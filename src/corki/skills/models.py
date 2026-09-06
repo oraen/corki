@@ -1,0 +1,56 @@
+"""Immutable skill metadata shared by discovery, prompting, and tools."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum
+from pathlib import Path
+
+
+class SkillScope(StrEnum):
+    """The ownership layer from which a skill was discovered."""
+
+    PROJECT = "project"
+    USER = "user"
+    SYSTEM = "system"
+    PLUGIN = "plugin"
+
+
+@dataclass(frozen=True, slots=True)
+class SkillMetadata:
+    """Validated metadata for one materialized ``SKILL.md`` package."""
+
+    name: str
+    description: str
+    path: Path
+    root: Path
+    scope: SkillScope
+    namespace: str | None = None
+
+    @property
+    def qualified_name(self) -> str:
+        return f"{self.namespace}:{self.name}" if self.namespace else self.name
+
+
+@dataclass(frozen=True, slots=True)
+class SkillLoadError:
+    path: Path
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class SkillSnapshot:
+    """One deterministic discovery result for a working directory."""
+
+    skills: tuple[SkillMetadata, ...] = ()
+    errors: tuple[SkillLoadError, ...] = ()
+
+    def resolve(self, name: str) -> SkillMetadata | None:
+        """Resolve only an unambiguous enabled name or qualified name."""
+
+        normalized = name.strip().removeprefix("$").casefold()
+        exact = [skill for skill in self.skills if skill.qualified_name.casefold() == normalized]
+        if len(exact) == 1:
+            return exact[0]
+        bare = [skill for skill in self.skills if skill.name.casefold() == normalized]
+        return bare[0] if len(bare) == 1 else None
