@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from corki.memory.backend import LocalMemoryBackend
+from corki.memory.backend import AD_HOC_FILENAME_PATTERN, LocalMemoryBackend
 from corki.protocol.tools import ToolCall, ToolConcurrency, ToolResult, ToolSpec
 from corki.tools.base import ToolContext
 
@@ -159,8 +159,23 @@ class MemoryAddNoteTool:
             parameters={
                 "type": "object",
                 "properties": {
-                    "filename": {"type": "string"},
-                    "note": {"type": "string"},
+                    "filename": {
+                        "type": "string",
+                        "minLength": 24,
+                        "maxLength": 128,
+                        "pattern": f"^{AD_HOC_FILENAME_PATTERN}$",
+                        "description": (
+                            "New file in YYYY-MM-DDTHH-MM-SS-<slug>.md format. "
+                            "Use ASCII digits in the timestamp and a 1–80 character slug "
+                            "of lowercase ASCII letters, digits and hyphens, starting with "
+                            "a letter or digit. Existing files are never overwritten."
+                        ),
+                    },
+                    "note": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Verbatim Markdown for the explicit memory update request.",
+                    },
                 },
                 "required": ["filename", "note"],
                 "additionalProperties": False,

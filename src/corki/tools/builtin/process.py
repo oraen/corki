@@ -27,6 +27,9 @@ class ProcessObservation:
     session_id: str | None
     timed_out: bool = False
     wall_time_seconds: float = 0.0
+    chunk_id: str = ""
+    original_token_count: int | None = None
+    output_omitted_bytes: int = 0
 
 
 @dataclass(slots=True)
@@ -34,6 +37,7 @@ class _ProcessSession:
     id: str
     process: asyncio.subprocess.Process
     output_limit_bytes: int
+    head: bytearray = field(default_factory=bytearray)
     chunks: deque[bytes] = field(default_factory=deque)
     buffered_bytes: int = 0
     dropped_bytes: int = 0
@@ -44,16 +48,22 @@ class _ProcessSession:
     pty_master_fd: int | None = None
 
     def append(self, chunk: bytes) -> None:
-        if len(chunk) >= self.output_limit_bytes:
-            self.dropped_bytes += self.buffered_bytes + len(chunk) - self.output_limit_bytes
+        head_remaining = max(0, self.output_limit_bytes // 2 - len(self.head))
+        self.head.extend(chunk[:head_remaining])
+        chunk = chunk[head_remaining:]
+        if not chunk:
+            return
+        tail_limit = self.output_limit_bytes - self.output_limit_bytes // 2
+        if len(chunk) >= tail_limit:
+            self.dropped_bytes += self.buffered_bytes + len(chunk) - tail_limit
             self.chunks.clear()
-            self.chunks.append(chunk[-self.output_limit_bytes :])
-            self.buffered_bytes = self.output_limit_bytes
+            self.chunks.append(chunk[-tail_limit:])
+            self.buffered_bytes = tail_limit
             return
         self.chunks.append(chunk)
         self.buffered_bytes += len(chunk)
-        while self.buffered_bytes > self.output_limit_bytes and self.chunks:
-            overflow = self.buffered_bytes - self.output_limit_bytes
+        while self.buffered_bytes > tail_limit and self.chunks:
+            overflow = self.buffered_bytes - tail_limit
             removed = self.chunks.popleft()
             if len(removed) > overflow:
                 self.chunks.appendleft(removed[overflow:])
@@ -64,19 +74,27 @@ class _ProcessSession:
             self.dropped_bytes += len(removed)
 
     def take_output(self) -> str:
-        content = b"".join(self.chunks).decode("utf-8", errors="replace")
+        marker = (
+            f"\n... {self.dropped_bytes} bytes omitted ...\n".encode()
+            if self.dropped_bytes
+            else b""
+        )
+        content = (bytes(self.head) + marker + b"".join(self.chunks)).decode(
+            "utf-8", errors="replace"
+        )
+        self.head.clear()
         self.chunks.clear()
         self.buffered_bytes = 0
-        if self.dropped_bytes:
-            content = f"... {self.dropped_bytes} earlier output bytes omitted ...\n{content}"
-            self.dropped_bytes = 0
+        self.dropped_bytes = 0
         return content
 
 
 class ProcessManager:
     """Own child processes independently of any one LangGraph node."""
 
-    def __init__(self, *, output_limit_bytes: int = 1_000_000) -> None:
+    def __init__(self, *, output_limit_bytes: int = 1024 * 1024) -> None:
+        if type(output_limit_bytes) is not int or output_limit_bytes < 1:
+            raise ValueError("output_limit_bytes must be a positive integer")
         self._sessions: dict[str, _ProcessSession] = {}
         self._output_limit_bytes = output_limit_bytes
 
@@ -134,13 +152,14 @@ class ProcessManager:
             self._read_pty_output(session) if master_fd is not None else self._read_output(session)
         )
         session.timeout_task = asyncio.create_task(self._enforce_timeout(session, timeout_seconds))
+        started = time.monotonic()
         await self._wait_at_most(process, yield_seconds)
         # A process may have written bytes just before the wait expired while
         # the independent reader task has not yet been scheduled. Give it one
         # event-loop turn so the first observation never spuriously loses
         # already-available output.
         await asyncio.sleep(0)
-        return await self._observe(session)
+        return await self._observe(session, started)
 
     async def write_stdin(
         self,
@@ -160,8 +179,9 @@ class ProcessManager:
             elif session.process.stdin is not None:
                 session.process.stdin.write(chars.encode())
                 await session.process.stdin.drain()
+        started = time.monotonic()
         await self._wait_at_most(session.process, yield_seconds)
-        return await self._observe(session)
+        return await self._observe(session, started)
 
     async def terminate_all(self) -> None:
         sessions = tuple(self._sessions.values())
@@ -186,17 +206,24 @@ class ProcessManager:
         if errors:
             raise errors[0]
 
-    async def _observe(self, session: _ProcessSession) -> ProcessObservation:
+    async def _observe(self, session: _ProcessSession, started: float) -> ProcessObservation:
         running = session.process.returncode is None
         if not running and session.reader_task is not None:
             await session.reader_task
+        original_bytes = len(session.head) + session.buffered_bytes + session.dropped_bytes
+        metadata = {
+            "chunk_id": uuid4().hex[:6],
+            "original_token_count": (original_bytes + 3) // 4,
+            "output_omitted_bytes": session.dropped_bytes,
+            "wall_time_seconds": time.monotonic() - started,
+        }
         output = session.take_output()
         if running:
             return ProcessObservation(
                 output=output,
                 exit_code=None,
                 session_id=session.id,
-                wall_time_seconds=time.monotonic() - session.started_at,
+                **metadata,
             )
         if session.timeout_task is not None:
             session.timeout_task.cancel()
@@ -208,7 +235,7 @@ class ProcessManager:
             exit_code=session.process.returncode,
             session_id=None,
             timed_out=session.timed_out,
-            wall_time_seconds=time.monotonic() - session.started_at,
+            **metadata,
         )
 
     @staticmethod

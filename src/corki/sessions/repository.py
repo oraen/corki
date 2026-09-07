@@ -5,11 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
+from corki.models.failure import ModelFailure
 from corki.models.types import ModelCompleted
 from corki.protocol.ids import ThreadId, TurnId
 from corki.protocol.items import ConversationItem
 from corki.protocol.tools import ToolCall, ToolResult
-from corki.sessions.models import TurnRecord
+from corki.sessions.models import ContextUsage, TurnRecord
 
 
 class SessionRepository(Protocol):
@@ -22,6 +23,8 @@ class SessionRepository(Protocol):
     ) -> None: ...
 
     async def load_items(self, thread_id: ThreadId) -> tuple[ConversationItem, ...]: ...
+
+    async def load_context_usage(self, thread_id: ThreadId) -> ContextUsage | None: ...
 
     async def latest_thread(self, cwd: Path | None = None) -> ThreadId | None: ...
 
@@ -39,6 +42,14 @@ class SessionRepository(Protocol):
         self, thread_id: ThreadId, turn_id: TurnId, step_index: int
     ) -> ModelCompleted | None: ...
 
+    async def load_partial_step(
+        self, thread_id: ThreadId, turn_id: TurnId, step_index: int
+    ) -> tuple[ConversationItem, ...]: ...
+
+    async def append_partial_item(
+        self, thread_id: ThreadId, turn_id: TurnId, step_index: int, item: ConversationItem
+    ) -> None: ...
+
     async def commit_model_step(
         self,
         thread_id: ThreadId,
@@ -48,3 +59,11 @@ class SessionRepository(Protocol):
     ) -> None: ...
 
     async def close(self) -> None: ...
+
+    async def load_model_failure(
+        self, thread_id: ThreadId, turn_id: TurnId, step_index: int
+    ) -> ModelFailure | None: ...
+
+    async def save_model_failure(
+        self, thread_id: ThreadId, turn_id: TurnId, step_index: int, failure: ModelFailure
+    ) -> None: ...

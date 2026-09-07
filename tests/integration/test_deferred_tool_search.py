@@ -26,6 +26,7 @@ from corki.protocol.tools import ToolCall, ToolExposure, ToolResult, ToolSpec
 from corki.sessions import TurnRecord, TurnStatus
 from corki.storage import SQLiteSessionRepository
 from corki.tools import ToolRegistry
+from corki.tools.search import ToolSearchTool
 
 
 class CalendarTool:
@@ -103,7 +104,7 @@ def test_search_load_call_observation_and_cross_turn_history(tmp_path: Path) -> 
 
 @pytest.mark.parametrize("append_result,checkpoint", [(False, False), (True, False), (True, True)])
 def test_search_ledger_resume_restores_definitions_without_reexecution(
-    tmp_path: Path, append_result: bool, checkpoint: bool
+    tmp_path: Path, append_result: bool, checkpoint: bool, monkeypatch
 ) -> None:
     class NullSink:
         async def emit(self, event):
@@ -205,12 +206,18 @@ def test_search_ledger_resume_restores_definitions_without_reexecution(
             thread_id=first.thread_id,
             model=model,
         )
+
+        async def unexpected_search(self, call, context):
+            pytest.fail("durable search was rerun")
+
+        monkeypatch.setattr(ToolSearchTool, "execute", unexpected_search)
         try:
             events = [event async for event in resumed.resume_pending()]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert len(model.requests) == 2
             assert calendar.titles == ["resumed"]
-            assert registry.get("tool_search").index.generation == 0, "durable search was rerun"
+            # Preparation rebuilds the process-local index, not the durable call.
+            assert registry.get("tool_search").index.generation == 1
         finally:
             await resumed.aclose()
 
@@ -218,7 +225,10 @@ def test_search_ledger_resume_restores_definitions_without_reexecution(
 
 
 @pytest.mark.parametrize("mode", ["compatible", "native"])
-def test_responses_search_wire_roundtrip_without_eager_schemas(tmp_path: Path, mode: str) -> None:
+@pytest.mark.parametrize("refresh_after_search", [False, True])
+def test_responses_search_wire_roundtrip_without_eager_schemas(
+    tmp_path: Path, mode: str, refresh_after_search: bool
+) -> None:
     async def scenario():
         bodies = []
 
@@ -241,6 +251,12 @@ def test_responses_search_wire_roundtrip_without_eager_schemas(tmp_path: Path, m
                 )
                 item.update(id="search-item", call_id="search-call")
             elif index == 2:
+                if refresh_after_search:
+                    replacement = CalendarTool()
+                    replacement.spec = replace(
+                        calendar.spec, description="Updated calendar metadata"
+                    )
+                    registry.replace_owned(owner, (replacement,))
                 item = {
                     "type": "function_call",
                     "name": CalendarTool.spec.name,
@@ -261,7 +277,8 @@ def test_responses_search_wire_roundtrip_without_eager_schemas(tmp_path: Path, m
             return httpx.Response(200, text="".join(f"data: {json.dumps(p)}\n\n" for p in packets))
 
         registry, calendar = ToolRegistry(), CalendarTool()
-        registry.register(calendar)
+        owner = registry.create_owner()
+        registry.replace_owned(owner, (calendar,))
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
         model = OpenAIResponsesModel(
             api_key="test",
@@ -299,6 +316,12 @@ def test_responses_search_wire_roundtrip_without_eager_schemas(tmp_path: Path, m
                 assert function["name"] == calendar.spec.name
                 assert function["parameters"] == calendar.spec.parameters
                 assert function["defer_loading"] is True
+                final_search_output = next(
+                    item for item in bodies[2]["input"] if item.get("type") == "tool_search_output"
+                )
+                assert final_search_output == output, (
+                    "native history must not follow registry drift"
+                )
                 assert all(
                     not any(tool.get("name") == calendar.spec.name for tool in body["tools"])
                     for body in bodies
@@ -306,6 +329,10 @@ def test_responses_search_wire_roundtrip_without_eager_schemas(tmp_path: Path, m
             else:
                 assert bodies[0]["tools"][0]["name"] == "tool_search"
                 assert any(tool["name"] == calendar.spec.name for tool in bodies[1]["tools"])
+                if refresh_after_search:
+                    assert not any(
+                        tool.get("name") == calendar.spec.name for tool in bodies[2]["tools"]
+                    )
                 assert not any(
                     item.get("type") == "tool_search_output" for item in bodies[1]["input"]
                 )

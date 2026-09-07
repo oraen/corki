@@ -47,16 +47,25 @@ class PromptContribution:
     """A feature's request to add one template to the model context."""
 
     key: str
-    template_name: str
+    template_name: str | None
     role: PromptRole
     slot: PromptSlot
     order: int = 0
     variables: Mapping[str, str] = field(default_factory=dict)
     separate_message: bool = False
+    input_scoped: bool = False
+    warnings: tuple[str, ...] = ()
+    # Feature-owned comparison state, never prompt text. A None template emits
+    # a silent snapshot rather than an empty model message.
+    snapshot_state: str | None = None
 
     def __post_init__(self) -> None:
         if not self.key or not self.key.strip():
             raise ValueError("prompt contribution key must not be empty")
+        if self.template_name is None and self.snapshot_state is None:
+            raise ValueError("a silent contribution requires snapshot state")
+        if self.input_scoped and self.snapshot_state is not None:
+            raise ValueError("input-attached history cannot carry world-state metadata")
         object.__setattr__(self, "variables", MappingProxyType(dict(self.variables)))
 
 
@@ -70,6 +79,9 @@ class RenderedPrompt:
     slot: PromptSlot
     order: int
     separate_message: bool
+    input_scoped: bool = False
+    warnings: tuple[str, ...] = ()
+    snapshot_state: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,10 +131,17 @@ class PromptAssembler:
             RenderedPrompt(
                 key=contribution.key,
                 role=contribution.role,
-                content=self._store.render(contribution.template_name, **contribution.variables),
+                content=(
+                    self._store.render(contribution.template_name, **contribution.variables)
+                    if contribution.template_name is not None
+                    else ""
+                ),
                 slot=contribution.slot,
                 order=contribution.order,
                 separate_message=contribution.separate_message,
+                input_scoped=contribution.input_scoped,
+                warnings=contribution.warnings,
+                snapshot_state=contribution.snapshot_state,
             )
             for _, contribution in indexed_contributions
         )

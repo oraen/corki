@@ -6,7 +6,18 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from corki.protocol.ids import ThreadId, TurnId
+from corki.protocol.ids import ItemId, ThreadId, TurnId
+
+
+@dataclass(frozen=True, slots=True)
+class ContextUsage:
+    """Latest committed sampling usage and its durable history boundary."""
+
+    total_tokens: int
+    anchor_id: ItemId
+    server_reasoning_included: bool = False
+    input_tokens: int | None = None
+    sample_id: str | None = None
 
 
 class TurnStatus(StrEnum):
@@ -25,6 +36,11 @@ class TurnRecord:
     user_input: str
     final_answer: str | None = None
     error: str | None = None
+    operation: str = "normal"
+
+    def __post_init__(self) -> None:
+        if self.operation not in {"normal", "compact"}:
+            raise ValueError(f"unknown turn operation: {self.operation}")
 
 
 @dataclass(frozen=True, slots=True)

@@ -83,8 +83,11 @@ def test_runtime_recalls_context_skill_and_continuous_memory_in_codex_order(
     assert all(isinstance(item, ContextItem) for item in context_before_user)
     combined_context = "\n".join(item.content for item in context_before_user)
     assert "ALWAYS_RUN_RECALL_CHECK" in combined_context
-    assert "SKILL_BODY_RECALLED" in combined_context
-    assert first_user_index == len(first_items) - 1
+    assert "SKILL_BODY_RECALLED" not in combined_context
+    selected_skill = first_items[first_user_index + 1 :]
+    assert len(selected_skill) == 1 and isinstance(selected_skill[0], ContextItem)
+    assert "SKILL_BODY_RECALLED" in selected_skill[0].content
+    assert selected_skill[0].source_input_id == first_items[first_user_index].id
 
     second_items = model.requests[1].items
     remembered = [

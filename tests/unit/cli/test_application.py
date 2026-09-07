@@ -1,11 +1,26 @@
 import asyncio
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
+from io import StringIO
 from pathlib import Path
 
+import pytest
+from rich.console import Console
+
 from corki.cli.application import CorkiApplication
+from corki.cli.terminal import TerminalUI
 from corki.config import CorkiPaths, CorkiSettings
-from corki.protocol.events import AssistantReasoningDelta, AssistantTextDelta, TurnCompleted
+from corki.protocol.events import (
+    AssistantMessageInterrupted,
+    AssistantReasoningDelta,
+    AssistantTextDelta,
+    ContextCompacted,
+    ContextCompactionStarted,
+    ModelRetryScheduled,
+    TurnCompleted,
+    TurnFailed,
+    WarningEvent,
+)
 from corki.protocol.ids import new_thread_id, new_turn_id
 from corki.realtime import RealtimeTurnClosedError
 
@@ -87,6 +102,74 @@ class FakeRuntime:
         return None
 
 
+def test_warning_is_a_notice_not_an_assistant_error(tmp_path):
+    async def scenario():
+        thread, turn = new_thread_id(), new_turn_id()
+        ui = FakeUI(iter(()))
+        app = CorkiApplication(
+            CorkiSettings(working_directory=tmp_path),
+            CorkiPaths.from_home(tmp_path / ".corki"),
+            FakeRuntime(),
+            ui,
+        )
+
+        async def events():
+            yield WarningEvent(thread, turn, "Failed to load skill at /[red]/SKILL.md")
+            yield TurnCompleted(thread, turn, "done")
+
+        await app._consume_events(events())
+        assert ui.events == [
+            ("notice", "Warning: Failed to load skill at /[red]/SKILL.md"),
+            ("assistant", "done"),
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_terminal_notice_does_not_interpret_error_text_as_markup():
+    output = StringIO()
+    # Rendering does not need an interactive prompt session or terminal input.
+    ui = TerminalUI.__new__(TerminalUI)
+    ui._console = Console(file=output, width=200, force_terminal=False)
+    message = "Warning: Failed to load skill at /[red]/SKILL.md: [/broken]"
+    ui.show_notice(message)
+    assert message in output.getvalue()
+
+
+@pytest.mark.parametrize("limit", [3, None])
+def test_retry_closes_partial_output_without_claiming_user_steering(tmp_path, limit):
+    async def scenario():
+        thread, turn = new_thread_id(), new_turn_id()
+        ui = FakeUI(iter(()))
+        app = CorkiApplication(
+            CorkiSettings(working_directory=tmp_path),
+            CorkiPaths.from_home(tmp_path / ".corki"),
+            FakeRuntime(),
+            ui,
+        )
+
+        async def events():
+            yield AssistantTextDelta(thread, turn, "partial")
+            yield AssistantMessageInterrupted(thread, turn, reason="retry")
+            yield ModelRetryScheduled(thread, turn, 1, limit, 5, "network failure")
+            yield AssistantTextDelta(thread, turn, "recovered")
+            yield TurnCompleted(thread, turn, "recovered")
+
+        await app._consume_events(events())
+        assert ui.events == [
+            ("assistant_start", ""),
+            ("assistant_delta", "partial"),
+            ("assistant_end", ""),
+            ("notice", "Response interrupted; retrying with updated history..."),
+            ("notice", f"Reconnecting... 1/{limit if limit is not None else '∞'} in 5s"),
+            ("assistant_start", ""),
+            ("assistant_delta", "recovered"),
+            ("assistant_end", ""),
+        ]
+
+    asyncio.run(scenario())
+
+
 def test_late_steering_submission_is_kept_for_next_turn(tmp_path: Path) -> None:
     async def scenario():
         first_started = asyncio.Event()
@@ -156,3 +239,120 @@ def test_application_routes_commands_and_messages(tmp_path: Path) -> None:
     assert ("reasoning_delta", "thinking") in ui.events
     assert ("assistant_delta", "reply: hello") in ui.events
     assert ui.events[-1] == ("goodbye", "")
+
+
+def test_mcp_refresh_command_reaches_runtime_without_model_input(tmp_path):
+    class Runtime(FakeRuntime):
+        refreshed = False
+
+        def request_mcp_refresh(self):
+            self.refreshed = True
+
+    def inputs():
+        yield "/mcp refresh"
+        raise EOFError
+
+    runtime, ui = Runtime(), FakeUI(inputs())
+    app = CorkiApplication(
+        CorkiSettings(working_directory=tmp_path),
+        CorkiPaths.from_home(tmp_path / ".corki"),
+        runtime,
+        ui,
+    )
+    assert asyncio.run(app.run()) == 0
+    assert runtime.refreshed and runtime.received == []
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_compact_command_uses_runtime_operation_not_normal_input(tmp_path, failed):
+    class Runtime(FakeRuntime):
+        compacted = False
+
+        async def compact(self):
+            self.compacted = True
+            thread, turn = new_thread_id(), new_turn_id()
+            yield ContextCompactionStarted(thread, turn)
+            if failed:
+                yield TurnFailed(thread, turn, "summary unavailable")
+            else:
+                yield ContextCompacted(thread, turn, 123)
+                yield TurnCompleted(thread, turn, "")
+
+    def inputs():
+        yield "/compact"
+        raise EOFError
+
+    runtime, ui = Runtime(), FakeUI(inputs())
+    app = CorkiApplication(
+        CorkiSettings(working_directory=tmp_path),
+        CorkiPaths.from_home(tmp_path / ".corki"),
+        runtime,
+        ui,
+    )
+    assert asyncio.run(app.run()) == 0
+    assert runtime.compacted and runtime.received == []
+    assert ("notice", "Compacting context...") in ui.events
+    if failed:
+        assert ("error", "summary unavailable") in ui.events
+    else:
+        assert ("notice", "Context compacted (123 estimated tokens).") in ui.events
+
+
+def test_realtime_compact_cancels_current_turn_and_runs_standalone_operation(tmp_path):
+    from corki.core import LangGraphRuntime
+    from corki.models import ModelCompleted
+    from corki.protocol.items import AssistantMessageItem, new_step_id
+    from corki.tools import ToolRegistry
+
+    async def scenario():
+        entered, compacted = asyncio.Event(), asyncio.Event()
+        requests = []
+
+        class Model:
+            async def stream(self, request):
+                requests.append(request)
+                if len(requests) == 1:
+                    entered.set()
+                    await asyncio.Event().wait()
+                assert "checkpoint compaction" in request.items[-1].content
+                compacted.set()
+                yield ModelCompleted(
+                    (AssistantMessageItem("SUMMARY", request.items[-1].turn_id, new_step_id()),)
+                )
+
+            async def aclose(self):
+                pass
+
+        class UI(FakeUI):
+            reads = 0
+
+            async def read_message(self):
+                self.reads += 1
+                if self.reads == 1:
+                    return "work"
+                if self.reads == 2:
+                    await entered.wait()
+                    return "/compact"
+                await compacted.wait()
+                raise EOFError
+
+        settings = CorkiSettings(
+            working_directory=tmp_path, realtime_enabled=True, skills_enabled=False
+        )
+        runtime = LangGraphRuntime.create(
+            settings=settings,
+            database_path=tmp_path / "sessions.db",
+            model=Model(),
+            registry=ToolRegistry(),
+        )
+        ui = UI(iter(()))
+        app = CorkiApplication(settings, CorkiPaths.from_home(tmp_path / ".corki"), runtime, ui)
+        assert await asyncio.wait_for(app.run(), 3) == 0
+        assert len(requests) == 2
+        assert not any(getattr(i, "content", None) == "/compact" for r in requests for i in r.items)
+        assert not any(
+            "<turn_aborted>" in getattr(i, "content", "") for r in requests for i in r.items
+        )
+        assert any(kind == "notice" and "Context compacted" in text for kind, text in ui.events)
+
+    asyncio.run(scenario())

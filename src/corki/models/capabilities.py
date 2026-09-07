@@ -31,6 +31,8 @@ class ProviderCapabilities:
     api_mode: ApiMode
     supports_tools: bool = True
     supports_native_tool_search: bool = False
+    supports_native_freeform: bool = False
+    supports_audio_input: bool = False
     supports_parallel_tools: bool = True
     supports_stream_usage: bool = False
     supports_thinking_toggle: bool = False
@@ -38,6 +40,8 @@ class ProviderCapabilities:
     reasoning_protocol: ReasoningProtocol = ReasoningProtocol.NONE
     requires_reasoning_replay: bool = False
     structured_output_protocol: StructuredOutputProtocol = StructuredOutputProtocol.NONE
+    supports_encrypted_tool_output: bool = False
+    supports_native_namespaces: bool = False
 
 
 def resolve_capabilities(
@@ -73,6 +77,7 @@ def resolve_capabilities(
         return ProviderCapabilities(
             name="openai-compatible",
             api_mode=mode,
+            supports_reasoning_effort=True,
             structured_output_protocol=StructuredOutputProtocol.JSON_SCHEMA,
         )
     return ProviderCapabilities(name="openai-compatible", api_mode=mode)

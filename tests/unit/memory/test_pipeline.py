@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -105,7 +106,7 @@ def test_two_phase_pipeline_extracts_consolidates_redacts_and_skips_unchanged(
         assert first.claimed == 1
         assert first.extracted == 1
         assert first.consolidated
-        assert "[REDACTED]" in (root / "raw_memories.md").read_text(encoding="utf-8")
+        assert "[REDACTED_SECRET]" in (root / "raw_memories.md").read_text(encoding="utf-8")
         assert "super-secret-value" not in (root / "raw_memories.md").read_text(encoding="utf-8")
         assert (root / "MEMORY.md").read_text(encoding="utf-8").startswith("v1\n")
         assert (root / "memory_summary.md").read_text(encoding="utf-8").startswith("v1\n")
@@ -118,10 +119,13 @@ def test_two_phase_pipeline_extracts_consolidates_redacts_and_skips_unchanged(
         assert set(json.loads(model.requests[1].items[0].content)) == {
             "previous_memory",
             "previous_summary",
+            "previous_skills",
             "raw_memories",
             "ad_hoc_notes",
         }
 
+        with sqlite3.connect(database) as connection:
+            connection.execute("UPDATE memory_jobs SET finished_at=0 WHERE job_key='global'")
         second = await service.run_once(new_thread_id())
         assert second.claimed == 0
         assert second.consolidation_skipped
@@ -174,13 +178,24 @@ def test_failed_consolidation_preserves_previously_published_memory(tmp_path: Pa
     asyncio.run(scenario())
 
 
-def test_empty_extraction_is_completed_without_running_consolidation(tmp_path: Path) -> None:
+def test_empty_extraction_is_deduplicated_and_missing_artifacts_are_initialized(
+    tmp_path: Path,
+) -> None:
     database = tmp_path / "sessions.db"
 
     async def scenario() -> None:
         await _seed_thread(database, tmp_path)
         model = ScriptedMemoryModel(
-            [json.dumps({"raw_memory": "", "rollout_summary": "", "rollout_slug": None})]
+            [
+                json.dumps({"raw_memory": "", "rollout_summary": "", "rollout_slug": None}),
+                json.dumps(
+                    {
+                        "memory": "No supported memories.",
+                        "memory_summary": "Empty index.",
+                        "skills": [],
+                    }
+                ),
+            ]
         )
         service = LongTermMemoryService(
             settings=CorkiSettings(
@@ -197,9 +212,10 @@ def test_empty_extraction_is_completed_without_running_consolidation(tmp_path: P
         second = await service.run_once(new_thread_id())
 
         assert first.empty == 1
-        assert not first.consolidated
+        assert first.consolidated and not first.failed
         assert second.claimed == 0
-        assert len(model.requests) == 1
+        assert not second.consolidated  # successful initialization is now cooling down
+        assert len(model.requests) == 2
         await service.aclose()
 
     asyncio.run(scenario())

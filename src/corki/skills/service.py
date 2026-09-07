@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-import re
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+from corki.config.skills import SkillRule, disabled_skill_paths
+from corki.skills.catalog import MetadataBudget, render_catalog
 from corki.skills.discovery import SkillRoot, discover_skills, skill_files
 from corki.skills.installer import install_bundled_skills
+from corki.skills.mentions import select
 from corki.skills.models import SkillMetadata, SkillScope, SkillSnapshot
+from corki.skills.policy import metadata_path
 
 MAX_SKILL_CONTENT_BYTES = 128 * 1_024
-MAX_CATALOG_CHARS = 48_000
-_MENTION = re.compile(r"(?<![\w$])\$([A-Za-z0-9_.:-]+)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,12 +34,17 @@ class SkillService:
         compatibility_home: Path | None = None,
         plugin_roots: tuple[PluginSkillRoot, ...] = (),
         bundled_enabled: bool = True,
+        context_window_tokens: int | None = None,
+        max_context_tokens: int | None = None,
+        rules: tuple[SkillRule, ...] = (),
     ) -> None:
         self.home = home
         self.project_root = project_root.resolve()
         self._compatibility_home = compatibility_home
         self._plugin_roots = plugin_roots
         self._bundled_enabled = bundled_enabled
+        self._catalog_budget = MetadataBudget.resolve(context_window_tokens, max_context_tokens)
+        self._rules = rules
         self._lock = threading.RLock()
         self._cache_key: tuple[tuple[str, int, int], ...] | None = None
         self._snapshot = SkillSnapshot()
@@ -52,19 +58,18 @@ class SkillService:
             if not force_reload and self._cache_key == key:
                 return self._snapshot
             self._snapshot = discover_skills(roots)
+            self._snapshot = replace(
+                self._snapshot,
+                disabled_paths=disabled_skill_paths(
+                    self._rules,
+                    ((skill.qualified_name, skill.path) for skill in self._snapshot.skills),
+                ),
+            )
             self._cache_key = key
             return self._snapshot
 
     def explicit_mentions(self, text: str, cwd: Path) -> tuple[SkillMetadata, ...]:
-        snapshot = self.snapshot(cwd)
-        selected: list[SkillMetadata] = []
-        seen: set[Path] = set()
-        for match in _MENTION.finditer(text):
-            skill = snapshot.resolve(match.group(1))
-            if skill is not None and skill.path not in seen:
-                selected.append(skill)
-                seen.add(skill.path)
-        return tuple(selected)
+        return select(text, self.snapshot(cwd))
 
     def read(self, skill: SkillMetadata, relative_file: str = "SKILL.md") -> str:
         """Read one text resource contained by a discovered skill package."""
@@ -83,23 +88,13 @@ class SkillService:
         return data.decode("utf-8-sig", errors="strict")
 
     def render_catalog(self, cwd: Path) -> str:
+        return self.catalog(cwd).body
+
+    def catalog(self, cwd: Path):
         snapshot = self.snapshot(cwd)
-        lines = [
-            "## Skills",
-            "A skill is a reusable instruction package whose full body is loaded only when needed.",
-            "### Available skills",
-        ]
-        for skill in snapshot.skills:
-            lines.append(
-                f"- {skill.qualified_name}: {skill.description} "
-                f"(file: {skill.path}; scope: {skill.scope.value})"
-            )
-        rendered = "\n".join(lines)
-        if len(rendered) <= MAX_CATALOG_CHARS:
-            return rendered
-        return (
-            rendered[: MAX_CATALOG_CHARS - 80]
-            + "\n- ... additional skills omitted by catalog budget"
+        return render_catalog(
+            tuple(skill for skill in snapshot.skills if snapshot.is_visible(skill)),
+            self._catalog_budget,
         )
 
     def _roots(self, cwd: Path) -> tuple[SkillRoot, ...]:
@@ -161,7 +156,9 @@ def _root_signature(roots: tuple[SkillRoot, ...]) -> tuple[tuple[str, int, int],
                 modified = 0
             signature.append((str(root.path), modified, 0))
             continue
-        for file in files:
+        for file in (
+            path for skill_file in files for path in (skill_file, metadata_path(skill_file))
+        ):
             try:
                 stat = file.stat()
             except OSError:

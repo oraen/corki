@@ -15,6 +15,7 @@ async def model_events(
     model: ModelPort,
     request: ModelRequest,
     realtime: RealtimeController | None,
+    failure: asyncio.Future[BaseException] | None = None,
 ) -> AsyncIterator[ModelEvent | RealtimeCommand]:
     """Yield response/steering events; the caller must explicitly close this generator.
 
@@ -27,12 +28,18 @@ async def model_events(
     try:
         while True:
             try:
-                if realtime is not None and realtime.active:
+                live_input = realtime is not None and realtime.active
+                if live_input or failure is not None:
                     model_task = asyncio.create_task(anext(iterator), name="corki-model-read")
-                    input_task = asyncio.create_task(realtime.next(), name="corki-steering-read")
-                    tasks = (model_task, input_task)
+                    input_task = (
+                        asyncio.create_task(realtime.next(), name="corki-steering-read")
+                        if live_input
+                        else None
+                    )
+                    tasks = [model_task] + ([input_task] if input_task is not None else [])
                     try:
-                        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                        watched = [*tasks, *([failure] if failure is not None else [])]
+                        done, _ = await asyncio.wait(watched, return_when=asyncio.FIRST_COMPLETED)
                     finally:
                         # asyncio.wait does not own its children. Join both even
                         # if this parent is cancelled or one child raises.
@@ -40,7 +47,9 @@ async def model_events(
                             if not task.done():
                                 task.cancel()
                         await asyncio.gather(*tasks, return_exceptions=True)
-                    if input_task in done:
+                    if failure is not None and failure in done:
+                        raise failure.result()
+                    if input_task is not None and input_task in done:
                         yield input_task.result()
                         return
                     event = model_task.result()

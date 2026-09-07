@@ -12,6 +12,7 @@ from corki.models.openai_compatible import OpenAICompatibleModel
 from corki.models.responses import OpenAIResponsesModel
 from corki.models.types import (
     ModelCompleted,
+    ModelItemCompleted,
     ModelReasoningDelta,
     ModelRequest,
     ModelRetrying,
@@ -23,6 +24,7 @@ __all__ = [
     "ModelCompleted",
     "ModelError",
     "ModelErrorKind",
+    "ModelItemCompleted",
     "ModelPort",
     "ModelReasoningDelta",
     "ModelRequest",

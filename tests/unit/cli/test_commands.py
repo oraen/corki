@@ -52,3 +52,9 @@ def test_realtime_command_toggles_subsequent_turn_mode(tmp_path: Path) -> None:
 
     assert enabled.action is CommandAction.REALTIME_ON
     assert "enabled" in status.output
+
+
+def test_mcp_refresh_is_an_explicit_local_command(tmp_path):
+    result = dispatcher(tmp_path).dispatch("/mcp refresh")
+    assert result.action is CommandAction.MCP_REFRESH
+    assert "not retried" in result.output

@@ -79,3 +79,26 @@ def test_rejects_duplicate_stable_contribution_keys(tmp_path: Path) -> None:
             base_template="base",
             contributions=[contribution, contribution],
         )
+
+
+def test_silent_snapshot_has_no_template_or_model_text(tmp_path):
+    _write_template(tmp_path, "base", "base")
+    contribution = PromptContribution(
+        "state", None, PromptRole.DEVELOPER, PromptSlot.EXTENSIONS, snapshot_state="hidden"
+    )
+    result = PromptAssembler(PromptStore(root=tmp_path)).assemble(
+        base_template="base", contributions=(contribution,)
+    )
+    assert result.fragments[0].content == ""
+    assert result.fragments[0].snapshot_state == "hidden"
+    with pytest.raises(ValueError, match="silent contribution requires"):
+        PromptContribution("state", None, PromptRole.DEVELOPER, PromptSlot.EXTENSIONS)
+    with pytest.raises(ValueError, match="input-attached history"):
+        PromptContribution(
+            "state",
+            None,
+            PromptRole.DEVELOPER,
+            PromptSlot.EXTENSIONS,
+            input_scoped=True,
+            snapshot_state="hidden",
+        )

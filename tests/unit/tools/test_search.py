@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from corki.context.tokens import estimate_text_tokens
+from corki.context.tokens import estimate_item_tokens, estimate_request_tokens, estimate_text_tokens
 from corki.protocol.ids import ToolCallId, new_turn_id
 from corki.protocol.items import ToolResultItem
 from corki.protocol.tools import ToolCall, ToolExposure, ToolResult, ToolSpec
@@ -22,6 +22,33 @@ class FixtureTool:
     async def execute(self, call, context):
         self.calls += 1
         return ToolResult(call.id, call.name, "ran")
+
+
+def test_freeform_grammar_is_bounded_in_search_and_context(tmp_path):
+    async def scenario():
+        spec = ToolSpec(
+            "raw",
+            "raw source",
+            {},
+            exposure=ToolExposure.DEFERRED,
+            input_kind="freeform",
+            freeform_format={"type": "grammar", "syntax": "lark", "definition": "x" * 40_000},
+        )
+        assert estimate_request_tokens("", (), (spec,)) >= 10_000
+        item = ToolResultItem(
+            ToolCallId("s"), "tool_search", "short", new_turn_id(), discovered_tools=(spec,)
+        )
+        assert estimate_item_tokens(item) >= 10_000
+        registry = ToolRegistry()
+        registry.register(FixtureTool(spec))
+        registry.register(ToolSearchTool(registry))
+        result = await ToolExecutor(registry, output_char_budget=500).execute(
+            ToolCall(ToolCallId("s"), "tool_search", {"query": "raw"}), ToolContext(tmp_path)
+        )
+        assert not result.is_error and result.discovered_tools == ()
+        assert json.loads(result.content)["omitted_for_budget"] == 1
+
+    asyncio.run(scenario())
 
 
 def test_search_indexes_recursive_metadata_top_k_and_definition_changes():

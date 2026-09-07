@@ -2,6 +2,8 @@ import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import pytest
+
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted, ModelRequest, ModelTextDelta
@@ -40,7 +42,8 @@ class SteerableModel:
         return None
 
 
-def test_live_input_interrupts_sampling_and_rebuilds_context(tmp_path: Path) -> None:
+@pytest.mark.parametrize("initial_skill", [False, True])
+def test_live_input_interrupts_sampling_and_rebuilds_context(tmp_path: Path, initial_skill) -> None:
     skill = tmp_path / ".corki" / "skills" / "steering" / "SKILL.md"
     skill.parent.mkdir(parents=True)
     skill.write_text(
@@ -56,7 +59,8 @@ def test_live_input_interrupts_sampling_and_rebuilds_context(tmp_path: Path) -> 
 
     async def scenario() -> list[object]:
         events = []
-        async for event in runtime.stream("initial request", realtime=True):
+        initial = "initial $steering request" if initial_skill else "initial request"
+        async for event in runtime.stream(initial, realtime=True):
             events.append(event)
             if isinstance(event, AssistantTextDelta) and event.delta == "stale prefix":
                 await runtime.steer("use $steering and the new direction")
@@ -84,14 +88,17 @@ def test_live_input_interrupts_sampling_and_rebuilds_context(tmp_path: Path) -> 
         for item in model.requests[-1].items
     )
     steered_items = model.requests[-1].items
-    steered_index = next(
-        index
-        for index, item in enumerate(steered_items)
-        if isinstance(item, UserMessageItem) and "$steering" in item.content
-    )
-    selected_index = next(
-        index
-        for index, item in enumerate(steered_items)
+    selected = [
+        item
+        for item in steered_items
         if isinstance(item, ContextItem) and "STEERING_SKILL_BODY" in item.content
-    )
-    assert selected_index < steered_index
+    ]
+    assert len(selected) == int(initial_skill)
+    if initial_skill:
+        original_input = next(i for i in steered_items if isinstance(i, UserMessageItem))
+        assert selected[0].source_input_id == original_input.id
+        assert selected == [
+            i
+            for i in model.requests[0].items
+            if isinstance(i, ContextItem) and "STEERING_SKILL_BODY" in i.content
+        ]

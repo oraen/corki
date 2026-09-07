@@ -15,6 +15,7 @@ from corki.protocol.events import (
     AssistantReasoningDelta,
     AssistantTextDelta,
     ContextCompacted,
+    ContextCompactionStarted,
     ModelRetryScheduled,
     PlanUpdated,
     RealtimeInputAccepted,
@@ -27,6 +28,7 @@ from corki.protocol.events import (
     TurnCompleted,
     TurnFailed,
     TurnStarted,
+    WarningEvent,
 )
 from corki.realtime import RealtimeTurnClosedError
 
@@ -100,7 +102,7 @@ class CorkiApplication:
                     continue
 
                 command = self._commands.dispatch(message)
-                if command.handled:
+                if command.handled and command.action is not CommandAction.COMPACT:
                     if command.action is CommandAction.CLEAR:
                         self._ui.clear()
                     elif command.action is CommandAction.REALTIME_ON:
@@ -109,12 +111,17 @@ class CorkiApplication:
                     elif command.action is CommandAction.REALTIME_OFF:
                         self._realtime_enabled = False
                         self._commands.set_realtime_enabled(False)
+                    elif command.action is CommandAction.MCP_REFRESH:
+                        self._runtime.request_mcp_refresh()
                     if command.output:
                         self._ui.show_notice(command.output)
                     continue
 
                 try:
-                    await self._consume_turn(message)
+                    if command.action is CommandAction.COMPACT:
+                        await self._consume_events(self._runtime.compact())
+                    else:
+                        await self._consume_turn(message)
                 except KeyboardInterrupt:
                     self._ui.show_notice("Turn interrupted.")
                 except asyncio.CancelledError:
@@ -174,6 +181,10 @@ class CorkiApplication:
                 if steering == "/stop":
                     await self._runtime.cancel_active()
                     break
+                if steering.lower() == "/compact":
+                    self._pending_message = "/compact"
+                    await self._runtime.cancel_active(reason="replaced")
+                    break
                 if steering:
                     try:
                         await self._runtime.steer(steering)
@@ -226,7 +237,11 @@ class CorkiApplication:
                 if streaming:
                     self._ui.end_assistant_message()
                     streaming = False
-                self._ui.show_notice("Response interrupted; applying your latest input...")
+                self._ui.show_notice(
+                    "Response interrupted; retrying with updated history..."
+                    if event.reason == "retry"
+                    else "Response interrupted; applying your latest input..."
+                )
             elif isinstance(event, RealtimeInputAccepted):
                 # The active prompt already leaves submitted text in scrollback,
                 # so only acknowledge it instead of echoing it a second time.
@@ -245,15 +260,20 @@ class CorkiApplication:
                 self._ui.show_tool_completed(event.tool_name, is_error=event.is_error)
             elif isinstance(event, PlanUpdated):
                 self._ui.show_plan(event.plan)
+            elif isinstance(event, WarningEvent):
+                self._ui.show_notice(f"Warning: {event.message}")
             elif isinstance(event, ModelRetryScheduled):
+                limit = event.max_attempts if event.max_attempts is not None else "∞"
+                label = "Retrying compaction" if event.purpose == "compaction" else "Reconnecting"
                 self._ui.show_notice(
-                    f"Reconnecting... {event.attempt}/{event.max_attempts} "
-                    f"in {event.delay_seconds:g}s"
+                    f"{label}... {event.attempt}/{limit} in {event.delay_seconds:g}s"
                 )
             elif isinstance(event, ContextCompacted):
                 self._ui.show_notice(
                     f"Context compacted ({event.estimated_tokens} estimated tokens)."
                 )
+            elif isinstance(event, ContextCompactionStarted):
+                self._ui.show_notice("Compacting context...")
             elif isinstance(event, TokenUsageUpdated):
                 continue
             elif isinstance(event, TurnCompleted):

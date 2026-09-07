@@ -50,6 +50,7 @@ def sync_stage_one_artifacts(root: Path, memories: tuple[StageOneMemory, ...]) -
     """
 
     ensure_memory_layout(root)
+    _workspace_files(root)
     desired: dict[Path, str] = {}
     desired[root / "raw_memories.md"] = _raw_memories(memories)
     summary_dir = root / "rollout_summaries"
@@ -72,55 +73,134 @@ def sync_stage_one_artifacts(root: Path, memories: tuple[StageOneMemory, ...]) -
 
 
 def write_consolidated_artifacts(root: Path, value: ConsolidatedMemory) -> None:
-    """Atomically publish both model-generated indexes after validation."""
+    """Replace each validated artifact atomically, not the entire file set.
+
+    The caller must fence concurrent consolidators. An I/O failure between
+    replacements can still leave mixed generations; this is not a transaction.
+    """
 
     ensure_memory_layout(root)
+    _workspace_files(root)
     for skill in value.skills:
         target = root / "skills" / skill.name
         if target.is_symlink() or (target.exists() and not target.is_dir()):
             raise ValueError(f"memory skill path must be a regular directory: {target}")
     memory = _versioned(value.memory)
     summary = _versioned(value.summary)
-    # Write the detailed registry first.  Readers see either the old complete
-    # pair or a new MEMORY.md with the old (still valid) compact summary.
+    # Write detail before the routing summary. Readers may see a mixed pair;
+    # callers must not describe this per-file replacement as atomic publication.
     _atomic_write(root / "MEMORY.md", memory)
     _atomic_write(root / "memory_summary.md", summary)
     _sync_memory_skills(root, value)
 
 
 def stage_one_digest(root: Path) -> str:
-    """Hash the exact selected inputs; this is the lightweight git baseline."""
-
-    digest = hashlib.sha256()
-    paths = [
-        root / "raw_memories.md",
-        *sorted((root / "rollout_summaries").glob("*.md")),
-        *sorted((root / "extensions").rglob("*.md")),
-    ]
-    for path in paths:
-        if path.is_symlink() or not path.is_file():
-            continue
-        digest.update(path.relative_to(root).as_posix().encode())
-        digest.update(b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
-    return digest.hexdigest()
+    """Hash input files separately so mid-sampling changes remain pending."""
+    return _hash_paths(
+        root, tuple(path for path in _workspace_files(root) if not _is_output(root, path))
+    )
 
 
-def baseline_digest(root: Path) -> str | None:
+def baseline_matches(root: Path, input_digest: str) -> bool:
+    """Skip only if both input and validated output snapshots are unchanged."""
+    baseline_path = root / ".consolidation-baseline.json"
+    if baseline_path.is_symlink():
+        raise ValueError("memory baseline cannot be a symbolic link")
     try:
-        value = json.loads((root / ".consolidation-baseline.json").read_text(encoding="utf-8"))
+        value = json.loads(baseline_path.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, UnicodeError, json.JSONDecodeError):
-        return None
-    digest = value.get("stage_one_sha256") if isinstance(value, dict) else None
-    return digest if isinstance(digest, str) else None
+        return False
+    if (
+        not isinstance(value, dict)
+        or value.get("version") != 2
+        or value.get("stage_one_sha256") != input_digest
+    ):
+        # A v1 baseline has no evidence about the published outputs. Rebuild it
+        # through a normal successful consolidation, not a silent migration.
+        return False
+    try:
+        validate_consolidation_artifacts(root)
+    except (OSError, UnicodeError, ValueError):
+        return False
+    return value.get("output_sha256") == _output_digest(root)
 
 
 def write_baseline(root: Path, digest: str) -> None:
+    validate_consolidation_artifacts(root)
     _atomic_write(
         root / ".consolidation-baseline.json",
-        json.dumps({"version": 1, "stage_one_sha256": digest}, sort_keys=True) + "\n",
+        json.dumps(
+            {"version": 2, "stage_one_sha256": digest, "output_sha256": _output_digest(root)},
+            sort_keys=True,
+        )
+        + "\n",
     )
+
+
+def validate_consolidation_artifacts(root: Path) -> None:
+    _workspace_files(root)  # reject links/non-regular files without traversing their targets
+    memory = root / "MEMORY.md"
+    if not memory.is_file():
+        raise ValueError("consolidated MEMORY.md must be a regular file")
+    summary = (root / "memory_summary.md").read_text(encoding="utf-8")
+    if not summary.splitlines() or summary.splitlines()[0] != "v1":
+        raise ValueError("consolidated memory summary must start with v1")
+
+
+def read_skill_artifacts(root: Path) -> dict[str, str]:
+    """Give consolidation the previous procedures, not just their existence."""
+    return {
+        path.relative_to(root).as_posix(): path.read_text(encoding="utf-8")
+        for path in _workspace_files(root)
+        if path.relative_to(root).parts[0] == "skills" and path.suffix == ".md"
+    }
+
+
+def _workspace_files(root: Path) -> tuple[Path, ...]:
+    if root.is_symlink():
+        raise ValueError("memory root cannot be a symbolic link")
+    directories = [root]
+    files: list[Path] = []
+    while directories:
+        for path in directories.pop().iterdir():
+            if path.name.startswith("."):
+                continue  # private baseline, temporary files and Git metadata are not memory
+            if path.is_symlink():
+                raise ValueError(f"memory workspace cannot contain a symbolic link: {path}")
+            if path.is_dir():
+                directories.append(path)
+            elif path.is_file():
+                files.append(path)
+            else:
+                raise ValueError(f"memory workspace must contain regular files: {path}")
+    return tuple(sorted(files))
+
+
+def _is_output(root: Path, path: Path) -> bool:
+    relative = path.relative_to(root)
+    return relative.parts[0] == "skills" or relative.as_posix() in {
+        "MEMORY.md",
+        "memory_summary.md",
+    }
+
+
+def _output_digest(root: Path) -> str:
+    return _hash_paths(
+        root, tuple(path for path in _workspace_files(root) if _is_output(root, path))
+    )
+
+
+def _hash_paths(root: Path, paths: tuple[Path, ...]) -> str:
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(b"\0")
+        file_digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            while block := stream.read(65536):
+                file_digest.update(block)
+        digest.update(file_digest.digest())
+    return digest.hexdigest()
 
 
 def read_optional(path: Path) -> str:
@@ -211,6 +291,8 @@ def _sync_memory_skills(root: Path, value: ConsolidatedMemory) -> None:
 
 
 def _read_text(path: Path) -> str | None:
+    if path.is_symlink():
+        raise ValueError(f"memory artifact cannot be a symbolic link: {path}")
     try:
         return path.read_text(encoding="utf-8")
     except FileNotFoundError:

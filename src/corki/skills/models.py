@@ -26,6 +26,9 @@ class SkillMetadata:
     root: Path
     scope: SkillScope
     namespace: str | None = None
+    allow_implicit_invocation: bool = True
+    short_description: str | None = None
+    discovery_path: Path | None = None
 
     @property
     def qualified_name(self) -> str:
@@ -44,13 +47,21 @@ class SkillSnapshot:
 
     skills: tuple[SkillMetadata, ...] = ()
     errors: tuple[SkillLoadError, ...] = ()
+    disabled_paths: frozenset[Path] = frozenset()
+
+    def is_enabled(self, skill: SkillMetadata) -> bool:
+        return skill.path not in self.disabled_paths
+
+    def is_visible(self, skill: SkillMetadata) -> bool:
+        return self.is_enabled(skill) and skill.allow_implicit_invocation
 
     def resolve(self, name: str) -> SkillMetadata | None:
         """Resolve only an unambiguous enabled name or qualified name."""
 
         normalized = name.strip().removeprefix("$").casefold()
-        exact = [skill for skill in self.skills if skill.qualified_name.casefold() == normalized]
+        enabled = [skill for skill in self.skills if self.is_enabled(skill)]
+        exact = [skill for skill in enabled if skill.qualified_name.casefold() == normalized]
         if len(exact) == 1:
             return exact[0]
-        bare = [skill for skill in self.skills if skill.name.casefold() == normalized]
+        bare = [skill for skill in enabled if skill.name.casefold() == normalized]
         return bare[0] if len(bare) == 1 else None

@@ -4,11 +4,12 @@ import json
 from typing import Any
 
 from corki.models.base import ModelError
+from corki.models.namespaces import group_tool_definitions
 from corki.protocol.items import ConversationItem, ToolCallItem, ToolResultItem
 from corki.protocol.tools import ToolSpec
 
 
-def native_tool_definition(spec: ToolSpec) -> dict[str, Any]:
+def native_tool_definition(spec: ToolSpec, *, native_freeform: bool = False) -> dict[str, Any]:
     """Encode a direct function or the special client-side search tool."""
 
     if spec.name == "tool_search":
@@ -18,16 +19,12 @@ def native_tool_definition(spec: ToolSpec) -> dict[str, Any]:
             "description": spec.description,
             "parameters": dict(spec.parameters),
         }
-    return {
-        "type": "function",
-        "name": spec.name,
-        "description": spec.description,
-        "parameters": dict(spec.parameters),
-        "strict": False,
-    }
+    return spec.as_response_tool(native_freeform=native_freeform)
 
 
-def native_search_item(item: ConversationItem) -> dict[str, Any] | None:
+def native_search_item(
+    item: ConversationItem, *, native_freeform: bool = False, native_namespaces: bool = False
+) -> dict[str, Any] | None:
     """History owns loaded schemas; never inject them into the top-level tools."""
 
     if isinstance(item, ToolCallItem) and item.call.name == "tool_search":
@@ -39,25 +36,18 @@ def native_search_item(item: ConversationItem) -> dict[str, Any] | None:
             "arguments": dict(item.call.arguments or {}),
         }
     if isinstance(item, ToolResultItem) and item.tool_name == "tool_search":
-        functions = [
-            {**native_tool_definition(spec), "defer_loading": True}
-            for spec in item.discovered_tools
-        ]
+        definitions = group_tool_definitions(
+            item.discovered_tools,
+            native_freeform=native_freeform,
+            native_namespaces=native_namespaces,
+            discovered=True,
+        )
         return {
             "type": "tool_search_output",
             "call_id": str(item.call_id),
             "execution": "client",
             "status": "completed",
-            "tools": [
-                {
-                    "type": "namespace",
-                    "name": "functions",
-                    "description": "Callable functions.",
-                    "tools": functions,
-                }
-            ]
-            if functions and not item.is_error
-            else [],
+            "tools": definitions if not item.is_error else [],
         }
     return None
 
@@ -76,4 +66,8 @@ def response_tool_name(item: dict[str, Any], fallback: str = "") -> str:
 
     name = str(item.get("name") or fallback)
     namespace = item.get("namespace")
-    return name if namespace in (None, "functions") else f"{namespace}::{name}"
+    return (
+        name
+        if namespace in (None, "", "functions")
+        else (name if name.startswith(f"{namespace}::") else f"{namespace}::{name}")
+    )

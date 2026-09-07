@@ -6,7 +6,8 @@ from dataclasses import dataclass
 
 from corki.protocol.tools import ToolCall, ToolConcurrency, ToolResult, ToolSpec
 from corki.tools.base import ToolContext
-from corki.tools.builtin.process import ProcessManager, ProcessObservation
+from corki.tools.builtin.process import ProcessManager
+from corki.tools.builtin.shell_output import shell_result
 
 
 @dataclass(slots=True)
@@ -29,7 +30,7 @@ class ExecCommandTool:
                     "cmd": {"type": "string", "description": "Shell command to execute."},
                     "workdir": {"type": "string", "description": "Working directory."},
                     "yield_time_ms": {"type": "integer", "minimum": 50, "maximum": 30000},
-                    "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 100000},
+                    "max_output_tokens": {"type": "integer", "minimum": 0},
                     "tty": {"type": "boolean"},
                     "login": {"type": "boolean"},
                 },
@@ -61,9 +62,8 @@ class ExecCommandTool:
             timeout_seconds=self.timeout_seconds,
             tty=bool(call.arguments.get("tty", False)),
             login=bool(call.arguments.get("login", True)),
-            max_output_bytes=int(call.arguments.get("max_output_tokens", 10000)) * 4,
         )
-        return _result(call, observation)
+        return shell_result(call, observation, context)
 
 
 @dataclass(slots=True)
@@ -83,6 +83,7 @@ class WriteStdinTool:
                 "properties": {
                     "session_id": {"type": "string"},
                     "chars": {"type": "string"},
+                    "max_output_tokens": {"type": "integer", "minimum": 0},
                     "yield_time_ms": {"type": "integer", "minimum": 50, "maximum": 30000},
                 },
                 "required": ["session_id"],
@@ -91,7 +92,6 @@ class WriteStdinTool:
         )
 
     async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        del context
         assert call.arguments is not None
         yield_seconds = (
             float(call.arguments.get("yield_time_ms", self.default_yield_seconds * 1000)) / 1000
@@ -101,29 +101,4 @@ class WriteStdinTool:
             str(call.arguments.get("chars", "")),
             yield_seconds=yield_seconds,
         )
-        return _result(call, observation)
-
-
-def _result(call: ToolCall, observation: ProcessObservation) -> ToolResult:
-    status = (
-        f"Process running with session ID {observation.session_id}."
-        if observation.session_id
-        else f"Process exited with code {observation.exit_code}."
-    )
-    if observation.timed_out:
-        status += " Timed out."
-    content = (
-        f"{status}\nWall time: {observation.wall_time_seconds:.3f}s\nOutput:\n{observation.output}"
-    )
-    return ToolResult(
-        call_id=call.id,
-        tool_name=call.name,
-        content=content,
-        display_content=observation.output.strip()
-        or (
-            f"process running: {observation.session_id}"
-            if observation.session_id
-            else f"exit code {observation.exit_code}"
-        ),
-        is_error=observation.timed_out,
-    )
+        return shell_result(call, observation, context)

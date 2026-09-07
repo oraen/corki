@@ -1,17 +1,14 @@
-"""Strict, bounded parser for the Agent Skills ``SKILL.md`` frontmatter."""
+"""Host skill document parsing, separate from model-visible catalog budgets."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import yaml
 
+from corki.skills.frontmatter import parse
 from corki.skills.models import SkillMetadata, SkillScope
-
-MAX_SKILL_NAME_CHARS = 64
-MAX_SKILL_DESCRIPTION_CHARS = 1_024
-MAX_FRONTMATTER_BYTES = 16 * 1_024
+from corki.skills.policy import allows_implicit_invocation
 
 
 class SkillParseError(ValueError):
@@ -25,37 +22,20 @@ def parse_skill(
     scope: SkillScope,
     namespace: str | None = None,
 ) -> SkillMetadata:
-    """Read and validate metadata without loading the full instruction body."""
-
-    with path.open("rb") as handle:
-        prefix = handle.read(MAX_FRONTMATTER_BYTES + 1)
-    text = prefix.decode("utf-8-sig", errors="strict")
-    if not text.startswith("---"):
-        raise SkillParseError("missing YAML frontmatter")
-    end = text.find("\n---", 3)
-    if end < 0:
-        detail = (
-            "frontmatter exceeds 16 KiB"
-            if len(prefix) > MAX_FRONTMATTER_BYTES
-            else "unterminated YAML frontmatter"
-        )
-        raise SkillParseError(detail)
+    """Read the document as UTF-8 and preserve metadata until catalog allocation."""
     try:
-        value: Any = yaml.safe_load(text[3:end]) or {}
-    except yaml.YAMLError as exc:
-        raise SkillParseError(f"invalid YAML frontmatter: {exc}") from exc
-    if not isinstance(value, dict):
-        raise SkillParseError("frontmatter must be a mapping")
-    name = value.get("name")
-    description = value.get("description")
-    if not isinstance(name, str) or not name.strip():
-        raise SkillParseError("missing non-empty name")
-    if not isinstance(description, str) or not description.strip():
-        raise SkillParseError("missing non-empty description")
-    name = name.strip()
-    description = " ".join(description.split())
-    if len(name) > MAX_SKILL_NAME_CHARS:
-        raise SkillParseError("name exceeds 64 characters")
-    if len(description) > MAX_SKILL_DESCRIPTION_CHARS:
-        raise SkillParseError("description exceeds 1024 characters")
-    return SkillMetadata(name, description, path.resolve(), root.resolve(), scope, namespace)
+        name, description, short = parse(
+            path.read_text(encoding="utf-8-sig"), " ".join(path.parent.name.split()) or "skill"
+        )
+    except (yaml.YAMLError, ValueError) as exc:
+        raise SkillParseError(str(exc)) from exc
+    return SkillMetadata(
+        name,
+        description,
+        path.resolve(),
+        root.resolve(),
+        scope,
+        namespace,
+        allows_implicit_invocation(path),
+        short_description=short,
+    )

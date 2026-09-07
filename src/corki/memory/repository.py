@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Protocol
 
 from corki.memory.models import ConsolidationClaim, MemoryExtractionClaim, StageOneMemory
@@ -10,6 +10,10 @@ from corki.protocol.ids import ThreadId
 
 
 class MemoryRepository(Protocol):
+    async def prune_stage_one_outputs(self, *, max_unused_days: int, limit: int) -> int:
+        """Remove a bounded batch of stale unselected outputs, preserving job watermarks."""
+        ...
+
     async def claim_extraction_jobs(
         self,
         *,
@@ -36,6 +40,20 @@ class MemoryRepository(Protocol):
 
     async def claim_consolidation(self, *, lease_seconds: int) -> ConsolidationClaim | None: ...
 
+    async def heartbeat_consolidation(
+        self, claim: ConsolidationClaim, *, lease_seconds: int
+    ) -> bool: ...
+
+    async def write_consolidation_workspace(
+        self, claim: ConsolidationClaim, write: Callable[[], None]
+    ) -> bool:
+        """Run a synchronous workspace write while takeover is fenced out.
+
+        Return false without calling write if ownership is lost. Cancellation
+        must join any already-started write before returning to the caller.
+        """
+        ...
+
     async def enqueue_consolidation(self, *, force: bool = False) -> bool: ...
 
     async def load_consolidation_inputs(
@@ -46,6 +64,8 @@ class MemoryRepository(Protocol):
         self,
         claim: ConsolidationClaim,
         selected: tuple[StageOneMemory, ...],
+        *,
+        publish: Callable[[], None] | None = None,
     ) -> bool: ...
 
     async def fail_consolidation(

@@ -9,16 +9,38 @@ from corki.protocol.tools import ToolExposure, ToolSpec
 TOOL_SEARCH_NAME = "tool_search"
 
 
+def _loaded_definition_matches(current: ToolSpec | None, loaded: ToolSpec | None) -> bool:
+    if current is None or loaded is None:
+        return False
+    # These runtime-only fields are absent from the model's loaded definition.
+    # Keep identity/schema/exposure checks; dispatch always uses the current spec.
+    return (
+        replace(
+            loaded, concurrency=current.concurrency, output_char_budget=current.output_char_budget
+        )
+        == current
+    )
+
+
 def current_discovery_history(
-    specs: tuple[ToolSpec, ...], items: tuple[ConversationItem, ...]
+    specs: tuple[ToolSpec, ...], items: tuple[ConversationItem, ...], *, mode: str = "compatible"
 ) -> tuple[ConversationItem, ...]:
-    """Invalidate stale definitions in the request view, preserving raw audit history."""
+    """Preserve native history; project compatible loaded definitions without editing storage."""
+
+    if mode == "native":
+        # Codex history normalization does not consult the current tool router.
+        # Removed/changed handlers affect dispatch, not past search observations.
+        return items
 
     current = {spec.name: spec for spec in specs if spec.exposure.is_deferred}
     result = []
     for item in items:
         if isinstance(item, ToolResultItem) and item.tool_name == TOOL_SEARCH_NAME:
-            valid = tuple(spec for spec in item.discovered_tools if current.get(spec.name) == spec)
+            valid = tuple(
+                spec
+                for spec in item.discovered_tools
+                if _loaded_definition_matches(current.get(spec.name), spec)
+            )
             if valid != item.discovered_tools:
                 item = replace(
                     item,
@@ -44,7 +66,11 @@ class ToolPlan:
 
 
 def build_tool_plan(
-    specs: tuple[ToolSpec, ...], items: tuple[ConversationItem, ...], mode: str
+    specs: tuple[ToolSpec, ...],
+    items: tuple[ConversationItem, ...],
+    mode: str,
+    *,
+    tool_mode: str = "direct",
 ) -> ToolPlan:
     """Load only definitions actually discovered in the active context window.
 
@@ -53,6 +79,13 @@ def build_tool_plan(
     Stale or removed definitions never authorize the replacement tool.
     """
 
+    if tool_mode == "code_mode_only":
+        specs = tuple(
+            spec
+            for spec in specs
+            if spec.name in {"exec", "wait", TOOL_SEARCH_NAME}
+            or spec.exposure in {ToolExposure.DIRECT_MODEL_ONLY, ToolExposure.DEFERRED_MODEL_ONLY}
+        )
     direct = tuple(spec for spec in specs if spec.exposure.is_model_visible)
     if mode == "disabled":
         return ToolPlan(direct, direct)
@@ -67,7 +100,9 @@ def build_tool_plan(
         and not item.is_error
         for spec in item.discovered_tools
     }
-    loaded = tuple(spec for spec in deferred if discovered.get(spec.name) == spec)
+    loaded = tuple(
+        spec for spec in deferred if _loaded_definition_matches(spec, discovered.get(spec.name))
+    )
     advertised = (
         *direct,
         *(

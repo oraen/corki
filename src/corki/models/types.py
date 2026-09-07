@@ -22,8 +22,28 @@ class ModelRequest:
     output_schema: Mapping[str, Any] | None = None
     output_schema_name: str = "structured_output"
     tool_search_mode: str = "compatible"
+    harness_managed_retries: bool = False
+    tool_freeform_mode: str = "compatible"
+    # None inherits the adapter's setting; memory jobs provide per-request
+    # effort without mutating a transport shared with the interactive turn.
+    reasoning_effort: str | None = None
+    tool_namespace_mode: str = "compatible"
+    client_metadata: Mapping[str, str] | None = None
 
     def __post_init__(self) -> None:
+        if self.client_metadata is not None:
+            if not isinstance(self.client_metadata, Mapping) or any(
+                not isinstance(key, str) or not isinstance(value, str)
+                for key, value in self.client_metadata.items()
+            ):
+                raise ValueError("client_metadata must map strings to strings")
+            object.__setattr__(self, "client_metadata", dict(self.client_metadata))
+        if self.tool_namespace_mode not in ("compatible", "native"):
+            raise ValueError("tool_namespace_mode must be compatible or native")
+        if self.reasoning_effort is not None and (
+            not isinstance(self.reasoning_effort, str) or not self.reasoning_effort.strip()
+        ):
+            raise ValueError("reasoning_effort must be a non-empty string")
         if self.output_schema is not None:
             object.__setattr__(self, "output_schema", dict(self.output_schema))
         if not self.output_schema_name.strip():
@@ -36,11 +56,31 @@ class ModelUsage:
     output_tokens: int = 0
     cached_tokens: int = 0
     reasoning_tokens: int = 0
+    total_tokens: int | None = None
+
+    def __post_init__(self) -> None:
+        for value in (
+            self.input_tokens,
+            self.output_tokens,
+            self.cached_tokens,
+            self.reasoning_tokens,
+            self.total_tokens if self.total_tokens is not None else 0,
+        ):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError("token usage must contain non-negative integers")
+
+    @property
+    def context_tokens(self) -> int | None:
+        if self.total_tokens is not None:
+            return self.total_tokens
+        # Cached input and reasoning output are subsets, not additional costs.
+        return (self.input_tokens + self.output_tokens) or None
 
 
 @dataclass(frozen=True, slots=True)
 class ModelTextDelta:
     delta: str
+    item_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +88,7 @@ class ModelReasoningDelta:
     """Provider reasoning kept separate from user-visible answer text."""
 
     delta: str
+    item_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +97,13 @@ class ModelRetrying:
     max_attempts: int
     delay_seconds: float
     error: str
+
+
+@dataclass(frozen=True, slots=True)
+class ModelItemCompleted:
+    """An immutable, complete output item; not completion of the response."""
+
+    item: ConversationItem
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,4 +120,6 @@ class ModelCompleted:
             raise ValueError("end_turn must be a boolean or None")
 
 
-ModelEvent = ModelTextDelta | ModelReasoningDelta | ModelRetrying | ModelCompleted
+ModelEvent = (
+    ModelTextDelta | ModelReasoningDelta | ModelRetrying | ModelItemCompleted | ModelCompleted
+)

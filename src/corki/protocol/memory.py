@@ -25,6 +25,10 @@ class MemoryCitation:
     entries: tuple[MemoryCitationEntry, ...] = ()
     thread_ids: tuple[ThreadId, ...] = ()
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "entries", tuple(self.entries))
+        object.__setattr__(self, "thread_ids", tuple(self.thread_ids))
+
 
 def parse_memory_citation(text: str) -> tuple[str, MemoryCitation | None]:
     """Parse a final citation block while leaving malformed prose untouched."""

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from corki.context.tokens import estimate_text_tokens
+from corki.memory.inputs import truncate_memory_text
 from corki.prompting import PromptContribution, PromptRole, PromptSlot
 
 
@@ -21,12 +21,12 @@ class MemoryContextContributor:
         if not self._enabled:
             return ()
         try:
-            summary = (self._root / "memory_summary.md").read_text(encoding="utf-8").strip()
+            summary = (self._root / "memory_summary.md").read_bytes().decode("utf-8").strip()
         except (FileNotFoundError, OSError, UnicodeError):
             return ()
         if not summary:
             return ()
-        summary = _truncate_tokens(summary, self._token_limit)
+        summary = truncate_memory_text(summary, self._token_limit)
         return (
             PromptContribution(
                 key="memory.instructions",
@@ -36,16 +36,3 @@ class MemoryContextContributor:
                 variables={"memory_root": str(self._root), "memory_summary": summary},
             ),
         )
-
-
-def _truncate_tokens(text: str, limit: int) -> str:
-    if estimate_text_tokens(text) <= limit:
-        return text
-    low, high = 0, len(text)
-    while low < high:
-        middle = (low + high + 1) // 2
-        if estimate_text_tokens(text[:middle]) <= limit:
-            low = middle
-        else:
-            high = middle - 1
-    return text[:low].rstrip()

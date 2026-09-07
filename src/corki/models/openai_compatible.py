@@ -12,14 +12,17 @@ import json
 from collections.abc import AsyncIterator, Iterable
 from contextlib import aclosing
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
 
+from corki.models.backoff import backoff, retry_limit
 from corki.models.base import ModelError, ModelErrorKind
 from corki.models.capabilities import ProviderCapabilities, StructuredOutputProtocol
+from corki.models.freeform import compatible_arguments, compatible_call
+from corki.models.http_stream import model_http_stream
+from corki.models.media import chat_content
+from corki.models.namespaces import request_tool_aliases
 from corki.models.types import (
     ModelCompleted,
     ModelEvent,
@@ -32,17 +35,21 @@ from corki.models.types import (
 from corki.protocol.ids import ModelStepId, ToolCallId, new_tool_call_id
 from corki.protocol.items import (
     AssistantMessageItem,
+    BudgetNoticeItem,
     CompactionItem,
     ContextItem,
     ContextRole,
     ConversationItem,
+    HostedToolItem,
     ReasoningItem,
     ToolCallItem,
     ToolResultItem,
+    TurnAbortedItem,
     UserMessageItem,
     new_step_id,
 )
-from corki.protocol.tools import ToolCall, ToolExposure
+from corki.protocol.tool_names import compatible_tool_name
+from corki.protocol.tools import TextContent, ToolCall, ToolExposure
 
 
 @dataclass(slots=True)
@@ -72,8 +79,9 @@ class OpenAICompatibleModel:
         timeout_seconds: float = 120.0,
         thinking_enabled: bool | None = None,
         reasoning_effort: str | None = None,
-        max_retries: int = 3,
-        retry_base_seconds: float = 0.5,
+        max_retries: int = 5,
+        request_max_retries: int = 4,
+        retry_base_seconds: float = 0.2,
         response_char_limit: int = 4_000_000,
         client: httpx.AsyncClient | None = None,
     ) -> None:
@@ -82,7 +90,8 @@ class OpenAICompatibleModel:
         self._capabilities = capabilities
         self._thinking_enabled = thinking_enabled
         self._reasoning_effort = reasoning_effort
-        self._max_retries = max_retries
+        self._max_retries = retry_limit(max_retries)
+        self._request_max_retries = retry_limit(request_max_retries)
         self._retry_base_seconds = retry_base_seconds
         self._response_char_limit = response_char_limit
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
@@ -111,18 +120,28 @@ class OpenAICompatibleModel:
                         yield event
                 return
             except ModelError as exc:
-                if emitted_data or not exc.retryable or attempt >= self._max_retries:
+                if (
+                    request.harness_managed_retries
+                    or emitted_data
+                    or not exc.retryable
+                    or attempt >= self._max_retries
+                ):
                     raise
                 attempt += 1
                 delay = exc.retry_after_seconds
                 if delay is None:
-                    delay = min(self._retry_base_seconds * (2 ** (attempt - 1)), 8.0)
+                    delay = backoff(self._retry_base_seconds, attempt - 1)
                 yield ModelRetrying(attempt, self._max_retries, delay, str(exc))
                 await asyncio.sleep(delay)
 
     def _build_payload(self, request: ModelRequest) -> dict[str, Any]:
+        request_tool_aliases(request)
+        if request.tool_namespace_mode == "native":
+            raise ModelError("native namespaces are not supported by Chat Completions")
         if request.tool_search_mode == "native":
             raise ModelError("native tool search is not supported by Chat Completions")
+        if request.tool_freeform_mode == "native":
+            raise ModelError("native freeform is not supported by Chat Completions")
         payload: dict[str, Any] = {
             "model": request.model,
             "messages": self._convert_items(request),
@@ -140,8 +159,13 @@ class OpenAICompatibleModel:
             payload["stream_options"] = {"include_usage": True}
         if self._thinking_enabled is not None and self._capabilities.supports_thinking_toggle:
             payload["thinking"] = {"type": "enabled" if self._thinking_enabled else "disabled"}
-        if self._reasoning_effort is not None and self._capabilities.supports_reasoning_effort:
-            payload["reasoning_effort"] = self._reasoning_effort
+        effort = (
+            request.reasoning_effort
+            if request.reasoning_effort is not None
+            else self._reasoning_effort
+        )
+        if effort is not None and self._capabilities.supports_reasoning_effort:
+            payload["reasoning_effort"] = effort
         if request.output_schema is not None:
             if (
                 self._capabilities.structured_output_protocol
@@ -176,15 +200,14 @@ class OpenAICompatibleModel:
         saw_terminal = False
         total_chars = 0
         try:
-            async with self._client.stream(
-                "POST",
+            async with model_http_stream(
+                self._client,
                 f"{self._base_url}/chat/completions",
                 headers=headers,
-                json=payload,
+                payload=payload,
+                max_retries=self._request_max_retries,
+                base_seconds=self._retry_base_seconds,
             ) as response:
-                if response.is_error:
-                    body = (await response.aread()).decode("utf-8", errors="replace")[:4_000]
-                    raise _http_error(response, body)
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -205,7 +228,7 @@ class OpenAICompatibleModel:
                         raise ModelError(
                             message,
                             kind=ModelErrorKind.SERVER,
-                            retryable=not (text_parts or reasoning_parts or call_buffers),
+                            retryable=True,
                         )
                     if packet.get("id"):
                         provider_metadata["response_id"] = packet["id"]
@@ -228,7 +251,7 @@ class OpenAICompatibleModel:
                         if finish_reason == "length":
                             raise ModelError(
                                 "model stopped because its output token limit was reached",
-                                kind=ModelErrorKind.CONTEXT_WINDOW,
+                                kind=ModelErrorKind.OUTPUT_LIMIT,
                             )
                         if finish_reason not in {"stop", "tool_calls", "function_call"}:
                             raise ModelError(
@@ -292,7 +315,11 @@ class OpenAICompatibleModel:
         except httpx.HTTPError as exc:
             raise ModelError(
                 f"model transport failed: {exc}",
-                kind=ModelErrorKind.TRANSPORT,
+                kind=(
+                    ModelErrorKind.CONNECTION
+                    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
+                    else ModelErrorKind.TRANSPORT
+                ),
                 retryable=True,
             ) from exc
 
@@ -300,7 +327,7 @@ class OpenAICompatibleModel:
             raise ModelError(
                 "model stream closed before a completion marker",
                 kind=ModelErrorKind.PROTOCOL,
-                retryable=not (text_parts or reasoning_parts or call_buffers),
+                retryable=True,
             )
 
         step_id = new_step_id()
@@ -325,7 +352,9 @@ class OpenAICompatibleModel:
         if text:
             items.append(AssistantMessageItem(text, turn_id, step_id))
         items.extend(
-            ToolCallItem(_finish_tool_call(call_buffers[index]), turn_id, step_id)
+            ToolCallItem(
+                compatible_call(_finish_tool_call(call_buffers[index]), request), turn_id, step_id
+            )
             for index in sorted(call_buffers)
         )
         yield ModelCompleted(tuple(items), usage=usage, provider_metadata=provider_metadata)
@@ -352,9 +381,8 @@ class OpenAICompatibleModel:
                         "id": str(call_item.call.id),
                         "type": "function",
                         "function": {
-                            "name": call_item.call.name,
-                            "arguments": call_item.call.raw_arguments
-                            or json.dumps(dict(call_item.call.arguments or {}), ensure_ascii=False),
+                            "name": compatible_tool_name(call_item.call.name),
+                            "arguments": compatible_arguments(call_item.call),
                         },
                     }
                     for call_item in assistant.calls
@@ -365,6 +393,8 @@ class OpenAICompatibleModel:
             assistant = None
 
         for conversation_item in (*request.context_items, *request.items):
+            if isinstance(conversation_item, ContextItem) and conversation_item.is_snapshot_only:
+                continue
             step_id = getattr(conversation_item, "step_id", None)
             if isinstance(
                 conversation_item,
@@ -384,9 +414,48 @@ class OpenAICompatibleModel:
                 continue
 
             flush_assistant()
-            if isinstance(conversation_item, UserMessageItem):
-                converted.append(_user_message(conversation_item))
+            if isinstance(conversation_item, HostedToolItem):
+                converted.append(
+                    {"role": "user", "content": conversation_item.compatibility_content}
+                )
+            elif isinstance(conversation_item, UserMessageItem):
+                converted.append(
+                    _user_message(
+                        conversation_item, audio_enabled=self._capabilities.supports_audio_input
+                    )
+                )
             elif isinstance(conversation_item, ToolResultItem):
+                parts = conversation_item.content_items
+                if parts:
+                    has_media = any(not isinstance(part, TextContent) for part in parts)
+                    converted.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": str(conversation_item.call_id),
+                            "content": "Tool output follows in the next user content block."
+                            if has_media
+                            else conversation_item.content,
+                        }
+                    )
+                    if has_media:
+                        converted.append(
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": (
+                                            f"Output from tool {conversation_item.tool_name}, "
+                                            f"call {conversation_item.call_id}:"
+                                        ),
+                                    },
+                                    *chat_content(
+                                        parts, audio_enabled=self._capabilities.supports_audio_input
+                                    ),
+                                ],
+                            }
+                        )
+                    continue
                 converted.append(
                     {
                         "role": "tool",
@@ -398,6 +467,10 @@ class OpenAICompatibleModel:
             elif isinstance(conversation_item, ContextItem):
                 role = "system" if conversation_item.role is ContextRole.DEVELOPER else "user"
                 converted.append({"role": role, "content": conversation_item.content})
+            elif isinstance(conversation_item, TurnAbortedItem):
+                converted.append({"role": "user", "content": conversation_item.content})
+            elif isinstance(conversation_item, BudgetNoticeItem):
+                converted.append({"role": "system", "content": conversation_item.content})
             elif isinstance(conversation_item, CompactionItem):
                 converted.append(
                     {
@@ -413,7 +486,12 @@ class OpenAICompatibleModel:
         return converted
 
 
-def _user_message(item: UserMessageItem) -> dict[str, Any]:
+def _user_message(item: UserMessageItem, *, audio_enabled=False) -> dict[str, Any]:
+    if item.content_items:
+        return {
+            "role": "user",
+            "content": chat_content(item.content_items, audio_enabled=audio_enabled),
+        }
     if not item.attachments:
         return {"role": "user", "content": item.content}
     content: list[dict[str, Any]] = [{"type": "text", "text": item.content}]
@@ -461,7 +539,7 @@ def _decode_stream_object(data: str, error: str) -> dict[str, Any]:
     try:
         value = json.loads(data)
     except json.JSONDecodeError as exc:
-        raise _protocol_error(error) from exc
+        raise ModelError(error, kind=ModelErrorKind.PROTOCOL, retryable=True) from exc
     if not isinstance(value, dict):
         raise _protocol_error(error)
     return value
@@ -498,6 +576,11 @@ def _parse_usage(value: dict[str, Any]) -> ModelUsage:
     if not isinstance(prompt_details, dict) or not isinstance(completion_details, dict):
         raise _protocol_error("provider returned invalid token usage details")
     return ModelUsage(
+        total_tokens=(
+            _usage_integer(value["total_tokens"], "total tokens")
+            if value.get("total_tokens") is not None
+            else None
+        ),
         input_tokens=_usage_integer(
             value.get("prompt_tokens") or value.get("input_tokens") or 0,
             "input tokens",
@@ -527,45 +610,6 @@ def _usage_integer(value: object, label: str) -> int:
     if parsed < 0 or (isinstance(value, float) and not value.is_integer()):
         raise _protocol_error(f"provider returned invalid {label}")
     return parsed
-
-
-def _http_error(response: httpx.Response, body: str) -> ModelError:
-    status = response.status_code
-    lowered = body.lower()
-    retry_after = _retry_after_seconds(response.headers.get("retry-after"))
-    if status in {401, 403}:
-        kind = ModelErrorKind.AUTHENTICATION
-    elif status == 429:
-        kind = ModelErrorKind.RATE_LIMIT
-    elif status == 400 and any(word in lowered for word in ("context", "token limit")):
-        kind = ModelErrorKind.CONTEXT_WINDOW
-    elif status >= 500:
-        kind = ModelErrorKind.SERVER
-    else:
-        kind = ModelErrorKind.PROTOCOL
-    retryable = status in {408, 409, 425, 429} or status >= 500
-    return ModelError(
-        f"model request failed ({status}): {body}",
-        kind=kind,
-        retryable=retryable,
-        status_code=status,
-        retry_after_seconds=retry_after,
-    )
-
-
-def _retry_after_seconds(value: str | None) -> float | None:
-    if not value:
-        return None
-    try:
-        return max(0.0, float(value))
-    except ValueError:
-        try:
-            parsed = parsedate_to_datetime(value)
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=UTC)
-            return max(0.0, (parsed - datetime.now(UTC)).total_seconds())
-        except (TypeError, ValueError, OverflowError):
-            return None
 
 
 def _check_response_limit(total: int, limit: int) -> None:

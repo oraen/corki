@@ -85,8 +85,9 @@ def test_manager_registers_and_executes_namespaced_mcp_tools(tmp_path: Path, mon
 
     content = asyncio.run(scenario())
 
-    assert "search:langgraph" in content
-    assert json.dumps({"count": 1}) in content
+    assert content.startswith("Wall time: ")
+    assert content.split("\nOutput:\n", 1)[1] == '{"count":1}'
+    assert "search:langgraph" not in content
     assert "mcp__docs__search" in manager.tool_names
     assert "read_mcp_resource" in manager.tool_names
     assert client.closed
@@ -270,7 +271,7 @@ for line in sys.stdin:
         await manager.aclose()
         return result.content
 
-    assert asyncio.run(scenario()) == "hello"
+    assert asyncio.run(scenario()).split("\nOutput:\n", 1)[1] == "hello"
     assert manager.warnings == ()
     assert PROTOCOL_VERSION == "2025-06-18"
 
@@ -292,5 +293,7 @@ def test_mcp_image_content_becomes_a_model_attachment(tmp_path: Path) -> None:
         )
     )
 
-    assert result.content == "<MCP image: image/png>"
-    assert result.attachments[0].data_url == "data:image/png;base64,aGVsbG8="
+    assert result.content_items[0].text.startswith("Wall time: ")
+    assert result.content_items[1].data_url == "data:image/png;base64,aGVsbG8="
+    assert not result.attachments
+    assert "base64" not in result.display_content

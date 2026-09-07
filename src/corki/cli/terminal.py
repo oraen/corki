@@ -186,7 +186,7 @@ class TerminalUI:
         """Render local command output in the transcript."""
 
         self._console.print()
-        self._console.print(message, style="dim")
+        self._console.print(Text(message), style="dim")
         self._console.print()
 
     def clear(self) -> None:

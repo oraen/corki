@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import re
 import shlex
@@ -11,6 +10,8 @@ import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+from PIL import Image
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -24,7 +25,7 @@ from corki.protocol.items import (
     ToolResultItem,
     new_step_id,
 )
-from corki.protocol.tools import ToolCall
+from corki.protocol.tools import ImageAttachment, ToolCall
 
 
 def _completed_call(
@@ -111,10 +112,8 @@ class BuiltinToolModel:
 
 async def _run(workspace: Path) -> dict[str, object]:
     # A valid 1x1 transparent PNG keeps the visual-tool exercise deterministic.
-    pixel = base64.b64decode(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+X1n0WQAAAABJRU5ErkJggg=="
-    )
-    (workspace / "pixel.png").write_bytes(pixel)
+    with Image.new("RGBA", (1, 1)) as pixel:
+        pixel.save(workspace / "pixel.png")
     model = BuiltinToolModel()
     runtime = LangGraphRuntime.create(
         settings=CorkiSettings(
@@ -144,7 +143,8 @@ async def _run(workspace: Path) -> dict[str, object]:
         for item in model.requests[-1].items
         if isinstance(item, ToolResultItem) and item.tool_name == "view_image"
     )
-    assert len(image_result.attachments) == 1
+    assert len(image_result.content_items) == 1
+    assert isinstance(image_result.content_items[0], ImageAttachment)
     assert sum(isinstance(event, ToolCallCompleted) for event in events) == 5
     assert any(isinstance(event, PlanUpdated) for event in events)
     assert isinstance(events[-1], TurnCompleted)

@@ -68,6 +68,40 @@ class TerminalThenHang(httpx.AsyncByteStream):
 
 
 @pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+def test_standalone_connection_requests_keep_their_bounded_adapter_retry(api_mode):
+    async def scenario():
+        requests = []
+
+        def handle(request):
+            requests.append(request)
+            raise httpx.ConnectError("fixture disconnected", request=request)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+        adapter = OpenAICompatibleModel if api_mode == "chat_completions" else OpenAIResponsesModel
+        model = adapter(
+            api_key="test",
+            base_url="https://example.test/v1",
+            capabilities=resolve_capabilities(
+                base_url="https://example.test/v1", api_mode=api_mode
+            ),
+            client=client,
+            max_retries=1,
+            retry_base_seconds=0.001,
+        )
+        try:
+            with pytest.raises(ModelError) as caught:
+                async for _ in model.stream(request()):
+                    pass
+            assert caught.value.kind == ModelErrorKind.CONNECTION
+            assert len(requests) == 10  # 2 standalone stream attempts, 5 HTTP attempts each.
+        finally:
+            await model.aclose()
+            await client.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
 def test_closing_partial_model_iterator_closes_underlying_http_response(api_mode: str) -> None:
     async def scenario() -> None:
         packet = (
@@ -166,7 +200,52 @@ def test_responses_invalid_completion_cannot_become_valid_empty_answer(response)
             with pytest.raises(ModelError) as raised:
                 await _collect(model.stream(request()))
             assert raised.value.kind is ModelErrorKind.PROTOCOL
-            assert not raised.value.retryable
+            assert raised.value.retryable  # Codex maps failed ResponseCompleted parsing to Stream.
+        finally:
+            await client.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize("transport", ["sse", "http"])
+def test_output_exhaustion_is_not_classified_as_input_context_overflow(api_mode, transport):
+    async def scenario():
+        packet = (
+            {"choices": [{"delta": {"content": "partial"}, "finish_reason": "length"}]}
+            if api_mode == "chat_completions"
+            else {
+                "type": "response.incomplete",
+                "response": {"id": "r", "incomplete_details": {"reason": "max_output_tokens"}},
+            }
+        )
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda _: (
+                    httpx.Response(200, text=f"data: {json.dumps(packet)}\n\n")
+                    if transport == "sse"
+                    else httpx.Response(400, text="max_output_tokens exceeds output token limit")
+                )
+            )
+        )
+        adapter = OpenAICompatibleModel if api_mode == "chat_completions" else OpenAIResponsesModel
+        model = adapter(
+            api_key="test",
+            base_url="https://fixture.test/v1",
+            capabilities=resolve_capabilities(
+                base_url="https://fixture.test/v1", api_mode=api_mode
+            ),
+            client=client,
+        )
+        try:
+            with pytest.raises(ModelError) as raised:
+                await _collect(model.stream(request()))
+            assert raised.value.kind is (
+                ModelErrorKind.OUTPUT_LIMIT
+                if transport == "sse"
+                else ModelErrorKind.INVALID_REQUEST
+            )
+            assert raised.value.retryable == (api_mode == "responses" and transport == "sse")
         finally:
             await client.aclose()
 
@@ -319,7 +398,7 @@ def test_transient_failure_retries_before_any_visible_delta() -> None:
 
     events = asyncio.run(scenario())
     assert attempts == 2
-    assert isinstance(events[0], ModelRetrying)
+    assert not any(isinstance(event, ModelRetrying) for event in events)
     completed = next(event for event in events if isinstance(event, ModelCompleted))
     assert completed.usage.input_tokens == 3
     assert completed.usage.output_tokens == 2

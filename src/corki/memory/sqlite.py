@@ -8,20 +8,23 @@ mode column, mirroring Codex's separation between thread state and memories.
 from __future__ import annotations
 
 import asyncio
-import json
+import logging
 import sqlite3
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import uuid4
+from typing import TypeVar
 
+from corki.memory.consolidation import claim_consolidation, enqueue_consolidation
+from corki.memory.extraction import claim_extraction_jobs
 from corki.memory.models import ConsolidationClaim, MemoryExtractionClaim, StageOneMemory
 from corki.protocol.ids import ThreadId
-from corki.protocol.items import item_from_payload
 
 _STAGE_ONE = "memory_stage1"
 _CONSOLIDATE = "memory_consolidate_global"
 _GLOBAL_KEY = "global"
+_WriteResult = TypeVar("_WriteResult")
 
 
 class SQLiteMemoryRepository:
@@ -86,6 +89,28 @@ class SQLiteMemoryRepository:
                     );
                 """
             )
+            # executescript ends the previous transaction. Serialize additive
+            # migrations again so concurrent openers cannot race ALTER TABLE.
+            connection.execute("BEGIN IMMEDIATE")
+            job_columns = {row[1] for row in connection.execute("PRAGMA table_info(memory_jobs)")}
+            if "retry_remaining" not in job_columns:
+                # Older databases have no failure count. Preserve their backoff
+                # and owner; start the newly enforceable budget at three.
+                connection.execute(
+                    "ALTER TABLE memory_jobs ADD COLUMN retry_remaining INTEGER NOT NULL DEFAULT 3"
+                )
+            if "last_success_source_updated_at" not in job_columns:
+                connection.execute(
+                    "ALTER TABLE memory_jobs ADD COLUMN last_success_source_updated_at TEXT"
+                )
+                connection.execute(
+                    "UPDATE memory_jobs SET last_success_source_updated_at=source_updated_at "
+                    "WHERE kind='memory_stage1' AND status='succeeded'"
+                )
+            if "finished_at" not in job_columns:
+                # updated_at may describe an enqueue, not a successful finish.
+                # Old databases provide no reliable cooldown start time.
+                connection.execute("ALTER TABLE memory_jobs ADD COLUMN finished_at REAL")
 
     async def claim_extraction_jobs(
         self,
@@ -113,91 +138,17 @@ class SQLiteMemoryRepository:
         limit: int,
         lease_seconds: int,
     ) -> tuple[MemoryExtractionClaim, ...]:
-        now = time.time()
-        claims: list[MemoryExtractionClaim] = []
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            candidates = connection.execute(
-                """
-                SELECT t.id, t.cwd, t.updated_at
-                FROM threads AS t
-                WHERE t.id != ?
-                  AND t.memory_mode = 'enabled'
-                  AND datetime(t.updated_at) >= datetime('now', ?)
-                  AND datetime(t.updated_at) <= datetime('now', ?)
-                  AND EXISTS (
-                      SELECT 1 FROM turns
-                      WHERE turns.thread_id=t.id AND turns.status='completed'
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM memory_stage1_outputs AS output
-                      WHERE output.thread_id=t.id
-                        AND output.source_updated_at=t.updated_at
-                  )
-                ORDER BY datetime(t.updated_at) DESC, t.id
-                LIMIT ?
-                """,
-                (
-                    str(current_thread_id),
-                    f"-{max_age_days} days",
-                    f"-{min_idle_hours} hours",
-                    max(limit * 8, limit),
-                ),
-            ).fetchall()
-            for row in candidates:
-                if len(claims) >= limit:
-                    break
-                existing = connection.execute(
-                    "SELECT status, lease_until, retry_at, source_updated_at "
-                    "FROM memory_jobs WHERE kind=? AND job_key=?",
-                    (_STAGE_ONE, row["id"]),
-                ).fetchone()
-                if existing is not None:
-                    same_source = existing["source_updated_at"] == row["updated_at"]
-                    if same_source and existing["status"] == "succeeded":
-                        continue
-                    if existing["status"] == "running" and (existing["lease_until"] or 0) > now:
-                        continue
-                    if (
-                        same_source
-                        and existing["status"] == "failed"
-                        and (existing["retry_at"] or 0) > now
-                    ):
-                        continue
-                token = str(uuid4())
-                connection.execute(
-                    """
-                    INSERT INTO memory_jobs(
-                        kind, job_key, status, ownership_token, source_updated_at,
-                        lease_until, retry_at, error
-                    ) VALUES (?, ?, 'running', ?, ?, ?, NULL, NULL)
-                    ON CONFLICT(kind, job_key) DO UPDATE SET
-                        status='running', ownership_token=excluded.ownership_token,
-                        source_updated_at=excluded.source_updated_at,
-                        lease_until=excluded.lease_until, retry_at=NULL, error=NULL,
-                        updated_at=CURRENT_TIMESTAMP
-                    """,
-                    (_STAGE_ONE, row["id"], token, row["updated_at"], now + lease_seconds),
-                )
-                item_rows = connection.execute(
-                    "SELECT kind, payload_json FROM conversation_items "
-                    "WHERE thread_id=? ORDER BY sequence",
-                    (row["id"],),
-                ).fetchall()
-                items = tuple(
-                    item_from_payload(item["kind"], json.loads(item["payload_json"]))
-                    for item in item_rows
-                )
-                claims.append(
-                    MemoryExtractionClaim(
-                        ThreadId(row["id"]),
-                        Path(row["cwd"]),
-                        row["updated_at"],
-                        token,
-                        items,
-                    )
-                )
-        return tuple(claims)
+            return claim_extraction_jobs(
+                connection,
+                current_thread_id=current_thread_id,
+                max_age_days=max_age_days,
+                min_idle_hours=min_idle_hours,
+                limit=limit,
+                lease_seconds=lease_seconds,
+                now=time.time(),
+            )
 
     async def complete_extraction(
         self, claim: MemoryExtractionClaim, memory: StageOneMemory | None
@@ -247,7 +198,16 @@ class SQLiteMemoryRepository:
                     ),
                 )
                 return False
-            if memory is not None:
+            changed = memory is not None
+            if memory is None:
+                changed = (
+                    connection.execute(
+                        "DELETE FROM memory_stage1_outputs WHERE thread_id=?",
+                        (str(claim.thread_id),),
+                    ).rowcount
+                    > 0
+                )
+            else:
                 connection.execute(
                     """
                     INSERT INTO memory_stage1_outputs(
@@ -262,8 +222,7 @@ class SQLiteMemoryRepository:
                         raw_memory=excluded.raw_memory,
                         rollout_summary=excluded.rollout_summary,
                         rollout_slug=excluded.rollout_slug,
-                        generated_at=CURRENT_TIMESTAMP,
-                        selected_for_phase2=0
+                        generated_at=CURRENT_TIMESTAMP
                     """,
                     (
                         str(memory.thread_id),
@@ -274,23 +233,13 @@ class SQLiteMemoryRepository:
                         memory.rollout_slug,
                     ),
                 )
-                watermark = time.time_ns()
-                connection.execute(
-                    """
-                    INSERT INTO memory_jobs(kind, job_key, status, input_watermark)
-                    VALUES (?, ?, 'pending', ?)
-                    ON CONFLICT(kind, job_key) DO UPDATE SET
-                        status=CASE WHEN memory_jobs.status='running'
-                                    THEN memory_jobs.status ELSE 'pending' END,
-                        input_watermark=MAX(memory_jobs.input_watermark, excluded.input_watermark),
-                        updated_at=CURRENT_TIMESTAMP
-                    """,
-                    (_CONSOLIDATE, _GLOBAL_KEY, watermark),
-                )
+            if changed:
+                enqueue_consolidation(connection, time.time_ns())
             connection.execute(
                 """
                 UPDATE memory_jobs SET status='succeeded', ownership_token=NULL,
-                    lease_until=NULL, retry_at=NULL, error=NULL, updated_at=CURRENT_TIMESTAMP
+                    lease_until=NULL, retry_at=NULL, error=NULL, updated_at=CURRENT_TIMESTAMP,
+                    last_success_source_updated_at=source_updated_at
                 WHERE kind=? AND job_key=? AND ownership_token=?
                 """,
                 (_STAGE_ONE, str(claim.thread_id), claim.ownership_token),
@@ -321,71 +270,74 @@ class SQLiteMemoryRepository:
         error: str,
         retry_delay_seconds: int,
     ) -> bool:
+        now = int(time.time())
         with self._connect() as connection:
             cursor = connection.execute(
                 """
                 UPDATE memory_jobs SET status='failed', ownership_token=NULL,
-                    lease_until=NULL, retry_at=?, error=?, updated_at=CURRENT_TIMESTAMP
+                    lease_until=NULL, retry_at=?, error=?, updated_at=CURRENT_TIMESTAMP,
+                    retry_remaining=CASE WHEN kind='memory_stage1'
+                        THEN retry_remaining-1 ELSE MAX(retry_remaining-1, 0) END,
+                    finished_at=CASE WHEN kind='memory_consolidate_global'
+                        THEN ? ELSE finished_at END
                 WHERE kind=? AND job_key=? AND status='running' AND ownership_token=?
                 """,
-                (time.time() + retry_delay_seconds, error[:4_000], kind, key, token),
+                (now + retry_delay_seconds, error[:4_000], now, kind, key, token),
             )
         return cursor.rowcount == 1
 
     async def claim_consolidation(self, *, lease_seconds: int) -> ConsolidationClaim | None:
         return await asyncio.to_thread(self._claim_consolidation, lease_seconds)
 
-    async def enqueue_consolidation(self, *, force: bool = False) -> bool:
-        return await asyncio.to_thread(self._enqueue_consolidation, force)
+    async def heartbeat_consolidation(
+        self, claim: ConsolidationClaim, *, lease_seconds: int
+    ) -> bool:
+        return await _joined_write(lambda: self._heartbeat_consolidation(claim, lease_seconds))
 
-    def _enqueue_consolidation(self, force: bool) -> bool:
+    def _heartbeat_consolidation(self, claim: ConsolidationClaim, lease_seconds: int) -> bool:
         with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            if (
-                not force
-                and connection.execute("SELECT 1 FROM memory_stage1_outputs LIMIT 1").fetchone()
-                is None
-            ):
-                return False
-            watermark = time.time_ns()
-            connection.execute(
-                """
-                INSERT INTO memory_jobs(kind, job_key, status, input_watermark)
-                VALUES (?, ?, 'pending', ?)
-                ON CONFLICT(kind, job_key) DO UPDATE SET
-                    status=CASE WHEN memory_jobs.status='running'
-                                THEN memory_jobs.status ELSE 'pending' END,
-                    input_watermark=MAX(memory_jobs.input_watermark, excluded.input_watermark),
-                    updated_at=CURRENT_TIMESTAMP
-                """,
-                (_CONSOLIDATE, _GLOBAL_KEY, watermark),
+            cursor = connection.execute(
+                "UPDATE memory_jobs SET lease_until=? WHERE kind=? AND job_key=? "
+                "AND status='running' AND ownership_token=?",
+                (time.time() + lease_seconds, _CONSOLIDATE, _GLOBAL_KEY, claim.ownership_token),
             )
-        return True
+        return cursor.rowcount == 1
 
-    def _claim_consolidation(self, lease_seconds: int) -> ConsolidationClaim | None:
-        now = time.time()
+    async def write_consolidation_workspace(
+        self, claim: ConsolidationClaim, write: Callable[[], None]
+    ) -> bool:
+        return await _joined_write(lambda: self._write_consolidation_workspace(claim, write))
+
+    def _write_consolidation_workspace(
+        self, claim: ConsolidationClaim, write: Callable[[], None]
+    ) -> bool:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT * FROM memory_jobs WHERE kind=? AND job_key=?",
-                (_CONSOLIDATE, _GLOBAL_KEY),
+                "SELECT 1 FROM memory_jobs WHERE kind=? AND job_key=? "
+                "AND status='running' AND ownership_token=?",
+                (_CONSOLIDATE, _GLOBAL_KEY, claim.ownership_token),
             ).fetchone()
-            if row is None or row["input_watermark"] <= row["completed_watermark"]:
-                return None
-            if row["status"] == "running" and (row["lease_until"] or 0) > now:
-                return None
-            if row["status"] == "failed" and (row["retry_at"] or 0) > now:
-                return None
-            token = str(uuid4())
-            connection.execute(
-                """
-                UPDATE memory_jobs SET status='running', ownership_token=?, lease_until=?,
-                    retry_at=NULL, error=NULL, updated_at=CURRENT_TIMESTAMP
-                WHERE kind=? AND job_key=?
-                """,
-                (token, now + lease_seconds, _CONSOLIDATE, _GLOBAL_KEY),
-            )
-            return ConsolidationClaim(token, row["input_watermark"])
+            if row is None:
+                return False
+            write()
+        return True
+
+    async def enqueue_consolidation(self, *, force: bool = False) -> bool:
+        """Record an input change; force is retained for older caller compatibility."""
+        del force
+        return await asyncio.to_thread(self._enqueue_consolidation)
+
+    def _enqueue_consolidation(self) -> bool:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            enqueue_consolidation(connection, time.time_ns())
+        return True
+
+    def _claim_consolidation(self, lease_seconds: int) -> ConsolidationClaim | None:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            return claim_consolidation(connection, lease_seconds=lease_seconds, now=time.time())
 
     async def load_consolidation_inputs(
         self, *, limit: int, max_unused_days: int
@@ -398,26 +350,60 @@ class SQLiteMemoryRepository:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT * FROM memory_stage1_outputs
-                WHERE datetime(COALESCE(last_used_at, generated_at)) >= datetime('now', ?)
-                ORDER BY usage_count DESC,
-                         datetime(COALESCE(last_used_at, generated_at)) DESC,
-                         thread_id
-                LIMIT ?
+                SELECT * FROM (
+                    SELECT output.* FROM memory_stage1_outputs AS output
+                    JOIN threads AS thread ON thread.id=output.thread_id
+                    WHERE thread.memory_mode='enabled'
+                      AND (length(trim(raw_memory)) > 0 OR length(trim(rollout_summary)) > 0)
+                      AND julianday(COALESCE(last_used_at, source_updated_at)) >= julianday(?)
+                    ORDER BY COALESCE(usage_count, 0) DESC,
+                             julianday(COALESCE(last_used_at, source_updated_at)) DESC,
+                             julianday(source_updated_at) DESC,
+                             thread_id DESC
+                    LIMIT ?
+                ) ORDER BY thread_id ASC
                 """,
-                (f"-{max_unused_days} days", limit),
+                (_retention_cutoff(max_unused_days), max(0, limit)),
             ).fetchall()
         return tuple(_stage_one_from_row(row) for row in rows)
+
+    async def prune_stage_one_outputs(self, *, max_unused_days: int, limit: int) -> int:
+        """Prune old inputs without invalidating a successful baseline or resampling watermarks."""
+        return await _joined_write(lambda: self._prune_stage_one_outputs(max_unused_days, limit))
+
+    def _prune_stage_one_outputs(self, max_unused_days: int, limit: int) -> int:
+        if limit <= 0:
+            return 0
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM memory_stage1_outputs WHERE thread_id IN (
+                    SELECT thread_id FROM memory_stage1_outputs
+                    WHERE selected_for_phase2=0
+                      AND julianday(COALESCE(last_used_at, source_updated_at)) < julianday(?)
+                    ORDER BY julianday(COALESCE(last_used_at, source_updated_at)) ASC,
+                             julianday(source_updated_at) ASC, thread_id ASC
+                    LIMIT ?
+                )
+                """,
+                (_retention_cutoff(max_unused_days), limit),
+            )
+        return cursor.rowcount
 
     async def complete_consolidation(
         self,
         claim: ConsolidationClaim,
         selected: tuple[StageOneMemory, ...],
+        *,
+        publish: Callable[[], None] | None = None,
     ) -> bool:
-        return await asyncio.to_thread(self._complete_consolidation, claim, selected)
+        return await _joined_write(lambda: self._complete_consolidation(claim, selected, publish))
 
     def _complete_consolidation(
-        self, claim: ConsolidationClaim, selected: tuple[StageOneMemory, ...]
+        self,
+        claim: ConsolidationClaim,
+        selected: tuple[StageOneMemory, ...],
+        publish: Callable[[], None] | None = None,
     ) -> bool:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -428,27 +414,33 @@ class SQLiteMemoryRepository:
             ).fetchone()
             if row is None:
                 return False
-            connection.execute("UPDATE memory_stage1_outputs SET selected_for_phase2=0")
+            # This lock fences all cooperative owners through publication and
+            # DB commit. It is not a cross-filesystem/SQLite crash transaction.
+            if publish is not None:
+                publish()
+            connection.execute(
+                "UPDATE memory_stage1_outputs SET selected_for_phase2=0, "
+                "selected_source_updated_at=NULL"
+            )
             for memory in selected:
                 connection.execute(
                     """
                     UPDATE memory_stage1_outputs SET selected_for_phase2=1,
-                        selected_source_updated_at=? WHERE thread_id=?
+                        selected_source_updated_at=? WHERE thread_id=? AND source_updated_at=?
                     """,
-                    (memory.source_updated_at, str(memory.thread_id)),
+                    (memory.source_updated_at, str(memory.thread_id), memory.source_updated_at),
                 )
-            pending = row["input_watermark"] > claim.input_watermark
             connection.execute(
                 """
-                UPDATE memory_jobs SET status=?, ownership_token=NULL, lease_until=NULL,
+                UPDATE memory_jobs SET status='succeeded', ownership_token=NULL, lease_until=NULL,
                     retry_at=NULL, error=NULL,
                     completed_watermark=MAX(completed_watermark, ?),
-                    updated_at=CURRENT_TIMESTAMP
+                    finished_at=?, updated_at=CURRENT_TIMESTAMP
                 WHERE kind=? AND job_key=? AND ownership_token=?
                 """,
                 (
-                    "pending" if pending else "succeeded",
                     claim.input_watermark,
+                    int(time.time()),
                     _CONSOLIDATE,
                     _GLOBAL_KEY,
                     claim.ownership_token,
@@ -475,31 +467,69 @@ class SQLiteMemoryRepository:
     async def mark_thread_mode(self, thread_id: ThreadId, mode: str) -> None:
         if mode not in {"enabled", "disabled", "polluted"}:
             raise ValueError(f"unsupported thread memory mode: {mode}")
-        await asyncio.to_thread(self._mark_thread_mode, thread_id, mode)
+        await _joined_write(lambda: self._mark_thread_mode(thread_id, mode))
 
     def _mark_thread_mode(self, thread_id: ThreadId, mode: str) -> None:
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 "UPDATE threads SET memory_mode=? WHERE id=?", (mode, str(thread_id))
             )
+            if mode == "polluted":
+                selected = connection.execute(
+                    "SELECT selected_for_phase2 FROM memory_stage1_outputs WHERE thread_id=?",
+                    (str(thread_id),),
+                ).fetchone()
+                if selected is not None and selected["selected_for_phase2"]:
+                    # Repeat even when already polluted: the previous successful
+                    # baseline still needs reconciliation until phase two replaces it.
+                    # Preserve an active owner's lease and the ordinary cooldown.
+                    enqueue_consolidation(connection, time.time_ns())
 
     async def mark_memories_used(self, thread_ids: Iterable[ThreadId]) -> None:
-        unique = tuple(dict.fromkeys(str(value) for value in thread_ids))
-        if unique:
-            await asyncio.to_thread(self._mark_memories_used, unique)
+        signals = tuple(str(value) for value in thread_ids)
+        if signals:
+            await asyncio.to_thread(self._mark_memories_used, signals)
 
     def _mark_memories_used(self, thread_ids: tuple[str, ...]) -> None:
+        now = datetime.fromtimestamp(time.time(), UTC).isoformat(timespec="seconds")
         with self._connect() as connection:
             connection.executemany(
                 """
-                UPDATE memory_stage1_outputs SET usage_count=usage_count+1,
-                    last_used_at=CURRENT_TIMESTAMP WHERE thread_id=?
+                UPDATE memory_stage1_outputs SET usage_count=COALESCE(usage_count, 0)+1,
+                    last_used_at=? WHERE thread_id=?
                 """,
-                ((thread_id,) for thread_id in thread_ids),
+                ((now, thread_id) for thread_id in thread_ids),
             )
 
     async def close(self) -> None:
         return None
+
+
+def _retention_cutoff(max_unused_days: int) -> str:
+    return (
+        datetime.fromtimestamp(time.time(), UTC) - timedelta(days=max(0, max_unused_days))
+    ).isoformat(timespec="seconds")
+
+
+async def _joined_write(write: Callable[[], _WriteResult]) -> _WriteResult:
+    """Cancelling to_thread cannot stop its worker; retain ownership until exit."""
+    task = asyncio.create_task(asyncio.to_thread(write))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:  # noqa: BLE001 - preserve cancellation after joining worker
+                break
+        if not task.cancelled() and (error := task.exception()) is not None:
+            logging.getLogger(__name__).warning(
+                "Memory write failed during cancellation: %s", error
+            )
+        raise
 
 
 def _stage_one_from_row(row: sqlite3.Row) -> StageOneMemory:

@@ -1,23 +1,24 @@
 """Bounded BM25 lexical discovery over registered deferred tool metadata."""
 
 import json
-import math
-import re
-from collections import Counter
 from collections.abc import Mapping
+from copy import deepcopy
+from dataclasses import dataclass
 
 from corki.context.tokens import estimate_text_tokens
 from corki.protocol.tools import ToolCall, ToolConcurrency, ToolResult, ToolSpec
 from corki.tools.base import ToolContext
+from corki.tools.bm25 import BM25Scorer
 from corki.tools.discovery import TOOL_SEARCH_NAME
 from corki.tools.registry import ToolRegistry
+from corki.tools.search_sources import render_sources
+from corki.tools.tokenizer import token_id, tokenize
 
-_TOKENS = re.compile(r"[^\W_]+", re.UNICODE)
 _OUTPUT_TOKEN_LIMIT = 8_000
 
 
 def _tokens(text: str) -> list[str]:
-    return _TOKENS.findall(text.casefold())
+    return tokenize(text)
 
 
 def _schema_text(schema: Mapping) -> list[str]:
@@ -37,72 +38,118 @@ def _schema_text(schema: Mapping) -> list[str]:
 def search_text(spec: ToolSpec) -> str:
     """Index names, source, description and recursive property documentation."""
 
-    return spec.search_text or " ".join(
-        [spec.name, spec.name.replace("_", " "), spec.description, spec.source or ""]
+    if spec.search_text is not None:
+        return spec.search_text
+    if spec.input_kind == "freeform":
+        return " ".join(
+            part.strip()
+            for part in (
+                spec.name,
+                spec.description,
+                spec.namespace_description or "",
+                (spec.freeform_format or {}).get("syntax", ""),
+                spec.source or "",
+            )
+            if part.strip()
+        )
+    return " ".join(
+        [
+            spec.name,
+            spec.name.replace("_", " "),
+            spec.description,
+            spec.source or "",
+        ]
+        + ([spec.namespace_description] if spec.namespace_description else [])
         + _schema_text(spec.parameters)
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _IndexSnapshot:
+    specs: tuple[ToolSpec, ...]
+    scorer: BM25Scorer
+    generation: int
 
 
 class ToolSearchIndex:
     """Cache a generation by full definition equality, never just tool names."""
 
     def __init__(self) -> None:
-        self.specs: tuple[ToolSpec, ...] = ()
-        self.documents: list[Counter] = []
-        self.frequencies: Counter = Counter()
-        self.average_length = 0.0
-        self.generation = 0
+        self._snapshot = _IndexSnapshot((), BM25Scorer(()), 0)
+
+    @property
+    def specs(self) -> tuple[ToolSpec, ...]:
+        return deepcopy(self._snapshot.specs)
+
+    @property
+    def generation(self) -> int:
+        return self._snapshot.generation
 
     def search(self, specs: tuple[ToolSpec, ...], query: str, limit: int) -> tuple[ToolSpec, ...]:
-        if specs != self.specs:
-            self.specs = specs
-            self.documents = [Counter(_tokens(search_text(spec))) for spec in specs]
-            self.frequencies = Counter(term for doc in self.documents for term in doc)
-            self.average_length = sum(doc.total() for doc in self.documents) / max(len(specs), 1)
-            self.generation += 1
-        if not self.average_length:
-            return ()
-        scores = []
-        for index, doc in enumerate(self.documents):
-            score = 0.0
-            for term in sorted(set(_tokens(query))):
-                frequency = doc[term]
-                if frequency:
-                    df = self.frequencies[term]
-                    idf = math.log(1 + (len(specs) - df + 0.5) / (df + 0.5))
-                    norm = 1.5 * (0.25 + 0.75 * doc.total() / self.average_length)
-                    score += idf * frequency * 2.5 / (frequency + norm)
-            if score > 0:
-                scores.append((-score, index))
-        return tuple(specs[index] for _, index in sorted(scores)[:limit])
+        self.prepare(specs)
+        return deepcopy(tuple(self._snapshot.specs[index] for index in self.rank(query, limit)))
+
+    def prepare(self, specs: tuple[ToolSpec, ...]) -> None:
+        """Build a complete index before publishing; no search call is executed."""
+        snapshot = self._snapshot
+        if specs != snapshot.specs:
+            owned_specs = deepcopy(specs)
+            scorer = BM25Scorer(
+                (token_id(token) for token in _tokens(search_text(spec))) for spec in owned_specs
+            )
+            snapshot = _IndexSnapshot(owned_specs, scorer, snapshot.generation + 1)
+            # Build and validate everything before publishing one coherent generation.
+            self._snapshot = snapshot
+
+    def rank(self, query: str, limit: int) -> tuple[int, ...]:
+        """Query the already prepared generation without reading tool registrations."""
+        return tuple(
+            index
+            for index, _score in self._snapshot.scorer.rank(
+                (token_id(token) for token in _tokens(query)), limit
+            )
+        )
 
 
 class ToolSearchTool:
     """Discover definitions; never execute a retrieved tool on the model's behalf."""
 
     def __init__(self, registry: ToolRegistry) -> None:
-        self._registry = registry
-        self.index = ToolSearchIndex()
+        self._initialize(tuple(spec for spec in registry.specs() if spec.exposure.is_deferred))
+
+    @classmethod
+    def from_specs(
+        cls, specs: tuple[ToolSpec, ...], *, index: ToolSearchIndex | None = None
+    ) -> "ToolSearchTool":
+        """Bind frozen definitions, optionally reusing an equivalent discovery index."""
+        handler = cls.__new__(cls)
+        handler._initialize(specs, index=index)
+        return handler
+
+    def _initialize(
+        self, specs: tuple[ToolSpec, ...], *, index: ToolSearchIndex | None = None
+    ) -> None:
+        self._definitions = deepcopy(specs)
         self._spec = self._build_spec()
+        if index is None:
+            index = ToolSearchIndex()
+            index.prepare(self._definitions)
+        self.index = index
 
     @property
     def spec(self) -> ToolSpec:
-        return self._spec
+        return deepcopy(self._spec)
 
     def _build_spec(self) -> ToolSpec:
-        sources = sorted(
-            {
-                spec.source
-                for spec in self._registry.specs()
-                if spec.exposure.is_deferred and spec.source
-            }
-        )
+        sources = render_sources(self._definitions)
         return ToolSpec(
             TOOL_SEARCH_NAME,
-            "Search deferred tool metadata with BM25 and load matching definitions for the next "
-            "model call. Use this for MCP tool discovery, not list_mcp_resources or templates. "
-            "Search again if a definition is no longer available after compaction. Sources: "
-            + ", ".join(sources)[:4_000],
+            "# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes "
+            "matching tools for the next model call.\n\nYou have access to tools from the "
+            f"following sources:\n{sources}\nSome of the tools may not have been provided to you "
+            "upfront, and you should use this tool (`tool_search`) to search for the required "
+            "tools. For MCP tool discovery, always use `tool_search` instead of "
+            "`list_mcp_resources` or `list_mcp_resource_templates`.",
             {
                 "type": "object",
                 "properties": {
@@ -120,14 +167,29 @@ class ToolSearchTool:
         query = call.arguments["query"].strip()
         if not query:
             raise ValueError("query must not be empty")
-        specs = tuple(spec for spec in self._registry.specs() if spec.exposure.is_deferred)
-        matches = self.index.search(specs, query, min(call.arguments.get("limit", 8), len(specs)))
+        matches = tuple(
+            deepcopy(self._definitions[index])
+            for index in self.index.rank(
+                query, min(call.arguments.get("limit", 8), len(self._definitions))
+            )
+        )
         selected: list[ToolSpec] = []
         definitions = []
         for spec in matches:
             candidate = [*definitions, spec.as_chat_completion_tool()]
             if (
-                estimate_text_tokens(json.dumps(candidate, ensure_ascii=False))
+                max(
+                    estimate_text_tokens(json.dumps(candidate, ensure_ascii=False)),
+                    estimate_text_tokens(
+                        json.dumps(
+                            [
+                                tool.as_response_tool(native_freeform=True)
+                                for tool in (*selected, spec)
+                            ],
+                            ensure_ascii=False,
+                        )
+                    ),
+                )
                 <= _OUTPUT_TOKEN_LIMIT
             ):
                 definitions = candidate
@@ -136,4 +198,10 @@ class ToolSearchTool:
             {"tools": definitions, "omitted_for_budget": len(matches) - len(selected)},
             ensure_ascii=False,
         )
-        return ToolResult(call.id, call.name, content, discovered_tools=tuple(selected))
+        return ToolResult(
+            call.id,
+            call.name,
+            content,
+            discovered_tools=tuple(selected),
+            contains_external_context=True,
+        )

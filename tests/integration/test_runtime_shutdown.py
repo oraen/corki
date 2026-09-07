@@ -199,18 +199,23 @@ def test_runtime_interrupt_terminates_real_exec_process_and_reader_tasks(tmp_pat
     asyncio.run(scenario())
 
 
-def test_close_serializes_with_turn_registration_and_prevents_new_sampling(tmp_path: Path):
+def test_close_cancels_and_joins_initial_turn_write_before_dependencies(tmp_path: Path):
     async def scenario():
         model = ShutdownModel()
         runtime = runtime_for(tmp_path, model)
-        saving, release = asyncio.Event(), asyncio.Event()
+        saving, cancelled, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
         original_save = runtime._repository.save_turn
 
         async def save(turn):
             await original_save(turn)
             if turn.status is TurnStatus.RUNNING:
                 saving.set()
-                await release.wait()
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    await release.wait()
+                    raise
 
         runtime._repository.save_turn = save
         events = []
@@ -224,8 +229,9 @@ def test_close_serializes_with_turn_registration_and_prevents_new_sampling(tmp_p
         try:
             await asyncio.wait_for(saving.wait(), timeout=3)
             closer = asyncio.create_task(runtime.aclose())
-            with pytest.raises(TimeoutError):
-                await asyncio.wait_for(asyncio.shield(closer), timeout=0.05)
+            await asyncio.wait_for(cancelled.wait(), timeout=3)
+            assert not closer.done()
+            assert not model.closed
             release.set()
             await asyncio.wait_for(closer, timeout=3)
             await asyncio.gather(consumer, return_exceptions=True)

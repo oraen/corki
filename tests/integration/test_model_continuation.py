@@ -79,7 +79,10 @@ async def run_responses(tmp_path, responder, *, max_steps=4):
     registry.register(echo)
     runtime = LangGraphRuntime.create(
         settings=CorkiSettings(
-            working_directory=tmp_path, skills_enabled=False, max_steps=max_steps
+            working_directory=tmp_path,
+            skills_enabled=False,
+            max_steps=max_steps,
+            model_retry_base_seconds=0.001,
         ),
         database_path=tmp_path / "continuation.db",
         model=model,
@@ -131,13 +134,13 @@ def test_explicit_continuation_is_bounded_by_model_step_budget(tmp_path: Path, k
 
 
 @pytest.mark.parametrize("end_turn", ["false", 0, 1, [], {}])
-def test_malformed_continuation_flag_is_protocol_failure_not_success_or_retry(
+def test_malformed_continuation_flag_exhausts_stream_retries_without_success(
     tmp_path: Path, end_turn
 ):
     events, requests, _ = asyncio.run(
         run_responses(tmp_path, lambda _: {"output": output("text"), "end_turn": end_turn})
     )
-    assert len(requests) == 1
+    assert len(requests) == 6
     assert isinstance(events[-1], TurnFailed)
     assert "end_turn" in events[-1].error
 

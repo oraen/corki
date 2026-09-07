@@ -15,6 +15,8 @@ class CommandAction(Enum):
     CLEAR = auto()
     REALTIME_ON = auto()
     REALTIME_OFF = auto()
+    MCP_REFRESH = auto()
+    COMPACT = auto()
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +57,8 @@ class CommandDispatcher:
                     "  /status  show the current session configuration\n"
                     "  /clear   clear the terminal and redraw the header\n"
                     "  /model   show how to configure the current model\n"
+                    "  /compact summarize history in a standalone turn\n"
+                    "  /mcp refresh  reconnect before preparation or the next MCP call\n"
                     "  /realtime [on|off]  configure live turn steering\n"
                     "  /stop    stop an active realtime turn"
                 ),
@@ -72,6 +76,19 @@ class CommandDispatcher:
 
         if command == "/clear":
             return CommandResult(handled=True, action=CommandAction.CLEAR)
+
+        if command == "/compact":
+            return CommandResult(handled=True, action=CommandAction.COMPACT)
+
+        if command == "/mcp refresh":
+            return CommandResult(
+                handled=True,
+                output=(
+                    "MCP reconnect queued for preparation or MCP call admission; "
+                    "running calls are not retried."
+                ),
+                action=CommandAction.MCP_REFRESH,
+            )
 
         if command == "/model":
             return CommandResult(

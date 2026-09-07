@@ -75,6 +75,22 @@ def test_settings_accepts_disabled_retries_and_responses_mode(tmp_path: Path) ->
     assert settings.model_max_retries == 0
 
 
+@pytest.mark.parametrize("value", ["true", "false"])
+def test_connection_retry_switch_loads_from_toml(tmp_path, value):
+    config = tmp_path / "config.toml"
+    config.write_text(f"[provider]\nunbounded_connection_retries = {value}\n")
+    settings = CorkiSettings.for_directory(tmp_path, config_file=config)
+    assert settings.model_unbounded_connection_retries is (value == "true")
+
+
+@pytest.mark.parametrize("value", ["'false'", "0", "[]"])
+def test_connection_retry_switch_rejects_non_booleans(tmp_path, value):
+    config = tmp_path / "config.toml"
+    config.write_text(f"[provider]\nunbounded_connection_retries = {value}\n")
+    with pytest.raises(ValueError, match="unbounded_connection_retries"):
+        CorkiSettings.for_directory(tmp_path, config_file=config)
+
+
 def test_settings_loads_skills_plugins_mcp_and_realtime(tmp_path: Path) -> None:
     config = tmp_path / "config.toml"
     config.write_text(

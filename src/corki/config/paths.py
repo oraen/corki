@@ -73,17 +73,31 @@ class CorkiPaths:
                 "max_steps = 24\n"
                 "max_tool_calls = 64\n"
                 "context_window_tokens = 65536\n"
-                "auto_compact_tokens = 49152\n\n"
+                "effective_context_window_percent = 95\n"
+                "# auto_compact_tokens = 58982  # default: 90% of context_window_tokens\n"
+                '# auto_compact_token_limit_scope = "total"  # or "body_after_prefix"\n\n'
+                "[features]\n"
+                "# token_budget = false  # opt-in reset without summarization\n\n"
+                "# Alternatively replace the boolean with this table:\n"
+                "# [features.token_budget]\n"
+                "# enabled = true\n"
+                "# reminder_threshold_tokens = 2000\n"
+                "# use_history_notes_extension = false  # native when eligible, otherwise local\n"
+                '# auto_compact_fallback_prompt = "Save important progress before reset."\n'
+                "# auto_compact_fallback_buffer_tokens = 4000\n\n"
                 "[provider]\n"
                 '# name = "openai"\n'
                 'base_url = "https://api.openai.com/v1"\n'
                 'api_mode = "chat_completions"\n'
+                "# codex_backend = false  # requires a backend bearer credential\n"
+                "# supports_encrypted_tool_output = false  # supported Responses providers only\n"
                 "# thinking = true\n"
                 '# reasoning_effort = "high"\n\n'
                 "max_retries = 3\n"
                 "retry_base_seconds = 0.5\n"
                 "response_char_limit = 4000000\n\n"
                 "[tools]\n"
+                '# namespace_mode = "compatible"  # or "native" for capable Responses providers\n'
                 "command_timeout_seconds = 120\n"
                 "command_yield_seconds = 10\n"
                 "output_char_budget = 20000\n\n"

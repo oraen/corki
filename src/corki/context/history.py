@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from uuid import UUID, uuid5
 
+from corki.context.world_state import render_context_history
 from corki.protocol.ids import ItemId, ToolCallId
 from corki.protocol.items import (
     CompactionItem,
-    ContextItem,
     ConversationItem,
     ToolCallItem,
     ToolResultItem,
@@ -17,28 +17,17 @@ _SYNTHETIC_ITEM_NAMESPACE = UUID("ca19dca4-103e-4a56-b388-e14b27f95d58")
 
 
 def active_history(items: tuple[ConversationItem, ...]) -> tuple[ConversationItem, ...]:
-    """Return one continuous compacted window with only current world state.
-
-    Context items are append-only snapshots. Older values for the same key are
-    audit history, not model-visible conversation, so only the last value is
-    retained. An empty last value is a tombstone for a deleted context source.
-    """
+    """Return one continuous window, preserving appended context update messages."""
 
     start = 0
     for index, item in enumerate(items):
         if isinstance(item, CompactionItem):
             start = index
     window = _reconstruct_compaction_replacement(items[start:])
-    latest_context: dict[str, int] = {
-        item.key: index for index, item in enumerate(window) if isinstance(item, ContextItem)
-    }
-    current = tuple(
-        item
-        for index, item in enumerate(window)
-        if not isinstance(item, ContextItem)
-        or (latest_context[item.key] == index and bool(item.content))
+    window = tuple(
+        item for item in window if not (isinstance(item, CompactionItem) and item.context_reset)
     )
-    return normalize_tool_pairs(current)
+    return normalize_tool_pairs(render_context_history(window))
 
 
 def _reconstruct_compaction_replacement(

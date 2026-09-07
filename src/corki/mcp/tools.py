@@ -2,25 +2,29 @@
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Mapping
+from copy import deepcopy
 from hashlib import sha256
+from time import perf_counter
 from typing import Any
 
-from corki.mcp.client import MCPClient
+import httpx
+
+from corki.mcp.client import MCPClient, MCPProtocolError, validate_tool_result
+from corki.mcp.connection import MCPConnection, MCPServerMetadata
+from corki.mcp.output import mcp_output
 from corki.protocol.tools import (
-    ImageAttachment,
     ToolCall,
     ToolConcurrency,
     ToolExposure,
     ToolResult,
     ToolSpec,
 )
+from corki.protocol.truncation import TruncationPolicy
 from corki.tools import ToolContext
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_-]")
-_MAX_IMAGE_DATA_CHARS = 20_000_000
 
 
 def exposed_tool_name(server: str, remote: str) -> str:
@@ -31,13 +35,20 @@ def exposed_tool_name(server: str, remote: str) -> str:
 
 
 class MCPTool:
+    # Both search metadata and schema are immutable for this handler's lifetime.
+    # Connection routing may change independently at MCP call admission.
+    immutable_search_metadata = True
+
     def __init__(
         self,
         server_name: str,
         definition: Mapping[str, Any],
-        client: MCPClient,
+        client: MCPClient | MCPConnection,
         *,
         exposure: ToolExposure = ToolExposure.DIRECT,
+        call_router=None,
+        server_instructions: str | None = None,
+        server_metadata: MCPServerMetadata | None = None,
     ) -> None:
         remote_name = definition.get("name")
         if not isinstance(remote_name, str) or not remote_name:
@@ -49,66 +60,99 @@ class MCPTool:
         annotations = definition.get("annotations", {})
         read_only = isinstance(annotations, Mapping) and annotations.get("readOnlyHint") is True
         self.remote_name = remote_name
+        self._server_name = server_name
+        self._call_router = call_router
         self._client = client
+        self._server_metadata = server_metadata or MCPServerMetadata()
+        # Regular MCP servers cannot claim hosted connector/plugin provenance
+        # through tool._meta. Namespace metadata comes from initialize only.
+        source_description = (server_instructions or "").strip() or None
+        properties = schema.get("properties")
+        search_parts = [
+            exposed_tool_name(server_name, remote_name),
+            remote_name,  # callable name; intentionally repeated for regular MCP
+            remote_name,  # original wire name
+            server_name,
+        ]
+        for part in (definition.get("title"), description, source_description):
+            if isinstance(part, str) and part.strip():
+                search_parts.append(part.strip())
+        if isinstance(properties, Mapping):
+            search_parts.extend(sorted(properties))
         self._spec = ToolSpec(
             exposed_tool_name(server_name, remote_name),
             str(description or f"MCP tool {remote_name} from {server_name}")[:1_024],
             dict(schema),
             exposure=exposure,
-            source=server_name,
-            search_text=" ".join(
-                [
-                    exposed_tool_name(server_name, remote_name),
-                    remote_name,
-                    server_name,
-                    str(definition.get("title") or ""),
-                    str(description or ""),
-                    *sorted(schema.get("properties", {})),
-                ]
-            ),
+            source=server_name.strip() or None,
+            source_description=source_description,
+            search_text=" ".join(search_parts),
             concurrency=ToolConcurrency.PARALLEL if read_only else ToolConcurrency.EXCLUSIVE,
-            output_char_budget=160_000,
         )
 
     @property
     def spec(self) -> ToolSpec:
-        return self._spec
+        return deepcopy(self._spec)
 
     async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        del context
         assert call.arguments is not None
-        result = await self._client.call_tool(self.remote_name, call.arguments)
-        is_error = result.get("isError") is True
-        text_parts: list[str] = []
-        attachments: list[ImageAttachment] = []
-        for item in result.get("content", []):
-            if not isinstance(item, Mapping):
-                continue
-            if item.get("type") == "text" and isinstance(item.get("text"), str):
-                text_parts.append(item["text"])
-            elif (
-                item.get("type") == "image"
-                and isinstance(item.get("data"), str)
-                and isinstance(item.get("mimeType"), str)
-                and item["mimeType"].startswith("image/")
-            ):
-                data = item["data"]
-                mime_type = item["mimeType"]
-                if len(data) <= _MAX_IMAGE_DATA_CHARS:
-                    attachments.append(ImageAttachment(f"data:{mime_type};base64,{data}"))
-                    text_parts.append(f"<MCP image: {mime_type}>")
+        policy = context.model_output_policy
+        started = perf_counter()
+
+        def capture(limit: int | None) -> None:
+            nonlocal policy, started
+            policy = (
+                TruncationPolicy("tokens", limit)
+                if limit is not None
+                else context.model_output_policy
+            )
+            started = perf_counter()
+
+        try:
+            if self._call_router is None:
+                if isinstance(self._client, MCPConnection):
+                    result = await self._client.call_tool(
+                        self.remote_name,
+                        call.arguments,
+                        on_external_context=context.on_external_context,
+                        on_output_token_limit=capture,
+                    )
                 else:
-                    text_parts.append("<MCP image omitted: payload exceeds 20,000,000 characters>")
+                    settings = getattr(self._client, "settings", None)
+                    capture(
+                        dict(getattr(settings, "tool_output_token_limits", ())).get(
+                            self.remote_name
+                        )
+                    )
+                    if (
+                        self._server_metadata.pollutes_memory
+                        and context.on_external_context is not None
+                    ):
+                        await context.on_external_context()
+                    result = await self._client.call_tool(self.remote_name, call.arguments)
             else:
-                text_parts.append(json.dumps(dict(item), ensure_ascii=False))
-        structured = result.get("structuredContent")
-        if structured is not None:
-            text_parts.append(json.dumps(structured, ensure_ascii=False))
-        content = "\n".join(text_parts) or json.dumps(dict(result), ensure_ascii=False)
-        return ToolResult(
-            call.id,
-            call.name,
-            content,
-            is_error=is_error,
-            attachments=tuple(attachments),
+                result = await self._call_router(
+                    self._server_name,
+                    self.remote_name,
+                    call.arguments,
+                    on_external_context=context.on_external_context,
+                    on_output_token_limit=capture,
+                )
+            result = validate_tool_result(result)
+        except (MCPProtocolError, httpx.HTTPError, TimeoutError, OSError) as error:
+            # An admitted remote failure is an MCP error value, not a JS host
+            # dispatch failure. Cancellation deliberately bypasses this boundary.
+            message = f"{type(error).__name__}: {error}"
+            if isinstance(error, (TimeoutError, httpx.TimeoutException)):
+                message = (
+                    "MCP tool timed out; execution outcome may be unknown. "
+                    "Do not automatically retry an operation with side effects. " + message
+                )
+            result = {"content": [{"type": "text", "text": message}], "isError": True}
+        return mcp_output(
+            call,
+            result,
+            context=context,
+            policy=policy,
+            wall_time=perf_counter() - started,
         )

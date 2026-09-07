@@ -177,7 +177,7 @@ async def _run(workspace: Path) -> dict[str, object]:
     outputs = [item.content for item in model.requests[2].items if isinstance(item, ToolResultItem)]
     assert any("PROJECT_SKILL_BODY" in output for output in outputs)
     assert any('"plugin": "hello"' in output for output in outputs)
-    assert "mcp:hello" in outputs
+    assert any(value.endswith("\nOutput:\nmcp:hello") for value in outputs)
     assert len(model.requests) == 4
     assert any(
         isinstance(item, AssistantMessageItem) and item.content == "checking extension results"

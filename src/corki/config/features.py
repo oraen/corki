@@ -21,6 +21,18 @@ class MCPServerSettings:
     url: str | None = None
     headers: tuple[tuple[str, str], ...] = ()
     timeout_seconds: float = 30.0
+    tool_output_token_limits: tuple[tuple[str, int], ...] = ()
+
+    def __post_init__(self) -> None:
+        limits = tuple(tuple(pair) for pair in self.tool_output_token_limits)
+        names = set()
+        for name, limit in limits:
+            if not isinstance(name, str) or not name or name in names:
+                raise ValueError("MCP output token limits require unique tool names")
+            if type(limit) is not int or limit <= 0:
+                raise ValueError("MCP output_token_limit must be a positive integer")
+            names.add(name)
+        object.__setattr__(self, "tool_output_token_limits", limits)
 
     @classmethod
     def from_mapping(cls, name: str, value: Mapping[str, Any]) -> MCPServerSettings:
@@ -56,6 +68,15 @@ class MCPServerSettings:
         cwd = value.get("cwd")
         if cwd is not None and not isinstance(cwd, str):
             raise ValueError(f"mcp.servers.{name}.cwd must be a path string")
+        tools = value.get("tools", {})
+        if not isinstance(tools, Mapping):
+            raise ValueError(f"mcp.servers.{name}.tools must be a table")
+        limits = []
+        for tool_name, config in tools.items():
+            if not isinstance(config, Mapping):
+                raise ValueError("MCP per-tool settings must be a table")
+            if config.get("output_token_limit") is not None:
+                limits.append((tool_name, config["output_token_limit"]))
         return cls(
             name=name,
             transport=transport,
@@ -66,6 +87,7 @@ class MCPServerSettings:
             url=url.strip() if isinstance(url, str) else None,
             headers=tuple(headers.items()),
             timeout_seconds=float(timeout),
+            tool_output_token_limits=tuple(limits),
         )
 
 

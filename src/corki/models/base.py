@@ -12,9 +12,20 @@ from corki.models.types import ModelEvent, ModelRequest
 class ModelErrorKind(StrEnum):
     AUTHENTICATION = "authentication"
     RATE_LIMIT = "rate_limit"
+    QUOTA = "quota"
+    USAGE_NOT_INCLUDED = "usage_not_included"
+    INVALID_REQUEST = "invalid_request"
+    CYBER_POLICY = "cyber_policy"
+    MISALIGNMENT_POLICY = "misalignment_policy"
+    SERVER_OVERLOADED = "server_overloaded"
+    USAGE_LIMIT = "usage_limit"
+    RETRY_LIMIT = "retry_limit"
+    INVALID_IMAGE = "invalid_image"
     CONTEXT_WINDOW = "context_window"
+    OUTPUT_LIMIT = "output_limit"
     SERVER = "server"
     TRANSPORT = "transport"
+    CONNECTION = "connection"
     PROTOCOL = "protocol"
 
 

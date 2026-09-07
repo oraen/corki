@@ -27,12 +27,41 @@ class MCPProtocolError(RuntimeError):
     pass
 
 
+def validate_tool_result(result: object) -> Mapping[str, Any]:
+    """Check remote envelope fields before entering model/public projections."""
+    if not isinstance(result, Mapping):
+        raise MCPProtocolError("tools/call returned a non-object result")
+    if not isinstance(result.get("content", []), list):
+        raise MCPProtocolError("MCP result.content must be an array")
+    if result.get("isError") is not None and type(result["isError"]) is not bool:
+        raise MCPProtocolError("MCP result.isError must be a boolean")
+    return result
+
+
+def _decode_json(data: bytes | str) -> Any:
+    """Reject Python-only JSON values without reflecting untrusted response data."""
+    try:
+        value = json.loads(data.decode("utf-8") if isinstance(data, bytes) else data)
+        # Also rejects overflow floats, NaN/Infinity and escaped lone surrogates.
+        # Input is already bounded by the transport's response/line limit.
+        json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (ValueError, UnicodeError, RecursionError) as error:
+        raise MCPProtocolError("MCP response contains invalid JSON") from error
+    return value
+
+
+def _matches_id(value: object, expected: int) -> bool:
+    # bool and float equality must not impersonate our integer request identity.
+    return type(value) is int and value == expected
+
+
 class MCPClient(ABC):
     def __init__(self, settings: MCPServerSettings) -> None:
         self.settings = settings
         self._next_id = 0
         self._initialized = False
         self._protocol_version = PROTOCOL_VERSION
+        self.server_instructions: str | None = None
 
     async def initialize(self) -> None:
         result = await self.request(
@@ -48,7 +77,11 @@ class MCPClient(ABC):
         negotiated = result.get("protocolVersion")
         if not isinstance(negotiated, str) or not negotiated:
             raise MCPProtocolError("initialize result is missing protocolVersion")
+        instructions = result.get("instructions")
+        if instructions is not None and not isinstance(instructions, str):
+            raise MCPProtocolError("initialize instructions must be a string")
         self._protocol_version = negotiated
+        self.server_instructions = instructions
         self._initialized = True
         await self.notify("notifications/initialized", {})
 
@@ -102,9 +135,7 @@ class MCPClient(ABC):
 
     async def call_tool(self, name: str, arguments: Mapping[str, Any]) -> Mapping[str, Any]:
         result = await self.request("tools/call", {"name": name, "arguments": dict(arguments)})
-        if not isinstance(result, Mapping):
-            raise MCPProtocolError("tools/call returned a non-object result")
-        return result
+        return validate_tool_result(result)
 
     async def request(self, method: str, params: Mapping[str, Any]) -> Any:
         self._next_id += 1
@@ -112,7 +143,7 @@ class MCPClient(ABC):
         response = await asyncio.wait_for(
             self._exchange(message), timeout=self.settings.timeout_seconds
         )
-        if response.get("id") != message["id"]:
+        if not _matches_id(response.get("id"), message["id"]):
             raise MCPProtocolError("MCP response id does not match request")
         if "error" in response:
             raise MCPProtocolError(_error_text(response["error"]))
@@ -191,10 +222,10 @@ class StdioMCPClient(MCPClient):
         try:
             while line := await self._process.stdout.readline():
                 try:
-                    message = json.loads(line)
-                except (UnicodeError, json.JSONDecodeError):
+                    message = _decode_json(line)
+                except MCPProtocolError:
                     continue
-                if not isinstance(message, dict) or not isinstance(message.get("id"), int):
+                if not isinstance(message, dict) or type(message.get("id")) is not int:
                     continue
                 future = self._pending.get(message["id"])
                 if future is not None and not future.done():
@@ -233,9 +264,11 @@ class StdioMCPClient(MCPClient):
 
 
 class HttpMCPClient(MCPClient):
-    def __init__(self, settings: MCPServerSettings) -> None:
+    def __init__(
+        self, settings: MCPServerSettings, *, transport: httpx.AsyncBaseTransport | None = None
+    ) -> None:
         super().__init__(settings)
-        self._client = httpx.AsyncClient(timeout=settings.timeout_seconds)
+        self._client = httpx.AsyncClient(timeout=settings.timeout_seconds, transport=transport)
         self._session_id: str | None = None
 
     async def start(self) -> None:
@@ -291,21 +324,27 @@ def _decode_http_response(
 ) -> dict[str, Any]:
     content_type = response.headers.get("content-type", "").lower()
     if "text/event-stream" not in content_type:
-        value = response.json()
+        value = _decode_json(response.content)
         if not isinstance(value, dict):
             raise MCPProtocolError("MCP HTTP response is not a JSON object")
         return value
-    for block in response.text.replace("\r\n", "\n").split("\n\n"):
+    try:
+        stream_text = response.content.decode("utf-8")
+    except UnicodeError as error:
+        raise MCPProtocolError("MCP event stream contains invalid UTF-8") from error
+    for block in stream_text.replace("\r\n", "\n").split("\n\n"):
         data = "\n".join(
             line[5:].lstrip() for line in block.splitlines() if line.startswith("data:")
         )
         if not data:
             continue
         try:
-            value = json.loads(data)
-        except json.JSONDecodeError:
+            value = _decode_json(data)
+        except MCPProtocolError:
             continue
-        if isinstance(value, dict) and (expected_id is None or value.get("id") == expected_id):
+        if isinstance(value, dict) and (
+            expected_id is None or _matches_id(value.get("id"), expected_id)
+        ):
             return value
     raise MCPProtocolError("MCP event stream contained no JSON-RPC response")
 

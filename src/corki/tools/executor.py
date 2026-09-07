@@ -3,78 +3,268 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import Any
 
+from corki.context.hosted_output import truncate_output_text
 from corki.context.truncation import truncate_text
-from corki.protocol.tools import ToolCall, ToolResult, ToolSpec
+from corki.planning.models import validate_plan
+from corki.protocol.tools import (
+    AudioAttachment,
+    CodeModeOutput,
+    EncryptedContent,
+    ImageAttachment,
+    TextContent,
+    ToolCall,
+    ToolResult,
+    ToolSpec,
+    ToolStateUpdate,
+    content_text,
+)
+from corki.protocol.truncation import TruncationPolicy
 from corki.tools.base import ToolContext
-from corki.tools.registry import ToolRegistry
+from corki.tools.errors import FatalToolError
+from corki.tools.registry import ToolRegistry, ToolRegistrySnapshot
 from corki.tools.search import ToolSearchTool
+
+MAX_RAW_TOOL_RESULT_BYTES = 32_000_000
 
 
 class ToolExecutor:
-    def __init__(self, registry: ToolRegistry, *, output_char_budget: int) -> None:
+    def __init__(
+        self, registry: ToolRegistry, *, output_char_budget: int, media_preparation=None
+    ) -> None:
         self._registry = registry
         self._output_char_budget = output_char_budget
+        self._media = media_preparation
 
     async def execute(
-        self, call: ToolCall, context: ToolContext, *, spec: ToolSpec | None = None
+        self,
+        call: ToolCall,
+        context: ToolContext,
+        *,
+        spec: ToolSpec | None = None,
+        snapshot: ToolRegistrySnapshot | None = None,
     ) -> ToolResult:
-        tool = self._registry.get(call.name)
+        registry = snapshot if snapshot is not None else self._registry
+        tool = registry.get(call.name)
         if tool is None:
             return self.error(call, f"unknown tool: {call.name}")
-        if call.parse_error is not None or call.arguments is None:
-            return self.error(call, f"invalid JSON arguments: {call.parse_error}")
-        current = self._registry.spec(call.name)
+        current = registry.spec(call.name)
         if spec is not None and spec != current:
             return self.error(call, f"tool definition changed since this step: {call.name}")
         spec = spec or current
+        if spec is None:
+            raise FatalToolError(f"registered tool has no definition: {call.name}")
+        if call.input_kind != spec.input_kind:
+            raise FatalToolError(f"tool {call.name} invoked with incompatible payload")
+        if call.parse_error is not None or (call.input_kind == "json" and call.arguments is None):
+            return self.error(call, f"invalid JSON arguments: {call.parse_error}", spec=spec)
         try:
-            _validate(call.arguments, spec.parameters, path="arguments")
-            result = await tool.execute(call, context)
-        except Exception as exc:  # noqa: BLE001 - tool boundary normalizes failures
-            return self.error(call, f"{type(exc).__name__}: {exc}")
-        if not isinstance(result, ToolResult):
+            if call.input_kind == "json":
+                _validate(call.arguments, spec.parameters, path="arguments")
+            else:
+                _text(call.raw_arguments, "input")
+            # The handler cannot mutate the durable model call's arguments
+            # through nested dict/list aliases after the ledger was claimed.
+            result = await tool.execute(deepcopy(call), context)
+            result = self._normalize_result(
+                call,
+                result,
+                spec,
+                is_search=isinstance(tool, ToolSearchTool),
+            )
+            return await self._media.prepare_result(result) if self._media is not None else result
+        except FatalToolError as exc:
+            raise FatalToolError(truncate_text(_exception_message(exc), 4_000)) from exc
+        except TimeoutError as exc:
             return self.error(
                 call,
-                f"tool returned {type(result).__name__} instead of ToolResult",
+                "tool timed out; execution outcome may be unknown. Do not automatically retry "
+                f"an operation with side effects. {_exception_message(exc)}",
+                spec=spec,
             )
+        except Exception as exc:  # noqa: BLE001 - tool boundary normalizes failures
+            return self.error(call, _exception_message(exc), spec=spec)
+
+    def _normalize_result(
+        self,
+        call: ToolCall,
+        result: object,
+        spec: ToolSpec,
+        *,
+        is_search: bool,
+    ) -> ToolResult:
+        if not isinstance(result, ToolResult):
+            raise ValueError(f"tool returned {type(result).__name__} instead of ToolResult")
         if result.call_id != call.id or result.tool_name != call.name:
-            return self.error(call, "tool returned a result for a different call")
+            raise ValueError("tool returned a result for a different call")
+        _text(result.content, "result.content")
+        if result.display_content is not None:
+            _text(result.display_content, "result.display_content")
+        if not isinstance(result.is_error, bool):
+            raise ValueError("result.is_error must be a boolean")
+        if not isinstance(result.contains_external_context, bool):
+            raise ValueError("result.contains_external_context must be a boolean")
+        if result.fallback_token_limit_override is not None and (
+            type(result.fallback_token_limit_override) is not int
+            or result.fallback_token_limit_override < 0
+        ):
+            raise ValueError("result.fallback_token_limit_override must be a non-negative integer")
+        if not isinstance(result.attachments, (tuple, list)):
+            raise ValueError("result.attachments must be an array")
+        attachments: list[ImageAttachment] = []
+        for attachment in result.attachments:
+            if not isinstance(attachment, ImageAttachment):
+                raise ValueError("result attachment must be an ImageAttachment")
+            _text(attachment.data_url, "attachment.data_url")
+            if not attachment.data_url or attachment.detail not in {
+                "auto",
+                "low",
+                "high",
+                "original",
+            }:
+                raise ValueError("result attachment requires a non-empty URL and valid detail")
+            attachments.append(ImageAttachment(attachment.data_url, attachment.detail))
+        if not isinstance(result.state_update, ToolStateUpdate):
+            raise ValueError("result.state_update must be a ToolStateUpdate")
+        plan = result.state_update.plan
+        if plan is not None:
+            if not isinstance(plan, (tuple, list)):
+                raise ValueError("result plan must be an array")
+            parsed_plan = validate_plan(list(plan))
+            for item in parsed_plan:
+                _text(item.step, "plan.step")
+            plan = tuple(item.as_dict() for item in parsed_plan)
         output_budget = spec.output_char_budget or self._output_char_budget
-        is_search = isinstance(tool, ToolSearchTool)
+        parts = result.content_items
+        if parts:
+            if len(parts) > 8192:
+                raise ValueError("tool content item count exceeds limit")
+            media_bytes = 0
+            if result.attachments or result.discovered_tools:
+                raise ValueError(
+                    "ordered tool content cannot also use attachments or discovered tools"
+                )
+            for part in parts:
+                if isinstance(part, TextContent):
+                    _text(part.text, "content item text")
+                elif isinstance(part, EncryptedContent):
+                    _text(part.encrypted_content, "encrypted content")
+                    media_bytes += len(part.encrypted_content.encode("utf-8"))
+                    if media_bytes > 32_000_000:
+                        raise ValueError("tool content media byte limit exceeded")
+                elif isinstance(part, (ImageAttachment, AudioAttachment)):
+                    _text(part.data_url, "content item URL")
+                    media_bytes += len(part.data_url.encode("utf-8"))
+                    if media_bytes > 32_000_000:
+                        raise ValueError("tool content media byte limit exceeded")
+                    if not part.data_url:
+                        raise ValueError("content item requires a non-empty URL")
+                    if isinstance(part, ImageAttachment) and part.detail not in {
+                        "auto",
+                        "low",
+                        "high",
+                        "original",
+                    }:
+                        raise ValueError("invalid content item image detail")
+                    if isinstance(part, AudioAttachment) and not part.data_url.lower().startswith(
+                        "data:"
+                    ):
+                        raise ValueError("audio content requires a data URL")
+                else:
+                    raise ValueError("invalid tool content item")
+        # This is a transport/storage guard, not the model's output policy.
+        raw_bytes = len(result.content.encode("utf-8")) + sum(
+            len(part.text.encode("utf-8"))
+            if isinstance(part, TextContent)
+            else len(part.encrypted_content.encode("utf-8"))
+            if isinstance(part, EncryptedContent)
+            else len(part.data_url.encode("utf-8"))
+            for part in (*parts, *attachments)
+        )
+        if raw_bytes > MAX_RAW_TOOL_RESULT_BYTES:
+            raise ValueError("tool result exceeds the raw transport byte limit")
+        content = content_text(parts) if result.content_items else result.content
+        code_mode_output = result.code_mode_output
+        if code_mode_output is not None:
+            if not isinstance(code_mode_output, CodeModeOutput):
+                raise ValueError("result.code_mode_output must be a CodeModeOutput")
+            code_mode_output = code_mode_output.normalized()
         return ToolResult(
             call_id=result.call_id,
             tool_name=result.tool_name,
-            # Search already budgets whole schemas. Never publish a truncated
-            # definition while loading the complete one for execution.
-            content=result.content if is_search else truncate_text(result.content, output_budget),
+            # History owns the model projection; the ledger and nested calls
+            # consume this validated original, not the UI's bounded preview.
+            content=content,
             is_error=result.is_error,
             display_content=truncate_text(
                 result.display_content if result.display_content is not None else result.content,
                 min(output_budget, 4_000),
             ),
-            attachments=result.attachments,
-            state_update=result.state_update,
+            attachments=tuple(attachments),
+            state_update=ToolStateUpdate(
+                plan=plan,
+                new_context_requested=result.state_update.new_context_requested,
+            ),
             discovered_tools=result.discovered_tools if is_search else (),
+            code_mode_output=code_mode_output,
+            content_items=parts,
+            contains_external_context=result.contains_external_context,
+            fallback_token_limit_override=result.fallback_token_limit_override,
+            legacy_output_char_budget=spec.output_char_budget,
+            is_tool_search_output=is_search,
         )
 
-    @staticmethod
-    def error(call: ToolCall, message: str) -> ToolResult:
+    def error(self, call: ToolCall, message: str, *, spec: ToolSpec | None = None) -> ToolResult:
         """Build a normalized failure without invoking a registered handler."""
-
+        budget = (spec.output_char_budget if spec is not None else None) or self._output_char_budget
+        message = message.encode("utf-8", errors="replace").decode("utf-8")
+        if len(message.encode("utf-8")) > MAX_RAW_TOOL_RESULT_BYTES:
+            message = truncate_output_text(
+                message, TruncationPolicy("bytes", max(0, MAX_RAW_TOOL_RESULT_BYTES - 64))
+            )
         return ToolResult(
             call_id=call.id,
             tool_name=call.name,
             content=message,
-            display_content=message,
+            display_content=truncate_text(message, min(budget, 4_000)),
             is_error=True,
+            dispatch_error=True,
+            legacy_output_char_budget=spec.output_char_budget if spec is not None else None,
+            is_tool_search_output=False,
         )
+
+
+def _text(value: object, field: str) -> None:
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    try:
+        value.encode("utf-8")
+    except UnicodeError as exc:
+        raise ValueError(f"{field} contains invalid Unicode") from exc
+
+
+def _exception_message(exc: Exception) -> str:
+    try:
+        text = str(exc)
+    except Exception:  # noqa: BLE001 - an extension's broken __str__ is still a call error
+        text = "exception message unavailable"
+    return f"{type(exc).__name__}: {text}".encode("utf-8", errors="replace").decode("utf-8")
 
 
 def _validate(value: object, schema: Mapping[str, Any], *, path: str) -> None:
     """Validate the JSON-Schema subset used by Corki's built-in tools."""
 
+    if "anyOf" in schema:
+        for branch in schema["anyOf"]:
+            try:
+                _validate(value, branch, path=path)
+            except ValueError:
+                continue
+            break
+        else:
+            raise ValueError(f"{path} must match an allowed schema alternative")
     expected = schema.get("type")
     type_map: dict[str, type | tuple[type, ...]] = {
         "object": Mapping,
@@ -83,6 +273,7 @@ def _validate(value: object, schema: Mapping[str, Any], *, path: str) -> None:
         "integer": int,
         "number": (int, float),
         "boolean": bool,
+        "null": type(None),
     }
     if isinstance(expected, str) and expected in type_map:
         expected_type = type_map[expected]

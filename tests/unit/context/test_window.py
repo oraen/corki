@@ -84,7 +84,7 @@ def test_window_compacts_without_history_gaps_and_persists_checkpoint(
     asyncio.run(scenario())
 
 
-def test_removed_context_source_is_tombstoned_and_not_replayed(tmp_path: Path) -> None:
+def test_removed_context_source_appends_notice_without_rewriting_history(tmp_path: Path) -> None:
     async def scenario() -> None:
         repository = SQLiteSessionRepository(tmp_path / "context.db")
         thread_id = new_thread_id()
@@ -112,13 +112,16 @@ def test_removed_context_source_is_tombstoned_and_not_replayed(tmp_path: Path) -
             tools=(),
         )
 
-        assert not any(
-            isinstance(item, ContextItem) and item.key == "project.agents"
-            for item in prepared.items
+        assert prepared.items[0] == first.items[0]
+        assert (
+            "previously provided AGENTS.md instructions no longer apply"
+            in prepared.items[-1].content
         )
         stored = await repository.load_items(thread_id)
         assert any(
-            isinstance(item, ContextItem) and item.key == "project.agents" and item.content == ""
+            isinstance(item, ContextItem)
+            and item.key == "project.agents"
+            and item.snapshot_content == ""
             for item in stored
         )
         await repository.close()
@@ -270,6 +273,11 @@ def test_compaction_recovery_does_not_resummarize_already_stored_pending_input(
         assert first.compacted
         assert not repeated.compacted
         assert len(model.requests) == 1
+        copies = [item for item in first.items if isinstance(item, UserMessageItem)]
+        assert (
+            next(item for item in copies if item.content == current.content).retained_from_id
+            == current.id
+        )
         assert all(
             not isinstance(item, UserMessageItem) or item.content != current.content
             for item in model.requests[0].items

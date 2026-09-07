@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from corki.skills.models import SkillLoadError, SkillMetadata, SkillScope, SkillSnapshot
@@ -48,6 +48,7 @@ def discover_skills(roots: tuple[SkillRoot, ...]) -> SkillSnapshot:
                     scope=root.scope,
                     namespace=root.namespace,
                 )
+                skill = replace(skill, discovery_path=path.absolute())
             except (OSError, UnicodeError, ValueError) as exc:
                 errors.append(SkillLoadError(path, str(exc)))
                 continue

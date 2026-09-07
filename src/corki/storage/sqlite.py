@@ -4,22 +4,28 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sqlite3
 from dataclasses import asdict
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from corki.models.failure import ModelFailure
 from corki.models.types import ModelCompleted, ModelUsage
-from corki.protocol.ids import MessageId, ModelStepId, ThreadId, ToolCallId, TurnId
+from corki.protocol.ids import ItemId, MessageId, ModelStepId, ThreadId, ToolCallId, TurnId
 from corki.protocol.items import (
     AssistantMessageItem,
+    BudgetNoticeItem,
     CompactionItem,
     ContextItem,
     ContextRole,
     ConversationItem,
+    HostedToolItem,
     ReasoningItem,
     ToolCallItem,
     ToolResultItem,
+    TurnAbortedItem,
     UserMessageItem,
     item_from_payload,
     item_kind,
@@ -28,13 +34,16 @@ from corki.protocol.items import (
 )
 from corki.protocol.messages import Message, MessageRole
 from corki.protocol.tools import (
+    CodeModeOutput,
     ImageAttachment,
     ToolCall,
     ToolResult,
     ToolStateUpdate,
+    content_from_payload,
+    content_to_payload,
     tool_spec_from_payload,
 )
-from corki.sessions.models import TurnRecord
+from corki.sessions.models import ContextUsage, TurnRecord
 
 
 class StorageIntegrityError(RuntimeError):
@@ -135,13 +144,42 @@ class SQLiteSessionRepository:
                     thread_id TEXT NOT NULL REFERENCES threads(id),
                     turn_id TEXT NOT NULL,
                     tool_name TEXT NOT NULL,
+                    arguments_sha256 TEXT,
                     status TEXT NOT NULL,
                     result_json TEXT,
                     started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     completed_at TEXT
                 );
+                CREATE TABLE IF NOT EXISTS partial_model_items (
+                    thread_id TEXT NOT NULL REFERENCES threads(id),
+                    turn_id TEXT NOT NULL,
+                    step_index INTEGER NOT NULL,
+                    item_id TEXT NOT NULL REFERENCES conversation_items(id),
+                    ordinal INTEGER NOT NULL,
+                    PRIMARY KEY(thread_id, turn_id, step_index, item_id),
+                    UNIQUE(thread_id, turn_id, step_index, ordinal)
+                );
+                CREATE TABLE IF NOT EXISTS model_failures (
+                    thread_id TEXT NOT NULL REFERENCES threads(id),
+                    turn_id TEXT NOT NULL,
+                    step_index INTEGER NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    PRIMARY KEY(thread_id, turn_id, step_index)
+                );
                 """
             )
+            # Serialize legacy column inspection/ALTER with other openers.
+            connection.execute("BEGIN IMMEDIATE")
+            turn_columns = {row[1] for row in connection.execute("PRAGMA table_info(turns)")}
+            if "operation" not in turn_columns:
+                connection.execute(
+                    "ALTER TABLE turns ADD COLUMN operation TEXT NOT NULL DEFAULT 'normal'"
+                )
+            tool_columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(tool_executions)")
+            }
+            if "arguments_sha256" not in tool_columns:
+                connection.execute("ALTER TABLE tool_executions ADD COLUMN arguments_sha256 TEXT")
             columns = {
                 row[1] for row in connection.execute("PRAGMA table_info(messages)").fetchall()
             }
@@ -160,6 +198,10 @@ class SQLiteSessionRepository:
                 connection.execute(
                     "ALTER TABLE model_steps ADD COLUMN items_json TEXT NOT NULL DEFAULT '[]'"
                 )
+            if "total_tokens" not in step_columns:
+                connection.execute("ALTER TABLE model_steps ADD COLUMN total_tokens INTEGER")
+            if "usage_anchor_id" not in step_columns:
+                connection.execute("ALTER TABLE model_steps ADD COLUMN usage_anchor_id TEXT")
             connection.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS model_steps_turn_index
@@ -205,7 +247,7 @@ class SQLiteSessionRepository:
         connection.execute("INSERT INTO schema_migrations(name) VALUES (?)", (migration,))
 
     async def create_thread(self, thread_id: ThreadId, cwd: Path) -> None:
-        await asyncio.to_thread(self._create_thread, thread_id, cwd)
+        await _joined_write(self._create_thread, thread_id, cwd)
 
     def _create_thread(self, thread_id: ThreadId, cwd: Path) -> None:
         with self._connect() as connection:
@@ -243,7 +285,7 @@ class SQLiteSessionRepository:
         return ThreadId(row["id"])
 
     async def save_turn(self, turn: TurnRecord) -> None:
-        await asyncio.to_thread(self._save_turn, turn)
+        await _joined_write(self._save_turn, turn)
 
     async def latest_running_turn(self, thread_id: ThreadId) -> TurnRecord | None:
         return await asyncio.to_thread(self._latest_running_turn, thread_id)
@@ -252,7 +294,7 @@ class SQLiteSessionRepository:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT id, thread_id, status, user_input, final_answer, error
+                SELECT id, thread_id, status, user_input, final_answer, error, operation
                 FROM turns WHERE thread_id=? AND status='running'
                 ORDER BY updated_at DESC, rowid DESC LIMIT 1
                 """,
@@ -269,14 +311,15 @@ class SQLiteSessionRepository:
             row["user_input"],
             row["final_answer"],
             row["error"],
+            row["operation"],
         )
 
     def _save_turn(self, turn: TurnRecord) -> None:
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO turns(id, thread_id, status, user_input, final_answer, error)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO turns(id, thread_id, status, user_input, final_answer, error, operation)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     status=excluded.status,
                     final_answer=excluded.final_answer,
@@ -290,6 +333,7 @@ class SQLiteSessionRepository:
                     turn.user_input,
                     turn.final_answer,
                     turn.error,
+                    turn.operation,
                 ),
             )
             connection.execute(
@@ -325,6 +369,8 @@ class SQLiteSessionRepository:
             ).fetchone()
             if existing is not None:
                 existing_payload = json.loads(existing["payload_json"])
+                if isinstance(item, AssistantMessageItem):
+                    existing_payload.setdefault("phase", None)
                 normalized_payload = json.loads(json.dumps(payload, ensure_ascii=False))
                 # Recovery may reconstruct a deterministic item after restart,
                 # so its wall-clock creation metadata can differ while its
@@ -390,11 +436,12 @@ class SQLiteSessionRepository:
     def _claim_tool_call(
         self, thread_id: ThreadId, turn_id: TurnId, call: ToolCall
     ) -> ToolResult | None:
+        fingerprint = _call_arguments_fingerprint(call)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """
-                SELECT status, result_json, thread_id, turn_id, tool_name
+                SELECT status, result_json, thread_id, turn_id, tool_name, arguments_sha256
                 FROM tool_executions WHERE call_id=?
                 """,
                 (str(call.id),),
@@ -404,12 +451,29 @@ class SQLiteSessionRepository:
                     row["thread_id"] != str(thread_id)
                     or row["turn_id"] != str(turn_id)
                     or row["tool_name"] != call.name
+                    or (
+                        row["arguments_sha256"] is not None
+                        and row["arguments_sha256"] != fingerprint
+                    )
                 ):
                     return ToolResult(
                         call.id,
                         call.name,
                         "Tool call id collision; execution was refused.",
                         is_error=True,
+                        dispatch_error=True,
+                    )
+                if row["arguments_sha256"] is None:
+                    # History alone cannot establish which payload produced
+                    # an old result: a later colliding call may already have
+                    # been appended. Do not backfill from unproven evidence.
+                    return ToolResult(
+                        call.id,
+                        call.name,
+                        "Previous tool arguments are unverified (legacy ledger); "
+                        "the cached result was not reused and execution was not repeated.",
+                        is_error=True,
+                        dispatch_error=True,
                     )
                 if row["status"] == "completed" and row["result_json"]:
                     return _result_from_json(row["result_json"])
@@ -418,13 +482,16 @@ class SQLiteSessionRepository:
                     call.name,
                     "Previous execution was interrupted; outcome is unknown and was not repeated.",
                     is_error=True,
+                    dispatch_error=True,
                 )
             connection.execute(
                 """
-                INSERT INTO tool_executions(call_id, thread_id, turn_id, tool_name, status)
-                VALUES (?, ?, ?, ?, 'running')
+                INSERT INTO tool_executions(
+                    call_id, thread_id, turn_id, tool_name, arguments_sha256, status
+                )
+                VALUES (?, ?, ?, ?, ?, 'running')
                 """,
-                (str(call.id), str(thread_id), str(turn_id), call.name),
+                (str(call.id), str(thread_id), str(turn_id), call.name, fingerprint),
             )
         return None
 
@@ -435,6 +502,25 @@ class SQLiteSessionRepository:
 
     def _complete_tool_call(self, thread_id: ThreadId, turn_id: TurnId, result: ToolResult) -> None:
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status, result_json, tool_name FROM tool_executions "
+                "WHERE call_id=? AND thread_id=? AND turn_id=?",
+                (str(result.call_id), str(thread_id), str(turn_id)),
+            ).fetchone()
+            if row is None or row["tool_name"] != result.tool_name:
+                raise StorageIntegrityError(
+                    "tool execution entry is missing or belongs to a different tool"
+                )
+            encoded = _result_to_json(result)
+            if row["status"] == "completed":
+                if row["result_json"] is not None and json.loads(row["result_json"]) == json.loads(
+                    encoded
+                ):
+                    return
+                raise StorageIntegrityError(
+                    "completed tool result cannot be overwritten with different data"
+                )
             cursor = connection.execute(
                 """
                 UPDATE tool_executions
@@ -442,7 +528,7 @@ class SQLiteSessionRepository:
                 WHERE call_id=? AND thread_id=? AND turn_id=?
                 """,
                 (
-                    _result_to_json(result),
+                    encoded,
                     str(result.call_id),
                     str(thread_id),
                     str(turn_id),
@@ -451,10 +537,83 @@ class SQLiteSessionRepository:
             if cursor.rowcount != 1:
                 raise RuntimeError("tool execution ledger entry is missing or belongs elsewhere")
 
+    async def load_partial_step(
+        self, thread_id: ThreadId, turn_id: TurnId, step_index: int
+    ) -> tuple[ConversationItem, ...]:
+        return await asyncio.to_thread(self._load_partial_step, thread_id, turn_id, step_index)
+
+    def _load_partial_step(
+        self, thread_id: ThreadId, turn_id: TurnId, step_index: int
+    ) -> tuple[ConversationItem, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT c.kind, c.payload_json FROM partial_model_items p
+                   JOIN conversation_items c ON c.id=p.item_id
+                   WHERE p.thread_id=? AND p.turn_id=? AND p.step_index=? ORDER BY p.ordinal""",
+                (str(thread_id), str(turn_id), step_index),
+            ).fetchall()
+        return tuple(
+            item_from_payload(row["kind"], json.loads(row["payload_json"])) for row in rows
+        )
+
+    async def append_partial_item(
+        self, thread_id: ThreadId, turn_id: TurnId, step_index: int, item: ConversationItem
+    ) -> None:
+        # Cancellation must join the write: the caller can then reconcile the
+        # exact set of durable calls before closing the turn.
+        await _joined_write(self._append_partial_item, thread_id, turn_id, step_index, item)
+
+    def _append_partial_item(
+        self, thread_id: ThreadId, turn_id: TurnId, step_index: int, item: ConversationItem
+    ) -> None:
+        if item.turn_id != turn_id:
+            raise StorageIntegrityError("partial item belongs to another turn")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._append_items_in_connection(connection, thread_id, (item,))
+            ordinal = connection.execute(
+                """SELECT COALESCE(MAX(ordinal), -1)+1 FROM partial_model_items
+                   WHERE thread_id=? AND turn_id=? AND step_index=?""",
+                (str(thread_id), str(turn_id), step_index),
+            ).fetchone()[0]
+            connection.execute(
+                """INSERT OR IGNORE INTO partial_model_items
+                   (thread_id, turn_id, step_index, item_id, ordinal) VALUES (?, ?, ?, ?, ?)""",
+                (str(thread_id), str(turn_id), step_index, str(item.id), ordinal),
+            )
+
     async def load_model_step(
         self, thread_id: ThreadId, turn_id: TurnId, step_index: int
     ) -> ModelCompleted | None:
         return await asyncio.to_thread(self._load_model_step, thread_id, turn_id, step_index)
+
+    async def load_context_usage(self, thread_id: ThreadId) -> ContextUsage | None:
+        return await asyncio.to_thread(self._load_context_usage, thread_id)
+
+    def _load_context_usage(self, thread_id: ThreadId) -> ContextUsage | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM model_steps WHERE thread_id=? ORDER BY rowid DESC LIMIT 1",
+                (str(thread_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        completed = _completed_from_row(row)
+        total = completed.usage.context_tokens
+        anchor = row["usage_anchor_id"]
+        # Old rows with outputs retain an exact identity; empty legacy results
+        # cannot establish a boundary and must use local estimation instead.
+        if anchor is None and completed.items:
+            anchor = str(completed.items[-1].id)
+        if total is None or anchor is None:
+            return None
+        return ContextUsage(
+            total,
+            ItemId(anchor),
+            completed.provider_metadata.get("server_reasoning_included") is True,
+            input_tokens=completed.usage.input_tokens,
+            sample_id=row["step_id"],
+        )
 
     def _load_model_step(
         self, thread_id: ThreadId, turn_id: TurnId, step_index: int
@@ -463,7 +622,7 @@ class SQLiteSessionRepository:
             row = connection.execute(
                 """
                 SELECT input_tokens, output_tokens, cached_tokens, reasoning_tokens,
-                       metadata_json, items_json, end_turn
+                       metadata_json, items_json, end_turn, total_tokens
                 FROM model_steps
                 WHERE thread_id=? AND turn_id=? AND step_index=?
                 """,
@@ -504,10 +663,18 @@ class SQLiteSessionRepository:
         ]
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            if (
+                connection.execute(
+                    "SELECT 1 FROM model_failures WHERE thread_id=? AND turn_id=? AND step_index=?",
+                    (str(thread_id), str(turn_id), step_index),
+                ).fetchone()
+                is not None
+            ):
+                raise StorageIntegrityError("cannot complete a failed model attempt")
             existing = connection.execute(
                 """
                 SELECT input_tokens, output_tokens, cached_tokens, reasoning_tokens,
-                       metadata_json, items_json, end_turn
+                       metadata_json, items_json, end_turn, total_tokens
                 FROM model_steps
                 WHERE thread_id=? AND turn_id=? AND step_index=?
                 """,
@@ -539,16 +706,111 @@ class SQLiteSessionRepository:
                 ),
             )
             self._append_items_in_connection(connection, thread_id, completed.items)
+            if completed.items:
+                anchor = str(completed.items[-1].id)
+            else:
+                last = connection.execute(
+                    "SELECT id FROM conversation_items WHERE thread_id=? "
+                    "ORDER BY sequence DESC LIMIT 1",
+                    (str(thread_id),),
+                ).fetchone()
+                anchor = last["id"] if last is not None else None
+            connection.execute(
+                "UPDATE model_steps SET total_tokens=?, usage_anchor_id=? "
+                "WHERE thread_id=? AND turn_id=? AND step_index=?",
+                (completed.usage.total_tokens, anchor, str(thread_id), str(turn_id), step_index),
+            )
 
     async def close(self) -> None:
         return None
 
+    async def load_model_failure(self, thread_id, turn_id, step_index) -> ModelFailure | None:
+        return await asyncio.to_thread(self._load_model_failure, thread_id, turn_id, step_index)
+
+    def _load_model_failure(self, thread_id, turn_id, step_index):
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM model_failures "
+                "WHERE thread_id=? AND turn_id=? AND step_index=?",
+                (str(thread_id), str(turn_id), step_index),
+            ).fetchone()
+        return ModelFailure(**json.loads(row[0])) if row is not None else None
+
+    async def save_model_failure(
+        self, thread_id, turn_id, step_index, failure: ModelFailure
+    ) -> None:
+        await _joined_write(self._save_model_failure, thread_id, turn_id, step_index, failure)
+
+    def _save_model_failure(self, thread_id, turn_id, step_index, failure):
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if (
+                connection.execute(
+                    "SELECT 1 FROM model_steps WHERE thread_id=? AND turn_id=? AND step_index=?",
+                    (str(thread_id), str(turn_id), step_index),
+                ).fetchone()
+                is not None
+            ):
+                raise StorageIntegrityError("cannot fail a completed model attempt")
+            payload = asdict(failure)
+            existing = connection.execute(
+                "SELECT payload_json FROM model_failures "
+                "WHERE thread_id=? AND turn_id=? AND step_index=?",
+                (str(thread_id), str(turn_id), step_index),
+            ).fetchone()
+            if existing is not None:
+                if ModelFailure(**json.loads(existing[0])) != failure:
+                    raise StorageIntegrityError("conflicting model failure for the same attempt")
+                return
+            connection.execute(
+                "INSERT INTO model_failures VALUES (?, ?, ?, ?)",
+                (str(thread_id), str(turn_id), step_index, json.dumps(payload)),
+            )
+
+
+async def _joined_write(write, *args):
+    task = asyncio.create_task(asyncio.to_thread(write, *args))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not task.cancelled() and task.exception() is not None:
+            logging.getLogger(__name__).warning(
+                "Durable write failed during cancellation", exc_info=task.exception()
+            )
+        raise
+
+
+def _call_arguments_fingerprint(call: ToolCall) -> str:
+    # Hash executable parsed arguments rather than JSON whitespace/key order.
+    # Invalid arguments cannot execute, but distinct malformed calls still
+    # must not accidentally reuse another call's recorded observation.
+    value = (
+        {"parsed": dict(call.arguments)}
+        if call.arguments is not None and call.parse_error is None
+        else {"raw": call.raw_arguments, "parsed": call.arguments}
+    )
+    if call.input_kind == "freeform":
+        value = {"freeform": call.raw_arguments, "parse_error": call.parse_error}
+    encoded = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    )
+    return sha256(encoded.encode("ascii")).hexdigest()
+
 
 def _result_to_json(result: ToolResult) -> str:
+    from corki.protocol.tools import tool_spec_to_payload
+
     value = {
         "call_id": str(result.call_id),
         "tool_name": result.tool_name,
-        "discovered_tools": [asdict(spec) for spec in result.discovered_tools],
+        "discovered_tools": [tool_spec_to_payload(spec) for spec in result.discovered_tools],
         "content": result.content,
         "is_error": result.is_error,
         "display_content": result.display_content,
@@ -560,6 +822,25 @@ def _result_to_json(result: ToolResult) -> str:
         if result.state_update.plan is not None
         else None,
     }
+    # Omit the absent override: old completed ledger rows are immutable and
+    # must remain byte-compatible. A present wrapper may explicitly hold null.
+    if result.code_mode_output is not None:
+        value["code_mode_output"] = {"value": result.code_mode_output.value}
+    if result.content_items:
+        value["content_items"] = [content_to_payload(part) for part in result.content_items]
+    if result.dispatch_error:
+        value["dispatch_error"] = True
+    if result.contains_external_context:
+        value["contains_external_context"] = True
+    for key in (
+        "fallback_token_limit_override",
+        "legacy_output_char_budget",
+        "is_tool_search_output",
+    ):
+        if getattr(result, key) is not None:
+            value[key] = getattr(result, key)
+    if result.state_update.new_context_requested:
+        value["new_context_requested"] = True
     return json.dumps(value, ensure_ascii=False)
 
 
@@ -573,6 +854,7 @@ def _completed_from_row(row: sqlite3.Row) -> ModelCompleted:
             output_tokens=row["output_tokens"],
             cached_tokens=row["cached_tokens"],
             reasoning_tokens=row["reasoning_tokens"],
+            total_tokens=row["total_tokens"],
         ),
         provider_metadata=json.loads(row["metadata_json"]),
         end_turn=None if row["end_turn"] is None else bool(row["end_turn"]),
@@ -590,10 +872,20 @@ def _result_from_json(value: str) -> ToolResult:
             tool_spec_from_payload(spec) for spec in raw.get("discovered_tools", ())
         ),
         is_error=bool(raw["is_error"]),
+        dispatch_error=bool(raw.get("dispatch_error", False)),
+        contains_external_context=raw.get("contains_external_context", False),
+        fallback_token_limit_override=raw.get("fallback_token_limit_override"),
+        legacy_output_char_budget=raw.get("legacy_output_char_budget"),
+        is_tool_search_output=raw.get("is_tool_search_output"),
         display_content=raw.get("display_content"),
+        content_items=tuple(content_from_payload(part) for part in raw.get("content_items", ())),
+        code_mode_output=CodeModeOutput(raw["code_mode_output"]["value"])
+        if "code_mode_output" in raw
+        else None,
         attachments=tuple(ImageAttachment(**item) for item in raw.get("attachments", [])),
         state_update=ToolStateUpdate(
-            plan=tuple(dict(item) for item in plan) if plan is not None else None
+            plan=tuple(dict(item) for item in plan) if plan is not None else None,
+            new_context_requested=raw.get("new_context_requested", False),
         ),
     )
 
@@ -629,6 +921,10 @@ def _messages_from_items(items: tuple[ConversationItem, ...]) -> tuple[Message, 
     assistant_groups: dict[ModelStepId, dict[str, Any]] = {}
     assistant_order: list[ModelStepId] = []
     for item in items:
+        if isinstance(item, CompactionItem) and item.context_reset:
+            continue
+        if isinstance(item, ContextItem) and item.is_snapshot_only:
+            continue
         if isinstance(item, (AssistantMessageItem, ReasoningItem, ToolCallItem)):
             group = assistant_groups.get(item.step_id)
             if group is None:
@@ -643,14 +939,24 @@ def _messages_from_items(items: tuple[ConversationItem, ...]) -> tuple[Message, 
                 group["calls"].append(item.call)
             continue
         _flush_legacy_assistants(messages, assistant_groups, assistant_order)
-        if isinstance(item, UserMessageItem):
+        if isinstance(item, HostedToolItem):
+            messages.append(
+                Message(
+                    MessageRole.USER,
+                    item.compatibility_content,
+                    MessageId(str(item.id)),
+                    item.turn_id,
+                    created_at=item.created_at,
+                )
+            )
+        elif isinstance(item, (UserMessageItem, TurnAbortedItem)):
             messages.append(
                 Message(
                     MessageRole.USER,
                     item.content,
                     MessageId(str(item.id)),
                     item.turn_id,
-                    attachments=item.attachments,
+                    attachments=item.attachments if isinstance(item, UserMessageItem) else (),
                     created_at=item.created_at,
                 )
             )
@@ -672,6 +978,16 @@ def _messages_from_items(items: tuple[ConversationItem, ...]) -> tuple[Message, 
             messages.append(
                 Message(
                     role,
+                    item.content,
+                    MessageId(str(item.id)),
+                    item.turn_id,
+                    created_at=item.created_at,
+                )
+            )
+        elif isinstance(item, BudgetNoticeItem):
+            messages.append(
+                Message(
+                    MessageRole.DEVELOPER,
                     item.content,
                     MessageId(str(item.id)),
                     item.turn_id,

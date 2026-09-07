@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import os
 import re
 import signal
@@ -7,6 +6,7 @@ import stat
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from corki.protocol.ids import new_tool_call_id
 from corki.protocol.tools import ToolCall
@@ -76,14 +76,13 @@ def test_exec_command_supports_a_real_pseudo_terminal(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_process_output_budget_keeps_exact_tail_for_oversized_chunk() -> None:
+def test_process_output_budget_keeps_head_and_tail_for_oversized_chunk() -> None:
     session = _ProcessSession("test", None, 5)  # type: ignore[arg-type]
 
     session.append(b"abcdefgh")
 
     output = session.take_output()
-    assert "3 earlier output bytes omitted" in output
-    assert output.endswith("defgh")
+    assert output == "ab\n... 3 bytes omitted ...\nfgh"
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups only")
@@ -263,20 +262,17 @@ def test_update_plan_enforces_single_active_step(tmp_path: Path) -> None:
 
 
 def test_view_image_returns_multimodal_attachment(tmp_path: Path) -> None:
-    # One transparent 1x1 PNG.
-    image = base64.b64decode(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF"
-        "gAI/ScL7WQAAAABJRU5ErkJggg=="
-    )
     path = tmp_path / "pixel.png"
-    path.write_bytes(image)
+    with Image.new("RGBA", (1, 1)) as image:
+        image.save(path)
 
     async def scenario() -> None:
-        result = await ViewImageTool().execute(
+        result = await ViewImageTool(supports_original=True).execute(
             call("view_image", {"path": "pixel.png", "detail": "original"}),
             ToolContext(tmp_path),
         )
-        assert result.attachments[0].data_url.startswith("data:image/png;base64,")
-        assert result.attachments[0].detail == "original"
+        assert result.content_items[0].data_url.startswith("data:application/octet-stream;base64,")
+        assert result.content_items[0].detail == "original"
+        assert result.code_mode_output.value["image_url"] == result.content_items[0].data_url
 
     asyncio.run(scenario())

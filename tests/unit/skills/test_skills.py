@@ -188,7 +188,8 @@ def test_explicit_skill_mention_loads_full_body_as_a_separate_context_item(
         builder.build(cwd=tmp_path, turn_id=new_turn_id(), user_input="请使用 $arxiv 找论文")
     )
 
-    selected = [item for item in snapshot.items if "<skill>" in item.content]
+    selected = [item for item in snapshot.input_items if "<skill>" in item.content]
+    assert not any("<skill>" in item.content for item in snapshot.items)
     assert len(selected) == 1
     assert "<name>arxiv</name>" in selected[0].content
     assert "# arXiv Research" in selected[0].content

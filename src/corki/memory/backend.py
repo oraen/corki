@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path, PurePosixPath
 
-from corki.context.tokens import estimate_text_tokens
 from corki.memory.artifacts import ensure_memory_layout
+from corki.memory.inputs import truncate_memory_text
 from corki.memory.repository import MemoryRepository
 from corki.protocol.ids import ThreadId
 
 _THREAD_ID = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
+AD_HOC_FILENAME_PATTERN = (
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-[a-z0-9][a-z0-9-]{0,79}\.md"
 )
 
 
@@ -65,30 +69,27 @@ class LocalMemoryBackend:
         max_lines: int | None = None,
         max_tokens: int = 20_000,
     ) -> dict:
-        if line_offset < 1 or (max_lines is not None and max_lines < 1) or max_tokens < 1:
+        if line_offset < 1 or (max_lines is not None and max_lines < 1) or max_tokens < 0:
             raise ValueError("line_offset, max_lines, and max_tokens must be positive")
         target = self._resolve(path)
         if not target.exists():
             raise FileNotFoundError(path)
         if target.is_symlink() or not target.is_file():
             raise MemoryPathError("memory read target must be a regular file")
-        content = target.read_text(encoding="utf-8")
-        lines = content.splitlines(keepends=True)
-        if line_offset > max(1, len(lines)):
+        content = target.read_bytes().decode("utf-8")
+        starts = [0, *(index + 1 for index, char in enumerate(content) if char == "\n")]
+        if line_offset > len(starts):
             raise ValueError("line_offset exceeds file length")
-        selected = lines[line_offset - 1 :]
-        truncated = False
-        if max_lines is not None and len(selected) > max_lines:
-            selected = selected[:max_lines]
-            truncated = True
-        text = "".join(selected)
-        text, token_truncated = _truncate_tokens(text, max_tokens)
+        end_line = line_offset - 1 + max_lines if max_lines is not None else len(starts)
+        end = starts[end_line] if end_line < len(starts) else len(content)
+        selected = content[starts[line_offset - 1] : end]
+        text = truncate_memory_text(selected, max_tokens or 20_000)
         await self._record_usage(text)
         return {
             "path": path,
             "start_line_number": line_offset,
             "content": text,
-            "truncated": truncated or token_truncated,
+            "truncated": end < len(content) or text != selected,
         }
 
     async def search(
@@ -112,8 +113,16 @@ class LocalMemoryBackend:
         if within_lines < 1 or context_lines < 0 or cursor < 0 or not 1 <= limit <= 200:
             raise ValueError("invalid search bounds")
         start = self._resolve(path)
+        if start.is_symlink():
+            raise MemoryPathError("memory paths must not be symbolic links")
         if not start.exists():
             raise FileNotFoundError(path or "")
+        prepared_queries = [
+            _prepare(value, case_sensitive=case_sensitive, normalized=normalized)
+            for value in cleaned
+        ]
+        if any(not value for value in prepared_queries):
+            raise ValueError("queries must not be empty after normalization")
         files = [start] if start.is_file() else sorted(start.rglob("*"))
         matches: list[dict] = []
         for file in files:
@@ -124,16 +133,13 @@ class LocalMemoryBackend:
             ):
                 continue
             try:
-                lines = file.read_text(encoding="utf-8").splitlines()
+                content = file.read_bytes().decode("utf-8")
+                lines = _search_lines(content)
             except UnicodeError:
                 continue
             prepared_lines = [
                 _prepare(value, case_sensitive=case_sensitive, normalized=normalized)
                 for value in lines
-            ]
-            prepared_queries = [
-                _prepare(value, case_sensitive=case_sensitive, normalized=normalized)
-                for value in cleaned
             ]
             for first, last in _matching_windows(
                 prepared_lines, prepared_queries, match_mode, within_lines
@@ -171,18 +177,19 @@ class LocalMemoryBackend:
     def add_note(self, filename: str, note: str) -> dict:
         if len(filename.encode("utf-8")) > 128:
             raise ValueError("memory note filename must be at most 128 bytes")
-        if not re.fullmatch(
-            r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]{0,79}\.md",
-            filename,
-        ):
+        if not re.fullmatch(AD_HOC_FILENAME_PATTERN, filename):
             raise ValueError("memory note filename must be YYYY-MM-DDTHH-MM-SS-<slug>.md")
         if not note.strip():
             raise ValueError("memory note must not be empty")
+        content = note.encode("utf-8")
+        # A long-lived backend cannot rely on its construction-time path check.
+        # This rejects existing redirected ancestors, not adversarial rename races.
+        ensure_memory_layout(self.root)
         directory = self.root / "extensions" / "ad_hoc" / "notes"
         target = directory / filename
-        with target.open("x", encoding="utf-8") as handle:
-            handle.write(note.rstrip() + "\n")
-        target.chmod(0o600)
+        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
         return {"path": target.relative_to(self.root).as_posix()}
 
     def _resolve(self, relative: str | None) -> Path:
@@ -196,7 +203,7 @@ class LocalMemoryBackend:
         current = self.root
         for index, part in enumerate(logical.parts):
             current = current / part
-            if current.exists() and current.is_symlink():
+            if current.is_symlink():
                 raise MemoryPathError("memory paths must not traverse symbolic links")
             if current.exists() and index + 1 < len(logical.parts) and not current.is_dir():
                 raise MemoryPathError("memory path traverses a non-directory component")
@@ -211,10 +218,19 @@ class LocalMemoryBackend:
 
 
 def _prepare(value: str, *, case_sensitive: bool, normalized: bool) -> str:
+    value = value if case_sensitive else value.lower()
     if normalized:
-        value = re.sub(r"[\\/_-]+", " ", value)
-        value = " ".join(value.split())
-    return value if case_sensitive else value.casefold()
+        value = "".join(char for char in value if char.isalnum())
+    return value
+
+
+def _search_lines(content: str) -> list[str]:
+    """Rust str.lines: LF or CRLF terminators, no extra empty line after final LF."""
+    if not content:
+        return []
+    parts = content.split("\n")
+    terminated = [line.removesuffix("\r") for line in parts[:-1]]
+    return terminated + ([parts[-1]] if parts[-1] else [])
 
 
 def _matching_windows(
@@ -244,16 +260,3 @@ def _matching_windows(
             for other_index, other in enumerate(matches)
         )
     ]
-
-
-def _truncate_tokens(text: str, limit: int) -> tuple[str, bool]:
-    if estimate_text_tokens(text) <= limit:
-        return text, False
-    low, high = 0, len(text)
-    while low < high:
-        middle = (low + high + 1) // 2
-        if estimate_text_tokens(text[:middle]) <= limit:
-            low = middle
-        else:
-            high = middle - 1
-    return text[:low].rstrip() + "\n…truncated…\n", True

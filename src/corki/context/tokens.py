@@ -7,17 +7,28 @@ import json
 import math
 from collections.abc import Iterable
 
+from corki.protocol.audio import wav_duration_seconds
 from corki.protocol.items import (
     AssistantMessageItem,
+    BudgetNoticeItem,
     CompactionItem,
     ContextItem,
     ConversationItem,
+    HostedToolItem,
     ReasoningItem,
     ToolCallItem,
     ToolResultItem,
+    TurnAbortedItem,
     UserMessageItem,
 )
-from corki.protocol.tools import ImageAttachment, ToolSpec
+from corki.protocol.tool_names import compatible_tool_name
+from corki.protocol.tools import (
+    AudioAttachment,
+    EncryptedContent,
+    ImageAttachment,
+    TextContent,
+    ToolSpec,
+)
 
 _RESIZED_IMAGE_TOKENS = math.ceil(7_373 / 4)
 _ORIGINAL_IMAGE_PATCH_SIZE = 32
@@ -38,27 +49,70 @@ def estimate_text_tokens(text: str) -> int:
 
 
 def estimate_item_tokens(item: ConversationItem) -> int:
+    if isinstance(item, ContextItem) and item.is_snapshot_only:
+        return 0
     overhead = 12
+    if isinstance(item, HostedToolItem):
+        return overhead + estimate_text_tokens(item.compatibility_content)
     if isinstance(item, UserMessageItem):
+        if item.content_items:
+            return overhead + sum(
+                estimate_text_tokens(part.text)
+                if isinstance(part, TextContent)
+                else estimate_audio_tokens(part)
+                if isinstance(part, AudioAttachment)
+                else _estimate_image_tokens(part)
+                for part in item.content_items
+            )
         return (
             overhead
             + estimate_text_tokens(item.content)
             + sum(_estimate_image_tokens(value) for value in item.attachments)
         )
     if isinstance(item, ReasoningItem):
+        if item.encrypted_content is not None:
+            # Codex estimates decoded model-visible reasoning after its fixed
+            # encrypted envelope, not the serialized base64/summary text.
+            decoded_bytes = max(0, len(item.encrypted_content.encode("utf-8")) * 3 // 4 - 650)
+            return (decoded_bytes + 3) // 4
         return (
             overhead
             + estimate_text_tokens(item.content)
             + estimate_text_tokens(item.encrypted_content or "")
         )
-    if isinstance(item, (AssistantMessageItem, ContextItem)):
+    if isinstance(item, (AssistantMessageItem, ContextItem, TurnAbortedItem, BudgetNoticeItem)):
         return overhead + estimate_text_tokens(item.content)
     if isinstance(item, ToolCallItem):
         serialized = item.call.raw_arguments or json.dumps(
             dict(item.call.arguments or {}), ensure_ascii=False
         )
-        return overhead + estimate_text_tokens(item.call.name) + estimate_text_tokens(serialized)
+        if item.call.input_kind == "freeform" and item.call.parse_error is None:
+            # The compatible wrapper escapes source newlines/quotes. Reserve
+            # that representation even when native transport may be cheaper.
+            serialized = json.dumps({"input": item.call.raw_arguments}, ensure_ascii=False)
+        name_tokens = max(
+            estimate_text_tokens(item.call.name),
+            estimate_text_tokens(compatible_tool_name(item.call.name)),
+        )
+        return overhead + name_tokens + estimate_text_tokens(serialized)
     if isinstance(item, ToolResultItem):
+        if item.content_items:
+            return (
+                overhead
+                + estimate_text_tokens(item.tool_name)
+                + sum(
+                    estimate_text_tokens(part.text)
+                    if isinstance(part, TextContent)
+                    else estimate_audio_tokens(part)
+                    if isinstance(part, AudioAttachment)
+                    else estimate_encrypted_output_tokens(
+                        part, discounted=item.input_kind != "freeform"
+                    )
+                    if isinstance(part, EncryptedContent)
+                    else _estimate_image_tokens(part)
+                    for part in item.content_items
+                )
+            )
         content_tokens = estimate_text_tokens(item.content)
         if item.discovered_tools:
             # Native search serializes the typed definitions rather than the
@@ -72,6 +126,7 @@ def estimate_item_tokens(item: ConversationItem) -> int:
                         ensure_ascii=False,
                     )
                 ),
+                64 + sum(estimate_tool_tokens(spec) for spec in item.discovered_tools),
             )
         return (
             overhead
@@ -80,8 +135,25 @@ def estimate_item_tokens(item: ConversationItem) -> int:
             + sum(_estimate_image_tokens(value) for value in item.attachments)
         )
     if isinstance(item, CompactionItem):
+        if item.context_reset:
+            return 0
         return overhead + estimate_text_tokens(item.summary)
     raise TypeError(f"unsupported conversation item: {type(item).__name__}")
+
+
+def estimate_encrypted_output_tokens(part: EncryptedContent, *, discounted: bool = True) -> int:
+    encoded_bytes = len(part.encrypted_content.encode("utf-8"))
+    visible_bytes = (encoded_bytes * 9 + 15) // 16 if discounted else encoded_bytes
+    return (visible_bytes + 3) // 4
+
+
+def estimate_audio_tokens(attachment: AudioAttachment) -> int:
+    duration = wav_duration_seconds(attachment.data_url)
+    return (
+        math.ceil(duration * 10)
+        if duration is not None
+        else estimate_text_tokens(attachment.data_url)
+    )
 
 
 def _estimate_image_tokens(attachment: ImageAttachment) -> int:
@@ -189,14 +261,20 @@ def estimate_request_tokens(
     items: Iterable[ConversationItem],
     tools: Iterable[ToolSpec],
 ) -> int:
-    tool_tokens = sum(
-        estimate_text_tokens(
-            json.dumps(tool.as_chat_completion_tool(), ensure_ascii=False, sort_keys=True)
-        )
-        for tool in tools
-    )
+    tool_tokens = sum(estimate_tool_tokens(tool) for tool in tools)
     return (
         estimate_text_tokens(instructions)
         + tool_tokens
         + sum(estimate_item_tokens(item) for item in items)
+    )
+
+
+def estimate_tool_tokens(tool: ToolSpec) -> int:
+    """Reserve the larger wire representation, including native raw grammars."""
+    return max(
+        estimate_text_tokens(json.dumps(definition, ensure_ascii=False, sort_keys=True))
+        for definition in (
+            tool.as_chat_completion_tool(),
+            tool.as_response_tool(native_freeform=True),
+        )
     )

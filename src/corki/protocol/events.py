@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from corki.protocol.ids import ThreadId, ToolCallId, TurnId
 
@@ -12,6 +13,21 @@ class TurnStarted:
     thread_id: ThreadId
     turn_id: TurnId
     resumed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class WarningEvent:
+    """Nonfatal, transient diagnostic; not a persisted model-history item."""
+
+    thread_id: ThreadId
+    turn_id: TurnId
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class ContextCompactionStarted:
+    thread_id: ThreadId
+    turn_id: TurnId
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,9 +51,10 @@ class ModelRetryScheduled:
     thread_id: ThreadId
     turn_id: TurnId
     attempt: int
-    max_attempts: int
+    max_attempts: int | None
     delay_seconds: float
     error: str
+    purpose: str = "sampling"
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +85,7 @@ class AssistantMessageCompleted:
 class AssistantMessageInterrupted:
     thread_id: ThreadId
     turn_id: TurnId
+    reason: Literal["steering", "retry"] = "steering"
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +152,8 @@ class TurnCancelled:
 
 RuntimeEvent = (
     TurnStarted
+    | ContextCompactionStarted
+    | WarningEvent
     | AssistantTextDelta
     | AssistantReasoningDelta
     | ModelRetryScheduled

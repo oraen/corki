@@ -1,4 +1,4 @@
-"""Construct one immutable model-visible context snapshot per turn."""
+"""Construct one immutable world-state and optional turn-input snapshot per step."""
 
 from __future__ import annotations
 
@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from corki.context.extensions import ContextContributor
+from corki.context.extensions import (
+    ContextContributor,
+    InputContextContributions,
+    InputContextContributor,
+)
 from corki.context.instructions import load_project_instructions
 from corki.context.project import inspect_project
 from corki.prompting import (
@@ -23,9 +27,14 @@ from corki.protocol.items import ContextItem, ContextRole
 
 @dataclass(frozen=True, slots=True)
 class ContextSnapshot:
+    """Current world state plus input-attached fragments, with distinct lifetimes."""
+
     instructions: str
     items: tuple[ContextItem, ...]
     project_root: Path
+    input_items: tuple[ContextItem, ...] = ()
+    warnings: tuple[str, ...] = ()
+    section_warnings: tuple[tuple[str, str], ...] = ()
 
 
 class ContextBuilder:
@@ -40,6 +49,10 @@ class ContextBuilder:
         self._assembler = PromptAssembler(store or PromptStore())
         self._contributors = contributors
 
+    def base_instructions(self) -> str:
+        """Read cached base instructions without refreshing world-state contributors."""
+        return self._assembler.assemble(base_template="agent/base", contributions=()).instructions
+
     async def build(
         self,
         *,
@@ -47,6 +60,7 @@ class ContextBuilder:
         turn_id: TurnId,
         user_input: str = "",
         realtime_active: bool = False,
+        include_input_context: bool = True,
     ) -> ContextSnapshot:
         project = await inspect_project(cwd)
         agents = load_project_instructions(project.root, cwd)
@@ -93,6 +107,7 @@ class ContextBuilder:
                     variables={"directory": str(cwd), "instructions": agents},
                 )
             )
+        warnings: list[str] = []
         for contributor in self._contributors:
             contributions.extend(
                 contributor.contributions(
@@ -101,12 +116,21 @@ class ContextBuilder:
                     realtime_active=realtime_active,
                 )
             )
+            if include_input_context and isinstance(contributor, InputContextContributor):
+                selected = contributor.input_contributions(cwd=cwd, user_input=user_input)
+                if isinstance(selected, InputContextContributions):
+                    contributions.extend(selected.contributions)
+                    warnings.extend(selected.warnings)
+                else:
+                    contributions.extend(selected)
         assembly = self._assembler.assemble(
             base_template="agent/base",
             contributions=contributions,
         )
-        items = tuple(
-            ContextItem(
+        items: list[ContextItem] = []
+        input_items: list[ContextItem] = []
+        for fragment in assembly.fragments:
+            item = ContextItem(
                 key=fragment.key,
                 role=(
                     ContextRole.DEVELOPER
@@ -115,11 +139,18 @@ class ContextBuilder:
                 ),
                 content=fragment.content,
                 turn_id=turn_id,
+                snapshot_state=fragment.snapshot_state,
             )
-            for fragment in assembly.fragments
-        )
+            (input_items if fragment.input_scoped else items).append(item)
         return ContextSnapshot(
             instructions=assembly.instructions,
-            items=items,
+            items=tuple(items),
             project_root=project.root,
+            input_items=tuple(input_items),
+            warnings=tuple(warnings),
+            section_warnings=tuple(
+                (fragment.key, message)
+                for fragment in assembly.fragments
+                for message in fragment.warnings
+            ),
         )

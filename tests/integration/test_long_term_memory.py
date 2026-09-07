@@ -9,16 +9,17 @@ import pytest
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
+from corki.mcp.tools import MCPTool
 from corki.memory import SQLiteMemoryRepository, StageOneMemory
 from corki.models import ModelCompleted, ModelRequest
 from corki.models.types import ModelEvent
 from corki.protocol.events import TurnCompleted
 from corki.protocol.ids import ToolCallId, new_thread_id, new_turn_id
 from corki.protocol.items import AssistantMessageItem, ContextItem, ToolCallItem, new_step_id
-from corki.protocol.tools import ToolCall, ToolResult, ToolSpec
+from corki.protocol.tools import ToolCall
 from corki.sessions import TurnRecord, TurnStatus
 from corki.storage import SQLiteSessionRepository
-from corki.tools import ToolContext, ToolRegistry
+from corki.tools import ToolRegistry
 
 
 class RuntimeModel:
@@ -45,23 +46,26 @@ class RuntimeModel:
         return None
 
 
-class ExternalMCPTool:
-    @property
-    def spec(self) -> ToolSpec:
-        return ToolSpec(
-            name="mcp__docs__search",
-            description="Return external documentation.",
-            parameters={
-                "type": "object",
-                "properties": {"query": {"type": "string"}},
-                "required": ["query"],
-                "additionalProperties": False,
-            },
-        )
+class ExternalMCPTool(MCPTool):
+    def __init__(self):
+        class Client:
+            async def call_tool(self, name, arguments):
+                return {"content": [{"type": "text", "text": "external result"}]}
 
-    async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        del context
-        return ToolResult(call.id, call.name, "external result")
+        super().__init__(
+            "docs",
+            {
+                "name": "search",
+                "description": "Return external documentation.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                    "additionalProperties": False,
+                },
+            },
+            Client(),
+        )
 
 
 def test_custom_session_repository_requires_matching_memory_repository(tmp_path: Path) -> None:
@@ -165,6 +169,133 @@ def test_external_mcp_use_marks_thread_ineligible_for_memory_generation(tmp_path
     assert isinstance(events[-1], TurnCompleted)
     assert not claims
     assert thread_id != new_thread_id()
+
+
+def test_polluted_published_source_enqueues_and_cold_runtime_rebuilds_memory(tmp_path):
+    import sqlite3
+    from datetime import UTC, datetime
+
+    from corki.memory.artifacts import sync_stage_one_artifacts, write_consolidated_artifacts
+    from corki.memory.models import ConsolidatedMemory
+
+    async def scenario():
+        database, root = tmp_path / "sessions.db", tmp_path / "memories"
+        sessions = SQLiteSessionRepository(database)
+        memories = SQLiteMemoryRepository(database)
+        source = new_thread_id()
+        await sessions.create_thread(source, tmp_path)
+        version = datetime.now(UTC).isoformat()
+        memory = StageOneMemory(source, tmp_path, version, "RETRACT_THIS_SOURCE", "Old evidence")
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                "INSERT INTO memory_stage1_outputs(thread_id,cwd,source_updated_at,"
+                "raw_memory,rollout_summary) VALUES (?,?,?,?,?)",
+                (source, str(tmp_path), version, memory.raw_memory, memory.rollout_summary),
+            )
+        sync_stage_one_artifacts(root, (memory,))
+        write_consolidated_artifacts(
+            root, ConsolidatedMemory("RETRACT_THIS_SOURCE", "Old index", ())
+        )
+        claim = await memories.claim_consolidation(lease_seconds=60)
+        assert claim is not None and await memories.complete_consolidation(claim, (memory,))
+        registry = ToolRegistry()
+        registry.register(ExternalMCPTool())
+        runtime = LangGraphRuntime.create(
+            settings=CorkiSettings(
+                working_directory=tmp_path,
+                skills_enabled=False,
+                memories_enabled=True,
+                memories_generate=False,
+                memories_disable_on_external_context=True,
+            ),
+            database_path=database,
+            thread_id=source,
+            model=RuntimeModel([("tool", "mcp__docs__search"), ("answer", "done")]),
+            registry=registry,
+            memory_root=root,
+        )
+        try:
+            assert isinstance(
+                [e async for e in runtime.stream("read external docs")][-1], TurnCompleted
+            )
+            with sqlite3.connect(database) as connection:
+                state = connection.execute(
+                    "SELECT status,input_watermark,completed_watermark "
+                    "FROM memory_jobs WHERE job_key='global'"
+                ).fetchone()
+                assert state[0] == "pending" and state[1] > state[2]
+                assert (
+                    connection.execute(
+                        "SELECT memory_mode FROM threads WHERE id=?", (source,)
+                    ).fetchone()[0]
+                    == "polluted"
+                )
+        finally:
+            await runtime.aclose()
+        with sqlite3.connect(database) as connection:
+            # Next eligible startup, without changing the production cooldown policy.
+            connection.execute("UPDATE memory_jobs SET finished_at=0 WHERE job_key='global'")
+
+        class MemoryModel:
+            count = 0
+
+            async def stream(self, request):
+                self.count += 1
+                assert request.output_schema_name == "corki_memory_consolidation"
+                data = json.loads(request.items[0].content)
+                assert "RETRACT_THIS_SOURCE" in data["previous_memory"]
+                assert "RETRACT_THIS_SOURCE" not in data["raw_memories"]
+                assert not tuple((root / "rollout_summaries").glob("*.md"))
+                value = {
+                    "memory": "No supported evidence remains.",
+                    "memory_summary": "REBUILT_INDEX",
+                    "skills": [],
+                }
+                yield ModelCompleted(
+                    (
+                        AssistantMessageItem(
+                            json.dumps(value), request.items[-1].turn_id, new_step_id()
+                        ),
+                    )
+                )
+
+        main, background = (
+            RuntimeModel([("answer", "ready"), ("answer", "recalled")]),
+            MemoryModel(),
+        )
+        cold = LangGraphRuntime.create(
+            settings=CorkiSettings(
+                working_directory=tmp_path, skills_enabled=False, memories_enabled=True
+            ),
+            database_path=database,
+            model=main,
+            memory_model=background,
+            memory_root=root,
+        )
+        try:
+            assert isinstance([e async for e in cold.stream("initialize")][-1], TurnCompleted)
+            report = await cold._memory_service.wait()
+            assert report.claimed == 0 and report.consolidated and not report.failed
+            assert isinstance([e async for e in cold.stream("recall")][-1], TurnCompleted)
+            index = next(
+                i
+                for i in reversed(main.requests[-1].items)
+                if isinstance(i, ContextItem) and i.key == "memory.instructions"
+            )
+            assert "REBUILT_INDEX" in index.content and background.count == 1
+            with sqlite3.connect(database) as connection:
+                assert (
+                    connection.execute(
+                        "SELECT selected_for_phase2 FROM memory_stage1_outputs WHERE thread_id=?",
+                        (source,),
+                    ).fetchone()[0]
+                    == 0
+                )
+            assert await sessions.load_items(source), "pollution is not archive erasure"
+        finally:
+            await cold.aclose()
+
+    asyncio.run(scenario())
 
 
 def test_memory_citation_is_hidden_persisted_and_updates_usage(tmp_path: Path) -> None:

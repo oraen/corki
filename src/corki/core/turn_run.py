@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from typing import Literal
 
 from corki.protocol.events import RuntimeEvent
 from corki.protocol.ids import TurnId
@@ -18,6 +19,7 @@ class TurnRun:
         self.started = False
         self.finishing = False
         self.cancel_requested = False
+        self.cancel_reason: Literal["interrupted", "replaced"] | None = None
         self.terminal: RuntimeEvent | None = None
         self.error: BaseException | None = None
         self.cleanup_error: BaseException | None = None
@@ -36,10 +38,11 @@ class TurnRun:
 
         self.task = asyncio.create_task(owned(), name=f"corki-turn-{self.turn_id}")
 
-    def cancel(self) -> None:
+    def cancel(self, *, reason: Literal["interrupted", "replaced"] = "interrupted") -> None:
         if self.finishing or self.cancel_requested:
             return
         self.cancel_requested = True
+        self.cancel_reason = reason
         # Cancelling a task before its first instruction prevents its finally
         # block from running. The operation checks this flag on startup instead.
         if self.started and self.task is not None:

@@ -41,6 +41,7 @@ class SkillListTool:
                     "path": str(skill.path),
                 }
                 for skill in snapshot.skills
+                if snapshot.is_visible(skill)
             ],
             "warnings": [f"{error.path}: {error.message}" for error in snapshot.errors],
         }
