@@ -1,12 +1,13 @@
 """Model-visible hosted output copies; original event payloads remain immutable."""
 
-import json
 import math
 from dataclasses import replace
 
 from corki.protocol.audio import wav_duration_seconds
+from corki.protocol.hosted import decode_hosted_payload
 from corki.protocol.items import HostedToolItem
 from corki.protocol.truncation import TruncationPolicy
+from corki.protocol.wire_numbers import dumps_wire
 
 
 def truncate_output_text(text: str, policy: TruncationPolicy) -> str:
@@ -80,7 +81,7 @@ def project_hosted_items(items, policy: TruncationPolicy):
         if not isinstance(item, HostedToolItem) or item.model_payload_json is not None:
             projected.append(item)
             continue
-        payload = json.loads(item.payload_json)
+        payload = decode_hosted_payload(item.payload_json)
         if payload["type"] != "function_call_output":
             projected.append(item)
             continue
@@ -94,6 +95,6 @@ def project_hosted_items(items, policy: TruncationPolicy):
             projected.append(item)
             continue
         payload["output"] = body
-        value = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        value = dumps_wire(payload)
         projected.append(replace(item, model_payload_json=value))
     return tuple(projected)

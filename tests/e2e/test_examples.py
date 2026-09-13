@@ -54,12 +54,12 @@ def test_extensions_demo() -> None:
     assert result["model_continuation"] is True
     assert result["mcp_discovered"] is True
     assert "tool_search" in result["initial_tools"]
-    assert "mcp__fixture__echo" not in result["initial_tools"]
+    assert "mcp__fixture::echo" not in result["initial_tools"]
 
     assert result["status"] == "ok"
     assert result["skill_recalled"] is True
     assert result["plugin_called"] is True
     assert result["mcp_called"] is True
-    assert {"skill_read", "plugin__demo__echo", "mcp__fixture__echo"} <= set(
+    assert {"skill_read", "plugin__demo__echo", "mcp__fixture::echo"} <= set(
         result["advertised_tools"]
     )

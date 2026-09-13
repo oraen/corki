@@ -6,6 +6,8 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Literal
 
+from corki.core.step_settings import StepSettingsState
+from corki.core.user_input import UserInputBroker
 from corki.protocol.events import RuntimeEvent
 from corki.protocol.ids import TurnId
 
@@ -23,6 +25,10 @@ class TurnRun:
         self.terminal: RuntimeEvent | None = None
         self.error: BaseException | None = None
         self.cleanup_error: BaseException | None = None
+        self.models: StepSettingsState | None = None
+        self.user_input = UserInputBroker()
+        # Final diagnostics must not need space in an abandoned bounded UI queue.
+        self.final_events: list[RuntimeEvent] = []
 
     def start(self, operation: Callable[[TurnRun], Awaitable[RuntimeEvent]]) -> None:
         async def owned() -> None:

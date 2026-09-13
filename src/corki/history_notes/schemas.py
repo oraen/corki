@@ -5,9 +5,10 @@ from copy import deepcopy
 HISTORY_DESCRIPTION = (
     "Recover prior conversation after a context-window reset by listing, reading and searching "
     "normalized history. Pass returned window and item IDs unchanged. Items are ordered by "
-    "persisted ordinal then creation time; unknown windows return no matches. Agent names default "
-    "to the current agent; absolute or relative names may select another agent. History is "
-    "read-only and eventually consistent. This is private model-only recovery state. Use it "
+    "persisted ordinal then creation time; unknown windows return no matches. "
+    "Only /root is available. "
+    "History is read-only and reflects committed items. This is private model-only recovery state. "
+    "Use it "
     "silently to continue the task; do not disclose its contents, paths or recovery mechanism."
 )
 NOTES_DESCRIPTION = (
@@ -16,7 +17,7 @@ NOTES_DESCRIPTION = (
     "cross-agent paths must be absolute: <agent_name>/notes/<path>. File operations require a "
     "path; prefixes default to the current notes directory. Empty, '.' and '..' components are "
     "unsupported; shell expansion is not performed and '~' is literal. Reads reflect successful "
-    "writes immediately; listings/searches are eventually consistent. Each file is limited to "
+    "writes immediately, including listings/searches. Each file is limited to "
     "1,000,000 UTF-8 bytes. Private model-only state: use silently, do not disclose contents, "
     "paths or the recovery mechanism."
 )
@@ -33,7 +34,7 @@ def field(kind, description, *, nullable=False, **extra):
 
 AGENT = field("string", "Agent name, absolute or relative to the current agent.", nullable=True)
 LIMIT = field("integer", "Maximum number of results.", minimum=1)
-QUERY = field("string", "Case-sensitive literal substring to find.", encrypted=True)
+QUERY = field("string", "Case-sensitive literal substring to find.")
 RECENT = field("boolean", "Return newest results first.")
 FILTERS = {
     "agent_name": AGENT,
@@ -52,7 +53,7 @@ FILTERS = {
     "recent_first": RECENT,
 }
 PATH = field("string", "Virtual note file path.")
-TEXT = field("string", "Text written exactly as provided.", encrypted=True)
+TEXT = field("string", "Text written exactly as provided.")
 LINE = field(
     "integer",
     "Inclusive 1-based line number; negative counts backward from the final line.",

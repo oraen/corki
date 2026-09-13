@@ -7,6 +7,7 @@ import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from memory_evidence import inspect_worker_evidence
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -68,8 +69,8 @@ class MemoryModel:
 
     async def stream(self, request):
         self.requests.append(request)
-        assert not request.tools
-        value = json.loads(request.items[0].content)
+        assert request.tools and request.output_schema is None
+        value = inspect_worker_evidence(request)
         assert "detail-valid" in value["raw_memories"]
         assert "detail-stale" not in value["raw_memories"]
         assert "detail-selected-old" not in value["raw_memories"]
@@ -134,8 +135,11 @@ def test_runtime_prunes_only_one_batch_then_consolidates_visible_inputs(tmp_path
                 assert "detail-valid" in (root / "MEMORY.md").read_text()
                 assert len(tuple((root / "rollout_summaries").glob("*.md"))) == 1
                 await runtime._memory_service.wait()
+                prefix = await runtime._repository.load_items(current)
+                assert isinstance([e async for e in runtime.compact()][-1], TurnCompleted)
                 events = [event async for event in runtime.stream("recall")]
                 assert isinstance(events[-1], TurnCompleted)
+                assert (await runtime._repository.load_items(current))[: len(prefix)] == prefix
                 latest = next(
                     item
                     for item in reversed(main.requests[-1].items)

@@ -30,6 +30,7 @@ class _DynamicSearchInfo:
 @dataclass(frozen=True)
 class _CachedSearch:
     sources: tuple[ReferenceType | _DynamicSearchInfo, ...]
+    include_sources: bool
     handler: ToolSearchTool
 
 
@@ -43,7 +44,9 @@ class ToolSearchHandlerCache:
     def __init__(self) -> None:
         self._cached: _CachedSearch | None = None
 
-    def get_or_build(self, registry: ToolRegistry) -> ToolSearchTool:
+    def get_or_build(
+        self, registry: ToolRegistry, *, include_sources: bool = True
+    ) -> ToolSearchTool:
         entries = registry.deferred_entries()
         sources: list[ReferenceType | _DynamicSearchInfo] = []
         dynamic_specs: dict[int, ToolSpec] = {}
@@ -63,6 +66,7 @@ class ToolSearchHandlerCache:
         cached = self._cached
         same = (
             cached is not None
+            and cached.include_sources == include_sources
             and len(cached.sources) == len(key)
             and all(
                 (old() is not None and old() is new())
@@ -83,14 +87,16 @@ class ToolSearchHandlerCache:
                 return cached.handler
             # Rebind execution-only ToolSpec fields while retaining the exact
             # equivalent index. An old handler still owns its old definitions.
-            handler = ToolSearchTool.from_specs(specs, index=cached.handler.index)
+            handler = ToolSearchTool.from_specs(
+                specs, index=cached.handler.index, include_sources=include_sources
+            )
         else:
             captured: list[ToolSpec] = []
             for index, (name, _tool) in enumerate(entries):
                 spec = dynamic_specs[index] if index in dynamic_specs else registry.spec(name)
                 assert spec is not None
                 captured.append(spec)
-            handler = ToolSearchTool.from_specs(tuple(captured))
+            handler = ToolSearchTool.from_specs(tuple(captured), include_sources=include_sources)
         # Schema capture, text generation and index build have all succeeded.
-        self._cached = _CachedSearch(key, handler)
+        self._cached = _CachedSearch(key, include_sources, handler)
         return handler

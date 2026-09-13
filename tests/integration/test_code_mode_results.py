@@ -111,7 +111,7 @@ def test_mcp_preserves_protocol_value_without_private_result_metadata(tmp_path, 
     tool = MCPTool("fixture", {"name": "read"}, Client())
     registry = ToolRegistry()
     registry.register(tool)
-    content, ledger, _ = asyncio.run(
+    content, ledger, request = asyncio.run(
         run_script(
             tmp_path,
             "text(await tools.mcp__fixture__read({}));",
@@ -123,7 +123,11 @@ def test_mcp_preserves_protocol_value_without_private_result_metadata(tmp_path, 
     assert json.dumps(expected, ensure_ascii=False, separators=(",", ":")) in content
     nested = ledger[tool.spec.name]
     assert nested["code_mode_output"]["value"] == expected
-    assert "PRIVATE" not in json.dumps(ledger)
+    assert json.loads(nested["mcp_result_json"]) == raw
+    public_ledger = {name: dict(value) for name, value in ledger.items()}
+    del public_ledger[tool.spec.name]["mcp_result_json"]
+    assert "PRIVATE" not in json.dumps(public_ledger)
+    assert "PRIVATE" not in content + repr(request.items)
     assert raw["_meta"] == {"client_secret": "PRIVATE"}
 
 
@@ -202,7 +206,8 @@ def test_oversized_bridge_value_rejects_promise_without_replaying_tool(tmp_path)
 def test_running_shell_session_id_can_be_passed_to_write_stdin(tmp_path):
     source = (
         "const running = await tools.exec_command({"
-        'cmd:\'read answer; printf "%s" "$answer"\',login:false,yield_time_ms:50});'
+        'cmd:\'stty -echo; read answer; printf "%s" "$answer"\','
+        "tty:true,login:false,yield_time_ms:50});"
         "text(typeof running.session_id);"
         "const done = await tools.write_stdin({session_id:running.session_id,"
         "chars:'finished\\n',yield_time_ms:1000});"

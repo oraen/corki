@@ -2,7 +2,6 @@ from dataclasses import replace
 
 import pytest
 
-from corki.models.tool_search import native_search_item
 from corki.protocol.ids import ToolCallId, new_turn_id
 from corki.protocol.items import ToolResultItem, item_to_payload
 from corki.protocol.tools import ToolConcurrency, ToolExposure, ToolSpec
@@ -48,13 +47,13 @@ def test_native_history_remains_original_while_dispatch_tracks_current_registry(
             ),
         )
     )
-    before = native_search_item(result, native_freeform=True)
+    before = item_to_payload(result)
     view = current_discovery_history(specs, (result,), mode="native")
-    assert view == (result,)
-    assert native_search_item(view[0], native_freeform=True) == before
+    assert view[0].discovered_tools == ()
+    assert item_to_payload(result) == before
     plan = build_tool_plan(specs, view, "native")
     assert plan.advertised == ()
-    assert plan.dispatch == (() if change in {"removed", "hidden"} else specs)
+    assert plan.dispatch == ()
 
 
 @pytest.mark.parametrize(

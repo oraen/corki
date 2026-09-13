@@ -14,7 +14,9 @@ from corki.memory import (
     LongTermMemoryService,
     MemoryExtractionClaim,
     SQLiteMemoryRepository,
+    git_baseline,
 )
+from corki.memory.permissions import MemoryPermissionSnapshot
 from corki.models import ModelCompleted
 from corki.protocol.ids import new_thread_id
 from corki.protocol.items import AssistantMessageItem, new_step_id
@@ -71,40 +73,162 @@ def test_stale_owner_does_not_overwrite_new_owner_artifacts(tmp_path):
         assert not report.consolidated
         assert (root / "MEMORY.md").read_text() == "NEW OWNER"
         assert (root / "memory_summary.md").read_text() == "NEW SUMMARY"
-        assert not (root / ".consolidation-baseline.json").exists()
+        assert "MEMORY.md" not in git_baseline.read(root)
 
     asyncio.run(scenario())
 
 
-def test_memory_completed_is_terminal_and_closes_stream(tmp_path):
+def test_stale_owner_cannot_prepare_new_owners_workspace(tmp_path):
     async def scenario():
+        service, repository, _, root = _service(tmp_path, object())
+        git_baseline.prepare(root)
+        old = await repository.claim_consolidation(lease_seconds=0)
+        new = await repository.claim_consolidation(lease_seconds=60)
+        assert old is not None and new is not None and old != new
+        diff = root / "phase2_workspace_diff.md"
+        diff.write_text("NEW OWNER WORKSPACE DIFF", encoding="utf-8")
+        try:
+            with pytest.raises(RuntimeError, match="ownership lost"):
+                await service._consolidation_work(
+                    old, MemoryPermissionSnapshot(service._settings.execution_permissions)
+                )
+            assert diff.read_text() == "NEW OWNER WORKSPACE DIFF"
+            assert await repository.heartbeat_consolidation(new, lease_seconds=60)
+        finally:
+            await service.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("prepare_fails", [False, True])
+def test_cancelled_preparation_holds_fence_until_writer_finishes(
+    tmp_path, monkeypatch, memory_worker_state_dirs, prepare_fails
+):
+    async def scenario():
+        service, repository, _, root = _service(tmp_path, object())
+        claim = await repository.claim_consolidation(lease_seconds=0)
+        assert claim is not None
+        entered, contender_entered = asyncio.Event(), asyncio.Event()
+        release, finished = threading.Event(), threading.Event()
+        loop = asyncio.get_running_loop()
+        original_prepare = git_baseline.prepare
+        original_claim = repository._claim_consolidation
+
+        def held_prepare(path):
+            loop.call_soon_threadsafe(entered.set)
+            try:
+                assert release.wait(5), "test did not release baseline preparation"
+                original_prepare(path)
+                if prepare_fails:
+                    raise OSError("preparation failed after filesystem work")
+            finally:
+                finished.set()
+
+        def competing_claim(seconds):
+            loop.call_soon_threadsafe(contender_entered.set)
+            result = original_claim(seconds)
+            assert finished.is_set(), "takeover overtook the owned filesystem writer"
+            return result
+
+        monkeypatch.setattr(git_baseline, "prepare", held_prepare)
+        monkeypatch.setattr(repository, "_claim_consolidation", competing_claim)
+        work = asyncio.create_task(
+            service._consolidation_work(
+                claim, MemoryPermissionSnapshot(service._settings.execution_permissions)
+            )
+        )
+        contender = None
+        try:
+            await asyncio.wait_for(entered.wait(), 3)
+            work.cancel()
+            await asyncio.sleep(0)
+            work.cancel()
+            contender = asyncio.create_task(repository.claim_consolidation(lease_seconds=60))
+            await asyncio.wait_for(contender_entered.wait(), 3)
+            done, _ = await asyncio.wait((work, contender), timeout=0.03)
+            assert not done and not finished.is_set()
+        finally:
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await work
+            if contender is not None:
+                replacement = await contender
+                assert replacement is not None and replacement != claim
+                assert await repository.heartbeat_consolidation(replacement, lease_seconds=60)
+            await service.aclose()
+        assert finished.is_set()
+        assert memory_worker_state_dirs and all(not p.exists() for p in memory_worker_state_dirs)
+        assert (root / ".git").is_dir(), "owned memory artifacts must survive temporary cleanup"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("slow_layout", [False, True])
+def test_memory_completed_is_terminal_and_closes_stream(tmp_path, monkeypatch, slow_layout):
+    async def scenario():
+        started, closed = asyncio.Event(), asyncio.Event()
+        if slow_layout:
+            original_layout = git_baseline.ensure_layout
+
+            def delayed_layout(root):
+                # Reproduce filesystem preparation exceeding the old whole-pass watchdog.
+                threading.Event().wait(1.1)
+                return original_layout(root)
+
+            monkeypatch.setattr(git_baseline, "ensure_layout", delayed_layout)
+
         class Model:
             closed = False
 
             async def stream(self, request):
+                started.set()
                 try:
                     yield _completion(request)
-                    await asyncio.Event().wait()
+                    raise AssertionError("consumer read beyond ModelCompleted")
                 finally:
                     self.closed = True
+                    closed.set()
 
         model = Model()
         service, _, _, _ = _service(tmp_path, model)
-        report = await asyncio.wait_for(service.run_once(new_thread_id()), timeout=1)
-        assert report.consolidated
-        assert model.closed
+        work = asyncio.create_task(service.run_once(new_thread_id()))
+        try:
+            # Preparation/publication include real Git and SQLite work. The one-second
+            # stream-closure watchdog starts only once the model is actually running.
+            await asyncio.wait_for(started.wait(), timeout=10)
+            await asyncio.wait_for(closed.wait(), timeout=1)
+            report = await asyncio.wait_for(work, timeout=10)
+            assert report.consolidated
+            assert model.closed
+        finally:
+            if not work.done():
+                work.cancel()
+            await asyncio.gather(work, return_exceptions=True)
+            await service.aclose()
 
     asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("failure", ["lost", "error"])
-def test_failed_heartbeat_stops_model_and_does_not_publish(tmp_path, failure):
+@pytest.mark.parametrize("slow_prepare", [False, True])
+def test_failed_heartbeat_stops_model_and_does_not_publish(
+    tmp_path, monkeypatch, failure, slow_prepare
+):
     async def scenario():
-        started = asyncio.Event()
+        started, heartbeat_failed, closed = (asyncio.Event() for _ in range(3))
+        if slow_prepare:
+            original_layout = git_baseline.ensure_layout
+
+            def delayed_layout(root):
+                threading.Event().wait(1.1)
+                return original_layout(root)
+
+            monkeypatch.setattr(git_baseline, "ensure_layout", delayed_layout)
 
         class Repository(SQLiteMemoryRepository):
             async def heartbeat_consolidation(self, claim, *, lease_seconds):
                 await started.wait()
+                heartbeat_failed.set()
                 if failure == "error":
                     raise OSError("heartbeat storage failure")
                 return False
@@ -119,14 +243,26 @@ def test_failed_heartbeat_stops_model_and_does_not_publish(tmp_path, failure):
                     yield _completion(request)
                 finally:
                     self.closed = True
+                    closed.set()
 
         model = Model()
         service, _, _, root = _service(tmp_path, model, Repository)
-        report = await asyncio.wait_for(service.run_once(new_thread_id()), timeout=1)
-        assert report.failed == 1
-        assert model.closed
-        assert not (root / "MEMORY.md").exists()
-        assert service.warnings
+        work = asyncio.create_task(service.run_once(new_thread_id()))
+        try:
+            # Git/SQLite preparation is not the heartbeat-to-model-stop interval.
+            # Keep the one-second stop watchdog, measured from the actual fault.
+            await asyncio.wait_for(heartbeat_failed.wait(), timeout=10)
+            await asyncio.wait_for(closed.wait(), timeout=1)
+            report = await asyncio.wait_for(work, timeout=10)
+            assert report.failed == 1
+            assert model.closed
+            assert not (root / "MEMORY.md").exists()
+            assert service.warnings
+        finally:
+            if not work.done():
+                work.cancel()
+            await asyncio.gather(work, return_exceptions=True)
+            await service.aclose()
 
     asyncio.run(scenario())
 

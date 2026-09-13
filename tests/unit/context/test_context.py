@@ -8,6 +8,7 @@ from corki.protocol.items import AssistantMessageItem, UserMessageItem, new_step
 
 
 def test_context_loads_hierarchical_agents_and_environment(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
     (tmp_path / "pyproject.toml").write_text("[project]\nname='sample'\n")
     (tmp_path / "AGENTS.md").write_text("root instruction")
     nested = tmp_path / "src"

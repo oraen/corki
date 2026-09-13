@@ -5,6 +5,7 @@ import json
 import time
 
 import pytest
+from memory_evidence import inspect_worker_evidence
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -39,8 +40,8 @@ def test_empty_database_initialization_cooldown_and_file_only_changes(
 
             async def stream(self, request):
                 self.requests.append(request)
-                assert not request.tools
-                payload = json.loads(request.items[0].content)
+                assert request.tools and request.output_schema is None
+                payload = inspect_worker_evidence(request)
                 assert "No raw memories yet." in payload["raw_memories"]
                 if len(self.requests) == 2 and change == "detail":
                     assert "edited detail" in payload["previous_memory"]

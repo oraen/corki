@@ -8,7 +8,8 @@ _PARAMETERS = {"type": "object", "properties": {}, "additionalProperties": False
 class NewContextTool:
     spec = ToolSpec(
         "new_context",
-        "Start a new context window. Does not clear, reset, or otherwise affect environment state.",
+        "Request a model-generated history summary and a new context window. "
+        "Environment state is unchanged.",
         _PARAMETERS,
         exposure=ToolExposure.DIRECT_MODEL_ONLY,
     )
@@ -17,7 +18,8 @@ class NewContextTool:
         return ToolResult(
             call.id,
             call.name,
-            "A new context window will start without summarizing conversation history.",
+            "A new context window will start after a successful history summary; "
+            "original history is retained.",
             state_update=ToolStateUpdate(new_context_requested=True),
         )
 
@@ -34,7 +36,11 @@ class GetContextRemainingTool:
         self._thread_id = thread_id
 
     async def execute(self, call, context):
-        remaining = await self._window.remaining_tokens(self._thread_id)
+        remaining = (
+            await context.remaining_context_tokens()
+            if context.remaining_context_tokens is not None
+            else await self._window.remaining_tokens(self._thread_id)
+        )
         count = str(remaining) if remaining is not None else "unknown"
         return ToolResult(
             call.id,

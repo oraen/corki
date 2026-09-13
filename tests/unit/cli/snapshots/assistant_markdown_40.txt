@@ -1,0 +1,16 @@
+• # Result
+
+  Use bold, italic, and x=1.
+
+  - First item with enough words to wrap
+    around the narrow terminal.
+
+  - Second item
+
+  1. Ordered item
+
+  > Quoted text
+
+    print("[literal] **code**")
+
+  Guide (https://example.test/guide)

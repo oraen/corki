@@ -7,7 +7,11 @@ import json
 import math
 from collections.abc import Iterable
 
+from corki.prompting.compaction import render_compaction_summary
 from corki.protocol.audio import wav_duration_seconds
+from corki.protocol.compaction import compaction_payload
+from corki.protocol.context_messages import context_message_groups
+from corki.protocol.item_metadata import item_metadata_payload
 from corki.protocol.items import (
     AssistantMessageItem,
     BudgetNoticeItem,
@@ -16,13 +20,16 @@ from corki.protocol.items import (
     ConversationItem,
     HostedToolItem,
     ReasoningItem,
+    RemoteHistoryItem,
     ToolCallItem,
     ToolResultItem,
     TurnAbortedItem,
     UserMessageItem,
 )
+from corki.protocol.response_body import response_body_payload
 from corki.protocol.tool_names import compatible_tool_name
 from corki.protocol.tools import (
+    ENCRYPTED_OUTPUT_UNAVAILABLE,
     AudioAttachment,
     EncryptedContent,
     ImageAttachment,
@@ -52,6 +59,30 @@ def estimate_item_tokens(item: ConversationItem) -> int:
     if isinstance(item, ContextItem) and item.is_snapshot_only:
         return 0
     overhead = 12
+    if isinstance(item, (AssistantMessageItem, ReasoningItem, ToolCallItem)):
+        identity = item_metadata_payload(item.response_item_metadata_json).get("id")
+        if identity is not None:
+            overhead += estimate_text_tokens(json.dumps({"id": identity}))
+    if isinstance(item, RemoteHistoryItem):
+        payload = item.payload
+        if payload["type"] in ("compaction", "context_compaction"):
+            content = payload.get("encrypted_content") or ""
+            return (max(0, len(content.encode("utf-8")) * 3 // 4 - 650) + 3) // 4
+        total = overhead
+        for part in payload["content"]:
+            if part["type"] == "input_image":
+                total += _estimate_image_tokens(
+                    ImageAttachment(part["image_url"], part.get("detail") or "auto")
+                )
+            elif part["type"] == "input_audio":
+                total += estimate_audio_tokens(AudioAttachment(part["audio_url"]))
+            elif part["type"] == "encrypted_content":
+                total += (
+                    max(0, len(part["encrypted_content"].encode("utf-8")) * 3 // 4 - 650) + 3
+                ) // 4
+            else:
+                total += estimate_text_tokens(part["text"])
+        return total
     if isinstance(item, HostedToolItem):
         return overhead + estimate_text_tokens(item.compatibility_content)
     if isinstance(item, UserMessageItem):
@@ -75,10 +106,31 @@ def estimate_item_tokens(item: ConversationItem) -> int:
             # encrypted envelope, not the serialized base64/summary text.
             decoded_bytes = max(0, len(item.encrypted_content.encode("utf-8")) * 3 // 4 - 650)
             return (decoded_bytes + 3) // 4
+        body = response_body_payload(item.response_body_json, "reasoning")
+        if body is not None:
+            return overhead + sum(
+                12 + estimate_text_tokens(part["text"])
+                for part in [*body["summary"], *(body.get("content") or [])]
+            )
         return (
             overhead
             + estimate_text_tokens(item.content)
             + estimate_text_tokens(item.encrypted_content or "")
+        )
+    if isinstance(item, AssistantMessageItem) and item.response_body_json is not None:
+        body = response_body_payload(item.response_body_json, "message")
+        return overhead + sum(
+            12
+            + (
+                _estimate_image_tokens(
+                    ImageAttachment(part["image_url"], part.get("detail", "auto"))
+                )
+                if part["type"] == "input_image"
+                else estimate_audio_tokens(AudioAttachment(part["audio_url"]))
+                if part["type"] == "input_audio"
+                else estimate_text_tokens(part["text"])
+            )
+            for part in body["content"]
         )
     if isinstance(item, (AssistantMessageItem, ContextItem, TurnAbortedItem, BudgetNoticeItem)):
         return overhead + estimate_text_tokens(item.content)
@@ -88,7 +140,7 @@ def estimate_item_tokens(item: ConversationItem) -> int:
         )
         if item.call.input_kind == "freeform" and item.call.parse_error is None:
             # The compatible wrapper escapes source newlines/quotes. Reserve
-            # that representation even when native transport may be cheaper.
+            # that ordinary function-call representation.
             serialized = json.dumps({"input": item.call.raw_arguments}, ensure_ascii=False)
         name_tokens = max(
             estimate_text_tokens(item.call.name),
@@ -105,29 +157,15 @@ def estimate_item_tokens(item: ConversationItem) -> int:
                     if isinstance(part, TextContent)
                     else estimate_audio_tokens(part)
                     if isinstance(part, AudioAttachment)
-                    else estimate_encrypted_output_tokens(
-                        part, discounted=item.input_kind != "freeform"
-                    )
+                    else estimate_text_tokens(ENCRYPTED_OUTPUT_UNAVAILABLE)
                     if isinstance(part, EncryptedContent)
                     else _estimate_image_tokens(part)
                     for part in item.content_items
                 )
             )
         content_tokens = estimate_text_tokens(item.content)
-        if item.discovered_tools:
-            # Native search serializes the typed definitions rather than the
-            # display text. A short content string must not hide schema costs.
-            content_tokens = max(
-                content_tokens,
-                64
-                + estimate_text_tokens(
-                    json.dumps(
-                        [spec.as_chat_completion_tool() for spec in item.discovered_tools],
-                        ensure_ascii=False,
-                    )
-                ),
-                64 + sum(estimate_tool_tokens(spec) for spec in item.discovered_tools),
-            )
+        # Discovered definitions are internal state. Loaded definitions are
+        # charged by estimate_request_tokens in the ordinary request tools.
         return (
             overhead
             + estimate_text_tokens(item.tool_name)
@@ -135,16 +173,13 @@ def estimate_item_tokens(item: ConversationItem) -> int:
             + sum(_estimate_image_tokens(value) for value in item.attachments)
         )
     if isinstance(item, CompactionItem):
+        if item.remote_payload_json is not None:
+            content = compaction_payload(item.remote_payload_json)["encrypted_content"]
+            return (max(0, len(content.encode("utf-8")) * 3 // 4 - 650) + 3) // 4
         if item.context_reset:
             return 0
-        return overhead + estimate_text_tokens(item.summary)
+        return overhead + estimate_text_tokens(render_compaction_summary(item.summary))
     raise TypeError(f"unsupported conversation item: {type(item).__name__}")
-
-
-def estimate_encrypted_output_tokens(part: EncryptedContent, *, discounted: bool = True) -> int:
-    encoded_bytes = len(part.encrypted_content.encode("utf-8"))
-    visible_bytes = (encoded_bytes * 9 + 15) // 16 if discounted else encoded_bytes
-    return (visible_bytes + 3) // 4
 
 
 def estimate_audio_tokens(attachment: AudioAttachment) -> int:
@@ -265,16 +300,21 @@ def estimate_request_tokens(
     return (
         estimate_text_tokens(instructions)
         + tool_tokens
-        + sum(estimate_item_tokens(item) for item in items)
+        + sum(
+            sum(estimate_item_tokens(part) for part in item) - 12 * (len(item) - 1)
+            if isinstance(item, tuple)
+            else estimate_item_tokens(item)
+            for item in context_message_groups(items)
+        )
     )
 
 
 def estimate_tool_tokens(tool: ToolSpec) -> int:
-    """Reserve the larger wire representation, including native raw grammars."""
+    """Reserve the larger of the two ordinary function-tool representations."""
     return max(
         estimate_text_tokens(json.dumps(definition, ensure_ascii=False, sort_keys=True))
         for definition in (
             tool.as_chat_completion_tool(),
-            tool.as_response_tool(native_freeform=True),
+            tool.as_response_tool(),
         )
     )

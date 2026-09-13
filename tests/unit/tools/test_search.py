@@ -24,7 +24,7 @@ class FixtureTool:
         return ToolResult(call.id, call.name, "ran")
 
 
-def test_freeform_grammar_is_bounded_in_search_and_context(tmp_path):
+def test_freeform_search_preserves_internal_spec_but_budgets_ordinary_schema(tmp_path):
     async def scenario():
         spec = ToolSpec(
             "raw",
@@ -34,19 +34,27 @@ def test_freeform_grammar_is_bounded_in_search_and_context(tmp_path):
             input_kind="freeform",
             freeform_format={"type": "grammar", "syntax": "lark", "definition": "x" * 40_000},
         )
-        assert estimate_request_tokens("", (), (spec,)) >= 10_000
+        small = replace(spec, freeform_format={"type": "text"})
+        assert spec.as_chat_completion_tool() == small.as_chat_completion_tool()
+        assert estimate_request_tokens("", (), (spec,)) == estimate_request_tokens("", (), (small,))
         item = ToolResultItem(
             ToolCallId("s"), "tool_search", "short", new_turn_id(), discovered_tools=(spec,)
         )
-        assert estimate_item_tokens(item) >= 10_000
+        assert estimate_item_tokens(item) == estimate_item_tokens(
+            replace(item, discovered_tools=())
+        )
         registry = ToolRegistry()
         registry.register(FixtureTool(spec))
         registry.register(ToolSearchTool(registry))
         result = await ToolExecutor(registry, output_char_budget=500).execute(
             ToolCall(ToolCallId("s"), "tool_search", {"query": "raw"}), ToolContext(tmp_path)
         )
-        assert not result.is_error and result.discovered_tools == ()
-        assert json.loads(result.content)["omitted_for_budget"] == 1
+        assert not result.is_error and result.discovered_tools == (spec,)
+        assert json.loads(result.content) == {"tools": [spec.as_chat_completion_tool()]}
+        assert "grammar" not in result.content
+        visible = replace(item, content=result.content)
+        assert estimate_item_tokens(visible) >= estimate_text_tokens(result.content)
+        assert estimate_item_tokens(visible) > estimate_item_tokens(item)
 
     asyncio.run(scenario())
 
@@ -94,7 +102,7 @@ def test_invalid_search_parameters_return_observation(tmp_path, query, limit):
     asyncio.run(scenario())
 
 
-def test_exposure_filter_and_budget_never_return_partial_schemas(tmp_path: Path):
+def test_exposure_filter_preserves_complete_matching_schemas(tmp_path: Path):
     async def scenario():
         registry = ToolRegistry()
         for exposure in ToolExposure:
@@ -128,10 +136,10 @@ def test_exposure_filter_and_budget_never_return_partial_schemas(tmp_path: Path)
         assert {spec.name for spec in result.discovered_tools} == {
             "deferred",
             "deferred_model_only",
+            "oversized",
         }
-        assert len(json.loads(result.content)["tools"]) == 2
-        assert json.loads(result.content)["omitted_for_budget"] == 1
-        assert estimate_text_tokens(result.content) < 10_000
+        assert len(json.loads(result.content)["tools"]) == 3
+        assert estimate_text_tokens(result.content) > 10_000
 
     asyncio.run(scenario())
 
@@ -159,7 +167,10 @@ def test_stale_discovery_cannot_load_changed_removed_or_hidden_tool():
         assert "search again" in request_view[0].content
         assert result.discovered_tools == (original,), "raw history was mutated"
     assert not build_tool_plan((original,), (), "compatible").advertised
-    assert not build_tool_plan((original,), (result,), "native").advertised
+    assert (
+        build_tool_plan((original,), (result,), "native").advertised
+        == build_tool_plan((original,), (result,), "compatible").advertised
+    )
     assert build_tool_plan((original,), (result,), "native").dispatch == (original,)
 
 

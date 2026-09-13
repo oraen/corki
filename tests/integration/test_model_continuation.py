@@ -34,7 +34,13 @@ class EchoTool:
 
 def output(kind):
     if kind == "text":
-        return [{"type": "message", "content": [{"type": "output_text", "text": "interim"}]}]
+        return [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "interim"}],
+            }
+        ]
     if kind == "reasoning":
         return [
             {
@@ -152,17 +158,39 @@ def test_valid_empty_completed_response_can_end_turn(tmp_path: Path, completion)
     assert isinstance(events[-1], TurnCompleted), events[-1]
 
 
-def test_codex_tool_then_continuation_then_empty_completion_sequence(tmp_path: Path):
+@pytest.mark.parametrize("terminal_kind", ["empty", "reasoning", "text", "multiple", "whitespace"])
+def test_codex_tool_then_continuation_then_completion_sequence(tmp_path: Path, terminal_kind):
     """current_time_reminders_can_follow_only_user_or_tool_outputs, without time hooks."""
+    terminal_output = output(terminal_kind)
+    expected = "interim" if terminal_kind == "text" else ""
+    if terminal_kind in {"multiple", "whitespace"}:
+        texts = (
+            ["first terminal", " ", "last terminal", "\n"]
+            if terminal_kind == "multiple"
+            else [" \n"]
+        )
+        terminal_output = [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": text}],
+            }
+            for text in texts
+        ]
+        expected = "last terminal" if terminal_kind == "multiple" else ""
     responses = [
         {"output": output("tool")},
         {"output": output("text"), "end_turn": False},
-        {"output": []},
+        {"output": terminal_output},
     ]
     events, requests, calls = asyncio.run(
         run_responses(tmp_path, lambda index: responses[index - 1])
     )
     assert isinstance(events[-1], TurnCompleted), events[-1]
+    # Final answer belongs to the terminal sampling step. Earlier commentary
+    # is retained in history but cannot fill an empty terminal answer.
+    assert events[-1].final_answer == expected
+    assert sum(isinstance(event, (TurnCompleted, TurnFailed)) for event in events) == 1
     assert len(requests) == 3
     assert calls == 1
     assert sum("finish the task" in json.dumps(item) for item in requests[2]["input"]) == 1

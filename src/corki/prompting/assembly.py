@@ -34,12 +34,21 @@ class PromptSlot(IntEnum):
     SESSION = 100
     REALTIME = 200
     PROJECT_INSTRUCTIONS = 300
+    HOST_SKILLS = 350
     PERMISSIONS = 400
     COLLABORATION_MODE = 500
     ENVIRONMENT = 600
     EXTENSIONS = 700
+    WORLD_STATE_EXTENSIONS = 750
     MULTI_AGENT = 800
     TURN = 900
+
+
+class PromptPhase(StrEnum):
+    """Producer-owned initial context phase, independent of fragment ordering."""
+
+    EXTENSION = "extension"
+    WORLD_STATE = "world_state"
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,8 +67,16 @@ class PromptContribution:
     # Feature-owned comparison state, never prompt text. A None template emits
     # a silent snapshot rather than an empty model message.
     snapshot_state: str | None = None
+    # Producer-owned provenance, independent of the stable key or rendered text.
+    content_kind: str | None = None
+    # None preserves legacy host slot semantics. Built-in producers set this explicitly.
+    phase: PromptPhase | None = None
 
     def __post_init__(self) -> None:
+        if self.phase is not None and not isinstance(self.phase, PromptPhase):
+            raise TypeError("phase must be a PromptPhase or None")
+        if self.content_kind is not None and not isinstance(self.content_kind, str):
+            raise TypeError("content_kind must be a string or None")
         if not self.key or not self.key.strip():
             raise ValueError("prompt contribution key must not be empty")
         if self.template_name is None and self.snapshot_state is None:
@@ -82,6 +99,11 @@ class RenderedPrompt:
     input_scoped: bool = False
     warnings: tuple[str, ...] = ()
     snapshot_state: str | None = None
+    content_kind: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.content_kind is not None and not isinstance(self.content_kind, str):
+            raise TypeError("content_kind must be a string or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,10 +140,8 @@ class PromptAssembler:
             names = ", ".join(sorted(duplicate_keys))
             raise DuplicatePromptContributionError(f"duplicate prompt contribution keys: {names}")
 
-        role_order = {PromptRole.DEVELOPER: 0, PromptRole.USER: 1}
         indexed_contributions.sort(
             key=lambda item: (
-                role_order[item[1].role],
                 item[1].slot,
                 item[1].order,
                 item[0],
@@ -142,6 +162,7 @@ class PromptAssembler:
                 input_scoped=contribution.input_scoped,
                 warnings=contribution.warnings,
                 snapshot_state=contribution.snapshot_state,
+                content_kind=contribution.content_kind,
             )
             for _, contribution in indexed_contributions
         )

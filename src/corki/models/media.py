@@ -2,6 +2,7 @@
 
 from corki.media.audio import UNSUPPORTED_INPUT as UNSUPPORTED_AUDIO
 from corki.protocol.tools import (
+    ENCRYPTED_OUTPUT_UNAVAILABLE,
     AudioAttachment,
     EncryptedContent,
     ImageAttachment,
@@ -9,25 +10,16 @@ from corki.protocol.tools import (
     ToolContent,
 )
 
-UNSUPPORTED_ENCRYPTED = (
-    "[Encrypted tool output unavailable: this provider cannot read the opaque result. "
-    "Use a supported provider or request a plaintext result from its source.]"
-)
+UNSUPPORTED_ENCRYPTED = ENCRYPTED_OUTPUT_UNAVAILABLE
 
 
-def response_content(
-    parts: tuple[ToolContent, ...], *, audio_enabled: bool, encrypted_enabled=False
-):
+def response_content(parts: tuple[ToolContent, ...], *, audio_enabled: bool):
     output = []
     for part in parts:
         if isinstance(part, TextContent):
             output.append({"type": "input_text", "text": part.text})
         elif isinstance(part, EncryptedContent):
-            output.append(
-                {"type": "encrypted_content", "encrypted_content": part.encrypted_content}
-                if encrypted_enabled
-                else {"type": "input_text", "text": UNSUPPORTED_ENCRYPTED}
-            )
+            output.append({"type": "input_text", "text": UNSUPPORTED_ENCRYPTED})
         elif isinstance(part, ImageAttachment):
             output.append(
                 {"type": "input_image", "image_url": part.data_url, "detail": part.detail}

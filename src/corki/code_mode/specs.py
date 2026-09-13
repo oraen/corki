@@ -3,19 +3,34 @@
 import json
 import re
 
-from corki.protocol.tools import ToolExposure, ToolSpec
+from corki.protocol.tool_exposure import CODE_MODE_EXPOSURES
+from corki.protocol.tools import ToolSpec
 
 CONTROL_NAMES = {"exec", "wait", "tool_search"}
+
+
+def nested_description(spec):
+    """Describe the call contract before dropping schemas at the worker boundary.
+
+    The native runtime uses TypeScript declarations. This adapter keeps the same
+    information as JSON schema text, including for deferred ALL_TOOLS entries;
+    these schemas are documentation, not worker-side argument/result validators.
+    """
+    parameters = {"type": "string"} if spec.input_kind == "freeform" else spec.parameters
+    description = spec.description + "\nInput schema: " + json.dumps(parameters, ensure_ascii=False)
+    if spec.output_schema is not None:
+        description += "\nOutput schema: " + json.dumps(spec.output_schema, ensure_ascii=False)
+    return description
 
 
 def nested_specs(registry):
     result = {}
     for spec in registry.specs():
-        if spec.name in CONTROL_NAMES or spec.exposure not in {
-            ToolExposure.DIRECT,
-            ToolExposure.DEFERRED,
-            ToolExposure.CODE_MODE_ONLY,
-        }:
+        if (
+            spec.name in CONTROL_NAMES
+            or spec.exposure not in CODE_MODE_EXPOSURES
+            or not registry.namespace_policy.includes_nested(spec.name)
+        ):
             continue
         name = re.sub(r"[^A-Za-z0-9_]", "_", spec.name)
         if name and name[0].isdigit():
@@ -55,6 +70,7 @@ def exec_spec(registry):
             "description": spec.description,
             "input_kind": spec.input_kind,
             "parameters": {"type": "string"} if spec.input_kind == "freeform" else spec.parameters,
+            **({"output_schema": spec.output_schema} if spec.output_schema is not None else {}),
         }
         for name, spec in definitions.items()
         if not spec.exposure.is_deferred

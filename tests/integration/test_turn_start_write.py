@@ -9,7 +9,13 @@ import pytest
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted
-from corki.protocol.events import TurnCancelled, TurnCompleted, TurnFailed, TurnStarted
+from corki.protocol.events import (
+    TurnCancelled,
+    TurnCompleted,
+    TurnFailed,
+    TurnStarted,
+    WarningEvent,
+)
 from corki.protocol.items import UserMessageItem
 from corki.sessions import TurnStatus
 from corki.tools import ToolRegistry
@@ -78,7 +84,10 @@ def test_cancel_first_write_is_owned_joined_and_not_resumed(
         closing = None
         try:
             assert await asyncio.to_thread(entered.wait, 3)
-            assert len(events) == 1 and isinstance(events[0], TurnStarted)
+            assert isinstance(events[0], TurnStarted)
+            # Admission can warn before the first durable write, but cannot
+            # emit model/tool data or a terminal while that write is held.
+            assert all(isinstance(event, WarningEvent) for event in events[1:])
             assert runtime._active_run is not None and not runtime._active_run.done.is_set()
             if action == "stop":
                 await runtime.cancel_active()

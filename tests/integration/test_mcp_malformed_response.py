@@ -28,6 +28,24 @@ from corki.tools import ToolRegistry
         "utf8",
         "nan",
         "surrogate",
+        "empty",
+        "unknown-only",
+        "all-null",
+        "ack-only",
+        "input-required",
+        "future-result",
+        "non-string-result",
+        "meta-array",
+        "block-null",
+        "block-unknown",
+        "block-text-missing",
+        "block-image-missing-mime",
+        "block-resource-missing-uri",
+        "block-link-missing-name",
+        "duplicate-content",
+        "duplicate-error",
+        "duplicate-type",
+        "duplicate-resource-text",
     ],
 )
 def test_remote_malformed_response_is_error_value_without_replay(
@@ -43,12 +61,39 @@ def test_remote_malformed_response_is_error_value_without_replay(
                 if method == "notifications/initialized":
                     return httpx.Response(202)
                 if method == "initialize":
-                    result = {"protocolVersion": PROTOCOL_VERSION}
+                    result = {
+                        "capabilities": {},
+                        "serverInfo": {"name": "fixture", "version": "1"},
+                        "protocolVersion": PROTOCOL_VERSION,
+                    }
                 elif method == "tools/list":
                     result = {"tools": [{"name": "read", "inputSchema": {"type": "object"}}]}
                 else:
                     assert method == "tools/call"
                     calls.append(packet)
+                    duplicate_bodies = {
+                        "duplicate-content": '{"content":null,"content":[]}',
+                        "duplicate-error": '{"content":[],"isError":true,"isError":false}',
+                        "duplicate-type": (
+                            '{"content":[{"type":"PRIVATE","type":"text","text":"ok"}]}'
+                        ),
+                        "duplicate-resource-text": (
+                            '{"content":[{"type":"resource","resource":'
+                            '{"uri":"x","text":"PRIVATE","text":"ok"}}]}'
+                        ),
+                    }
+                    if malformed in duplicate_bodies:
+                        return httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            content=(
+                                '{"jsonrpc":"2.0","id":'
+                                + str(packet["id"])
+                                + ',"result":'
+                                + duplicate_bodies[malformed]
+                                + "}"
+                            ).encode(),
+                        )
                     if malformed in {"json", "utf8"}:
                         return httpx.Response(
                             200, content=b"{PRIVATE" if malformed == "json" else b"\xff"
@@ -60,9 +105,42 @@ def test_remote_malformed_response_is_error_value_without_replay(
                         "error-int": {"content": [], "isError": 1},
                         "nan": {"content": [], "structuredContent": float("nan")},
                         "surrogate": {"content": [], "structuredContent": "\ud800"},
+                        "empty": {},
+                        "unknown-only": {"unknown": "PRIVATE"},
+                        "all-null": {
+                            "content": None,
+                            "structuredContent": None,
+                            "isError": None,
+                            "_meta": None,
+                        },
+                        "ack-only": {"resultType": "complete"},
+                        "input-required": {
+                            "resultType": "input_required",
+                            "requestState": "PRIVATE",
+                            "_meta": {},
+                        },
+                        "future-result": {"content": [], "resultType": "PRIVATE"},
+                        "non-string-result": {"content": [], "resultType": 1},
+                        "meta-array": {"content": [], "_meta": []},
+                        "block-null": {"content": [None]},
+                        "block-unknown": {"content": [{"type": "PRIVATE"}]},
+                        "block-text-missing": {"content": [{"type": "text"}]},
+                        "block-image-missing-mime": {
+                            "content": [{"type": "image", "data": "AAAA"}]
+                        },
+                        "block-resource-missing-uri": {
+                            "content": [{"type": "resource", "resource": {"text": "PRIVATE"}}]
+                        },
+                        "block-link-missing-name": {
+                            "content": [{"type": "resource_link", "uri": "PRIVATE"}]
+                        },
                     }[malformed]
                 return httpx.Response(
-                    200, content=json.dumps({"id": packet["id"], "result": result}).encode()
+                    200,
+                    headers={"content-type": "application/json"},
+                    content=json.dumps(
+                        {"jsonrpc": "2.0", "id": packet["id"], "result": result}
+                    ).encode(),
                 )
 
             return HttpMCPClient(settings, transport=httpx.MockTransport(handler))
@@ -86,7 +164,7 @@ def test_remote_malformed_response_is_error_value_without_replay(
                             ),
                         )
                         if nested
-                        else ToolCall(new_tool_call_id(), "mcp__docs__read", {})
+                        else ToolCall(new_tool_call_id(), "mcp__docs::read", {})
                     )
                     yield ModelCompleted((ToolCallItem(call, turn, step),))
                 else:
@@ -127,7 +205,7 @@ def test_remote_malformed_response_is_error_value_without_replay(
             assert isinstance(events[-1], TurnCompleted), events[-1]
             with sqlite3.connect(database) as db:
                 (encoded,) = db.execute(
-                    "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs__read'"
+                    "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs::read'"
                 ).fetchone()
                 result = json.loads(encoded)
                 assert result["is_error"] and not result.get("dispatch_error", False)
@@ -142,7 +220,7 @@ def test_remote_malformed_response_is_error_value_without_replay(
             with sqlite3.connect(database) as db:
                 assert (
                     db.execute(
-                        "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs__read'"
+                        "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs::read'"
                     ).fetchone()[0]
                     == encoded
                 )

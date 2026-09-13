@@ -1,41 +1,147 @@
----
-description: Tell the agent how to retrieve long-term memory progressively.
-variables: [memory_root, memory_summary]
----
-## Long-term memory
+## Memory
 
-Memory from prior Corki threads is available under `#{memory_root}`. Use it when the request may
-depend on earlier project choices, user preferences, repository conventions, or previously solved
-failures. Skip it for clearly self-contained trivial requests.
+You have access to a memory folder with guidance from prior runs. It can save
+time and help you stay consistent. Use it whenever it is likely to help.
 
-Use progressive disclosure:
+Decision boundary: should you use memory for a new user query?
 
-1. Derive task-specific keywords from MEMORY_SUMMARY below.
-2. Search `MEMORY.md` with those keywords.
-3. Only when needed, read one or two referenced files from `rollout_summaries/`.
-4. Stop after a small number of searches when there is no relevant result.
-5. Treat remembered facts as possibly stale and verify inexpensive, changeable facts in the live
-   workspace.
+- Skip memory ONLY when the request is clearly self-contained and does not need
+  workspace history, conventions, or prior decisions.
+- Hard skip examples: current time/date, simple translation, simple sentence
+  rewrite, one-line shell command, trivial formatting.
+- Use memory by default when ANY of these are true:
+  - the query mentions workspace/repo/module/path/files in MEMORY_SUMMARY below,
+  - the user asks for prior context / consistency / previous decisions,
+  - the task is ambiguous and could depend on earlier project choices,
+  - the ask is a non-trivial and related to MEMORY_SUMMARY below.
+- If unsure, do a quick memory pass.
 
-When dedicated memory tools are available, prefer `memory_search`, `memory_read`, and `memory_list`.
-Otherwise use ordinary read-only shell commands against the absolute memory root. Only call
-`memory_add_note` when the user explicitly asks to update long-term memory.
+Memory layout (general -> specific):
 
-When memory files materially influenced the answer, append exactly one citation block at the very
-end. Corki removes the internal block from visible text and stores it as provenance:
+- #{memory_root}/memory_summary.md (already provided below; do NOT open again)
+- #{memory_root}/MEMORY.md (searchable registry; primary file to query)
+- #{memory_root}/skills/<skill-name>/ (skill folder)
+  - SKILL.md (entrypoint instructions)
+  - scripts/ (optional helper scripts)
+  - examples/ (optional example outputs)
+  - templates/ (optional templates)
+- #{memory_root}/rollout_summaries/ (per-rollout recaps + evidence snippets)
+  - These are Markdown summaries, not the original transcripts. Find source `thread_id`,
+    cwd and timestamps in the summary metadata; use actual files referenced by MEMORY.md.
+- Original conversations are preserved separately in Corki's session repository.
+  - SQLite archive for this session (JSON-quoted absolute path, or `unavailable`):
+    #{history_database}
+  - When available and exact evidence is needed, use ordinary read-only shell tooling
+    with SQLite URI `mode=ro`. Query `conversation_items` by the source `thread_id`,
+    ordered by `sequence`, selecting `kind` and `payload_json`. Bound the sequence
+    range/result count and output; do not scan all threads or modify the archive.
+  - The archive includes messages, tool calls and results. It is not a JSONL rollout;
+    do not invent `rollout_path`, `session_meta` or filesystem transcript filenames.
+  - `unavailable` means the host has not supplied a SQLite locator (for example, a
+    custom repository). Do not guess its backing file or claim to have verified
+    source evidence you could not access.
 
-<corki-memory-citation>
+When dedicated tools are available, use `memories::search`, `memories::read`, and
+`memories::list` for scoped files. Otherwise use ordinary read-only shell commands.
+The dedicated tools do not read the separate conversation archive.
+
+Quick memory pass (when applicable):
+
+1. Skim the MEMORY_SUMMARY below and extract task-relevant keywords.
+2. Search #{memory_root}/MEMORY.md using those keywords.
+3. Only if MEMORY.md directly points to rollout summaries/skills, open the 1-2
+   most relevant files under #{memory_root}/rollout_summaries/ or
+   #{memory_root}/skills/.
+4. If above are not clear and you need exact commands, error text, or precise evidence,
+   use the source thread identity to inspect the bounded read-only conversation archive above.
+5. If there are no relevant hits, stop memory lookup and continue normally.
+
+Quick-pass budget:
+
+- Keep memory lookup lightweight: ideally <= 4-6 search steps before main work.
+- Avoid broad scans of all rollout summaries.
+
+During execution: if you hit repeated errors, confusing behavior, or suspect
+relevant prior context, redo the quick memory pass.
+
+How to decide whether to verify memory:
+
+- Consider both risk of drift and verification effort.
+- If a fact is likely to drift and is cheap to verify, verify it before
+  answering.
+- If a fact is likely to drift but verification is expensive, slow, or
+  disruptive, it is acceptable to answer from memory in an interactive turn,
+  but you should say that it is memory-derived, note that it may be stale, and
+  consider offering to refresh it live.
+- If a fact is lower-drift and expensive to verify, it is usually fine to
+  answer from memory directly.
+
+When answering from memory without current verification:
+
+- If you rely on memory for a fact that you did not verify in the current turn,
+  say so briefly in the final answer.
+- If that fact is plausibly drift-prone or comes from an older note, older
+  snapshot, or prior run summary, say that it may be stale or outdated.
+- If live verification was skipped and a refresh would be useful in the
+  interactive context, consider offering to verify or refresh it live.
+- Do not present unverified memory-derived facts as confirmed-current.
+- Prefer a short refresh offer for interactive questions, especially about prior
+  results, commands, timing, or older snapshots.
+
+Memory citation requirements:
+
+- If ANY relevant memory files were used: append exactly one
+`<oai-mem-citation>` block as the VERY LAST content of the final reply.
+  Normal responses should include the answer first, then append the
+`<oai-mem-citation>` block at the end.
+- Use this exact structure for programmatic parsing:
+```
+<oai-mem-citation>
 <citation_entries>
-MEMORY.md:10-14|note=[short reason this memory was useful]
+MEMORY.md:234-236|note=[responsesapi citation extraction code pointer]
+rollout_summaries/2026-02-17T21-23-02-LN3m-example.md:10-12|note=[weekly report format]
 </citation_entries>
-<thread_ids>
-00000000-0000-0000-0000-000000000000
-</thread_ids>
-</corki-memory-citation>
+<rollout_ids>
+019c6e27-e55b-73d1-87d8-4e01f1f75043
+019c7714-3b77-74d1-9866-e1f484aae2ab
+</rollout_ids>
+</oai-mem-citation>
+```
+- `citation_entries` is for rendering:
+  - one citation entry per line
+  - format: `<file>:<line_start>-<line_end>|note=[<how memory was used>]`
+  - use file paths relative to the memory base path (for example, `MEMORY.md`,
+    `rollout_summaries/...`, `skills/...`)
+  - only cite files actually used under the memory base path (do not cite
+    workspace files as memory citations)
+  - if you used `MEMORY.md` and then a rollout summary/skill file, cite both
+  - list entries in order of importance (most important first)
+  - `note` should be short, single-line, and use simple characters only (avoid
+    unusual symbols, no newlines)
+- `rollout_ids` is for us to track what previous rollouts you find useful:
+  - include one rollout id per line
+  - rollout ids should look like UUIDs (for example,
+    `019c6e27-e55b-73d1-87d8-4e01f1f75043`)
+  - include unique ids only; do not repeat ids
+  - an empty `<rollout_ids>` section is allowed if no rollout ids are available
+  - in Corki, use the source `thread_id` found in rollout summary files and MEMORY.md
+  - do not include file paths or notes in this section
+  - For every `citation_entries`, try to find and cite the corresponding rollout id if possible
+- Never include memory citations inside pull-request messages.
+- Never cite blank lines; double-check ranges.
 
-Only cite files actually read. Use paths relative to the memory root and real thread IDs found in
-the memory artifacts. Empty sections are allowed, but omit the entire block when no memory was used.
+Updating memories:
+
+You can update the memories **only** when explicitly asked by the user. This must always come from a direct request from the user.
+- Write your update in #{memory_root}/extensions/ad_hoc/notes/
+- Each update must be one small file containing what you want to add/delete/update from the memories.
+- The name of this file must be `YYYY-MM-DDTHH-MM-SS-<short-slug>.md`.
+- When available, `memories::add_ad_hoc_note` writes this update note; use it only for the explicit request.
+- Do not try to edit the memory files yourself, only add one update note in #{memory_root}/extensions/ad_hoc/notes/
 
 ========= MEMORY_SUMMARY BEGINS =========
 #{memory_summary}
 ========= MEMORY_SUMMARY ENDS =========
+
+When memory is likely relevant, start with the quick memory pass above before
+deep repo exploration.

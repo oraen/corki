@@ -22,7 +22,14 @@ def test_codex_plugin_manifest_contributes_tools_skills_and_mcp(tmp_path: Path) 
                 "description": "all capability types",
                 "skills": "./skills",
                 "entrypoint": "plugin.py:register",
-                "mcpServers": {"docs": {"type": "http", "url": "https://example.test/mcp"}},
+                "mcpServers": {
+                    "docs": {
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                        "enabled_tools": ["read", "write"],
+                        "disabled_tools": ["write"],
+                    }
+                },
             }
         ),
         encoding="utf-8",
@@ -47,6 +54,8 @@ def test_codex_plugin_manifest_contributes_tools_skills_and_mcp(tmp_path: Path) 
     assert len(manager.plugins) == 1
     assert manager.plugins[0].tool_names == ("plugin__sample__echo",)
     assert manager.mcp_servers[0].name == "sample__docs"
+    assert manager.mcp_servers[0].enabled_tools == ("read", "write")
+    assert manager.mcp_servers[0].disabled_tools == ("write",)
     service = SkillService(
         home=tmp_path / ".corki",
         project_root=tmp_path,

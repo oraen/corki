@@ -4,12 +4,27 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from enum import StrEnum
+from uuid import UUID
 
 from corki.protocol.ids import ThreadId
 
-_OPEN = "<corki-memory-citation>"
-_CLOSE = "</corki-memory-citation>"
+_TAGS = (
+    ("<oai-mem-citation>", "</oai-mem-citation>"),
+    ("<corki-memory-citation>", "</corki-memory-citation>"),
+)
+# Rust str::trim uses Unicode White_Space, unlike Python's extra U+001C..001F.
+_WHITESPACE = (
+    "\t\n\v\f\r \x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006"
+    "\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
+)
+
+
+class ThreadMemoryMode(StrEnum):
+    """Public source eligibility; internal pollution is not a user-settable mode."""
+
+    ENABLED = "enabled"
+    DISABLED = "disabled"
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,82 +39,112 @@ class MemoryCitationEntry:
 class MemoryCitation:
     entries: tuple[MemoryCitationEntry, ...] = ()
     thread_ids: tuple[ThreadId, ...] = ()
+    # Raw provider provenance is not necessarily a valid thread identity. Keep
+    # it separate from the validated legacy usage field and default old rows.
+    rollout_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "entries", tuple(self.entries))
         object.__setattr__(self, "thread_ids", tuple(self.thread_ids))
+        object.__setattr__(self, "rollout_ids", tuple(self.rollout_ids or self.thread_ids))
 
 
 def parse_memory_citation(text: str) -> tuple[str, MemoryCitation | None]:
-    """Parse a final citation block while leaving malformed prose untouched."""
+    """Hide literal blocks regardless of whether their metadata can be parsed."""
 
-    start = text.rfind(_OPEN)
-    if start < 0:
-        return text, None
-    end = text.find(_CLOSE, start + len(_OPEN))
-    if end < 0 or text[end + len(_CLOSE) :].strip():
-        return text, None
-    body = text[start + len(_OPEN) : end]
-    entries_body = _block(body, "<citation_entries>", "</citation_entries>")
-    ids_body = _block(body, "<thread_ids>", "</thread_ids>")
-    if entries_body is None or ids_body is None:
-        return text, None
-    entries = tuple(
-        entry
-        for line in entries_body.splitlines()
-        if (entry := _parse_entry(line.strip())) is not None
-    )
-    thread_ids = tuple(
-        dict.fromkeys(
-            ThreadId(value.strip())
-            for value in ids_body.splitlines()
-            if re.fullmatch(
-                r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-                r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
-                value.strip(),
+    parser = MemoryCitationStreamFilter(collect_citations=True)
+    visible = parser.push(text) + parser.finish()
+    entries: list[MemoryCitationEntry] = []
+    ids: dict[str, None] = {}
+    for body in parser.citations:
+        entries_body = _block(body, "<citation_entries>", "</citation_entries>")
+        if entries_body is not None:
+            entries.extend(
+                entry
+                for line in entries_body.split("\n")
+                if (entry := _parse_entry(line)) is not None
             )
-        )
-    )
-    if not entries and not thread_ids:
-        return text, None
-    cleaned = text[:start].rstrip()
-    return cleaned, MemoryCitation(entries, thread_ids)
+        ids_body = _block(body, "<rollout_ids>", "</rollout_ids>")
+        if ids_body is None:
+            ids_body = _block(body, "<thread_ids>", "</thread_ids>")
+        if ids_body is not None:
+            ids.update(
+                (value, None) for line in ids_body.split("\n") if (value := line.strip(_WHITESPACE))
+            )
+    if not entries and not ids:
+        return visible, None
+    threads = tuple(thread for value in ids if (thread := _thread_id(value)) is not None)
+    return visible, MemoryCitation(tuple(entries), threads, tuple(ids))
 
 
 class MemoryCitationStreamFilter:
-    """Delay a tiny suffix so internal citation markup never reaches the UI."""
+    """Literal non-nested tags; malformed/open bodies stay hidden at EOF.
 
-    def __init__(self) -> None:
+    The UI only retains a possible delimiter prefix. Complete parsing optionally
+    collects hidden bodies, using exactly the same visibility state machine.
+    """
+
+    def __init__(self, *, collect_citations: bool = False) -> None:
         self._buffer = ""
-        self._capturing = False
+        self._closing: str | None = None
+        self._collect = collect_citations
+        self._body: list[str] = []
+        self.citations: list[str] = []
 
     def push(self, text: str) -> str:
         self._buffer += text
-        if self._capturing:
-            return ""
-        marker = self._buffer.find(_OPEN)
-        if marker >= 0:
-            visible = self._buffer[:marker]
-            self._buffer = self._buffer[marker:]
-            self._capturing = True
-            return visible
-        # Hold back only a suffix that could actually grow into the opening
-        # marker.  A fixed marker-sized delay would suppress short answers and
-        # can deadlock realtime steering when the model pauses after a delta.
-        pending = 0
-        for size in range(min(len(self._buffer), len(_OPEN) - 1), 0, -1):
-            if self._buffer.endswith(_OPEN[:size]):
-                pending = size
+        visible: list[str] = []
+        while True:
+            if self._closing is not None:
+                end = self._buffer.find(self._closing)
+                if end >= 0:
+                    if self._collect:
+                        self._body.append(self._buffer[:end])
+                        self.citations.append("".join(self._body))
+                    self._body.clear()
+                    self._buffer = self._buffer[end + len(self._closing) :]
+                    self._closing = None
+                    continue
+                keep = _prefix_suffix(self._buffer, self._closing)
+                take = len(self._buffer) - keep
+                if self._collect:
+                    self._body.append(self._buffer[:take])
+                self._buffer = self._buffer[take:]
                 break
-        visible = self._buffer[:-pending] if pending else self._buffer
-        self._buffer = self._buffer[-pending:] if pending else ""
+            matches = [
+                (index, opening, closing)
+                for opening, closing in _TAGS
+                if (index := self._buffer.find(opening)) >= 0
+            ]
+            if matches:
+                index, opening, self._closing = min(matches)
+                visible.append(self._buffer[:index])
+                self._buffer = self._buffer[index + len(opening) :]
+                continue
+            keep = max(_prefix_suffix(self._buffer, opening) for opening, _ in _TAGS)
+            take = len(self._buffer) - keep
+            visible.append(self._buffer[:take])
+            self._buffer = self._buffer[take:]
+            break
+        return "".join(visible)
+
+    def finish(self, *, citation_valid: bool | None = None) -> str:
+        """Flush an incomplete opener, not an opened body; legacy keyword ignored."""
+        visible = self._buffer if self._closing is None else ""
+        if self._closing is not None and self._collect:
+            self._body.append(self._buffer)
+            self.citations.append("".join(self._body))
+        self._buffer = ""
+        self._body.clear()
+        self._closing = None
         return visible
 
-    def finish(self, *, citation_valid: bool) -> str:
-        visible = "" if citation_valid and self._capturing else self._buffer
-        self._buffer = ""
-        self._capturing = False
-        return visible
+
+def _prefix_suffix(text: str, marker: str) -> int:
+    for size in range(min(len(text), len(marker) - 1), 0, -1):
+        if text.endswith(marker[:size]):
+            return size
+    return 0
 
 
 def _block(text: str, opening: str, closing: str) -> str | None:
@@ -111,20 +156,44 @@ def _block(text: str, opening: str, closing: str) -> str | None:
 
 
 def _parse_entry(line: str) -> MemoryCitationEntry | None:
-    if not line:
+    try:
+        location, note = line.strip(_WHITESPACE).rsplit("|note=[", 1)
+        if not note.endswith("]"):
+            return None
+        path, lines = location.rsplit(":", 1)
+        start, end = lines.split("-", 1)
+        first, last = _u32(start), _u32(end)
+        if first is None or last is None:
+            return None
+        return MemoryCitationEntry(
+            path.strip(_WHITESPACE), first, last, note[:-1].strip(_WHITESPACE)
+        )
+    except ValueError:
         return None
-    match = re.fullmatch(r"(.+):(\d+)-(\d+)\|note=\[(.*)]", line)
-    if match is None:
+
+
+def _u32(text: str) -> int | None:
+    text = text.strip(_WHITESPACE)
+    if re.fullmatch(r"\+?[0-9]+", text) is None:
         return None
-    path, start, end, note = match.groups()
-    logical = PurePosixPath(path.strip())
-    line_start, line_end = int(start), int(end)
+    # Leading zeroes do not overflow Rust's parser; avoid Python's large-int
+    # digit limit without turning a citation into arbitrary-precision work.
+    digits = text.removeprefix("+").lstrip("0") or "0"
+    if len(digits) > 10:
+        return None
+    value = int(digits)
+    return value if value <= 2**32 - 1 else None
+
+
+def _thread_id(value: str) -> ThreadId | None:
+    # UUID.parse_str accepts simple, hyphenated, braced and URN forms. Restrict
+    # shape before Python UUID, which otherwise accepts misplaced hyphens.
+    hyphenated = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
     if (
-        logical.is_absolute()
-        or any(part in {"", ".", ".."} for part in logical.parts)
-        or line_start < 1
-        or line_end < line_start
-        or "\n" in note
+        re.fullmatch(
+            rf"(?:[0-9a-fA-F]{{32}}|{hyphenated}|\{{{hyphenated}\}}|urn:uuid:{hyphenated})", value
+        )
+        is None
     ):
         return None
-    return MemoryCitationEntry(logical.as_posix(), line_start, line_end, note.strip())
+    return ThreadId(str(UUID(value)))

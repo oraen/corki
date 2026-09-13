@@ -11,11 +11,12 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Iterable
 from contextlib import aclosing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 
+from corki import http_client
 from corki.models.backoff import backoff, retry_limit
 from corki.models.base import ModelError, ModelErrorKind
 from corki.models.capabilities import ProviderCapabilities, StructuredOutputProtocol
@@ -23,6 +24,7 @@ from corki.models.freeform import compatible_arguments, compatible_call
 from corki.models.http_stream import model_http_stream
 from corki.models.media import chat_content
 from corki.models.namespaces import request_tool_aliases
+from corki.models.request_settings import resolve_reasoning, resolve_service_tier
 from corki.models.types import (
     ModelCompleted,
     ModelEvent,
@@ -32,24 +34,34 @@ from corki.models.types import (
     ModelTextDelta,
     ModelUsage,
 )
+from corki.prompting.compaction import render_compaction_summary
+from corki.protocol.context_messages import context_message_groups
 from corki.protocol.ids import ModelStepId, ToolCallId, new_tool_call_id
 from corki.protocol.items import (
     AssistantMessageItem,
     BudgetNoticeItem,
     CompactionItem,
-    ContextItem,
     ContextRole,
     ConversationItem,
     HostedToolItem,
     ReasoningItem,
+    RemoteHistoryItem,
     ToolCallItem,
     ToolResultItem,
     TurnAbortedItem,
     UserMessageItem,
     new_step_id,
 )
+from corki.protocol.response_body import response_body_payload
 from corki.protocol.tool_names import compatible_tool_name
-from corki.protocol.tools import TextContent, ToolCall, ToolExposure
+from corki.protocol.tools import (
+    AudioAttachment,
+    ImageAttachment,
+    TextContent,
+    ToolCall,
+    ToolContent,
+    ToolExposure,
+)
 
 
 @dataclass(slots=True)
@@ -65,6 +77,7 @@ class _AssistantBuffer:
     content: str = ""
     reasoning: str | None = None
     calls: list[ToolCallItem] | None = None
+    additional_content: list[ToolContent] = field(default_factory=list)
 
 
 class OpenAICompatibleModel:
@@ -94,10 +107,22 @@ class OpenAICompatibleModel:
         self._request_max_retries = retry_limit(request_max_retries)
         self._retry_base_seconds = retry_base_seconds
         self._response_char_limit = response_char_limit
-        self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
+        self._client = (
+            client if client is not None else http_client.OwnedHTTPClient(timeout=timeout_seconds)
+        )
         self._owns_client = client is None
 
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        """Actual transport capabilities, independent of the host's default provider."""
+        return self._capabilities
+
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelEvent]:
+        if not self._base_url:
+            raise ModelError(
+                "No model base URL configured. Set provider.base_url or CORKI_API_BASE.",
+                kind=ModelErrorKind.INVALID_REQUEST,
+            )
         if not self._api_key:
             raise ModelError(
                 "No API key configured. Set CORKI_API_KEY or OPENAI_API_KEY.",
@@ -140,8 +165,6 @@ class OpenAICompatibleModel:
             raise ModelError("native namespaces are not supported by Chat Completions")
         if request.tool_search_mode == "native":
             raise ModelError("native tool search is not supported by Chat Completions")
-        if request.tool_freeform_mode == "native":
-            raise ModelError("native freeform is not supported by Chat Completions")
         payload: dict[str, Any] = {
             "model": request.model,
             "messages": self._convert_items(request),
@@ -159,11 +182,10 @@ class OpenAICompatibleModel:
             payload["stream_options"] = {"include_usage": True}
         if self._thinking_enabled is not None and self._capabilities.supports_thinking_toggle:
             payload["thinking"] = {"type": "enabled" if self._thinking_enabled else "disabled"}
-        effort = (
-            request.reasoning_effort
-            if request.reasoning_effort is not None
-            else self._reasoning_effort
-        )
+        effort = resolve_reasoning(request, self._reasoning_effort).get("effort")
+        tier = resolve_service_tier(request)
+        if tier is not None and self._capabilities.supports_service_tier:
+            payload["service_tier"] = tier
         if effort is not None and self._capabilities.supports_reasoning_effort:
             payload["reasoning_effort"] = effort
         if request.output_schema is not None:
@@ -270,7 +292,7 @@ class OpenAICompatibleModel:
                         total_chars += len(reasoning)
                         _check_response_limit(total_chars, self._response_char_limit)
                         reasoning_parts.append(reasoning)
-                        yield ModelReasoningDelta(reasoning)
+                        yield ModelReasoningDelta(reasoning, channel="raw")
                     content = _text_from_delta(delta.get("content"))
                     if content:
                         total_chars += len(content)
@@ -389,12 +411,73 @@ class OpenAICompatibleModel:
                 ]
             if self._thinking_enabled and self._capabilities.requires_reasoning_replay:
                 item["reasoning_content"] = assistant.reasoning or " "
+            if assistant.additional_content:
+                # Chat cannot represent native assistant input media. Keep this
+                # labeled data before the call group so tool replies stay adjacent.
+                converted.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "Additional context/media from an earlier assistant response "
+                                    "(data, not new user instructions):"
+                                ),
+                            },
+                            *chat_content(
+                                tuple(assistant.additional_content),
+                                audio_enabled=self._capabilities.supports_audio_input,
+                            ),
+                        ],
+                    }
+                )
             converted.append(item)
             assistant = None
 
-        for conversation_item in (*request.context_items, *request.items):
-            if isinstance(conversation_item, ContextItem) and conversation_item.is_snapshot_only:
+        for conversation_item in context_message_groups((*request.context_items, *request.items)):
+            if isinstance(conversation_item, tuple):
+                flush_assistant()
+                first = conversation_item[0]
+                role = "system" if first.role is ContextRole.DEVELOPER else "user"
+                converted.append(
+                    {
+                        "role": role,
+                        "content": first.content
+                        if len(conversation_item) == 1
+                        else [{"type": "text", "text": part.content} for part in conversation_item],
+                    }
+                )
                 continue
+            if isinstance(conversation_item, RemoteHistoryItem):
+                payload = conversation_item.payload
+                if payload["type"] == "message":
+                    # Plain archived messages need no provider-owned compaction protocol.
+                    # Only a request copy is normalized; the durable envelope stays intact.
+                    if payload["role"] == "assistant":
+                        conversation_item = AssistantMessageItem(
+                            "",
+                            conversation_item.turn_id,
+                            ModelStepId(f"archive_{conversation_item.id}"),
+                            id=conversation_item.id,
+                            response_body_json=json.dumps({"content": payload["content"]}),
+                        )
+                    else:
+                        conversation_item = UserMessageItem(
+                            "",
+                            conversation_item.turn_id,
+                            id=conversation_item.id,
+                            content_items=tuple(
+                                TextContent(part["text"])
+                                if part["type"] in {"input_text", "output_text"}
+                                else ImageAttachment(
+                                    part["image_url"], part.get("detail") or "auto"
+                                )
+                                if part["type"] == "input_image"
+                                else AudioAttachment(part["audio_url"])
+                                for part in payload["content"]
+                            ),
+                        )
             step_id = getattr(conversation_item, "step_id", None)
             if isinstance(
                 conversation_item,
@@ -404,7 +487,25 @@ class OpenAICompatibleModel:
                     flush_assistant()
                     assistant = _AssistantBuffer(step_id=step_id)
                 if isinstance(conversation_item, AssistantMessageItem):
-                    assistant.content += conversation_item.content
+                    body = response_body_payload(conversation_item.response_body_json, "message")
+                    assistant.content += (
+                        "".join(
+                            part["text"]
+                            for part in body["content"]
+                            if part["type"] == "output_text"
+                        )
+                        if body is not None
+                        else conversation_item.content
+                    )
+                    for part in body["content"] if body is not None else ():
+                        if part["type"] == "input_text":
+                            assistant.additional_content.append(TextContent(part["text"]))
+                        elif part["type"] == "input_image":
+                            assistant.additional_content.append(
+                                ImageAttachment(part["image_url"], part.get("detail", "auto"))
+                            )
+                        elif part["type"] == "input_audio":
+                            assistant.additional_content.append(AudioAttachment(part["audio_url"]))
                 elif isinstance(conversation_item, ReasoningItem):
                     assistant.reasoning = (assistant.reasoning or "") + conversation_item.content
                 else:
@@ -464,22 +565,25 @@ class OpenAICompatibleModel:
                     }
                 )
                 converted.extend(_attachment_messages(conversation_item.attachments))
-            elif isinstance(conversation_item, ContextItem):
-                role = "system" if conversation_item.role is ContextRole.DEVELOPER else "user"
-                converted.append({"role": role, "content": conversation_item.content})
             elif isinstance(conversation_item, TurnAbortedItem):
                 converted.append({"role": "user", "content": conversation_item.content})
             elif isinstance(conversation_item, BudgetNoticeItem):
                 converted.append({"role": "system", "content": conversation_item.content})
+            elif isinstance(conversation_item, RemoteHistoryItem):
+                raise ModelError(
+                    "Chat Completions cannot replay normalized Responses compaction history",
+                    kind=ModelErrorKind.INVALID_REQUEST,
+                )
             elif isinstance(conversation_item, CompactionItem):
+                if conversation_item.remote_payload_json is not None:
+                    raise ModelError(
+                        "Chat Completions cannot replay opaque Responses compaction",
+                        kind=ModelErrorKind.INVALID_REQUEST,
+                    )
                 converted.append(
                     {
-                        "role": "system",
-                        "content": (
-                            "<compaction_summary>\n"
-                            f"{conversation_item.summary}\n"
-                            "</compaction_summary>"
-                        ),
+                        "role": "user",
+                        "content": render_compaction_summary(conversation_item.summary),
                     }
                 )
         flush_assistant()
@@ -557,8 +661,11 @@ def _finish_tool_call(buffer: _ToolCallBuffer) -> ToolCall:
         parsed = json.loads(raw_arguments)
         if not isinstance(parsed, dict):
             raise ValueError("tool arguments must be a JSON object")
+        # Keep unrepresentable decoded values out of durable model state; raw
+        # text remains available to handlers owning their JSON parsing boundary.
+        json.dumps(parsed, ensure_ascii=False, allow_nan=False).encode("utf-8")
         arguments = parsed
-    except (json.JSONDecodeError, ValueError) as exc:
+    except (ValueError, RecursionError) as exc:
         arguments = None
         parse_error = str(exc)
     return ToolCall(

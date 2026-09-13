@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
 from pathlib import Path
 
 from corki.context.extensions import InputContextContributions
-from corki.prompting import PromptContribution, PromptRole, PromptSlot
+from corki.prompting import PromptContribution, PromptPhase, PromptRole, PromptSlot
+from corki.skills.io import run_skill_io
 from corki.skills.models import SkillMetadata
 from corki.skills.service import SkillService
 
@@ -13,9 +15,45 @@ from corki.skills.service import SkillService
 class SkillContextContributor:
     """Refresh catalog metadata per step and read bodies through the turn-input hook."""
 
-    def __init__(self, service: SkillService, *, include_instructions: bool = True) -> None:
+    def __init__(
+        self,
+        service: SkillService,
+        *,
+        include_instructions: bool = True,
+        allow_input_mentions: bool = True,
+    ) -> None:
         self._service = service
         self._include_instructions = include_instructions
+        self._allow_input_mentions = allow_input_mentions
+
+    def with_context_window(self, tokens: int) -> SkillContextContributor:
+        """Retain the admitted Turn's skill budget across later settings changes."""
+        return SkillContextContributor(
+            self._service.with_context_window(tokens),
+            include_instructions=self._include_instructions,
+            allow_input_mentions=self._allow_input_mentions,
+        )
+
+    def with_service(self, service: SkillService) -> SkillContextContributor:
+        return SkillContextContributor(
+            service,
+            include_instructions=self._include_instructions,
+            allow_input_mentions=self._allow_input_mentions,
+        )
+
+    async def async_contributions(self, *, cwd, user_input, realtime_active):
+        return await run_skill_io(
+            self.contributions, cwd=cwd, user_input=user_input, realtime_active=realtime_active
+        )
+
+    async def async_input_contributions(self, *, cwd, user_input, mentions, tool_snapshot):
+        del tool_snapshot
+        return await run_skill_io(
+            self.input_contributions_with_mentions,
+            cwd=cwd,
+            user_input=user_input,
+            mentions=mentions,
+        )
 
     def contributions(
         self,
@@ -30,9 +68,11 @@ class SkillContextContributor:
         return (
             PromptContribution(
                 key="extensions.skills.catalog",
+                content_kind="corki.skills.catalog",
                 template_name="extensions/skills/catalog" if has_body else None,
                 role=PromptRole.DEVELOPER,
-                slot=PromptSlot.EXTENSIONS,
+                slot=PromptSlot.HOST_SKILLS,
+                phase=PromptPhase.WORLD_STATE,
                 variables={"catalog": catalog.body} if has_body else {},
                 warnings=(catalog.report.warning,) if catalog and catalog.report.warning else (),
                 snapshot_state="skills.listed" if self._include_instructions else "skills.hidden",
@@ -41,9 +81,22 @@ class SkillContextContributor:
 
     def input_contributions(self, *, cwd: Path, user_input: str) -> InputContextContributions:
         """Read explicit bodies only when the harness prepares a turn input."""
+        return self.input_contributions_with_mentions(cwd=cwd, user_input=user_input, mentions=())
+
+    def input_contributions_with_mentions(
+        self, *, cwd: Path, user_input: str, mentions
+    ) -> InputContextContributions:
+        if not self._allow_input_mentions:
+            return InputContextContributions()
         contributions: list[PromptContribution] = []
         warnings: list[str] = []
-        for index, skill in enumerate(self._service.explicit_mentions(user_input, cwd)):
+        for index, skill in enumerate(
+            self._service.explicit_mentions(
+                user_input,
+                cwd,
+                mentions=mentions,
+            )
+        ):
             try:
                 contents = self._service.read(skill)
             except (OSError, UnicodeError, ValueError) as exc:
@@ -51,7 +104,11 @@ class SkillContextContributor:
                 continue
             contributions.append(
                 PromptContribution(
-                    key=f"extensions.skills.selected.{skill.qualified_name}",
+                    key=(
+                        f"extensions.skills.selected.{skill.qualified_name}."
+                        + sha256(str(skill.path).encode()).hexdigest()
+                    ),
+                    content_kind="skills.selected_skill_instructions",
                     template_name="extensions/skills/selected",
                     role=PromptRole.USER,
                     slot=PromptSlot.EXTENSIONS,

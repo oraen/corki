@@ -1,0 +1,17 @@
+Command:
+PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring CORKI_TEST_SANDBOX_COMPILER=/Users/corki/PycharmProjects/corki/src/corki/_native/sandbox/corki-sandbox .venv/bin/pytest tests/unit tests/integration --ignore=tests/unit/cli --ignore-glob='tests/integration/test_cli*.py' -o addopts='' -q --tb=short -rs
+
+Session: 96933
+Exit code: 0
+Final output evidence: 846f9d
+
+....................... [ 99%]
+................                                                         [100%]
+=========================== short test summary info ============================
+SKIPPED [1] tests/unit/config/test_project_trust_selection.py:164: filesystem rejects non-UTF-8 filenames
+SKIPPED [2] tests/integration/test_metadata_compiler_contract.py:20: requires an actual pre-product-metadata compiler
+SKIPPED [1] tests/integration/test_native_patch.py:119: requires real native-read-only compiler
+SKIPPED [1] tests/integration/test_native_read_helper.py:245: requires actual pre-native-fs compiler
+SKIPPED [1] tests/integration/test_patch_approvals.py:223: requires real batch214 compiler
+SKIPPED [1] tests/integration/test_patch_deltas.py:110: requires real native patch approval compiler
+14913 passed, 7 skipped in 2562.28s (0:42:42)

@@ -1,11 +1,10 @@
-"""Bounded BM25 lexical discovery over registered deferred tool metadata."""
+"""Top-K BM25 lexical discovery over registered deferred tool metadata."""
 
 import json
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 
-from corki.context.tokens import estimate_text_tokens
 from corki.protocol.tools import ToolCall, ToolConcurrency, ToolResult, ToolSpec
 from corki.tools.base import ToolContext
 from corki.tools.bm25 import BM25Scorer
@@ -13,8 +12,6 @@ from corki.tools.discovery import TOOL_SEARCH_NAME
 from corki.tools.registry import ToolRegistry
 from corki.tools.search_sources import render_sources
 from corki.tools.tokenizer import token_id, tokenize
-
-_OUTPUT_TOKEN_LIMIT = 8_000
 
 
 def _tokens(text: str) -> list[str]:
@@ -114,22 +111,34 @@ class ToolSearchIndex:
 class ToolSearchTool:
     """Discover definitions; never execute a retrieved tool on the model's behalf."""
 
-    def __init__(self, registry: ToolRegistry) -> None:
-        self._initialize(tuple(spec for spec in registry.specs() if spec.exposure.is_deferred))
+    def __init__(self, registry: ToolRegistry, *, include_sources: bool = True) -> None:
+        self._initialize(
+            tuple(spec for spec in registry.specs() if spec.exposure.is_deferred),
+            include_sources=include_sources,
+        )
 
     @classmethod
     def from_specs(
-        cls, specs: tuple[ToolSpec, ...], *, index: ToolSearchIndex | None = None
+        cls,
+        specs: tuple[ToolSpec, ...],
+        *,
+        index: ToolSearchIndex | None = None,
+        include_sources: bool = True,
     ) -> "ToolSearchTool":
         """Bind frozen definitions, optionally reusing an equivalent discovery index."""
         handler = cls.__new__(cls)
-        handler._initialize(specs, index=index)
+        handler._initialize(specs, index=index, include_sources=include_sources)
         return handler
 
     def _initialize(
-        self, specs: tuple[ToolSpec, ...], *, index: ToolSearchIndex | None = None
+        self,
+        specs: tuple[ToolSpec, ...],
+        *,
+        index: ToolSearchIndex | None = None,
+        include_sources: bool = True,
     ) -> None:
         self._definitions = deepcopy(specs)
+        self._include_sources = include_sources
         self._spec = self._build_spec()
         if index is None:
             index = ToolSearchIndex()
@@ -141,12 +150,18 @@ class ToolSearchTool:
         return deepcopy(self._spec)
 
     def _build_spec(self) -> ToolSpec:
-        sources = render_sources(self._definitions)
+        sources = (
+            "You have access to tools from the following sources:\n"
+            + render_sources(self._definitions)
+            + "\n"
+            if self._include_sources
+            else ""
+        )
         return ToolSpec(
             TOOL_SEARCH_NAME,
             "# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes "
-            "matching tools for the next model call.\n\nYou have access to tools from the "
-            f"following sources:\n{sources}\nSome of the tools may not have been provided to you "
+            "matching tools for the next model call.\n\n"
+            f"{sources}Some of the tools may not have been provided to you "
             "upfront, and you should use this tool (`tool_search`) to search for the required "
             "tools. For MCP tool discovery, always use `tool_search` instead of "
             "`list_mcp_resources` or `list_mcp_resource_templates`.",
@@ -173,35 +188,17 @@ class ToolSearchTool:
                 query, min(call.arguments.get("limit", 8), len(self._definitions))
             )
         )
-        selected: list[ToolSpec] = []
-        definitions = []
-        for spec in matches:
-            candidate = [*definitions, spec.as_chat_completion_tool()]
-            if (
-                max(
-                    estimate_text_tokens(json.dumps(candidate, ensure_ascii=False)),
-                    estimate_text_tokens(
-                        json.dumps(
-                            [
-                                tool.as_response_tool(native_freeform=True)
-                                for tool in (*selected, spec)
-                            ],
-                            ensure_ascii=False,
-                        )
-                    ),
-                )
-                <= _OUTPUT_TOKEN_LIMIT
-            ):
-                definitions = candidate
-                selected.append(spec)
+        # Search returns complete Top-K definitions. The context manager owns
+        # window pressure; silently dropping a large hit makes it undiscoverable
+        # even when the selected model has room for its schema.
         content = json.dumps(
-            {"tools": definitions, "omitted_for_budget": len(matches) - len(selected)},
+            {"tools": [spec.as_chat_completion_tool() for spec in matches]},
             ensure_ascii=False,
         )
         return ToolResult(
             call.id,
             call.name,
             content,
-            discovered_tools=tuple(selected),
+            discovered_tools=matches,
             contains_external_context=True,
         )

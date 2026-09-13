@@ -6,6 +6,7 @@ import json
 import httpx
 import pytest
 
+from corki import http_client
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.protocol.events import TurnCompleted
@@ -37,6 +38,9 @@ def test_raw_tool_round_trip_and_durable_replay(tmp_path, monkeypatch, mode, sou
                 return ToolResult(call.id, call.name, "received raw")
 
         def handle(request):
+            assert str(request.url) == "https://fixture.invalid/v1/" + (
+                "chat/completions" if mode == "chat" else "responses"
+            )
             payload = json.loads(request.content)
             requests.append(payload)
             if mode == "chat":
@@ -81,26 +85,15 @@ def test_raw_tool_round_trip_and_durable_replay(tmp_path, monkeypatch, mode, sou
                 definition = next(
                     tool for tool in payload["tools"] if tool.get("name") == "raw_probe"
                 )
-                if mode == "native":
-                    assert definition["type"] == "custom"
-                    assert definition["format"] == GRAMMAR
-                    item = {
-                        "type": "custom_tool_call",
-                        "id": "i",
-                        "call_id": "c",
-                        "name": "raw_probe",
-                        "input": source,
-                    }
-                else:
-                    assert definition["type"] == "function"
-                    assert definition["parameters"]["required"] == ["input"]
-                    item = {
-                        "type": "function_call",
-                        "id": "i",
-                        "call_id": "c",
-                        "name": "raw_probe",
-                        "arguments": json.dumps({"input": source}),
-                    }
+                assert definition["type"] == "function" and "format" not in definition
+                assert definition["parameters"]["required"] == ["input"]
+                item = {
+                    "type": "function_call",
+                    "id": "i",
+                    "call_id": "c",
+                    "name": "raw_probe",
+                    "arguments": json.dumps({"input": source}),
+                }
                 body = (
                     "data: "
                     + json.dumps({"type": "response.output_item.done", "item": item})
@@ -109,26 +102,17 @@ def test_raw_tool_round_trip_and_durable_replay(tmp_path, monkeypatch, mode, sou
             else:
                 body = ""
                 call = next(item for item in payload["input"] if item.get("call_id") == "c")
-                if mode == "native":
-                    assert call["type"] == "custom_tool_call"
-                    assert call["input"] == source
-                    output = next(
-                        item
-                        for item in payload["input"]
-                        if item.get("type") == "custom_tool_call_output"
-                    )
-                    assert output["output"] == "received raw"
-                else:
-                    assert call["type"] == "function_call"
-                    assert json.loads(call["arguments"]) == {"input": source}
-                    assert any(
-                        item.get("type") == "function_call_output" for item in payload["input"]
-                    )
+                assert call["type"] == "function_call"
+                assert json.loads(call["arguments"]) == {"input": source}
+                assert any(
+                    item.get("type") == "function_call_output" and item["output"] == "received raw"
+                    for item in payload["input"]
+                )
             body += 'data: {"type":"response.completed","response":{"id":"r"}}\n\n'
             return httpx.Response(200, text=body)
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
-        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client)
+        monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
         registry = ToolRegistry()
         registry.register(RawTool())
         repository = SQLiteSessionRepository(tmp_path / "sessions.db")
@@ -156,6 +140,26 @@ def test_raw_tool_round_trip_and_durable_replay(tmp_path, monkeypatch, mode, sou
             saved_result = next(item for item in items if isinstance(item, ToolResultItem))
             assert saved_call == calls[0]
             assert saved_result.input_kind == "freeform"
+            # Rebuild both Runtime and HTTP client; read-only SQLite inspection
+            # alone does not prove cold history reaches a new model request.
+            settings, thread = runtime._settings, runtime.thread_id
+            await runtime.aclose()
+            await client.aclose()
+            client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+            fresh_registry = ToolRegistry()
+            fresh_registry.register(RawTool())
+            runtime = LangGraphRuntime.create(
+                settings=settings,
+                database_path=repository.path,
+                registry=fresh_registry,
+                thread_id=thread,
+            )
+            resumed = [event async for event in runtime.stream("continue")]
+            assert isinstance(resumed[-1], TurnCompleted), resumed[-1]
+            assert len(requests) == 3 and len(calls) == 1
+            restored = await runtime._repository.load_items(thread)
+            assert sum(isinstance(item, ToolCallItem) for item in restored) == 1
+            assert sum(isinstance(item, ToolResultItem) for item in restored) == 1
         finally:
             await runtime.aclose()
             await client.aclose()

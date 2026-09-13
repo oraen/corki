@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, replace
 
 from corki.protocol.items import ConversationItem, ToolResultItem
-from corki.protocol.tools import ToolExposure, ToolSpec
+from corki.protocol.tools import ToolExposure, ToolSpec, same_tool_spec
 
 TOOL_SEARCH_NAME = "tool_search"
 
@@ -14,23 +14,18 @@ def _loaded_definition_matches(current: ToolSpec | None, loaded: ToolSpec | None
         return False
     # These runtime-only fields are absent from the model's loaded definition.
     # Keep identity/schema/exposure checks; dispatch always uses the current spec.
-    return (
+    return same_tool_spec(
         replace(
             loaded, concurrency=current.concurrency, output_char_budget=current.output_char_budget
-        )
-        == current
+        ),
+        current,
     )
 
 
 def current_discovery_history(
     specs: tuple[ToolSpec, ...], items: tuple[ConversationItem, ...], *, mode: str = "compatible"
 ) -> tuple[ConversationItem, ...]:
-    """Preserve native history; project compatible loaded definitions without editing storage."""
-
-    if mode == "native":
-        # Codex history normalization does not consult the current tool router.
-        # Removed/changed handlers affect dispatch, not past search observations.
-        return items
+    """Project valid loaded definitions without editing durable search observations."""
 
     current = {spec.name: spec for spec in specs if spec.exposure.is_deferred}
     result = []
@@ -74,8 +69,7 @@ def build_tool_plan(
 ) -> ToolPlan:
     """Load only definitions actually discovered in the active context window.
 
-    Native Responses obtains definitions from search-output history, not from
-    top-level tools. Compatible providers require explicit schema advertisement.
+    Every provider receives explicitly advertised schemas after successful search.
     Stale or removed definitions never authorize the replacement tool.
     """
 
@@ -90,8 +84,6 @@ def build_tool_plan(
     if mode == "disabled":
         return ToolPlan(direct, direct)
     deferred = tuple(spec for spec in specs if spec.exposure.is_deferred)
-    if mode == "native":
-        return ToolPlan(direct, (*direct, *deferred))
     discovered = {
         spec.name: spec
         for item in items

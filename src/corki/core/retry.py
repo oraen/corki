@@ -5,7 +5,7 @@ import math
 
 from corki.models.backoff import backoff
 from corki.models.failure import ModelFailure
-from corki.realtime.controller import RealtimeCommand, RealtimeController
+from corki.realtime.controller import RealtimeController, RealtimeStop
 
 
 def retry_delay(failure: ModelFailure, base: float) -> float:
@@ -15,10 +15,10 @@ def retry_delay(failure: ModelFailure, base: float) -> float:
     return backoff(base, failure.retries_used)
 
 
-async def wait_retry(delay: float, realtime: RealtimeController | None) -> RealtimeCommand | None:
+async def wait_retry(delay: float, realtime: RealtimeController | None) -> RealtimeStop | None:
     sleep = asyncio.create_task(asyncio.sleep(delay), name="corki-retry-backoff")
     command = (
-        asyncio.create_task(realtime.next(), name="corki-retry-input")
+        asyncio.create_task(realtime.next_stop(), name="corki-retry-stop")
         if realtime is not None and realtime.active
         else None
     )

@@ -6,6 +6,7 @@ import pytest
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted
+from corki.protocol.context import ModelContextInfo
 from corki.protocol.events import TurnCompleted
 from corki.protocol.ids import new_tool_call_id
 from corki.protocol.items import AssistantMessageItem, ToolCallItem, ToolResultItem, new_step_id
@@ -64,8 +65,6 @@ def test_loaded_tools_survive_execution_settings_updates_across_turns_and_reopen
                     )
                     assert visible == (
                         tuple(replace(spec, exposure=ToolExposure.DIRECT) for spec in changed)
-                        if mode == "compatible"
-                        else ()
                     )
                     calls = tuple(ToolCall(new_tool_call_id(), spec.name, {}) for spec in changed)
                 else:
@@ -92,6 +91,7 @@ def test_loaded_tools_survive_execution_settings_updates_across_turns_and_reopen
             working_directory=tmp_path,
             skills_enabled=False,
             tool_search_mode=mode,
+            model_contexts=(ModelContextInfo("gpt-5", supports_search_tool=True),),
             api_mode="responses",
         )
         database = tmp_path / "loaded.db"

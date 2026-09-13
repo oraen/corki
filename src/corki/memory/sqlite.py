@@ -11,7 +11,8 @@ import asyncio
 import logging
 import sqlite3
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypeVar
@@ -34,12 +35,19 @@ class SQLiteMemoryRepository:
         self._path = path
         self._create_schema()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self._path, timeout=10)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA busy_timeout=10000")
-        return connection
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("PRAGMA busy_timeout=10000")
+            with connection:
+                yield connection
+        finally:
+            # Connection.__exit__ commits/rolls back but does not close it.
+            # These per-operation connections have no long-lived pool owner.
+            connection.close()
 
     def _create_schema(self) -> None:
         with self._connect() as connection:
@@ -121,13 +129,10 @@ class SQLiteMemoryRepository:
         limit: int,
         lease_seconds: int,
     ) -> tuple[MemoryExtractionClaim, ...]:
-        return await asyncio.to_thread(
-            self._claim_extraction_jobs,
-            current_thread_id,
-            max_age_days,
-            min_idle_hours,
-            limit,
-            lease_seconds,
+        return await _joined_write(
+            lambda: self._claim_extraction_jobs(
+                current_thread_id, max_age_days, min_idle_hours, limit, lease_seconds
+            )
         )
 
     def _claim_extraction_jobs(
@@ -153,7 +158,7 @@ class SQLiteMemoryRepository:
     async def complete_extraction(
         self, claim: MemoryExtractionClaim, memory: StageOneMemory | None
     ) -> bool:
-        return await asyncio.to_thread(self._complete_extraction, claim, memory)
+        return await _joined_write(lambda: self._complete_extraction(claim, memory))
 
     def _complete_extraction(
         self, claim: MemoryExtractionClaim, memory: StageOneMemory | None
@@ -168,36 +173,17 @@ class SQLiteMemoryRepository:
             connection.execute("BEGIN IMMEDIATE")
             owned = connection.execute(
                 """
-                SELECT thread.memory_mode, thread.updated_at
-                FROM memory_jobs AS job
-                JOIN threads AS thread ON thread.id=job.job_key
-                WHERE job.kind=? AND job.job_key=?
-                  AND job.status='running' AND job.ownership_token=?
+                UPDATE memory_jobs SET status='succeeded', ownership_token=NULL,
+                    lease_until=NULL, retry_at=NULL, error=NULL, updated_at=CURRENT_TIMESTAMP,
+                    last_success_source_updated_at=source_updated_at
+                WHERE kind=? AND job_key=? AND status='running' AND ownership_token=?
                 """,
                 (_STAGE_ONE, str(claim.thread_id), claim.ownership_token),
-            ).fetchone()
-            if owned is None:
+            ).rowcount
+            if not owned:
                 return False
-            if owned["memory_mode"] != "enabled" or owned["updated_at"] != claim.source_updated_at:
-                # The source changed while the model was sampling, or an
-                # external-context policy invalidated it. Release the lease
-                # without publishing stale/polluted output. An enabled newer
-                # source is immediately claimable on the next bounded pass.
-                connection.execute(
-                    """
-                    UPDATE memory_jobs SET status=?, ownership_token=NULL,
-                        lease_until=NULL, retry_at=NULL, error=NULL,
-                        updated_at=CURRENT_TIMESTAMP
-                    WHERE kind=? AND job_key=? AND ownership_token=?
-                    """,
-                    (
-                        "pending" if owned["memory_mode"] == "enabled" else "succeeded",
-                        _STAGE_ONE,
-                        str(claim.thread_id),
-                        claim.ownership_token,
-                    ),
-                )
-                return False
+            # Claim-time snapshot completion is independent of current thread
+            # mode/version. Eligibility is checked at claim and phase-two selection.
             changed = memory is not None
             if memory is None:
                 changed = (
@@ -208,6 +194,12 @@ class SQLiteMemoryRepository:
                     > 0
                 )
             else:
+                connection.create_function(
+                    "memory_source_version_at_least",
+                    2,
+                    _source_version_at_least,
+                    deterministic=True,
+                )
                 connection.execute(
                     """
                     INSERT INTO memory_stage1_outputs(
@@ -223,6 +215,9 @@ class SQLiteMemoryRepository:
                         rollout_summary=excluded.rollout_summary,
                         rollout_slug=excluded.rollout_slug,
                         generated_at=CURRENT_TIMESTAMP
+                    WHERE memory_source_version_at_least(
+                        excluded.source_updated_at, memory_stage1_outputs.source_updated_at
+                    )
                     """,
                     (
                         str(memory.thread_id),
@@ -235,15 +230,6 @@ class SQLiteMemoryRepository:
                 )
             if changed:
                 enqueue_consolidation(connection, time.time_ns())
-            connection.execute(
-                """
-                UPDATE memory_jobs SET status='succeeded', ownership_token=NULL,
-                    lease_until=NULL, retry_at=NULL, error=NULL, updated_at=CURRENT_TIMESTAMP,
-                    last_success_source_updated_at=source_updated_at
-                WHERE kind=? AND job_key=? AND ownership_token=?
-                """,
-                (_STAGE_ONE, str(claim.thread_id), claim.ownership_token),
-            )
         return True
 
     async def fail_extraction(
@@ -253,13 +239,10 @@ class SQLiteMemoryRepository:
         *,
         retry_delay_seconds: int,
     ) -> bool:
-        return await asyncio.to_thread(
-            self._fail_job,
-            _STAGE_ONE,
-            str(claim.thread_id),
-            claim.ownership_token,
-            error,
-            retry_delay_seconds,
+        return await _joined_write(
+            lambda: self._fail_job(
+                _STAGE_ONE, str(claim.thread_id), claim.ownership_token, error, retry_delay_seconds
+            )
         )
 
     def _fail_job(
@@ -287,7 +270,7 @@ class SQLiteMemoryRepository:
         return cursor.rowcount == 1
 
     async def claim_consolidation(self, *, lease_seconds: int) -> ConsolidationClaim | None:
-        return await asyncio.to_thread(self._claim_consolidation, lease_seconds)
+        return await _joined_write(lambda: self._claim_consolidation(lease_seconds))
 
     async def heartbeat_consolidation(
         self, claim: ConsolidationClaim, *, lease_seconds: int
@@ -308,6 +291,18 @@ class SQLiteMemoryRepository:
     ) -> bool:
         return await _joined_write(lambda: self._write_consolidation_workspace(claim, write))
 
+    async def clear_memory_data(self) -> None:
+        """Invalidate all old memory claims without deleting conversation records."""
+        await _joined_write(self._clear_memory_data)
+
+    def _clear_memory_data(self) -> None:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("DELETE FROM memory_stage1_outputs")
+            connection.execute(
+                "DELETE FROM memory_jobs WHERE kind IN (?, ?)", (_STAGE_ONE, _CONSOLIDATE)
+            )
+
     def _write_consolidation_workspace(
         self, claim: ConsolidationClaim, write: Callable[[], None]
     ) -> bool:
@@ -326,7 +321,7 @@ class SQLiteMemoryRepository:
     async def enqueue_consolidation(self, *, force: bool = False) -> bool:
         """Record an input change; force is retained for older caller compatibility."""
         del force
-        return await asyncio.to_thread(self._enqueue_consolidation)
+        return await _joined_write(self._enqueue_consolidation)
 
     def _enqueue_consolidation(self) -> bool:
         with self._connect() as connection:
@@ -342,7 +337,7 @@ class SQLiteMemoryRepository:
     async def load_consolidation_inputs(
         self, *, limit: int, max_unused_days: int
     ) -> tuple[StageOneMemory, ...]:
-        return await asyncio.to_thread(self._load_consolidation_inputs, limit, max_unused_days)
+        return await _joined_write(lambda: self._load_consolidation_inputs(limit, max_unused_days))
 
     def _load_consolidation_inputs(
         self, limit: int, max_unused_days: int
@@ -455,13 +450,10 @@ class SQLiteMemoryRepository:
         *,
         retry_delay_seconds: int,
     ) -> bool:
-        return await asyncio.to_thread(
-            self._fail_job,
-            _CONSOLIDATE,
-            _GLOBAL_KEY,
-            claim.ownership_token,
-            error,
-            retry_delay_seconds,
+        return await _joined_write(
+            lambda: self._fail_job(
+                _CONSOLIDATE, _GLOBAL_KEY, claim.ownership_token, error, retry_delay_seconds
+            )
         )
 
     async def mark_thread_mode(self, thread_id: ThreadId, mode: str) -> None:
@@ -489,7 +481,7 @@ class SQLiteMemoryRepository:
     async def mark_memories_used(self, thread_ids: Iterable[ThreadId]) -> None:
         signals = tuple(str(value) for value in thread_ids)
         if signals:
-            await asyncio.to_thread(self._mark_memories_used, signals)
+            await _joined_write(lambda: self._mark_memories_used(signals))
 
     def _mark_memories_used(self, thread_ids: tuple[str, ...]) -> None:
         now = datetime.fromtimestamp(time.time(), UTC).isoformat(timespec="seconds")
@@ -530,6 +522,16 @@ async def _joined_write(write: Callable[[], _WriteResult]) -> _WriteResult:
                 "Memory write failed during cancellation: %s", error
             )
         raise
+
+
+def _source_version_at_least(candidate: str, stored: str) -> bool:
+    # SQLite julianday loses sub-millisecond precision; source version ordering
+    # must not let a slightly older snapshot replace a newer one. Legacy naive
+    # CURRENT_TIMESTAMP strings represent UTC, unlike local wall-clock timestamps.
+    left, right = datetime.fromisoformat(candidate), datetime.fromisoformat(stored)
+    left = left if left.tzinfo is not None else left.replace(tzinfo=UTC)
+    right = right if right.tzinfo is not None else right.replace(tzinfo=UTC)
+    return left >= right
 
 
 def _stage_one_from_row(row: sqlite3.Row) -> StageOneMemory:

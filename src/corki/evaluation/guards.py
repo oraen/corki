@@ -26,21 +26,23 @@ def evaluate_model_step(
     *,
     step_count: int,
     tool_call_count: int,
-    max_steps: int,
-    max_tool_calls: int,
+    max_steps: int | None,
+    max_tool_calls: int | None,
     end_turn: bool | None = None,
 ) -> StepEvaluation:
     """Validate one normalized model step before selecting the next graph edge."""
 
     tool_calls = tuple(item.call for item in items if isinstance(item, ToolCallItem))
     needs_follow_up = bool(tool_calls) or end_turn is False
-    if step_count > max_steps or (needs_follow_up and step_count >= max_steps):
+    if max_steps is not None and (
+        step_count > max_steps or (needs_follow_up and step_count >= max_steps)
+    ):
         return StepEvaluation(
             EvaluationDecision.FAIL,
             f"model step limit exceeded ({max_steps})",
         )
     if tool_calls:
-        if tool_call_count + len(tool_calls) > max_tool_calls:
+        if max_tool_calls is not None and tool_call_count + len(tool_calls) > max_tool_calls:
             return StepEvaluation(
                 EvaluationDecision.FAIL,
                 f"tool call limit exceeded ({max_tool_calls})",

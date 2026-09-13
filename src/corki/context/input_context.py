@@ -63,6 +63,9 @@ def bind_input_context(
             turn_id=user.turn_id,
             created_at=user.created_at,
             source_input_id=user.id,
+            message_group_id=ItemId(str(uuid5(_INPUT_CONTEXT_NAMESPACE, f"{user.id}:{item.key}"))),
+            message_group_index=0,
+            message_group_size=1,
         )
         for item in fragments
     )

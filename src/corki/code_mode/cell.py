@@ -11,6 +11,7 @@ from pathlib import Path
 
 from corki.code_mode.observation import CellObservation
 from corki.code_mode.output import truncate_cell_output
+from corki.code_mode.specs import nested_description
 from corki.protocol.audio import wav_duration_seconds
 from corki.protocol.tools import (
     AudioAttachment,
@@ -18,6 +19,7 @@ from corki.protocol.tools import (
     TextContent,
     content_from_payload,
 )
+from corki.protocol.wire_numbers import dumps_wire
 from corki.tools.errors import CodeModeToolError, FatalToolError
 
 MAX_BUFFER = 4_000_000
@@ -62,18 +64,31 @@ class Cell:
                     },
                 )
             )
+            cancelled = False
             try:
-                self.process = await asyncio.shield(spawn)
-            except asyncio.CancelledError:
-                self.process = await spawn
+                while not spawn.done():
+                    try:
+                        await asyncio.shield(spawn)
+                    except asyncio.CancelledError:
+                        cancelled = True
+                self.process = spawn.result()
+            except Exception as error:
+                if cancelled:
+                    raise asyncio.CancelledError from error
                 raise
+            if cancelled:
+                raise asyncio.CancelledError
             await self.send(
                 {
                     "source": self.source,
                     "stored": self.stored_snapshot,
                     "memory_bytes": self.service.memory_bytes,
                     "tools": [
-                        {"name": name, "description": spec.description, "kind": spec.input_kind}
+                        {
+                            "name": name,
+                            "description": nested_description(spec),
+                            "kind": spec.input_kind,
+                        }
                         for name, spec in self.definitions.items()
                     ],
                 }
@@ -121,7 +136,10 @@ class Cell:
                     task = asyncio.create_task(self.service.notify(self.call_id, value["text"]))
                     self.notifications.add(task)
                 elif kind == "tool":
-                    if len(self.seen_calls) >= self.service.max_calls:
+                    if (
+                        self.service.max_calls is not None
+                        and len(self.seen_calls) >= self.service.max_calls
+                    ):
                         raise ValueError("cell nested tool call limit exceeded")
                     if value["id"] in self.seen_calls or value["name"] not in self.definitions:
                         raise ValueError("invalid nested tool identity")
@@ -205,6 +223,15 @@ class Cell:
         await asyncio.gather(*self.tool_tasks, return_exceptions=True)
 
     async def _invoke(self, value):
+        from corki.code_mode.ownership import parent_call_id
+
+        token = parent_call_id.set(str(self.call_id))
+        try:
+            await self._invoke_owned(value)
+        finally:
+            parent_call_id.reset(token)
+
+    async def _invoke_owned(self, value):
         try:
             result = await self.service.invoke(self.definitions[value["name"]], value["input"])
             response = {"type": "response", "id": value["id"], "result": result}
@@ -235,7 +262,7 @@ class Cell:
                 )
 
     async def send(self, value):
-        encoded = (json.dumps(value, ensure_ascii=True, allow_nan=False) + "\n").encode()
+        encoded = (dumps_wire(value, ensure_ascii=True) + "\n").encode()
         if len(encoded) > MAX_BUFFER:
             raise ValueError("cell bridge serialization limit exceeded")
         self.process.stdin.write(encoded)
@@ -277,7 +304,18 @@ class Cell:
                 self.service.cells.pop(self.id, None)
             parts = truncate_cell_output(tuple(output), max_tokens)
             header += f"\nWall time {time.monotonic() - started:.1f} seconds\nOutput:\n"
-            return CellObservation((TextContent(header), *parts), status == "failed")
+            return CellObservation(
+                (TextContent(header), *parts),
+                status == "failed",
+                json.dumps(
+                    {
+                        "version": 1,
+                        "cell_id": self.id,
+                        "parent_call_id": str(self.call_id),
+                        "status": status,
+                    }
+                ),
+            )
         finally:
             self.observing = False
 

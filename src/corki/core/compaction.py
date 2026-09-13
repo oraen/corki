@@ -1,7 +1,5 @@
 """Standalone compaction node using the same owned, checkpointed Turn lifecycle."""
 
-from pathlib import Path
-
 from langgraph.runtime import Runtime
 
 from corki.core.state import CorkiState
@@ -10,31 +8,35 @@ from corki.protocol.events import ContextCompacted, ContextCompactionStarted, Wa
 
 
 async def compact_node(
-    state: CorkiState, runtime: Runtime, *, window, context_builder, code_mode, retry_callback
+    state: CorkiState,
+    runtime: Runtime,
+    *,
+    window,
+    context_builder,
+    code_mode,
+    retry_callback,
+    registry,
+    refresh_tools=None,
+    tool_plan=None,
+    tool_inventory=None,
+    make_tool_snapshot=None,
+    on_compact=None,
 ):
     if code_mode is not None:
         code_mode.pause()
     thread, turn = state["thread_id"], state["turn_id"]
     await runtime.context.events.emit(ContextCompactionStarted(thread, turn))
-    options = {}
-    if window.token_budget_enabled:
-        options["snapshot"] = await context_builder.build(
-            cwd=Path(state["cwd"]),
-            turn_id=turn,
-            include_input_context=False,
-        )
     prepared = await window.compact(
         thread_id=thread,
         turn_id=turn,
-        instructions=context_builder.base_instructions(),
+        instructions=state.get("turn_base_instructions", context_builder.base_instructions()),
         on_retry=retry_callback(state, runtime),
-        **options,
+        on_compact=on_compact,
     )
     await runtime.context.events.emit(ContextCompacted(thread, turn, prepared.estimated_tokens))
-    if not window.token_budget_enabled:
-        await runtime.context.events.emit(
-            WarningEvent(thread, turn, PromptStore().render("context/compaction_warning").strip())
-        )
+    await runtime.context.events.emit(
+        WarningEvent(thread, turn, PromptStore().render("context/compaction_warning").strip())
+    )
     return {"status": "completed", "final_answer": "", "request_items": prepared.items}
 
 

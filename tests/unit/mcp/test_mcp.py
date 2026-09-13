@@ -41,14 +41,14 @@ class FakeMCPClient(MCPClient):
             "structuredContent": {"count": 1},
         }
 
-    async def list_resources(self) -> tuple[dict[str, Any], ...]:
-        return ({"uri": "memory://guide", "name": "guide"},)
+    async def list_resources(self, cursor=None):
+        return {"resources": [{"uri": "memory://guide", "name": "guide"}]}
 
     async def read_resource(self, uri: str) -> Mapping[str, Any]:
         return {"contents": [{"uri": uri, "text": "resource body"}]}
 
-    async def list_resource_templates(self) -> tuple[dict[str, Any], ...]:
-        return ({"uriTemplate": "memory://{name}", "name": "memory"},)
+    async def list_resource_templates(self, cursor=None):
+        return {"resourceTemplates": [{"uriTemplate": "memory://{name}", "name": "memory"}]}
 
     async def list_prompts(self) -> tuple[dict[str, Any], ...]:
         return ({"name": "review"},)
@@ -77,7 +77,7 @@ def test_manager_registers_and_executes_namespaced_mcp_tools(tmp_path: Path, mon
         await manager.start()
         executor = ToolExecutor(registry, output_char_budget=1_000)
         result = await executor.execute(
-            ToolCall(ToolCallId("mcp-1"), "mcp__docs__search", {"q": "langgraph"}),
+            ToolCall(ToolCallId("mcp-1"), "mcp__docs::search", {"q": "langgraph"}),
             ToolContext(cwd=tmp_path),
         )
         await manager.aclose()
@@ -88,7 +88,7 @@ def test_manager_registers_and_executes_namespaced_mcp_tools(tmp_path: Path, mon
     assert content.startswith("Wall time: ")
     assert content.split("\nOutput:\n", 1)[1] == '{"count":1}'
     assert "search:langgraph" not in content
-    assert "mcp__docs__search" in manager.tool_names
+    assert "mcp__docs::search" in manager.tool_names
     assert "read_mcp_resource" in manager.tool_names
     assert client.closed
 
@@ -133,7 +133,7 @@ def test_cancelled_manager_start_rolls_back_clients_and_registry(
 
     assert first.closed
     assert second.closed
-    assert {"mcp__first__search", "mcp__second__search"}.issubset(manager.tool_names)
+    assert {"mcp__first::search", "mcp__second::search"}.issubset(manager.tool_names)
     assert retry_first.closed
     assert retry_second.closed
 
@@ -166,7 +166,9 @@ def test_aggregate_mcp_resource_tools_preserve_server_provenance(
 
     listed, read = asyncio.run(scenario())
 
-    assert json.loads(listed)["docs"][0]["uri"] == "memory://guide"
+    assert json.loads(listed) == {
+        "resources": [{"server": "docs", "uri": "memory://guide", "name": "guide"}]
+    }
     assert json.loads(read)["contents"][0]["text"] == "resource body"
 
 
@@ -265,7 +267,7 @@ for line in sys.stdin:
     async def scenario() -> str:
         await manager.start()
         result = await ToolExecutor(registry, output_char_budget=1_000).execute(
-            ToolCall(ToolCallId("stdio-1"), "mcp__fixture__echo", {"text": "hello"}),
+            ToolCall(ToolCallId("stdio-1"), "mcp__fixture::echo", {"text": "hello"}),
             ToolContext(cwd=tmp_path),
         )
         await manager.aclose()
@@ -288,7 +290,7 @@ def test_mcp_image_content_becomes_a_model_attachment(tmp_path: Path) -> None:
 
     result = asyncio.run(
         tool.execute(
-            ToolCall(ToolCallId("image-1"), "mcp__vision__capture", {}),
+            ToolCall(ToolCallId("image-1"), "mcp__vision::capture", {}),
             ToolContext(cwd=tmp_path),
         )
     )

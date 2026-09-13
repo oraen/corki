@@ -26,7 +26,7 @@ def seed(
     generated=None,
 ):
     connection.execute(
-        "INSERT INTO threads(id,cwd,updated_at,memory_mode) VALUES (?,?,?,?)",
+        "INSERT INTO threads(id,cwd,updated_at,memory_mode,preview) VALUES (?,?,?,?,'evidence')",
         (thread, str(workspace), source, mode),
     )
     connection.execute(

@@ -40,30 +40,23 @@ class ProviderCapabilities:
     reasoning_protocol: ReasoningProtocol = ReasoningProtocol.NONE
     requires_reasoning_replay: bool = False
     structured_output_protocol: StructuredOutputProtocol = StructuredOutputProtocol.NONE
+    # Legacy constructor data only; no transport consults this excluded extension.
     supports_encrypted_tool_output: bool = False
     supports_native_namespaces: bool = False
+    supports_remote_compaction: bool = False
+    supports_service_tier: bool = False
+    supports_internal_metadata: bool = False
+    # Provider-owned semantic ceiling, distinct from native namespace encoding.
+    # Codex providers default this to true; custom adapters may lower it.
+    namespace_tools: bool = True
 
 
 def resolve_capabilities(
     *, base_url: str, api_mode: str, provider_name: str | None = None
 ) -> ProviderCapabilities:
-    """Resolve protocol behavior without leaking hostname checks into adapters."""
+    """Choose ordinary transport defaults; labels and addresses grant no capabilities."""
 
     mode = ApiMode(api_mode)
-    detected_name = (provider_name or "").strip().lower()
-    if not detected_name and "deepseek.com" in base_url.lower():
-        detected_name = "deepseek"
-    if detected_name == "deepseek":
-        return ProviderCapabilities(
-            name="deepseek",
-            api_mode=mode,
-            supports_stream_usage=True,
-            supports_thinking_toggle=True,
-            supports_reasoning_effort=True,
-            reasoning_protocol=ReasoningProtocol.DEEPSEEK,
-            requires_reasoning_replay=True,
-            structured_output_protocol=StructuredOutputProtocol.JSON_OBJECT,
-        )
     if mode is ApiMode.RESPONSES:
         return ProviderCapabilities(
             name="openai-compatible-responses",
@@ -71,13 +64,6 @@ def resolve_capabilities(
             supports_stream_usage=True,
             supports_reasoning_effort=True,
             reasoning_protocol=ReasoningProtocol.OPENAI_RESPONSES,
-            structured_output_protocol=StructuredOutputProtocol.JSON_SCHEMA,
-        )
-    if detected_name == "openai" or "api.openai.com" in base_url.lower():
-        return ProviderCapabilities(
-            name="openai-compatible",
-            api_mode=mode,
-            supports_reasoning_effort=True,
             structured_output_protocol=StructuredOutputProtocol.JSON_SCHEMA,
         )
     return ProviderCapabilities(name="openai-compatible", api_mode=mode)

@@ -62,8 +62,9 @@ def test_retry_with_same_snapshot_retains_nested_execution_gate():
             tasks.append(asyncio.create_task(service.invoke(spec, {})))
             await asyncio.wait_for(started.wait(), 2)
             original = service.step_calls[0]
+            gate = service.execution_gate
             service.activate("turn", dispatch, None, registry=registry)
-            assert service.step_calls == [original] and service.barrier == (original,)
+            assert service.step_calls == [original] and service.execution_gate is gate
             registry.selected.clear()
             tasks.append(asyncio.create_task(service.invoke(spec, {})))
             await asyncio.wait_for(registry.selected.wait(), 2)
@@ -150,7 +151,7 @@ def test_hidden_current_handler_is_exclusive_and_admitted_calls_keep_their_worke
         try:
             tasks.append(asyncio.create_task(service.invoke(old, {})))
             await asyncio.wait_for(started.wait(), 2)
-            assert service.barrier == (service.step_calls[0],), "Hidden disables parallelism"
+            assert service.execution_gate._writer, "Hidden disables parallelism"
             registry.selected.clear()
             tasks.append(asyncio.create_task(service.invoke(old, {})))
             await asyncio.wait_for(registry.selected.wait(), 2)

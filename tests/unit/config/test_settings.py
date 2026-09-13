@@ -2,14 +2,90 @@ from pathlib import Path
 
 import pytest
 
-from corki.config import CorkiSettings
+from corki.config import CorkiPaths, CorkiSettings
+
+
+def test_cli_live_text_defaults_on_and_preserves_explicit_opt_out(tmp_path):
+    assert CorkiSettings(tmp_path).realtime_enabled is True
+    paths = CorkiPaths.from_home(tmp_path / "home")
+    paths.ensure_exists()
+    assert CorkiSettings.for_directory(tmp_path, config_file=paths.config_file).realtime_enabled
+    paths.config_file.write_text("[realtime]\nenabled = false\n")
+    paths.ensure_exists()
+    assert not CorkiSettings.for_directory(tmp_path, config_file=paths.config_file).realtime_enabled
+
+
+@pytest.mark.parametrize("value", [True, False, "obsolete", None])
+def test_removed_remote_compaction_setting_is_inert(tmp_path, value):
+    assert CorkiSettings(tmp_path, remote_compaction_v2=value).remote_compaction_v2 is False
+
+
+@pytest.mark.parametrize("value", ["true", "false", '"obsolete"'])
+def test_removed_remote_compaction_toml_is_ignored(tmp_path, value):
+    config = tmp_path / "config.toml"
+    config.write_text(f"[features]\nremote_compaction_v2={value}\n")
+    assert CorkiSettings.for_directory(tmp_path, config_file=config).remote_compaction_v2 is False
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_step_model_switching_loads_explicit_feature_boolean(tmp_path, enabled):
+    config = tmp_path / "config.toml"
+    config.write_text(f"[features]\nstep_model_switching={str(enabled).lower()}\n")
+    assert CorkiSettings.for_directory(tmp_path, config_file=config).step_model_switching is enabled
+
+
+@pytest.mark.parametrize("value", [0, 1, "true", None, []])
+def test_step_model_switching_rejects_non_boolean(tmp_path, value):
+    with pytest.raises(ValueError, match="step_model_switching"):
+        CorkiSettings(tmp_path, step_model_switching=value)
+
+
+@pytest.mark.parametrize("servers", [None, [], ["docs"]])
+def test_non_prefixed_mcp_configuration_preserves_absent_vs_empty(tmp_path, servers):
+    config = tmp_path / "config.toml"
+    listing = "" if servers is None else f"non_prefixed_mcp_tool_servers={servers!r}\n"
+    config.write_text("[tools]\nnon_prefixed_mcp_tool_names=true\n" + listing)
+    settings = CorkiSettings.for_directory(tmp_path, config_file=config)
+    assert settings.non_prefixed_mcp_tool_names
+    assert settings.non_prefixed_mcp_tool_servers == (None if servers is None else tuple(servers))
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"non_prefixed_mcp_tool_names": "true"},
+        {"non_prefixed_mcp_tool_names": 1},
+        {"non_prefixed_mcp_tool_servers": "docs"},
+        {"non_prefixed_mcp_tool_servers": [1]},
+    ],
+)
+def test_non_prefixed_mcp_configuration_rejects_invalid_types(tmp_path, values):
+    with pytest.raises(ValueError, match="non_prefixed_mcp"):
+        CorkiSettings(working_directory=tmp_path, **values)
+
+
+def test_deferred_world_state_defaults_off_and_loads_boolean(tmp_path):
+    assert CorkiSettings(working_directory=tmp_path).deferred_tool_world_state is False
+    config = tmp_path / "config.toml"
+    config.write_text("[tools]\ndeferred_tool_world_state=true\n")
+    assert (
+        CorkiSettings.for_directory(tmp_path, config_file=config).deferred_tool_world_state is True
+    )
+
+
+@pytest.mark.parametrize("value", [0, 1, "true", None, []])
+def test_deferred_world_state_rejects_non_boolean(tmp_path, value):
+    with pytest.raises(ValueError, match="deferred_tool_world_state"):
+        CorkiSettings(working_directory=tmp_path, deferred_tool_world_state=value)
 
 
 @pytest.mark.parametrize("mode", ["compatible", "native", "disabled"])
 def test_tool_search_mode_loads_from_configuration(tmp_path: Path, mode: str) -> None:
     config = tmp_path / "config.toml"
     config.write_text(f'[provider]\napi_mode="responses"\n[tools]\nsearch_mode="{mode}"\n')
-    assert CorkiSettings.for_directory(tmp_path, config_file=config).tool_search_mode == mode
+    assert CorkiSettings.for_directory(tmp_path, config_file=config).tool_search_mode == (
+        "compatible" if mode == "native" else mode
+    )
 
 
 @pytest.mark.parametrize("mode", ["unknown", None, []])
@@ -18,9 +94,11 @@ def test_invalid_search_modes_fail_with_configuration_error(tmp_path: Path, mode
         CorkiSettings(working_directory=tmp_path, tool_search_mode=mode)
 
 
-def test_native_search_requires_responses_provider(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="Responses"):
-        CorkiSettings(working_directory=tmp_path, tool_search_mode="native")
+def test_old_native_search_migrates_for_chat_provider(tmp_path: Path) -> None:
+    assert (
+        CorkiSettings(working_directory=tmp_path, tool_search_mode="native").tool_search_mode
+        == "compatible"
+    )
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
@@ -120,7 +198,7 @@ timeout_seconds = 9
     settings = CorkiSettings.for_directory(tmp_path, config_file=config)
 
     assert settings.skills_enabled is False
-    assert settings.plugin_dirs == (Path("team-plugins"),)
+    assert settings.plugin_dirs == (tmp_path / "team-plugins",)
     assert settings.disabled_plugins == frozenset({"legacy"})
     assert settings.realtime_enabled is True
     assert settings.max_realtime_inputs == 3
@@ -161,7 +239,9 @@ def test_optional_capability_configuration_fails_fast(tmp_path: Path, document: 
         ("[agent]\nmodel = ''\n", "model"),
         ("[provider]\nbase_url = 'not-a-url'\n", "base_url"),
         ("[provider]\nmax_retries = -1\n", "max_retries"),
-        ("[runtime]\nevent_queue_size = 0\n", "event_queue_size"),
+        ("[runtime]\nevent_queue_size = -1\n", "event_queue_size"),
+        ("[runtime]\nevent_queue_size = true\n", "integers"),
+        ("[runtime]\nevent_queue_size = 1.5\n", "integers"),
     ],
 )
 def test_settings_rejects_invalid_known_types_and_values(

@@ -4,9 +4,11 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from corki.models.base import ModelError
+from corki.models.item_metadata import capture_response_identity
 from corki.models.types import ModelReasoningDelta, ModelTextDelta
 from corki.protocol.ids import ItemId, ModelStepId, TurnId, new_item_id
 from corki.protocol.items import AssistantMessageItem, ReasoningItem
+from corki.protocol.response_body import capture_response_body
 
 
 @dataclass
@@ -72,8 +74,14 @@ class ResponseContent:
         part = ("summary" if summary else "text", index)
         buffer.parts[part] = buffer.parts.get(part, "") + delta
         self.extra_chars += len(delta)
-        cls = ModelReasoningDelta if reasoning else ModelTextDelta
-        return cls(delta, item_id=buffer.id)
+        if reasoning:
+            return ModelReasoningDelta(
+                delta,
+                item_id=buffer.id,
+                section_index=index,
+                channel="summary" if summary else "raw",
+            )
+        return ModelTextDelta(delta, item_id=buffer.id)
 
     def complete(self, item: dict[str, Any], event: dict[str, Any], *, synthetic: bool = False):
         kind = item["type"]
@@ -108,7 +116,13 @@ class ResponseContent:
             if phase not in (None, "commentary", "final_answer"):
                 raise ModelError("Responses assistant phase is invalid")
             completed = AssistantMessageItem(
-                text, self.turn_id, self.step_id, id=buffer.id, phase=phase
+                text,
+                self.turn_id,
+                self.step_id,
+                id=buffer.id,
+                phase=phase,
+                response_item_metadata_json=None if synthetic else capture_response_identity(item),
+                response_body_json=None if synthetic else capture_response_body(item),
             )
         else:
             encrypted = item.get("encrypted_content")
@@ -120,14 +134,23 @@ class ResponseContent:
                 self.step_id,
                 id=buffer.id,
                 provider_name=self.provider,
+                summary=text
+                if parts is not None or any(key[0] == "summary" for key in buffer.parts)
+                else None,
                 provider_item_id=buffer.provider_id,
                 encrypted_content=encrypted,
+                response_item_metadata_json=None if synthetic else capture_response_identity(item),
+                response_body_json=None if synthetic else capture_response_body(item),
             )
         if buffer.completed is not None:
             if replace(completed, created_at=buffer.completed.created_at) != buffer.completed:
                 raise ModelError("Responses completed content item changed")
             return None
         self.extra_chars += max(0, len(text) - sum(map(len, buffer.parts.values())))
+        self.extra_chars += len(completed.response_item_metadata_json or "")
+        # Display text was counted above; retain bounds on all remaining body data
+        # (including raw reasoning, media, empty part wrappers and hidden markup).
+        self.extra_chars += max(0, len(completed.response_body_json or "") - len(text))
         if isinstance(completed, ReasoningItem):
             self.extra_chars += len(completed.encrypted_content or "")
         buffer.completed = completed

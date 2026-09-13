@@ -18,6 +18,100 @@ from corki.tools import ToolRegistry
 pytestmark = pytest.mark.skipif(not CodeModeService.available(), reason="install corki[code-mode]")
 
 
+@pytest.mark.parametrize("spawn_failure", [False, True])
+def test_runtime_joins_cancelled_cell_spawn_before_continuing(tmp_path, monkeypatch, spawn_failure):
+    async def scenario():
+        spawned, release = asyncio.Event(), asyncio.Event()
+        processes, requests = [], []
+        original = asyncio.create_subprocess_exec
+
+        async def spawn(*args, **kwargs):
+            if not any(
+                str(arg).replace("\\", "/").endswith("/code_mode/worker.py") for arg in args
+            ):
+                return await original(*args, **kwargs)
+            if spawn_failure:
+                spawned.set()
+                await release.wait()
+                raise OSError("engine creation failed after cancellation")
+            process = await original(*args, **kwargs)
+            processes.append(process)
+            spawned.set()
+            await release.wait()
+            return process
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+
+        class Model:
+            async def stream(self, request):
+                requests.append(request)
+                if len(requests) == 1:
+                    yield ModelCompleted(
+                        (
+                            ToolCallItem(
+                                ToolCall(
+                                    new_tool_call_id(),
+                                    "exec",
+                                    None,
+                                    raw_arguments="store('unexpected', true);",
+                                    input_kind="freeform",
+                                ),
+                                request.items[-1].turn_id,
+                                new_step_id(),
+                            ),
+                        )
+                    )
+                else:
+                    assert all(process.returncode is not None for process in processes)
+                    assert any(
+                        "Script terminated" in getattr(i, "content", "") for i in request.items
+                    )
+                    yield ModelCompleted(())
+
+            async def aclose(self):
+                pass
+
+        runtime = await LangGraphRuntime.acreate(
+            settings=CorkiSettings(tmp_path, skills_enabled=False, tool_mode="code_mode_only"),
+            database_path=tmp_path / "state.db",
+            home_path=tmp_path,
+            registry=ToolRegistry(),
+            model=Model(),
+        )
+
+        async def consume():
+            return [event async for event in runtime.stream("execute")]
+
+        consumer = asyncio.create_task(consume())
+        try:
+            await asyncio.wait_for(spawned.wait(), 3)
+            (cell,) = runtime._code_mode.cells.values()
+            for _ in range(2):
+                cell.task.cancel()
+                await asyncio.sleep(0)
+            release.set()
+            events = await asyncio.wait_for(consumer, 3)
+            assert isinstance(events[-1], TurnCompleted), events[-1]
+            assert len(requests) == 2 and len(processes) == (0 if spawn_failure else 1)
+            if spawn_failure:
+                assert cell.process is None and cell.task.cancelled()
+            else:
+                assert cell.process is processes[0] and cell.process.stdin.is_closing()
+            assert not runtime._code_mode.cells and not runtime._code_mode.stored
+        finally:
+            release.set()
+            consumer.cancel()
+            await asyncio.gather(consumer, return_exceptions=True)
+            await runtime.aclose()
+            for process in processes:
+                if process.returncode is None:
+                    process.kill()
+                await process.wait()
+                process.stdin.close()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("boundary", ["wait", "pipe"])
 @pytest.mark.parametrize("cancel", [False, True])
 def test_real_cell_cleanup_fault_preserves_terminal_and_joins_callbacks(

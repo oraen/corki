@@ -4,6 +4,7 @@ import json
 import httpx
 import pytest
 
+from corki import http_client
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.core.graph import GraphRunContext
@@ -70,6 +71,14 @@ def test_runtime_appends_rule_updates_across_steps_turns_and_cold_reopen(tmp_pat
             events = [e async for e in runtime.stream("change rules and continue")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert requests[1].items[: len(requests[0].items)] == requests[0].items
+            assert not any(
+                "NEW RULE" in i.content for i in requests[1].items if isinstance(i, ContextItem)
+            )
+            thread = runtime.thread_id
+            await runtime.aclose()
+            runtime = create(thread)
+            events = [e async for e in runtime.stream("load changed rules on cold reopen")]
+            assert isinstance(events[-1], TurnCompleted), events[-1]
             rules.unlink()
             for _ in range(2):
                 events = [e async for e in runtime.stream("continue without project rules")]
@@ -78,20 +87,38 @@ def test_runtime_appends_rule_updates_across_steps_turns_and_cold_reopen(tmp_pat
             contexts = [
                 i for i in stored if isinstance(i, ContextItem) and i.key == "project.agents"
             ]
-            assert len(contexts) == 3
+            assert len(contexts) == 2
             assert "OLD RULE" in contexts[0].content
             assert "replace all previously provided AGENTS.md instructions" in contexts[1].content
             assert "NEW RULE" in contexts[1].content
-            assert (
-                "previously provided AGENTS.md instructions no longer apply" in contexts[2].content
-            )
             thread = runtime.thread_id
             await runtime.aclose()
             runtime = create(thread)
             events = [e async for e in runtime.stream("resume unchanged")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
-            assert requests[-1].items[: len(stored)] == stored
+            visible = tuple(
+                i for i in stored if not isinstance(i, ContextItem) or not i.is_snapshot_only
+            )
+            assert requests[-1].items[: len(visible)] == visible
+            assert all(
+                i.response_item_metadata_json is None
+                for i in visible
+                if isinstance(i, AssistantMessageItem)
+            )
+            removed = [
+                i
+                for i in requests[-1].items
+                if isinstance(i, ContextItem) and i.key == "project.agents"
+            ]
+            assert removed[:2] == contexts
+            assert len(removed) == 3
+            assert (
+                "previously provided AGENTS.md instructions no longer apply" in removed[-1].content
+            )
             rules.write_text("RETURNED RULE", encoding="utf-8")
+            # A fresh Runtime, not another Turn, discovers the returned file.
+            await runtime.aclose()
+            runtime = create(thread)
             events = [e async for e in runtime.stream("use returned rules")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             latest = [
@@ -99,7 +126,7 @@ def test_runtime_appends_rule_updates_across_steps_turns_and_cold_reopen(tmp_pat
                 for i in requests[-1].items
                 if isinstance(i, ContextItem) and i.key == "project.agents"
             ]
-            assert latest[:3] == contexts
+            assert latest[:3] == removed
             assert len(latest) == 4 and "RETURNED RULE" in latest[-1].content
             assert "replace all previously" not in latest[-1].content
             assert len(calls) == 1
@@ -144,7 +171,11 @@ def test_cold_checkpoint_restores_rendered_update_and_comparison_value(tmp_path)
             events = [e async for e in runtime.stream("first turn")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             rules.write_text("NEW RULE", encoding="utf-8")
-            thread, turn = runtime.thread_id, new_turn_id()
+            thread = runtime.thread_id
+            await runtime.aclose()
+            runtime = create(thread)
+            await runtime._ensure_ready()
+            turn = new_turn_id()
             user = UserMessageItem("prepared but not yet sampled", turn)
             await runtime._repository.save_turn(
                 TurnRecord(turn, thread, TurnStatus.RUNNING, user.content)
@@ -164,7 +195,15 @@ def test_cold_checkpoint_restores_rendered_update_and_comparison_value(tmp_path)
             runtime = create(thread)
             events = [e async for e in runtime.resume_pending()]
             assert isinstance(events[-1], TurnCompleted), events[-1]
-            assert len(requests) == 2 and requests[-1].items == prepared
+            visible = tuple(
+                i for i in prepared if not isinstance(i, ContextItem) or not i.is_snapshot_only
+            )
+            assert len(requests) == 2 and requests[-1].items == visible
+            assert all(
+                i.response_item_metadata_json is None
+                for i in visible
+                if isinstance(i, AssistantMessageItem)
+            )
             updates = [
                 i
                 for i in requests[-1].items
@@ -198,7 +237,7 @@ def test_real_compaction_reinjects_current_snapshot_not_update_notices(tmp_path,
             async def execute(self, call, context):
                 calls.append(call)
                 if len(calls) == 1:
-                    rules.write_text("NEW RULE", encoding="utf-8")
+                    rules.write_text("UNRELOADED RULE", encoding="utf-8")
                     return ToolResult(call.id, call.name, "updated")
                 return ToolResult(call.id, call.name, "OBSERVATION " + "x" * 26000)
 
@@ -217,7 +256,7 @@ def test_real_compaction_reinjects_current_snapshot_not_update_notices(tmp_path,
                     )
                     return
                 requests.append(request)
-                if len(requests) <= 2:
+                if 2 <= len(requests) <= 3:
                     items = (ToolCallItem(ToolCall(new_tool_call_id(), "advance", {}), turn, step),)
                 else:
                     items = (AssistantMessageItem("done", turn, step),)
@@ -226,22 +265,36 @@ def test_real_compaction_reinjects_current_snapshot_not_update_notices(tmp_path,
             async def aclose(self):
                 pass
 
-        registry = ToolRegistry()
-        registry.register(Tool())
-        runtime = LangGraphRuntime.create(
-            settings=CorkiSettings(
-                working_directory=tmp_path,
-                skills_enabled=False,
-                context_window_tokens=14000,
-                auto_compact_tokens=5000,
-                tool_output_token_limit=5000,
-                model_max_retries=0,
-            ),
-            database_path=tmp_path / "sessions.db",
-            registry=registry,
-            model=Model(),
+        settings = CorkiSettings(
+            working_directory=tmp_path,
+            skills_enabled=False,
+            context_window_tokens=14000,
+            auto_compact_tokens=5000,
+            tool_output_token_limit=5000,
+            model_max_retries=0,
         )
+
+        def create(thread_id=None):
+            registry = ToolRegistry()
+            registry.register(Tool())
+            return LangGraphRuntime.create(
+                settings=settings,
+                database_path=tmp_path / "sessions.db",
+                home_path=tmp_path / ".corki",
+                registry=registry,
+                model=Model(),
+                thread_id=thread_id,
+            )
+
+        runtime = create()
         try:
+            assert isinstance(
+                [e async for e in runtime.stream("establish rules")][-1], TurnCompleted
+            )
+            thread = runtime.thread_id
+            await runtime.aclose()
+            rules.write_text("NEW RULE", encoding="utf-8")
+            runtime = create(thread)
             events = [e async for e in runtime.stream("CURRENT INPUT MUST SURVIVE")]
             assert isinstance(events[-1], TurnFailed if fail_summary else TurnCompleted), events[-1]
             assert len(summaries) == 1 and len(calls) == 2
@@ -266,6 +319,7 @@ def test_real_compaction_reinjects_current_snapshot_not_update_notices(tmp_path,
                     if isinstance(i, ContextItem) and i.key == "project.agents"
                 ]
                 assert len(current) == 1 and "NEW RULE" in current[0].content
+                assert "UNRELOADED RULE" not in current[0].content
                 assert "replace all previously" not in current[0].content
                 assert current[0].snapshot_content is None
                 assert any(
@@ -311,22 +365,36 @@ def test_context_updates_reach_real_provider_wire_without_rewriting_prefix(
                 text = "data: " + json.dumps(data) + "\n\ndata: [DONE]\n\n"
             return httpx.Response(200, text=text, headers={"content-type": "text/event-stream"})
 
-        client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
-        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client)
-        runtime = LangGraphRuntime.create(
-            settings=CorkiSettings(
-                working_directory=tmp_path,
-                skills_enabled=False,
-                api_mode=api_mode,
-                api_key="fixture",
-                api_base="https://fixture.invalid/v1",
-            ),
-            database_path=tmp_path / "sessions.db",
-            registry=ToolRegistry(),
+        monkeypatch.setattr(
+            http_client,
+            "OwnedHTTPClient",
+            lambda **kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handle)),
         )
+        settings = CorkiSettings(
+            working_directory=tmp_path,
+            skills_enabled=False,
+            api_mode=api_mode,
+            api_key="fixture",
+            api_base="https://fixture.invalid/v1",
+        )
+
+        def create(thread_id=None):
+            return LangGraphRuntime.create(
+                settings=settings,
+                database_path=tmp_path / "sessions.db",
+                home_path=tmp_path / ".corki",
+                registry=ToolRegistry(),
+                thread_id=thread_id,
+            )
+
+        runtime = create()
         rules = tmp_path / "AGENTS.md"
         try:
             for value in ("OLD RULE", "NEW RULE", "", ""):
+                if requests:
+                    thread = runtime.thread_id
+                    await runtime.aclose()
+                    runtime = create(thread)
                 if value:
                     rules.write_text(value, encoding="utf-8")
                 elif rules.exists():
@@ -343,6 +411,5 @@ def test_context_updates_reach_real_provider_wire_without_rewriting_prefix(
             assert "snapshot_content" not in wire
         finally:
             await runtime.aclose()
-            await client.aclose()
 
     asyncio.run(scenario())

@@ -10,12 +10,66 @@ from corki.models import (
     ModelCompleted,
     ModelError,
     ModelItemCompleted,
+    ModelReasoningDelta,
     ModelRequest,
     OpenAIResponsesModel,
     resolve_capabilities,
 )
 from corki.protocol.ids import new_turn_id
 from corki.protocol.items import AssistantMessageItem, ReasoningItem, UserMessageItem
+
+
+def test_summary_part_added_preserves_empty_section_boundary():
+    async def scenario():
+        packets = [
+            {
+                "type": "response.reasoning_summary_text.delta",
+                "item_id": "r1",
+                "summary_index": 0,
+                "delta": "**First** body",
+            },
+            {
+                "type": "response.reasoning_summary_part.added",
+                "item_id": "r1",
+                "summary_index": 1,
+                "part": {"type": "summary_text", "text": ""},
+            },
+            {
+                "type": "response.reasoning_summary_text.delta",
+                "item_id": "r1",
+                "summary_index": 1,
+                "delta": "**Second** body",
+            },
+            {"type": "response.completed", "response": {"id": "r"}},
+        ]
+        body = "".join(f"data: {json.dumps(packet)}\n\n" for packet in packets)
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, text=body))
+        )
+        model = OpenAIResponsesModel(
+            api_key="fixture",
+            base_url="https://fixture.invalid/v1",
+            client=client,
+            capabilities=resolve_capabilities(
+                base_url="https://fixture.invalid/v1", api_mode="responses"
+            ),
+        )
+        try:
+            request = ModelRequest("fixture", "", (), (UserMessageItem("run", new_turn_id()),), ())
+            events = [event async for event in model.stream(request)]
+            deltas = [event for event in events if isinstance(event, ModelReasoningDelta)]
+            assert [(event.section_index, event.delta) for event in deltas] == [
+                (0, "**First** body"),
+                (1, ""),
+                (1, "**Second** body"),
+            ]
+            assert len({event.item_id for event in deltas}) == 1
+            assert all(event.channel == "summary" for event in deltas)
+        finally:
+            await model.aclose()
+            await client.aclose()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("ending", ["identical", "changed_done", "changed_final", "late_delta"])
@@ -169,6 +223,7 @@ def test_complete_content_contract_rejects_mutation_and_combined_overflow(fault)
             "type": "message",
             "id": "m",
             "phase": "commentary",
+            "role": "assistant",
             "content": [{"type": "output_text", "text": "x" * 30}],
         }
         if fault == "changed_opaque":
@@ -206,7 +261,13 @@ def test_complete_content_contract_rejects_mutation_and_combined_overflow(fault)
             api_key="fixture",
             base_url="https://fixture.invalid/v1",
             client=client,
-            response_char_limit=50 if fault == "combined_budget" else 1000,
+            response_char_limit=(
+                len(json.dumps({"content": item["content"]}, separators=(",", ":")))
+                + len(json.dumps({"id": item["id"]}, separators=(",", ":")))
+                + 10
+                if fault == "combined_budget"
+                else 1000
+            ),
             capabilities=resolve_capabilities(
                 base_url="https://fixture.invalid/v1", api_mode="responses"
             ),

@@ -5,6 +5,7 @@ import json
 import sqlite3
 
 import pytest
+from memory_evidence import inspect_worker_evidence
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -53,7 +54,7 @@ def test_stage_one_parser_and_redaction_survive_runtime_publication(tmp_path, ca
 
             async def stream(self, request):
                 self.requests.append(request)
-                assert not request.tools
+                assert bool(request.tools) == (request.output_schema is None)
                 if len(self.requests) == 1:
                     assert set(request.output_schema["required"]) == {
                         "raw_memory",
@@ -65,7 +66,8 @@ def test_stage_one_parser_and_redaction_survive_runtime_publication(tmp_path, ca
                     assert "[REDACTED_SECRET]" in request.items[0].content
                     text = response
                 else:
-                    assert secret not in request.items[0].content
+                    data = json.dumps(inspect_worker_evidence(request))
+                    assert secret not in data
                     text = json.dumps(
                         {
                             "memory": f"Saved fact {secret}",

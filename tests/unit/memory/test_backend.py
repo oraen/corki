@@ -63,9 +63,9 @@ def test_ad_hoc_model_schema_explains_filename_and_verbatim_contract(tmp_path):
 
     spec = MemoryAddNoteTool(LocalMemoryBackend(tmp_path / "memories")).spec
     filename = spec.parameters["properties"]["filename"]
-    assert filename["minLength"] == 24 and filename["maxLength"] == 128
+    assert filename["type"] == "string"
     assert "YYYY-MM-DDTHH-MM-SS-<slug>.md" in filename["description"]
-    assert filename["pattern"]
+    assert "pattern" not in filename and "minLength" not in filename
     assert "Verbatim" in spec.parameters["properties"]["note"]["description"]
 
 

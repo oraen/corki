@@ -7,8 +7,7 @@ import pytest
 from corki.config import CorkiSettings
 from corki.core.checkpoint import checkpoint_serializer
 from corki.models.base import ModelError
-from corki.models.namespaces import group_tool_definitions, request_tool_aliases
-from corki.models.tool_search import response_tool_name
+from corki.models.namespaces import group_tool_definitions, request_tool_aliases, response_tool_name
 from corki.models.types import ModelRequest
 from corki.protocol.tool_names import compatible_tool_name
 from corki.protocol.tools import ToolSpec, tool_spec_from_payload, tool_spec_to_payload
@@ -22,14 +21,37 @@ def test_namespace_merge_order_empty_description_fill_and_sorted_children():
         ToolSpec("history::read", "read", {}),
     )
     output = group_tool_definitions(specs, native_namespaces=True)
-    assert [spec["name"] for spec in output] == ["notes", "plain", "history"]
-    assert output[0]["description"] == "Notes"
-    assert [spec["name"] for spec in output[0]["tools"]] == ["a", "z"]
-    assert output[2]["description"] == "Tools in the history namespace."
+    assert [spec["name"] for spec in output] == [compatible_tool_name(spec.name) for spec in specs]
+    assert all(spec["type"] == "function" and "tools" not in spec for spec in output)
+
+
+def test_discovery_coalesces_ranked_outputs_without_resorting_or_replacing_first_description():
+    specs = (
+        ToolSpec("notes::z", "z", {}, namespace_description=" "),
+        ToolSpec("notes::a", "a", {}, namespace_description="Notes"),
+    )
+    output = group_tool_definitions(specs, native_namespaces=True, discovered=True)
+    assert [s["name"] for s in output] == [compatible_tool_name(s.name) for s in specs]
+    assert all("defer_loading" not in s for s in output)
+
+
+@pytest.mark.parametrize("discovered", [False, True])
+@pytest.mark.parametrize("control", ["\x1c", "\x1d", "\x1e", "\x1f"])
+def test_namespace_c0_description_is_not_rust_whitespace(discovered, control):
+    specs = (
+        ToolSpec("notes::z", "z", {}, namespace_description=control),
+        ToolSpec("notes::a", "a", {}, namespace_description="Second"),
+    )
+    assert (
+        group_tool_definitions(specs, native_namespaces=True, discovered=discovered)[0][
+            "description"
+        ]
+        == specs[0].compatible_description()
+    )
 
 
 @pytest.mark.parametrize("mode", ["compatible", "native"])
-def test_conflicting_namespace_descriptions_are_rejected(mode):
+def test_namespace_wire_aliases_do_not_enforce_strict_directory_policy(mode):
     request = ModelRequest(
         "fixture",
         "",
@@ -41,8 +63,11 @@ def test_conflicting_namespace_descriptions_are_rejected(mode):
         ),
         tool_namespace_mode=mode,
     )
-    with pytest.raises(ModelError, match="conflicting"):
-        request_tool_aliases(request)
+    assert len(request_tool_aliases(request)) == 2
+    assert (
+        group_tool_definitions(request.tools, native_namespaces=True)[0]["description"]
+        == request.tools[0].compatible_description()
+    )
 
 
 def test_compatibility_name_collision_is_not_silently_aliased():
@@ -51,8 +76,8 @@ def test_compatibility_name_collision_is_not_silently_aliased():
     request = ModelRequest("fixture", "", (), (), (first, second))
     with pytest.raises(ModelError, match="collision"):
         request_tool_aliases(request)
-    # Native names do not share the compatibility alias's wire surface.
-    request_tool_aliases(replace(request, tool_namespace_mode="native"))
+    with pytest.raises(ModelError, match="collision"):
+        request_tool_aliases(replace(request, tool_namespace_mode="native"))
 
 
 def test_namespace_metadata_roundtrips_and_plain_legacy_payload_is_unchanged():
@@ -65,11 +90,12 @@ def test_namespace_metadata_roundtrips_and_plain_legacy_payload_is_unchanged():
     assert plain.as_chat_completion_tool()["function"]["name"] == "read"
 
 
-@pytest.mark.parametrize("namespace", [None, "", "functions"])
+@pytest.mark.parametrize("namespace", [None, ""])
 def test_default_namespace_alias_does_not_capture_named_namespaces(namespace):
     assert response_tool_name({"namespace": namespace, "name": "read"}) == "read"
-    assert response_tool_name({"namespace": "notes", "name": "read"}) == "notes::read"
-    assert response_tool_name({"namespace": "notes"}, "notes::read") == "notes::read"
+    for named in ("notes", "functions"):
+        with pytest.raises(ModelError, match="namespace"):
+            response_tool_name({"namespace": named, "name": "read"})
 
 
 @pytest.mark.parametrize("name", ["::read", "notes::", "functions::read", "a::b::c"])
@@ -81,9 +107,14 @@ def test_invalid_explicit_namespace_identity_is_rejected(name):
 def test_namespace_mode_loads_from_toml_and_rejects_chat_native(tmp_path):
     config = tmp_path / "config.toml"
     config.write_text('[provider]\napi_mode="responses"\n[tools]\nnamespace_mode="native"\n')
-    assert CorkiSettings.for_directory(tmp_path, config_file=config).tool_namespace_mode == "native"
-    with pytest.raises(ValueError, match="Responses"):
-        CorkiSettings(working_directory=tmp_path, tool_namespace_mode="native")
+    assert (
+        CorkiSettings.for_directory(tmp_path, config_file=config).tool_namespace_mode
+        == "compatible"
+    )
+    assert (
+        CorkiSettings(working_directory=tmp_path, tool_namespace_mode="native").tool_namespace_mode
+        == "compatible"
+    )
 
 
 @pytest.mark.parametrize("invalid", [None, True, "all", []])
@@ -96,8 +127,11 @@ def test_invalid_namespace_mode_is_rejected(tmp_path, invalid):
 
 def test_code_mode_alias_collision_cannot_silently_hide_a_tool():
     from corki.code_mode.specs import nested_specs
+    from corki.protocol.tool_exposure import ToolNamespacePolicy
 
     class Registry:
+        namespace_policy = ToolNamespacePolicy()
+
         def specs(self):
             return (ToolSpec("notes::read", "named", {}), ToolSpec("notes__read", "plain", {}))
 

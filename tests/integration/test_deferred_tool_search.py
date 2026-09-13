@@ -9,14 +9,17 @@ import httpx
 import pytest
 
 from corki.config import CorkiSettings
+from corki.config.managed_mcp import MCPRequirementsLayer, compose_mcp_requirements
 from corki.core import LangGraphRuntime
 from corki.core.graph import GraphRunContext
 from corki.core.runtime import _initial_state
 from corki.models import ModelCompleted, OpenAIResponsesModel, resolve_capabilities
+from corki.protocol.context import ModelContextInfo
 from corki.protocol.events import TurnCompleted
 from corki.protocol.ids import ToolCallId, new_turn_id
 from corki.protocol.items import (
     AssistantMessageItem,
+    ContextItem,
     ToolCallItem,
     ToolResultItem,
     UserMessageItem,
@@ -103,32 +106,67 @@ def test_search_load_call_observation_and_cross_turn_history(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize("append_result,checkpoint", [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize("catalog_change", ["unchanged", "description", "schema"])
+@pytest.mark.parametrize("change_policy", [False, True])
 def test_search_ledger_resume_restores_definitions_without_reexecution(
-    tmp_path: Path, append_result: bool, checkpoint: bool, monkeypatch
+    tmp_path: Path,
+    append_result: bool,
+    checkpoint: bool,
+    catalog_change: str,
+    monkeypatch,
+    change_policy: bool,
 ) -> None:
+    catalog_changed = catalog_change != "unchanged"
+
     class NullSink:
         async def emit(self, event):
             pass
 
     class ResumeModel:
-        def __init__(self):
+        def __init__(self, spec=CalendarTool.spec, reload=False, saved_request=False):
             self.requests = []
+            self.spec, self.reload = spec, reload
+            self.stale_attempt = reload and saved_request
 
         async def stream(self, request):
             self.requests.append(request)
-            assert CalendarTool.spec.name in {spec.name for spec in request.tools}
             outputs = [item for item in request.items if isinstance(item, ToolResultItem)]
             search = next(item for item in outputs if item.tool_name == "tool_search")
-            assert search.discovered_tools == (CalendarTool.spec,)
-            assert len([item for item in outputs if item.tool_name == "tool_search"]) == 1
             assert len([item for item in request.items if isinstance(item, UserMessageItem)]) == 1
             step, turn = new_step_id(), request.items[-1].turn_id
-            if len(self.requests) == 1:
+            if self.stale_attempt and len(self.requests) == 1:
+                saved = next(spec for spec in request.tools if spec.name == self.spec.name)
+                assert saved.description == CalendarTool.spec.description
+                assert saved.parameters == CalendarTool.spec.parameters
+                assert search.discovered_tools == (CalendarTool.spec,)
                 call = ToolCall(
-                    ToolCallId("after-resume"), CalendarTool.spec.name, {"title": "resumed"}
+                    ToolCallId("stale-attempt"), self.spec.name, {"title": "must not execute"}
+                )
+                yield ModelCompleted((ToolCallItem(call, turn, step),))
+                return
+            if self.reload and len(self.requests) == 1 + self.stale_attempt:
+                if self.stale_attempt:
+                    failed = next(item for item in outputs if item.call_id == "stale-attempt")
+                    assert failed.is_error and "definition changed" in failed.content
+                assert self.spec.name not in {spec.name for spec in request.tools}
+                assert search.discovered_tools == ()
+                assert "search again" in search.content
+                call = ToolCall(ToolCallId("fresh-search"), "tool_search", {"query": "calendar"})
+                yield ModelCompleted((ToolCallItem(call, turn, step),))
+                return
+            assert self.spec.name in {spec.name for spec in request.tools}
+            searches = [item for item in outputs if item.tool_name == "tool_search"]
+            assert len(searches) == 1 + self.reload
+            assert searches[-1].discovered_tools == (self.spec,)
+            if len(self.requests) == 1 + self.reload + self.stale_attempt:
+                call = ToolCall(
+                    ToolCallId("after-resume"),
+                    CalendarTool.spec.name,
+                    {"title": "resumed", **({"room": "A"} if catalog_change == "schema" else {})},
                 )
                 yield ModelCompleted((ToolCallItem(call, turn, step),))
             else:
+                assert any(item.content == "created resumed" for item in outputs)
                 yield ModelCompleted((AssistantMessageItem("recovered", turn, step),))
 
         async def aclose(self):
@@ -140,12 +178,13 @@ def test_search_ledger_resume_restores_definitions_without_reexecution(
         repository = SQLiteSessionRepository(database)
         registry = ToolRegistry()
         registry.register(CalendarTool())
+        warm_model = ResumeModel()
         first = LangGraphRuntime.create(
             settings=settings,
             database_path=database,
             registry=registry,
             repository=repository,
-            model=ResumeModel(),
+            model=warm_model,
         )
         await first._ensure_ready()
         turn = new_turn_id()
@@ -195,27 +234,70 @@ def test_search_ledger_resume_restores_definitions_without_reexecution(
                 invocation.cancel()
                 await asyncio.gather(invocation, return_exceptions=True)
         await first.aclose()
+        assert warm_model.requests == [], "committed search model step was sampled again"
         registry = ToolRegistry()
         calendar = CalendarTool()
+        if catalog_change == "description":
+            calendar.spec = replace(calendar.spec, description="Updated calendar scheduling")
+        elif catalog_change == "schema":
+            calendar.spec = replace(
+                calendar.spec,
+                parameters={
+                    "type": "object",
+                    "properties": {"title": {"type": "string"}, "room": {"type": "string"}},
+                    "required": ["title", "room"],
+                },
+            )
         registry.register(calendar)
-        model = ResumeModel()
+        model = ResumeModel(calendar.spec, reload=catalog_changed, saved_request=checkpoint)
         resumed = LangGraphRuntime.create(
             settings=settings,
             database_path=database,
             registry=registry,
             thread_id=first.thread_id,
             model=model,
+            mcp_requirements=compose_mcp_requirements(
+                (MCPRequirementsLayer("host", 'additional_developer_instructions = "NEW POLICY"'),)
+            )
+            if change_policy
+            else None,
         )
 
-        async def unexpected_search(self, call, context):
-            pytest.fail("durable search was rerun")
+        execute_search = ToolSearchTool.execute
+        searches = []
 
-        monkeypatch.setattr(ToolSearchTool, "execute", unexpected_search)
+        async def observed_search(self, call, context):
+            assert catalog_changed and call.id == ToolCallId("fresh-search"), (
+                "durable search was rerun"
+            )
+            searches.append(call.id)
+            return await execute_search(self, call, context)
+
+        monkeypatch.setattr(ToolSearchTool, "execute", observed_search)
         try:
             events = [event async for event in resumed.resume_pending()]
-            assert isinstance(events[-1], TurnCompleted), events[-1]
-            assert len(model.requests) == 2
+            assert isinstance(events[-1], TurnCompleted), str(events[-1])
+            assert len(model.requests) == 2 + catalog_changed + (catalog_changed and checkpoint)
+            assert searches == ([ToolCallId("fresh-search")] if catalog_changed else [])
             assert calendar.titles == ["resumed"]
+            if change_policy:
+                for request in model.requests:
+                    policies = [
+                        item
+                        for item in request.items
+                        if isinstance(item, ContextItem)
+                        and item.key == "managed_developer_instructions"
+                    ]
+                    assert len(policies) == 1 and "NEW POLICY" in policies[0].content
+            history = await resumed._repository.load_items(resumed.thread_id)
+            durable = [
+                item
+                for item in history
+                if isinstance(item, ToolResultItem) and item.call_id == search_call.id
+            ]
+            assert len(durable) == 1
+            assert durable[0].discovered_tools == (CalendarTool.spec,)
+            assert [event async for event in resumed.resume_pending()] == []
             # Preparation rebuilds the process-local index, not the durable call.
             assert registry.get("tool_search").index.generation == 1
         finally:
@@ -236,19 +318,11 @@ def test_responses_search_wire_roundtrip_without_eager_schemas(
             bodies.append(json.loads(request.content))
             index = len(bodies)
             if index == 1:
-                item = (
-                    {
-                        "type": "tool_search_call",
-                        "execution": "client",
-                        "arguments": {"query": "calendar"},
-                    }
-                    if mode == "native"
-                    else {
-                        "type": "function_call",
-                        "name": "tool_search",
-                        "arguments": '{"query":"calendar"}',
-                    }
-                )
+                item = {
+                    "type": "function_call",
+                    "name": "tool_search",
+                    "arguments": '{"query":"calendar"}',
+                }
                 item.update(id="search-item", call_id="search-call")
             elif index == 2:
                 if refresh_after_search:
@@ -260,7 +334,6 @@ def test_responses_search_wire_roundtrip_without_eager_schemas(
                 item = {
                     "type": "function_call",
                     "name": CalendarTool.spec.name,
-                    "namespace": "functions",
                     "id": "event-item",
                     "call_id": "event-call",
                     "arguments": '{"title":"round trip"}',
@@ -294,6 +367,7 @@ def test_responses_search_wire_roundtrip_without_eager_schemas(
                 working_directory=tmp_path,
                 api_mode="responses",
                 tool_search_mode=mode,
+                model_contexts=(ModelContextInfo("gpt-5", supports_search_tool=True),),
                 skills_enabled=False,
             ),
             database_path=tmp_path / "wire.db",
@@ -306,36 +380,13 @@ def test_responses_search_wire_roundtrip_without_eager_schemas(
             assert calendar.titles == ["round trip"]
             assert len(bodies) == 3
             assert not any(tool.get("name") == calendar.spec.name for tool in bodies[0]["tools"])
-            if mode == "native":
-                assert bodies[0]["tools"][0]["type"] == "tool_search"
-                output = next(
-                    item for item in bodies[1]["input"] if item.get("type") == "tool_search_output"
-                )
-                assert output["tools"][0]["name"] == "functions"
-                function = output["tools"][0]["tools"][0]
-                assert function["name"] == calendar.spec.name
-                assert function["parameters"] == calendar.spec.parameters
-                assert function["defer_loading"] is True
-                final_search_output = next(
-                    item for item in bodies[2]["input"] if item.get("type") == "tool_search_output"
-                )
-                assert final_search_output == output, (
-                    "native history must not follow registry drift"
-                )
-                assert all(
-                    not any(tool.get("name") == calendar.spec.name for tool in body["tools"])
-                    for body in bodies
-                )
-            else:
-                assert bodies[0]["tools"][0]["name"] == "tool_search"
-                assert any(tool["name"] == calendar.spec.name for tool in bodies[1]["tools"])
-                if refresh_after_search:
-                    assert not any(
-                        tool.get("name") == calendar.spec.name for tool in bodies[2]["tools"]
-                    )
+            assert bodies[0]["tools"][0]["name"] == "tool_search"
+            assert any(tool["name"] == calendar.spec.name for tool in bodies[1]["tools"])
+            if refresh_after_search:
                 assert not any(
-                    item.get("type") == "tool_search_output" for item in bodies[1]["input"]
+                    tool.get("name") == calendar.spec.name for tool in bodies[2]["tools"]
                 )
+            assert not any(item.get("type") == "tool_search_output" for item in bodies[1]["input"])
             assert any(item.get("output") == "created round trip" for item in bodies[2]["input"])
         finally:
             await runtime.aclose()

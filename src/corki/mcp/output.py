@@ -1,6 +1,5 @@
 """MCP-specific public result, ordered model payload and text-only log projections."""
 
-import json
 from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
@@ -8,6 +7,8 @@ from typing import Any
 from corki.context.function_output import truncate_function_content
 from corki.context.hosted_output import truncate_output_text
 from corki.mcp.client import validate_tool_result
+from corki.mcp.event_result import event_result_json
+from corki.protocol.mcp import MCP_EVENT_PREVIEW_BYTES
 from corki.protocol.tools import (
     AudioAttachment,
     CodeModeOutput,
@@ -20,13 +21,12 @@ from corki.protocol.tools import (
     content_text,
 )
 from corki.protocol.truncation import TruncationPolicy
+from corki.protocol.wire_numbers import dumps_wire
 from corki.tools.base import ToolContext
 
 
 def _json(value: object) -> str:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
-    )
+    return dumps_wire(value, sort_keys=True)
 
 
 def _convert(item: object) -> ToolContent:
@@ -72,6 +72,7 @@ def mcp_output(
     context: ToolContext,
     policy: TruncationPolicy,
     wall_time: float,
+    transport_error: str | None = None,
 ) -> ToolResult:
     """Convert one admitted result; nested values and logs precede model truncation."""
     raw = validate_tool_result(raw)
@@ -133,6 +134,12 @@ def mcp_output(
         display_content=display,
         content_items=parts,
         code_mode_output=nested,
+        mcp_result_json=event_result_json(raw) if transport_error is None else None,
+        mcp_error=truncate_output_text(
+            transport_error, TruncationPolicy("bytes", MCP_EVENT_PREVIEW_BYTES)
+        )
+        if transport_error is not None
+        else None,
         fallback_token_limit_override=(allowance.limit + 3) // 4
         if allowance.mode == "bytes"
         else allowance.limit,

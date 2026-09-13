@@ -5,9 +5,9 @@ from corki.protocol.tools import ToolConcurrency, ToolResult, ToolSpec
 
 
 class CodeModeExecTool:
-    def __init__(self, service):
+    def __init__(self, service, *, registry=None):
         self.service = service
-        self._spec = exec_spec(service.registry)
+        self._spec = exec_spec(service.registry if registry is None else registry)
 
     @property
     def spec(self):
@@ -16,6 +16,7 @@ class CodeModeExecTool:
     async def execute(self, call, context):
         source, delay_ms, max_tokens = parse_source(call.raw_arguments)
         result = await self.service.execute(call.id, source, delay_ms, max_tokens)
+        await self.service.elicitations.wait_until_clear()
         return ToolResult(
             call.id,
             call.name,
@@ -23,6 +24,7 @@ class CodeModeExecTool:
             content_items=result.content_items,
             is_error=result.is_error,
             state_update=self.service.consume_state_update(),
+            code_mode_lifecycle_json=result.lifecycle_json,
         )
 
 
@@ -56,6 +58,7 @@ class CodeModeWaitTool:
             args.get("max_tokens", 10000),
             args.get("terminate", False),
         )
+        await self.service.elicitations.wait_until_clear()
         return ToolResult(
             call.id,
             call.name,
@@ -63,4 +66,5 @@ class CodeModeWaitTool:
             content_items=result.content_items,
             is_error=result.is_error,
             state_update=self.service.consume_state_update(),
+            code_mode_lifecycle_json=result.lifecycle_json,
         )

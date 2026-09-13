@@ -12,10 +12,25 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
+from functools import cached_property
 from typing import Any
 
 from corki.protocol.ids import ToolCallId
+from corki.protocol.mcp import validate_mcp_event_error, validate_mcp_event_json
+from corki.protocol.patches import parse_patch_delta
 from corki.protocol.tool_names import compatible_tool_name, split_tool_name
+from corki.protocol.wire_numbers import WireNumber, dumps_wire, iterencode_wire, loads_number_values
+
+
+def same_tool_spec(left, right):
+    """Compare model definitions without Python's bool/number aliasing in JSON."""
+    if left is None or right is None:
+        return left is right
+    return left == right and all(
+        dumps_wire(getattr(left, name), sort_keys=True)
+        == dumps_wire(getattr(right, name), sort_keys=True)
+        for name in ("parameters", "freeform_format", "output_schema")
+    )
 
 
 class ToolExposure(StrEnum):
@@ -69,6 +84,8 @@ class ToolSpec:
     freeform_format: Mapping[str, Any] | None = None
     source_description: str | None = None
     namespace_description: str | None = None
+    # Internal metadata for typed Code Mode results, not an HTTP tool property.
+    output_schema: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         namespace, leaf = split_tool_name(self.name)
@@ -86,6 +103,10 @@ class ToolSpec:
         # immutable but cannot be encoded by LangGraph's durable serializer.
         object.__setattr__(self, "parameters", deepcopy(dict(self.parameters)))
         object.__setattr__(self, "input_kind", ToolInputKind(self.input_kind))
+        if self.output_schema is not None:
+            if not isinstance(self.output_schema, Mapping):
+                raise ValueError("tool output_schema must be an object")
+            object.__setattr__(self, "output_schema", deepcopy(dict(self.output_schema)))
         if self.source_description is not None and not isinstance(self.source_description, str):
             raise ValueError("tool source_description must be a string")
         if self.freeform_format is not None:
@@ -133,17 +154,8 @@ class ToolSpec:
     def as_response_tool(
         self, *, native_freeform: bool = False, native_namespaces: bool = False
     ) -> dict[str, Any]:
-        name = (
-            split_tool_name(self.name)[1] if native_namespaces else compatible_tool_name(self.name)
-        )
-        description = self.description if native_namespaces else self.compatible_description()
-        if native_freeform and self.input_kind == ToolInputKind.FREEFORM:
-            return {
-                "type": "custom",
-                "name": name,
-                "description": description,
-                "format": deepcopy(dict(self.freeform_format or {"type": "text"})),
-            }
+        name = compatible_tool_name(self.name)
+        description = self.compatible_description()
         return {
             "type": "function",
             "name": name,
@@ -151,6 +163,43 @@ class ToolSpec:
             "parameters": self.compatible_parameters(),
             "strict": False,
         }
+
+
+@dataclass(frozen=True, eq=False)
+class ToolArgumentMap(Mapping[str, Any]):
+    """Exact JSON-backed arguments when integers exceed the checkpoint codec's range.
+
+    Only JSON text is serialized; decoding remains ordinary argument data, never
+    a constructor supplied by a model. Ordinary argument dictionaries are unchanged.
+    """
+
+    json_text: str
+
+    @cached_property
+    def _value(self) -> dict[str, Any]:
+        value = json.loads(self.json_text)
+        if not isinstance(value, dict):
+            raise ValueError("tool arguments must be an object")
+        return value
+
+    def __getitem__(self, key: str) -> Any:
+        return self._value[key]
+
+    def __iter__(self):
+        return iter(self._value)
+
+    def __len__(self) -> int:
+        return len(self._value)
+
+
+def _has_large_integer(value: object) -> bool:
+    if type(value) is int:
+        return not -(2**63) <= value < 2**64
+    if isinstance(value, Mapping):
+        return any(_has_large_integer(item) for item in value.values())
+    if isinstance(value, (tuple, list)):
+        return any(_has_large_integer(item) for item in value)
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,7 +220,12 @@ class ToolCall:
         ):
             raise ValueError("freeform calls require raw string input and no JSON arguments")
         if self.arguments is not None:
-            object.__setattr__(self, "arguments", dict(self.arguments))
+            arguments = dict(self.arguments)
+            if _has_large_integer(arguments):
+                arguments = ToolArgumentMap(
+                    json.dumps(arguments, ensure_ascii=False, allow_nan=False)
+                )
+            object.__setattr__(self, "arguments", arguments)
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,7 +248,7 @@ class AudioAttachment:
 
 @dataclass(frozen=True, slots=True)
 class EncryptedContent:
-    """Opaque model-only function output; never decode or truncate the ciphertext."""
+    """Legacy opaque tool data; preserve locally, never transmit or decode it."""
 
     encrypted_content: str = field(repr=False)
 
@@ -202,6 +256,12 @@ class EncryptedContent:
         if not isinstance(self.encrypted_content, str):
             raise ValueError("encrypted content must be a string")
         self.encrypted_content.encode("utf-8")
+
+
+ENCRYPTED_OUTPUT_UNAVAILABLE = (
+    "[Encrypted tool output unavailable: Corki does not transmit opaque tool results. "
+    "Request a plaintext result from its source.]"
+)
 
 
 ToolContent = TextContent | ImageAttachment | AudioAttachment | EncryptedContent
@@ -253,8 +313,11 @@ class ToolStateUpdate:
 
     plan: tuple[Mapping[str, str], ...] | None = None
     new_context_requested: bool = False
+    plan_explanation: str | None = None
 
     def __post_init__(self) -> None:
+        if self.plan_explanation is not None and not isinstance(self.plan_explanation, str):
+            raise ValueError("plan_explanation must be a string")
         if not isinstance(self.new_context_requested, bool):
             raise ValueError("new_context_requested must be a boolean")
         if self.plan is not None:
@@ -280,13 +343,12 @@ class CodeModeOutput:
         _validate_json_value(self.value, budget=[MAX_CODE_MODE_RESULT_NODES])
         chunks: list[str] = []
         size = 0
-        encoder = json.JSONEncoder(ensure_ascii=False, allow_nan=False, separators=(",", ":"))
-        for chunk in encoder.iterencode(self.value):
+        for chunk in iterencode_wire(self.value):
             size += len(chunk.encode("utf-8"))
             if size > MAX_CODE_MODE_RESULT_BYTES:
                 raise ValueError("Code Mode result exceeds the structured result byte limit")
             chunks.append(chunk)
-        return CodeModeOutput(json.loads("".join(chunks)))
+        return CodeModeOutput(loads_number_values("".join(chunks)))
 
 
 def _validate_json_value(value: object, depth: int = 0, *, budget: list[int]) -> None:
@@ -297,6 +359,10 @@ def _validate_json_value(value: object, depth: int = 0, *, budget: list[int]) ->
         raise ValueError("Code Mode result exceeds the JSON node limit")
     if depth > 64:
         raise ValueError("Code Mode result exceeds the JSON nesting limit")
+    if isinstance(value, WireNumber):
+        if len(value.token) > MAX_CODE_MODE_RESULT_BYTES:
+            raise ValueError("Code Mode result exceeds the structured result byte limit")
+        return
     if type(value) is dict:
         for key, child in value.items():
             if type(key) is not str:
@@ -337,11 +403,72 @@ class ToolResult:
     legacy_output_char_budget: int | None = None
     # None identifies old persisted outputs which predate typed classification.
     is_tool_search_output: bool | None = None
+    # Immutable host/ledger result; deliberately absent from conversation items.
+    mcp_result_json: str | None = None
+    mcp_error: str | None = None
+    patch_delta_json: str | None = None
+    # Executor-owned input snapshot, not model history or handler-provided authority.
+    execution_input_json: str | None = None
+    # Adapted local Post payload; absent for old results and ineligible observations.
+    post_tool_use_json: str | None = None
+    code_mode_lifecycle_json: str | None = None
 
     def __post_init__(self) -> None:
+        if self.code_mode_lifecycle_json is not None:
+            value = loads_number_values(self.code_mode_lifecycle_json)
+            if (
+                not isinstance(value, dict)
+                or set(value) != {"version", "cell_id", "parent_call_id", "status"}
+                or type(value["version"]) is not int
+                or value["version"] != 1
+                or any(
+                    not isinstance(value[key], str) or not value[key]
+                    for key in ("cell_id", "parent_call_id", "status")
+                )
+                or value["status"] not in {"running", "completed", "failed", "terminated"}
+            ):
+                raise ValueError("Invalid Code Mode lifecycle snapshot")
+            dumps_wire(value).encode("utf-8")
+        if self.post_tool_use_json is not None:
+            value = loads_number_values(self.post_tool_use_json)
+            if (
+                not isinstance(value, dict)
+                or set(value)
+                != {"version", "tool_name", "tool_use_id", "tool_input", "tool_response"}
+                or type(value["version"]) is not int
+                or value["version"] != 1
+                or not isinstance(value["tool_name"], str)
+                or not value["tool_name"]
+                or not isinstance(value["tool_use_id"], str)
+                or not value["tool_use_id"]
+            ):
+                raise ValueError("Invalid PostToolUse payload")
+            dumps_wire(value).encode("utf-8")
+        if self.execution_input_json is not None:
+            value = loads_number_values(self.execution_input_json)
+            if (
+                not isinstance(value, dict)
+                or set(value) != {"version", "input_kind", "arguments", "raw_arguments"}
+                or type(value["version"]) is not int
+                or value["version"] != 1
+                or not isinstance(value["input_kind"], str)
+                or value["input_kind"] not in {"json", "freeform"}
+                or not isinstance(value["raw_arguments"], str)
+                or (value["arguments"] is not None and not isinstance(value["arguments"], dict))
+            ):
+                raise ValueError("Invalid execution input snapshot")
+            dumps_wire(value).encode("utf-8")
         object.__setattr__(self, "discovered_tools", tuple(self.discovered_tools))
+        if self.patch_delta_json is not None:
+            parse_patch_delta(self.patch_delta_json)
         object.__setattr__(self, "content_items", tuple(self.content_items))
         object.__setattr__(self, "attachments", tuple(self.attachments))
+        if self.mcp_result_json is not None:
+            validate_mcp_event_json(self.mcp_result_json)
+        if self.mcp_error is not None:
+            validate_mcp_event_error(self.mcp_error)
+            if self.mcp_result_json is not None:
+                raise ValueError("MCP host result and transport error are mutually exclusive")
 
 
 def tool_spec_from_payload(value: Mapping[str, Any]) -> ToolSpec:
@@ -360,6 +487,8 @@ def tool_spec_to_payload(spec: ToolSpec) -> dict[str, Any]:
         value.pop("source_description")
     if spec.namespace_description is None:
         value.pop("namespace_description")
+    if spec.output_schema is None:
+        value.pop("output_schema")
     if spec.input_kind == ToolInputKind.JSON:
         value.pop("input_kind")
         value.pop("freeform_format")

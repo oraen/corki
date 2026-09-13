@@ -15,7 +15,7 @@ MEMORY.md:10-12|note=[project verification command]
 
     visible, citation = parse_memory_citation(text)
 
-    assert visible == "Use the established command."
+    assert visible == "Use the established command.\n\n"
     assert citation is not None
     assert citation.entries[0].path == "MEMORY.md"
     assert citation.entries[0].line_start == 10
@@ -38,9 +38,9 @@ def test_stream_filter_does_not_delay_text_unrelated_to_marker() -> None:
     assert stream.finish(citation_valid=False) == ""
 
 
-def test_stream_filter_releases_buffer_when_completed_payload_has_no_valid_citation() -> None:
+def test_stream_filter_hides_open_block_even_without_valid_metadata() -> None:
     stream = MemoryCitationStreamFilter()
     visible = stream.push("answer <corki-memory-citation> malformed")
     visible += stream.finish(citation_valid=False)
 
-    assert visible == "answer <corki-memory-citation> malformed"
+    assert visible == "answer "

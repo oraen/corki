@@ -35,17 +35,20 @@ def with_window_context(
         ContextRole.DEVELOPER,
         "<context_window>\n" + "\n".join(lines) + "\n</context_window>",
         turn_id,
+        content_kind="token_budget.context_window",
+        separate_message=True,
     )
     items = tuple(
         i for i in snapshot.items if i.key not in ("context_window", "context_window_guidance")
     )
-    if guidance is not None:
+    if guidance is not None and guidance.strip():
         items += (
             ContextItem(
                 "context_window_guidance",
                 ContextRole.DEVELOPER,
                 f"<context_window_guidance>\n{guidance}\n</context_window_guidance>",
                 turn_id,
+                content_kind="token_budget.context_window_guidance",
             ),
         )
     return replace(snapshot, items=(*items, item))

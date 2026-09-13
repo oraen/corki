@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from typing import Literal
 
 from corki.protocol.ids import ThreadId, ToolCallId, TurnId
+from corki.protocol.items import UserMessageItem
+from corki.protocol.user_input import UserInputQuestion
+from corki.protocol.wire_numbers import WireNumber
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +38,7 @@ class AssistantTextDelta:
     thread_id: ThreadId
     turn_id: TurnId
     delta: str
+    item_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +48,16 @@ class AssistantReasoningDelta:
     thread_id: ThreadId
     turn_id: TurnId
     delta: str
+    item_id: str | None = None
+    section_index: int | None = None
+    channel: Literal["summary", "raw"] = "summary"
+
+
+@dataclass(frozen=True, slots=True)
+class AssistantReasoningCompleted:
+    thread_id: ThreadId
+    turn_id: TurnId
+    item_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +79,8 @@ class TokenUsageUpdated:
     output_tokens: int
     cached_tokens: int
     reasoning_tokens: int
+    cache_write_tokens: int = 0
+    codex_rollout_budget_units: int | float | WireNumber | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +95,7 @@ class AssistantMessageCompleted:
     thread_id: ThreadId
     turn_id: TurnId
     text: str
+    item_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,10 +106,60 @@ class AssistantMessageInterrupted:
 
 
 @dataclass(frozen=True, slots=True)
+class ProposedPlanDelta:
+    """Locally parsed plan text; empty delta announces a plan block start."""
+
+    thread_id: ThreadId
+    turn_id: TurnId
+    delta: str
+    item_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProposedPlanCompleted:
+    """Authoritative plan from a completed assistant item, not Turn completion."""
+
+    thread_id: ThreadId
+    turn_id: TurnId
+    text: str
+    item_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class RealtimeInputAccepted:
     thread_id: ThreadId
     turn_id: TurnId
     text: str
+
+
+@dataclass(frozen=True, slots=True)
+class HookOutputEntry:
+    kind: Literal["warning", "error", "feedback", "stop", "context"]
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class HookRunSummary:
+    id: str
+    key: str
+    event_name: str
+    status: Literal["running", "completed", "failed", "blocked", "stopped"]
+    status_message: str | None = None
+    entries: tuple[HookOutputEntry, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class HookStarted:
+    thread_id: ThreadId
+    turn_id: TurnId
+    run: HookRunSummary
+
+
+@dataclass(frozen=True, slots=True)
+class HookCompleted:
+    thread_id: ThreadId
+    turn_id: TurnId
+    run: HookRunSummary
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +186,18 @@ class ToolCallCompleted:
     tool_call_id: ToolCallId
     tool_name: str
     is_error: bool
+    mcp_result_json: str | None = None
+    mcp_error: str | None = None
+    patch_delta_json: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UserInputRequested:
+    thread_id: ThreadId
+    turn_id: TurnId
+    call_id: str
+    questions: tuple[UserInputQuestion, ...]
+    is_blocking: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +205,17 @@ class PlanUpdated:
     thread_id: ThreadId
     turn_id: TurnId
     plan: tuple[dict[str, str], ...]
+    explanation: str | None = None
+    tool_call_id: ToolCallId | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TurnDiff:
+    """Transient net committed patch text; empty text clears a previous diff."""
+
+    thread_id: ThreadId
+    turn_id: TurnId
+    unified_diff: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +238,8 @@ class TurnFailed:
 class TurnCancelled:
     thread_id: ThreadId
     turn_id: TurnId
+    # Returned to the host, not committed conversation history or a retry request.
+    unsubmitted_inputs: tuple[UserMessageItem, ...] = ()
 
 
 RuntimeEvent = (
@@ -156,16 +248,23 @@ RuntimeEvent = (
     | WarningEvent
     | AssistantTextDelta
     | AssistantReasoningDelta
+    | AssistantReasoningCompleted
     | ModelRetryScheduled
     | TokenUsageUpdated
     | ContextCompacted
     | AssistantMessageCompleted
     | AssistantMessageInterrupted
+    | ProposedPlanDelta
+    | ProposedPlanCompleted
     | RealtimeInputAccepted
     | ToolCallStarted
+    | HookStarted
+    | HookCompleted
     | ToolOutputDelta
     | ToolCallCompleted
     | PlanUpdated
+    | UserInputRequested
+    | TurnDiff
     | TurnCompleted
     | TurnFailed
     | TurnCancelled

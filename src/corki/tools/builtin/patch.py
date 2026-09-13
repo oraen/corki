@@ -9,6 +9,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from corki.execution.approvals import ExecutionApprovals
+from corki.execution.backend import patch_operation
 from corki.protocol.tools import ToolCall, ToolResult, ToolSpec
 from corki.tools.base import ToolContext
 
@@ -22,13 +24,17 @@ class _Operation:
 
 
 class ApplyPatchTool:
+    def __init__(self, approvals: ExecutionApprovals | None = None):
+        self._approvals = approvals
+
     @property
     def spec(self) -> ToolSpec:
         return ToolSpec(
             name="apply_patch",
             description=(
                 "Apply a patch using *** Begin Patch / Add File / Update File / "
-                "Delete File directives. Paths are relative to the workspace."
+                "Delete File directives. Relative paths resolve against the working directory; "
+                "configured execution permissions govern file access."
             ),
             parameters={
                 "type": "object",
@@ -40,8 +46,39 @@ class ApplyPatchTool:
 
     async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
         assert call.arguments is not None
-        operations = _parse_patch(str(call.arguments["patch"]))
-        summary = await asyncio.to_thread(_apply_operations, context.cwd, operations)
+        if context.execution_permissions is None:
+            # Explicit embedding-host compatibility path, not the default native
+            # parser or its sequential / partial-failure execution semantics.
+            operations = _parse_patch(str(call.arguments["patch"]))
+            summary = await asyncio.to_thread(_apply_operations, context.cwd, operations)
+        else:
+            try:
+                outcome = await patch_operation(
+                    context.execution_permissions,
+                    context.cwd,
+                    {"patch": str(call.arguments["patch"])},
+                    approvals=self._approvals,
+                    call_id=call.id,
+                    on_started=context.on_patch_started,
+                )
+            except Exception as error:
+                # Backend captures all post-start ordinary failures as inexact
+                # outcomes. These exceptions precede execution; no writes occurred.
+                return ToolResult(
+                    call.id,
+                    call.name,
+                    f"{type(error).__name__}: {error}",
+                    is_error=True,
+                    patch_delta_json='{"version":1,"exact":true,"changes":[]}',
+                )
+            return ToolResult(
+                call.id,
+                call.name,
+                outcome.output,
+                is_error=not outcome.success,
+                display_content=outcome.output,
+                patch_delta_json=outcome.delta_json,
+            )
         return ToolResult(call.id, call.name, summary, display_content=summary)
 
 

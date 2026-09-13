@@ -4,12 +4,14 @@ import asyncio
 import importlib.util
 import json
 import logging
+from contextlib import ExitStack, nullcontext
 from importlib.metadata import PackageNotFoundError, version
 from uuid import uuid4
 
 from corki.code_mode.cell import MAX_BUFFER, Cell
 from corki.code_mode.observation import CellObservation
 from corki.code_mode.specs import nested_specs
+from corki.mcp.elicitation import ElicitationRouter
 from corki.protocol.ids import new_tool_call_id
 from corki.protocol.tools import (
     EncryptedContent,
@@ -20,6 +22,7 @@ from corki.protocol.tools import (
     ToolStateUpdate,
 )
 from corki.tools.errors import CodeModeToolError
+from corki.tools.execution_gate import ExecutionGate
 
 _LOG = logging.getLogger(__name__)
 
@@ -47,7 +50,16 @@ class CellEventSink:
 
 
 class CodeModeService:
-    def __init__(self, registry, *, memory_bytes=64 * 1024 * 1024, max_cells=32, max_calls=64):
+    def __init__(
+        self,
+        registry,
+        *,
+        memory_bytes=64 * 1024 * 1024,
+        max_cells=32,
+        max_calls=None,
+        elicitations=None,
+    ):
+        self.elicitations = elicitations or ElicitationRouter()
         self.registry = registry
         self.step_registry = registry
         self.memory_bytes, self.max_cells, self.max_calls = memory_bytes, max_cells, max_calls
@@ -56,15 +68,20 @@ class CodeModeService:
         self.active = asyncio.Event()
         self.inactive = asyncio.Event()
         self.dispatch = None
+        self.admission_lease = nullcontext
         self.notifier = None
         self.turn_id = None
         self.failure = None
         self.calls = []
         self.step_calls = []
-        self.barrier = ()
+        self.execution_gate = ExecutionGate()
+        self.readiness = None
         self.closed = False
         self.pending_plan = None
+        self.pending_plan_explanation = None
         self.cleanup_error = None
+        self.engine_available = type(self).available()
+        self._unavailable_warning_emitted = False
 
     @staticmethod
     def available():
@@ -74,7 +91,29 @@ class CodeModeService:
             return False
         return importlib.util.find_spec("quickjs") is not None
 
-    def activate(self, turn_id, dispatch, notifier, failure=None, *, registry=None):
+    def take_unavailable_warning(self, requested_mode, effective_mode):
+        """Only an admitted Code Mode Turn consumes the session's availability warning."""
+        if self.engine_available or requested_mode == "direct" or self._unavailable_warning_emitted:
+            return None
+        self._unavailable_warning_emitted = True
+        behavior = (
+            "Falling back to direct tools"
+            if effective_mode == "direct"
+            else "Code Mode will fail closed on execution"
+        )
+        return f"Code Mode engine unavailable. {behavior}; install corki[code-mode]."
+
+    def activate(
+        self,
+        turn_id,
+        dispatch,
+        notifier,
+        failure=None,
+        *,
+        registry=None,
+        admission_lease=None,
+        readiness=None,
+    ):
         same_worker = (
             self.active.is_set()
             and self.turn_id == turn_id
@@ -85,15 +124,16 @@ class CodeModeService:
         if self.turn_id != turn_id:
             self.turn_id = turn_id
             self.calls = []
-            self.barrier = ()
             self.failure = asyncio.get_running_loop().create_future()
             self.inactive = asyncio.Event()
         self.dispatch, self.notifier = dispatch, notifier
+        self.admission_lease = admission_lease or nullcontext
+        self.readiness = readiness
         # Retries stay within one sampling Step, including its execution gate.
         # A genuinely new Step must not inherit an old yielded cell's gate.
         if not same_worker:
             self.step_calls = []
-            self.barrier = ()
+            self.execution_gate = ExecutionGate()
         self.active.set()
 
         if failure is None:
@@ -110,9 +150,11 @@ class CodeModeService:
         """Stop new admission without cancelling calls already owned by a worker."""
         self.active.clear()
         self.dispatch = self.notifier = None
+        self.admission_lease = nullcontext
         self.step_registry = self.registry
         self.step_calls = []
-        self.barrier = ()
+        self.execution_gate = ExecutionGate()
+        self.readiness = None
 
     async def _wait_for_worker(self):
         # Event.wait can resume after another task has already cleared it.
@@ -135,7 +177,7 @@ class CodeModeService:
 
     async def invoke(self, spec, value):
         await self._wait_for_worker()
-        if len(self.calls) >= self.max_calls:
+        if self.max_calls is not None and len(self.calls) >= self.max_calls:
             raise CodeModeToolError("Code Mode nested tool call budget exhausted")
         if spec.input_kind == "freeform":
             if not isinstance(value, str):
@@ -157,26 +199,34 @@ class CodeModeService:
             and current.exposure != ToolExposure.HIDDEN
             and current.concurrency == ToolConcurrency.PARALLEL
         )
-        dependencies = self.barrier if parallel else tuple(self.step_calls)
+        gate, readiness = self.execution_gate, self.readiness
         dispatch = self.dispatch
 
         async def run():
-            await asyncio.gather(
-                *(asyncio.shield(task) for task in dependencies), return_exceptions=True
-            )
-            return await dispatch(call, dispatch_spec)
+            if readiness is not None:
+                await readiness(call, dispatch_spec)
+            async with gate.enter(parallel=parallel):
+                return await dispatch(call, dispatch_spec)
 
-        task = asyncio.create_task(run(), name=f"corki-cell-tool-{call.id}")
+        # Retain at admission, before waiting for dependencies. A callback owns
+        # release even if the task is cancelled before its first instruction.
+        ownership = ExitStack()
+        ownership.enter_context(self.admission_lease())
+        try:
+            task = asyncio.create_task(run(), name=f"corki-cell-tool-{call.id}")
+        except BaseException:
+            ownership.close()
+            raise
+        task.add_done_callback(lambda _: ownership.close())
         self.calls.append(task)
         self.step_calls.append(task)
-        if not parallel:
-            self.barrier = (task,)
         try:
             result = await task
             if result.dispatch_error:
                 raise CodeModeToolError(result.content)
             if result.state_update.plan is not None:
                 self.pending_plan = result.state_update.plan
+                self.pending_plan_explanation = result.state_update.plan_explanation
             if result.code_mode_output is not None:
                 return result.code_mode_output.value
             if result.content_items:
@@ -199,7 +249,13 @@ class CodeModeService:
         except asyncio.CancelledError:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-            raise
+            if asyncio.current_task().cancelling():
+                # The cell/Turn owner cancelled this invocation: preserve control flow.
+                raise
+            # Only the owned dispatch was cancelled. The graph retains its
+            # unresolved claim; settle the still-live JS promise instead
+            # of leaving a detached, cancelled callback with no response.
+            raise CodeModeToolError("code mode nested tool call cancelled") from None
 
     async def notify(self, call_id, text):
         if not isinstance(text, str) or not text.strip():
@@ -210,8 +266,11 @@ class CodeModeService:
             await notifier(call_id, text[:MAX_BUFFER])
 
     def consume_state_update(self):
-        update = ToolStateUpdate(plan=self.pending_plan)
+        update = ToolStateUpdate(
+            plan=self.pending_plan, plan_explanation=self.pending_plan_explanation
+        )
         self.pending_plan = None
+        self.pending_plan_explanation = None
         return update
 
     def commit(self, writes):
@@ -223,6 +282,8 @@ class CodeModeService:
     async def execute(self, call_id, source, delay_ms, max_tokens):
         if self.closed:
             raise ValueError("Code Mode session is closed")
+        if not self.engine_available:
+            raise ValueError("Code Mode engine unavailable; install corki[code-mode]")
         if len(self.cells) >= self.max_cells:
             raise ValueError("Code Mode active cell limit exceeded; terminate or observe old cells")
         cell_id = str(uuid4())
@@ -236,6 +297,8 @@ class CodeModeService:
             raise
 
     async def wait(self, cell_id, delay_ms, max_tokens, terminate=False):
+        if not self.engine_available:
+            raise ValueError("Code Mode engine unavailable; install corki[code-mode]")
         cell = self.cells.get(cell_id)
         if cell is None:
             return CellObservation(

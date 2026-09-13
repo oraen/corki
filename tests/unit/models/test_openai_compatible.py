@@ -1,5 +1,6 @@
 import asyncio
 import json
+from dataclasses import replace
 
 import httpx
 
@@ -9,6 +10,7 @@ from corki.models import (
     ModelRequest,
     ModelTextDelta,
     OpenAICompatibleModel,
+    StructuredOutputProtocol,
     resolve_capabilities,
 )
 from corki.protocol.ids import new_turn_id
@@ -96,6 +98,7 @@ def test_openai_compatible_adapter_streams_text_and_assembles_tool_call() -> Non
     assert [event.delta for event in events if isinstance(event, ModelReasoningDelta)] == [
         "checking"
     ]
+    assert [event.channel for event in events if isinstance(event, ModelReasoningDelta)] == ["raw"]
     completed = next(event for event in events if isinstance(event, ModelCompleted))
     assistant = next(item for item in completed.items if isinstance(item, AssistantMessageItem))
     reasoning = next(item for item in completed.items if isinstance(item, ReasoningItem))
@@ -123,10 +126,11 @@ def test_adapter_maps_developer_role_and_sends_thinking_override() -> None:
             base_url="https://example.test",
             thinking_enabled=True,
             reasoning_effort="high",
-            capabilities=resolve_capabilities(
-                base_url="https://api.deepseek.com",
-                api_mode="chat_completions",
-                provider_name="deepseek",
+            capabilities=replace(
+                resolve_capabilities(base_url="https://example.test", api_mode="chat_completions"),
+                supports_thinking_toggle=True,
+                supports_reasoning_effort=True,
+                requires_reasoning_replay=True,
             ),
             client=client,
         )
@@ -167,15 +171,17 @@ def test_adapter_maps_structured_output_to_provider_protocol() -> None:
     openai = OpenAICompatibleModel(
         api_key="test",
         base_url="https://api.openai.com/v1",
-        capabilities=resolve_capabilities(
-            base_url="https://api.openai.com/v1", api_mode="chat_completions"
+        capabilities=replace(
+            resolve_capabilities(base_url="https://api.openai.com/v1", api_mode="chat_completions"),
+            structured_output_protocol=StructuredOutputProtocol.JSON_SCHEMA,
         ),
     )
     deepseek = OpenAICompatibleModel(
         api_key="test",
         base_url="https://api.deepseek.com",
-        capabilities=resolve_capabilities(
-            base_url="https://api.deepseek.com", api_mode="chat_completions"
+        capabilities=replace(
+            resolve_capabilities(base_url="https://api.deepseek.com", api_mode="chat_completions"),
+            structured_output_protocol=StructuredOutputProtocol.JSON_OBJECT,
         ),
     )
     structured = ModelRequest(

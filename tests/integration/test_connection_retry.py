@@ -100,8 +100,11 @@ def test_retry_node_does_not_repeat_wait_for_an_already_recorded_attempt(
 
 
 @pytest.mark.parametrize("api_mode", ["responses", "chat_completions"])
-@pytest.mark.parametrize("mode", ["default", "disabled", "bedrock", "mixed"])
-def test_connection_retries_are_separate_from_stream_budget(tmp_path, monkeypatch, api_mode, mode):
+@pytest.mark.parametrize("mode", ["default", "disabled", "mixed"])
+@pytest.mark.parametrize("provider", [None, "openai", "bedrock", "amazon_bedrock", "independent"])
+def test_connection_retries_are_separate_from_stream_budget(
+    tmp_path, monkeypatch, api_mode, mode, provider
+):
     async def scenario():
         requests, delays = [], []
 
@@ -113,6 +116,8 @@ def test_connection_retries_are_separate_from_stream_budget(tmp_path, monkeypatc
         monkeypatch.setattr("corki.models.backoff.random.uniform", lambda low, high: 1.0)
 
         async def handle(request):
+            endpoint = "responses" if api_mode == "responses" else "chat/completions"
+            assert str(request.url) == f"https://fixture.invalid/v1/{endpoint}"
             requests.append(request)
             if mode == "mixed":
                 error = httpx.ConnectError if len(requests) % 2 else httpx.ReadError
@@ -144,7 +149,7 @@ def test_connection_retries_are_separate_from_stream_budget(tmp_path, monkeypatc
                 max_steps=1,
                 model_max_retries=1,
                 model_retry_base_seconds=0.001,
-                provider_name="bedrock" if mode == "bedrock" else None,
+                provider_name=provider,
                 **({"model_unbounded_connection_retries": False} if mode == "disabled" else {}),
             ),
             database_path=tmp_path / "sessions.db",

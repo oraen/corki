@@ -13,6 +13,7 @@ from hashlib import sha256
 
 from PIL import Image
 
+from corki.protocol.content_kinds import user_content_kinds
 from corki.protocol.items import ToolResultItem, UserMessageItem
 from corki.protocol.tools import ImageAttachment, TextContent, content_text
 
@@ -151,12 +152,20 @@ class ImagePreparation:
                 continue
             parts = item.content_items or (TextContent(item.content), *item.attachments)
             prepared = self._parts(parts)
+            kinds = user_content_kinds(item, parts) if isinstance(item, UserMessageItem) else None
             if for_model and not self.policy.supports_images:
+                if kinds is not None:
+                    kinds = [
+                        "images.unsupported" if isinstance(p, ImageAttachment) else kind
+                        for p, kind in zip(prepared, kinds, strict=True)
+                    ]
                 prepared = tuple(
                     TextContent(UNSUPPORTED) if isinstance(p, ImageAttachment) else p
                     for p in prepared
                 )
             updates = {"content_items": prepared, "attachments": ()}
+            if kinds is not None and for_model and not self.policy.supports_images:
+                updates["content_item_kinds"] = tuple(kinds)
             if isinstance(item, ToolResultItem):
                 updates["content"] = content_text(prepared)
             output.append(replace(item, **updates))

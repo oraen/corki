@@ -53,6 +53,35 @@ def test_legacy_failure_default_counter_allows_idempotent_commit(tmp_path):
     asyncio.run(scenario())
 
 
+def test_legacy_payment_failure_keeps_fact_but_disables_retry(tmp_path):
+    async def scenario():
+        repository = SQLiteSessionRepository(tmp_path / "history.db")
+        thread, turn = new_thread_id(), new_turn_id()
+        await repository.create_thread(thread, tmp_path)
+        payload = {
+            "message": "model request failed (402): Insufficient Balance",
+            "kind": "protocol",
+            "retryable": True,
+            "retries_used": 2,
+            "status_code": 402,
+        }
+        with sqlite3.connect(repository.path) as connection:
+            connection.execute(
+                "INSERT INTO model_failures VALUES (?, ?, ?, ?)",
+                (thread, turn, 0, json.dumps(payload)),
+            )
+        failure = await repository.load_model_failure(thread, turn, 0)
+        assert failure.retryable is True
+        assert failure.error().retryable is False
+        assert str(failure.error()) == payload["message"]
+        await repository.save_model_failure(thread, turn, 0, failure)
+        with sqlite3.connect(repository.path) as connection:
+            row = connection.execute("SELECT payload_json FROM model_failures").fetchone()
+            assert json.loads(row[0]) == payload
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("order", ["success_first", "failure_first", "concurrent"])
 def test_attempt_success_and_failure_are_mutually_exclusive(tmp_path, order):
     async def scenario():

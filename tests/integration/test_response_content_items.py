@@ -37,6 +37,7 @@ def message(identity, content, phase="commentary"):
     return {
         "type": "message",
         "id": identity,
+        "role": "assistant",
         "phase": phase,
         "content": [{"type": "output_text", "text": content}],
     }
@@ -195,7 +196,8 @@ def test_mixed_done_items_survive_stream_and_replay_independently(tmp_path, trun
                     "opaque-one",
                     "opaque-two",
                 ]
-                assert [item["id"] for item in replayed] == ["r1", "r2"]
+                # Legacy unprefixed provider IDs remain archived but are not sent.
+                assert all("id" not in item for item in replayed)
         finally:
             await runtime.aclose()
             await client.aclose()
@@ -206,6 +208,7 @@ def test_mixed_done_items_survive_stream_and_replay_independently(tmp_path, trun
 def test_steering_after_completed_message_without_tools_is_a_continuation(tmp_path):
     async def scenario():
         waiting = asyncio.Event()
+        release = asyncio.Event()
         requests = []
 
         class Model:
@@ -213,9 +216,11 @@ def test_steering_after_completed_message_without_tools_is_a_continuation(tmp_pa
                 requests.append(request)
                 turn, step = request.items[-1].turn_id, new_step_id()
                 if len(requests) == 1:
-                    yield ModelItemCompleted(AssistantMessageItem("first message", turn, step))
+                    first = AssistantMessageItem("first message", turn, step)
+                    yield ModelItemCompleted(first)
                     waiting.set()
-                    await asyncio.Event().wait()
+                    await release.wait()
+                    yield ModelCompleted((first,))
                 else:
                     assert any(
                         isinstance(item, AssistantMessageItem) and item.content == "first message"
@@ -240,6 +245,9 @@ def test_steering_after_completed_message_without_tools_is_a_continuation(tmp_pa
         try:
             await asyncio.wait_for(waiting.wait(), 2)
             await runtime.steer("new input")
+            await asyncio.sleep(0.02)
+            assert len(requests) == 1
+            release.set()
             events = await asyncio.wait_for(task, 2)
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert events[-1].final_answer == "done" and len(requests) == 2
@@ -247,6 +255,7 @@ def test_steering_after_completed_message_without_tools_is_a_continuation(tmp_pa
                 event.text for event in events if isinstance(event, AssistantMessageCompleted)
             ] == ["first message", "done"]
         finally:
+            release.set()
             await runtime.aclose()
             await asyncio.gather(task, return_exceptions=True)
 

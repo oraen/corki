@@ -18,7 +18,8 @@ from corki.tools import ToolRegistry
 
 
 @pytest.mark.parametrize("close", [False, True])
-def test_manual_compaction_cancel_or_close_preserves_history_and_cleans_up(tmp_path, close):
+@pytest.mark.parametrize("remote", [False, True])
+def test_manual_compaction_cancel_or_close_preserves_history_and_cleans_up(tmp_path, close, remote):
     async def scenario():
         entered, cleaned = asyncio.Event(), asyncio.Event()
 
@@ -36,7 +37,11 @@ def test_manual_compaction_cancel_or_close_preserves_history_and_cleans_up(tmp_p
 
         runtime = LangGraphRuntime.create(
             settings=CorkiSettings(
-                working_directory=tmp_path, skills_enabled=False, event_queue_size=1
+                working_directory=tmp_path,
+                skills_enabled=False,
+                event_queue_size=1,
+                provider_name="openai" if remote else None,
+                api_mode="responses" if remote else "chat_completions",
             ),
             database_path=tmp_path / "sessions.db",
             model=Model(),

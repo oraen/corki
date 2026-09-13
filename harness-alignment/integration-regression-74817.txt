@@ -1,0 +1,30 @@
+Non-CLI integration regression; 8 workers, loadfile, no worker restart.
+Final output (exit 1):
+....................................... [ 98%]
+........................................................................ [ 99%]
+........................................................................ [ 99%]
+....                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_common_stream_search_call_observation_ledger_and_cold_history[stdio-eof-code_mode] _
+[gw4] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_mcp_response_routing.py:340: in test_common_stream_search_call_observation_ledger_and_cold_history
+    asyncio.run(asyncio.wait_for(scenario(), 15))
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+tests/integration/test_mcp_response_routing.py:282: in scenario
+    assert isinstance(events[-1], TurnCompleted), events[-1]
+E   AssertionError: TurnFailed(thread_id='596fcd1f-08c4-49bf-8744-84e37378b1a7', turn_id='27619d43-a0b1-4b5c-8dc9-14dfbff3f5f0', error="AttributeError: 'NoneType' object has no attribute 'wait'", error_kind='internal', retryable=False)
+E   assert False
+E    +  where False = isinstance(TurnFailed(thread_id='596fcd1f-08c4-49bf-8744-84e37378b1a7', turn_id='27619d43-a0b1-4b5c-8dc9-14dfbff3f5f0', error="AttributeError: 'NoneType' object has no attribute 'wait'", error_kind='internal', retryable=False), TurnCompleted)
+1 failed, 9075 passed in 499.98s (0:08:19)
+

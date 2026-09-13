@@ -5,6 +5,7 @@ from collections import Counter
 
 from corki.context.token_budget import window_identities
 from corki.history_notes.output import bounded_records, bounded_text
+from corki.prompting.compaction import render_compaction_summary
 from corki.protocol.items import (
     AssistantMessageItem,
     BudgetNoticeItem,
@@ -28,9 +29,9 @@ def project_history(stored, thread_id):
         call_metadata = {}
         if isinstance(item, CompactionItem):
             window += 1
-            if item.context_reset or not item.summary:
+            if item.context_reset or item.remote_payload_json is not None:
                 continue
-            role, text = "developer", item.summary
+            role, text = "user", render_compaction_summary(item.summary)
         elif isinstance(item, ContextItem):
             if item.is_snapshot_only:
                 continue

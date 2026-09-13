@@ -280,11 +280,14 @@ def test_raw_result_survives_completed_ledger_fault_and_nested_call(tmp_path, ne
 
         runtime._repository.append_items = fail_append
         runtime._repository.save_turn = leave_running
+        runtime._repository.retry_turn_terminal = leave_running
         try:
             events = [event async for event in runtime.stream("read")]
             assert isinstance(events[-1], TurnFailed) and injected
             assert len(requests) == 1 and len(calls) == 1
         finally:
+            # Simulate loss of the in-memory writer, retaining only committed facts.
+            runtime._pending_terminals.clear()
             await runtime.aclose()
         cold = create(thread)
         try:

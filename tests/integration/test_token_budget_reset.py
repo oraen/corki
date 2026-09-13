@@ -17,6 +17,7 @@ from corki.protocol.events import ContextCompacted, TurnCompleted
 from corki.protocol.ids import new_tool_call_id
 from corki.protocol.items import (
     AssistantMessageItem,
+    CompactionItem,
     ContextItem,
     ToolCallItem,
     UserMessageItem,
@@ -28,9 +29,7 @@ from corki.tools import ToolRegistry
 
 @pytest.mark.parametrize("trigger", ["manual", "auto", "tool"])
 @pytest.mark.parametrize("tool_mode", ["direct", "code_mode_only"])
-def test_token_budget_resets_without_summarizing_or_clearing_environment(
-    tmp_path, trigger, tool_mode
-):
+def test_token_budget_summarizes_without_clearing_environment(tmp_path, trigger, tool_mode):
     async def scenario():
         requests = []
         note = tmp_path / "retained-note.txt"
@@ -76,13 +75,14 @@ def test_token_budget_resets_without_summarizing_or_clearing_environment(
             events = [event async for event in runtime.stream("USER_BEFORE")]
             if trigger == "manual":
                 events += [event async for event in runtime.compact()]
-                assert len(requests) == 1
+                assert len(requests) == 2
                 events += [event async for event in runtime.stream("USER_AFTER")]
             assert isinstance(events[-1], TurnCompleted)
-            assert len(requests) == 2
+            assert len(requests) == 3
+            assert not requests[1].tools
             assert sum(isinstance(event, ContextCompacted) for event in events) == 1
-            assert "USER_BEFORE" not in str(requests[1].items)
-            assert "ASSISTANT_BEFORE" not in str(requests[1].items)
+            assert "USER_BEFORE" in str(requests[-1].items)
+            assert "ASSISTANT_BEFORE" not in str(requests[-1].items)
             assert "new_context" in {tool.name for tool in requests[0].tools}
             first = next(
                 item.content
@@ -91,7 +91,7 @@ def test_token_budget_resets_without_summarizing_or_clearing_environment(
             )
             second = next(
                 item.content
-                for item in requests[1].items
+                for item in requests[-1].items
                 if isinstance(item, ContextItem) and item.key == "context_window"
             )
             initial_id = first.split("Current context window id: ")[1].splitlines()[0]
@@ -99,6 +99,9 @@ def test_token_budget_resets_without_summarizing_or_clearing_environment(
             assert f"Previous context window id: {initial_id}" in second
             assert f"Current context window id: {initial_id}" not in second
             stored = await runtime._repository.load_items(runtime.thread_id)
+            markers = [item for item in stored if isinstance(item, CompactionItem)]
+            assert len(markers) == 1 and markers[0].summary == "done"
+            assert f"Current context window id: {markers[0].id}" in second
             assert any(
                 isinstance(item, UserMessageItem) and item.content == "USER_BEFORE"
                 for item in stored
@@ -111,13 +114,15 @@ def test_token_budget_resets_without_summarizing_or_clearing_environment(
 
 
 @pytest.mark.parametrize("mode", ["chat_completions", "responses"])
-def test_manual_reset_reaches_actual_http_without_summary_request(tmp_path, mode):
+def test_manual_summary_reaches_only_configured_ordinary_http(tmp_path, mode):
     from corki.memory.transcript import render_transcript
 
     async def scenario():
         payloads = []
 
         def respond(request):
+            suffix = "responses" if mode == "responses" else "chat/completions"
+            assert str(request.url) == f"https://fixture.invalid/v1/{suffix}"
             payloads.append(json.loads(request.content))
             if mode == "responses":
                 packet = {
@@ -161,9 +166,10 @@ def test_manual_reset_reaches_actual_http_without_summary_request(tmp_path, mode
             [event async for event in runtime.compact()]
             events = [event async for event in runtime.stream("AFTER_HTTP_RESET")]
             assert isinstance(events[-1], TurnCompleted)
-            assert len(payloads) == 2
+            assert len(payloads) == 3
+            assert not payloads[1].get("tools")
             key = "messages" if mode == "chat_completions" else "input"
-            assert "BEFORE_HTTP_RESET" not in str(payloads[-1][key])
+            assert "BEFORE_HTTP_RESET" in str(payloads[-1][key])
             assert "AFTER_HTTP_RESET" in str(payloads[-1][key])
             windows = [item for item in payloads[-1][key] if "<context_window>" in str(item)]
             assert len(windows) == 1
@@ -181,7 +187,9 @@ def test_manual_reset_reaches_actual_http_without_summary_request(tmp_path, mode
 
 @pytest.mark.parametrize("after_commit", [False, True])
 @pytest.mark.parametrize("tool_mode", ["direct", "code_mode_only"])
-def test_reset_request_survives_storage_failure_and_cold_runtime(tmp_path, after_commit, tool_mode):
+def test_summary_request_survives_storage_failure_and_cold_runtime(
+    tmp_path, after_commit, tool_mode
+):
     from corki.protocol.events import TurnFailed
     from corki.protocol.items import CompactionItem
 
@@ -226,7 +234,7 @@ def test_reset_request_survives_storage_failure_and_cold_runtime(tmp_path, after
 
         async def append(thread, items):
             nonlocal failed
-            reset = any(isinstance(item, CompactionItem) and item.context_reset for item in items)
+            reset = any(isinstance(item, CompactionItem) for item in items)
             if reset and not failed:
                 failed = True
                 if after_commit:
@@ -243,12 +251,13 @@ def test_reset_request_survives_storage_failure_and_cold_runtime(tmp_path, after
             runtime = create(thread)
             events = [event async for event in runtime.stream("AFTER_FAILED_RESET")]
             assert isinstance(events[-1], TurnCompleted)
-            assert len(requests) == 2
-            assert "BEFORE_FAILED_RESET" not in str(requests[-1].items)
+            assert len(requests) == (3 if after_commit else 4)
+            assert "BEFORE_FAILED_RESET" in str(requests[-1].items)
             assert "AFTER_FAILED_RESET" in str(requests[-1].items)
             stored = await runtime._repository.load_items(thread)
-            assert (
-                sum(isinstance(item, CompactionItem) and item.context_reset for item in stored) == 1
+            assert sum(isinstance(item, CompactionItem) for item in stored) == 1
+            assert not any(
+                isinstance(item, CompactionItem) and item.context_reset for item in stored
             )
             assert (
                 sum(

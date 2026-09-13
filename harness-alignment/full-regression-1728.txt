@@ -1,0 +1,928 @@
+bringing up nodes...
+bringing up nodes...
+
+........................................................................ [  0%]
+........................................................................ [  0%]
+........................................................................ [  1%]
+........................................................................ [  1%]
+........................................................................ [  2%]
+........................................................................ [  2%]
+........................................................................ [  3%]
+........................................................................ [  3%]
+........................................................................ [  4%]
+........................................................................ [  4%]
+........................................................................ [  5%]
+........................................................................ [  5%]
+........................................................................ [  6%]
+........................................................................ [  6%]
+........................................................................ [  6%]
+........................................................................ [  7%]
+........................................................................ [  7%]
+........................................................................ [  8%]
+........................................................................ [  8%]
+........................................................................ [  9%]
+........................................................................ [  9%]
+........................................................................ [ 10%]
+........................................................................ [ 10%]
+........................................................................ [ 11%]
+........................................................................ [ 11%]
+........................................................................ [ 12%]
+........................................................................ [ 12%]
+........................................................................ [ 12%]
+........................................................................ [ 13%]
+........................................................................ [ 13%]
+........................................................................ [ 14%]
+........................................................................ [ 14%]
+........................................................................ [ 15%]
+........................................................................ [ 15%]
+........................................................................ [ 16%]
+........................................................................ [ 16%]
+........................................................................ [ 17%]
+........................................................................ [ 17%]
+........................................................................ [ 18%]
+........................................................................ [ 18%]
+........................................................................ [ 19%]
+........................................................................ [ 19%]
+........................................................................ [ 19%]
+........................................................................ [ 20%]
+........................................................................ [ 20%]
+........................................................................ [ 21%]
+........................................................................ [ 21%]
+........................................................................ [ 22%]
+........................................................................ [ 22%]
+........................................................................ [ 23%]
+........................................................................ [ 23%]
+........................................................................ [ 24%]
+........................................................................ [ 24%]
+........................................................................ [ 25%]
+........................................................................ [ 25%]
+........................................................................ [ 25%]
+........................................................................ [ 26%]
+........................................................................ [ 26%]
+........................................................................ [ 27%]
+........................................................................ [ 27%]
+........................................................................ [ 28%]
+........................................................................ [ 28%]
+........................................................................ [ 29%]
+........................................................................ [ 29%]
+........................................................................ [ 30%]
+........................................................................ [ 30%]
+........................................................................ [ 31%]
+.......................................................................F [ 31%]
+........................................................................ [ 32%]
+........................................................................ [ 32%]
+........................................................................ [ 32%]
+........................................................................ [ 33%]
+........................................................................ [ 33%]
+........................................................................ [ 34%]
+........................................................................ [ 34%]
+........................................................................ [ 35%]
+........................................................................ [ 35%]
+........................................................................ [ 36%]
+........................................................................ [ 36%]
+........................................................................ [ 37%]
+.............s.......................................................... [ 37%]
+........................................................................ [ 38%]
+........................................................................ [ 38%]
+........................................................................ [ 38%]
+........................................................................ [ 39%]
+........................................................................ [ 39%]
+........................................................................ [ 40%]
+........................................................................ [ 40%]
+........................................................................ [ 41%]
+........................................................................ [ 41%]
+........................................................................ [ 42%]
+........................................................................ [ 42%]
+........................................................................ [ 43%]
+........................................................................ [ 43%]
+........................................................................ [ 44%]
+........................................................................ [ 44%]
+........................................................................ [ 45%]
+........................................................................ [ 45%]
+........................................................................ [ 45%]
+........................................................................ [ 46%]
+........................................................................ [ 46%]
+........................................................................ [ 47%]
+........................................................................ [ 47%]
+........................................................................ [ 48%]
+........................................................................ [ 48%]
+........................................................................ [ 49%]
+........................................................................ [ 49%]
+........................................................................ [ 50%]
+........................................................................ [ 50%]
+........................................................................ [ 51%]
+........................................................................ [ 51%]
+........................................................................ [ 51%]
+........................................................................ [ 52%]
+........................................................................ [ 52%]
+........................................................................ [ 53%]
+........................................................................ [ 53%]
+........................................................................ [ 54%]
+........................................................................ [ 54%]
+........................................................................ [ 55%]
+........................................................................ [ 55%]
+........................................................................ [ 56%]
+........................................................................ [ 56%]
+........................................................................ [ 57%]
+........................................................................ [ 57%]
+........................................................................ [ 57%]
+........................................................................ [ 58%]
+........................................................................ [ 58%]
+........................................................................ [ 59%]
+........................................................................ [ 59%]
+........................................................................ [ 60%]
+........................................................................ [ 60%]
+........................................................................ [ 61%]
+.................................................F..............F....... [ 61%]
+..................F...........................F...................F..... [ 62%]
+.......F................................................................ [ 62%]
+........................................................................ [ 63%]
+........................................................................ [ 63%]
+........................................................................ [ 64%]
+........................................................................ [ 64%]
+........................................................................ [ 64%]
+........................................................................ [ 65%]
+........................................................................ [ 65%]
+........................................................................ [ 66%]
+........................................................................ [ 66%]
+........................................................................ [ 67%]
+........................................................................ [ 67%]
+........................................................................ [ 68%]
+........................................................................ [ 68%]
+........................................................................ [ 69%]
+........................................................................ [ 69%]
+........................................................................ [ 70%]
+......................................................................F. [ 70%]
+........................................................................ [ 70%]
+........................................................................ [ 71%]
+...........F............................................................ [ 71%]
+........................................................................ [ 72%]
+........................................................................ [ 72%]
+........................................................................ [ 73%]
+........................................................................ [ 73%]
+....................................F.......................F........... [ 74%]
+.......F..................F....................F....................F... [ 74%]
+........................................................................ [ 75%]
+............................F.................F...................F..... [ 75%]
+...........F...................F.....F.................................. [ 76%]
+........................F...........................................F... [ 76%]
+.......................................F...............................F [ 77%]
+........................................................................ [ 77%]
+........................................................................ [ 77%]
+........................................................................ [ 78%]
+........................................................................ [ 78%]
+........................................................................ [ 79%]
+........................................................................ [ 79%]
+........................................................................ [ 80%]
+........................................................................ [ 80%]
+........................................................................ [ 81%]
+........................................................................ [ 81%]
+........................................................................ [ 82%]
+........................................................................ [ 82%]
+........................................................................ [ 83%]
+........................................................................ [ 83%]
+........................................................................ [ 83%]
+........................................................................ [ 84%]
+........................................................................ [ 84%]
+........................................................................ [ 85%]
+........................................................................ [ 85%]
+........................................................................ [ 86%]
+........................................................................ [ 86%]
+........................................................................ [ 87%]
+........................................................................ [ 87%]
+........................................................................ [ 88%]
+........................................................................ [ 88%]
+........................................................................ [ 89%]
+.........F............................F................................. [ 89%]
+............F........................................................... [ 90%]
+........................................................................ [ 90%]
+.........................F.............................................. [ 90%]
+F................................F...................................... [ 91%]
+........................................................................ [ 91%]
+........................................................................ [ 92%]
+........F.....................................................F......... [ 92%]
+...................................F.................................... [ 93%]
+.F.......F.............................................................. [ 93%]
+........................................................................ [ 94%]
+........................................................................ [ 94%]
+........................................................................ [ 95%]
+........................................................................ [ 95%]
+........................................................................ [ 96%]
+........................................................................ [ 96%]
+........................................................................ [ 96%]
+........................................................................ [ 97%]
+....F................................................................... [ 97%]
+.................................................F...................... [ 98%]
+........................................................................ [ 98%]
+........................................................................ [ 99%]
+........................................................................ [ 99%]
+........................................                                 [100%]
+=================================== FAILURES ===================================
+_ test_failed_get_deadline_does_not_reinitialize_or_replay_post[tools/list-401] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/unit/mcp/test_sse_resume.py:326: in test_failed_get_deadline_does_not_reinitialize_or_replay_post
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/unit/mcp/test_sse_resume.py:321: in scenario
+    assert len(gets) == 1 and len(closed) == 2
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_runtime_owned_memory_clients_use_ordinary_configured_transport[openai-chat_completions] _
+[gw1] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_model_http.py:345: in test_runtime_owned_memory_clients_use_ordinary_configured_transport
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_model_http.py:337: in scenario
+    assert "pytest route" in json.dumps(requests[-1])
+E   assert 'pytest route' in '{"model": "main", "messages": [{"role": "system", "content": "You are Corki, a coding agent running in a terminal-bas... "enum": ["high", "original"]}}, "required": ["path"], "additionalProperties": false}}}], "parallel_tool_calls": true}'
+E    +  where '{"model": "main", "messages": [{"role": "system", "content": "You are Corki, a coding agent running in a terminal-bas... "enum": ["high", "original"]}}, "required": ["path"], "additionalProperties": false}}}], "parallel_tool_calls": true}' = <function dumps at 0x1017b94e0>({'messages': [{'content': "You are Corki, a coding agent running in a terminal-based coding assistant. You and the use...ant'}, {'content': 'after memory', 'role': 'user'}], 'model': 'main', 'parallel_tool_calls': True, 'stream': True, ...})
+E    +    where <function dumps at 0x1017b94e0> = json.dumps
+------------------------------ Captured log call -------------------------------
+WARNING  corki.config.settings:settings.py:298 Unknown model extract uses fallback window metadata (272000 tokens)
+WARNING  corki.config.settings:settings.py:298 Unknown model extract uses fallback window metadata (272000 tokens)
+WARNING  corki.config.settings:settings.py:298 Unknown model merge uses fallback window metadata (272000 tokens)
+_ test_runtime_owned_memory_clients_use_ordinary_configured_transport[openai-responses] _
+[gw1] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_model_http.py:345: in test_runtime_owned_memory_clients_use_ordinary_configured_transport
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_model_http.py:337: in scenario
+    assert "pytest route" in json.dumps(requests[-1])
+E   assert 'pytest route' in '{"model": "main", "instructions": "You are Corki, a coding agent running in a terminal-based coding assistant. You an...": false}], "parallel_tool_calls": true, "reasoning": {"summary": "auto"}, "include": ["reasoning.encrypted_content"]}'
+E    +  where '{"model": "main", "instructions": "You are Corki, a coding agent running in a terminal-based coding assistant. You an...": false}], "parallel_tool_calls": true, "reasoning": {"summary": "auto"}, "include": ["reasoning.encrypted_content"]}' = <function dumps at 0x1017b94e0>({'include': ['reasoning.encrypted_content'], 'input': [{'content': [{'text': '<permissions instructions>\nFilesystem s...hen useful. Do not paste large files that already exist in the user's workspace unless asked.\n", 'model': 'main', ...})
+E    +    where <function dumps at 0x1017b94e0> = json.dumps
+------------------------------ Captured log call -------------------------------
+WARNING  corki.config.settings:settings.py:298 Unknown model extract uses fallback window metadata (272000 tokens)
+WARNING  corki.config.settings:settings.py:298 Unknown model extract uses fallback window metadata (272000 tokens)
+WARNING  corki.config.settings:settings.py:298 Unknown model merge uses fallback window metadata (272000 tokens)
+_ test_runtime_owned_memory_clients_use_ordinary_configured_transport[deepseek-chat_completions] _
+[gw1] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_model_http.py:345: in test_runtime_owned_memory_clients_use_ordinary_configured_transport
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_model_http.py:337: in scenario
+    assert "pytest route" in json.dumps(requests[-1])
+E   assert 'pytest route' in '{"model": "main", "messages": [{"role": "system", "content": "You are Corki, a coding agent running in a terminal-bas... "enum": ["high", "original"]}}, "required": ["path"], "additionalProperties": false}}}], "parallel_tool_calls": true}'
+E    +  where '{"model": "main", "messages": [{"role": "system", "content": "You are Corki, a coding agent running in a terminal-bas... "enum": ["high", "original"]}}, "required": ["path"], "additionalProperties": false}}}], "parallel_tool_calls": true}' = <function dumps at 0x1017b94e0>({'messages': [{'content': "You are Corki, a coding agent running in a terminal-based coding assistant. You and the use...ant'}, {'content': 'after memory', 'role': 'user'}], 'model': 'main', 'parallel_tool_calls': True, 'stream': True, ...})
+E    +    where <function dumps at 0x1017b94e0> = json.dumps
+------------------------------ Captured log call -------------------------------
+WARNING  corki.config.settings:settings.py:298 Unknown model extract uses fallback window metadata (272000 tokens)
+WARNING  corki.config.settings:settings.py:298 Unknown model extract uses fallback window metadata (272000 tokens)
+WARNING  corki.config.settings:settings.py:298 Unknown model merge uses fallback window metadata (272000 tokens)
+_ test_runtime_owned_memory_clients_use_ordinary_configured_transport[deepseek-responses] _
+[gw1] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_model_http.py:345: in test_runtime_owned_memory_clients_use_ordinary_configured_transport
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_model_http.py:337: in scenario
+    assert "pytest route" in json.dumps(requests[-1])
+E   assert 'pytest route' in '{"model": "main", "instructions": "You are Corki, a coding agent running in a terminal-based coding assistant. You an...": false}], "parallel_tool_calls": true, "reasoning": {"summary": "auto"}, "include": ["reasoning.encrypted_content"]}'
+E    +  where '{"model": "main", "instructions": "You are Corki, a coding agent running in a terminal-based coding assistant. You an...": false}], "parallel_tool_calls": true, "reasoning": {"summary": "auto"}, "include": ["reasoning.encrypted_content"]}' = <function dumps at 0x1017b94e0>({'include': ['reasoning.encrypted_content'], 'input': [{'content': [{'text': '<permissions instructions>\nFilesystem s...hen useful. Do not paste large files that already exist in the user's workspace unless asked.\n", 'model': 'main', ...})
+E    +    where <function dumps at 0x1017b94e0> = json.dumps
+------------------------------ Captured log call -------------------------------
+WARNING  corki.config.settings:settings.py:298 Unknown model extract uses fallback window metadata (272000 tokens)
+WARNING  corki.config.settings:settings.py:298 Unknown model extract uses fallback window metadata (272000 tokens)
+WARNING  corki.config.settings:settings.py:298 Unknown model merge uses fallback window metadata (272000 tokens)
+_ test_runtime_owned_memory_clients_use_ordinary_configured_transport[independent-chat_completions] _
+[gw1] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_model_http.py:345: in test_runtime_owned_memory_clients_use_ordinary_configured_transport
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_model_http.py:337: in scenario
+    assert "pytest route" in json.dumps(requests[-1])
+E   assert 'pytest route' in '{"model": "main", "messages": [{"role": "system", "content": "You are Corki, a coding agent running in a terminal-bas... "enum": ["high", "original"]}}, "required": ["path"], "additionalProperties": false}}}], "parallel_tool_calls": true}'
+E    +  where '{"model": "main", "messages": [{"role": "system", "content": "You are Corki, a coding agent running in a terminal-bas... "enum": ["high", "original"]}}, "required": ["path"], "additionalProperties": false}}}], "parallel_tool_calls": true}' = <function dumps at 0x1017b94e0>({'messages': [{'content': "You are Corki, a coding agent running in a terminal-based coding assistant. You and the use...ant'}, {'content': 'after memory', 'role': 'user'}], 'model': 'main', 'parallel_tool_calls': True, 'stream': True, ...})
+E    +    where <function dumps at 0x1017b94e0> = json.dumps
+------------------------------ Captured log call -------------------------------
+WARNING  corki.config.settings:settings.py:298 Unknown model extract uses fallback window metadata (272000 tokens)
+WARNING  corki.config.settings:settings.py:298 Unknown model extract uses fallback window metadata (272000 tokens)
+WARNING  corki.config.settings:settings.py:298 Unknown model merge uses fallback window metadata (272000 tokens)
+_ test_runtime_owned_memory_clients_use_ordinary_configured_transport[independent-responses] _
+[gw1] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_model_http.py:345: in test_runtime_owned_memory_clients_use_ordinary_configured_transport
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_model_http.py:337: in scenario
+    assert "pytest route" in json.dumps(requests[-1])
+E   assert 'pytest route' in '{"model": "main", "instructions": "You are Corki, a coding agent running in a terminal-based coding assistant. You an...": false}], "parallel_tool_calls": true, "reasoning": {"summary": "auto"}, "include": ["reasoning.encrypted_content"]}'
+E    +  where '{"model": "main", "instructions": "You are Corki, a coding agent running in a terminal-based coding assistant. You an...": false}], "parallel_tool_calls": true, "reasoning": {"summary": "auto"}, "include": ["reasoning.encrypted_content"]}' = <function dumps at 0x1017b94e0>({'include': ['reasoning.encrypted_content'], 'input': [{'content': [{'text': '<permissions instructions>\nFilesystem s...hen useful. Do not paste large files that already exist in the user's workspace unless asked.\n", 'model': 'main', ...})
+E    +    where <function dumps at 0x1017b94e0> = json.dumps
+------------------------------ Captured log call -------------------------------
+WARNING  corki.config.settings:settings.py:298 Unknown model extract uses fallback window metadata (272000 tokens)
+WARNING  corki.config.settings:settings.py:298 Unknown model extract uses fallback window metadata (272000 tokens)
+WARNING  corki.config.settings:settings.py:298 Unknown model merge uses fallback window metadata (272000 tokens)
+_ test_cold_use_toggle_removes_current_policy_and_owned_tools_without_erasing_history _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_read_policy.py:274: in test_cold_use_toggle_removes_current_policy_and_owned_tools_without_erasing_history
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_read_policy.py:269: in scenario
+    assert len(fragments) == 2 and fragments[-1].snapshot_content == ""
+E   AssertionError: assert (1 == 2)
+E    +  where 1 = len([ContextItem(key='memory.instructions', role=<ContextRole.DEVELOPER: 'developer'>, content='## Memory\n\nYou have acce...e_message=False, message_group_id='0b8e7728-3a82-44cb-a269-346dfb2b96f2', message_group_index=0, message_group_size=3)])
+_ test_summary_budget_and_refresh_do_not_truncate_policy_or_rewrite_old_context _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_read_policy.py:510: in test_summary_budget_and_refresh_do_not_truncate_policy_or_rewrite_old_context
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_read_policy.py:504: in scenario
+    assert len(fragments) == 3 and fragments[0] == original
+E   AssertionError: assert (1 == 3)
+E    +  where 1 = len([ContextItem(key='memory.instructions', role=<ContextRole.DEVELOPER: 'developer'>, content='## Memory\n\nYou have acce...e_message=False, message_group_id='7032691f-69f5-440b-b95d-4c256dc57fbd', message_group_index=0, message_group_size=3)])
+_ test_background_generation_then_summary_search_read_and_citation[False-False-completed] _
+[gw6] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_pipeline_runtime.py:185: in test_background_generation_then_summary_search_read_and_citation
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_pipeline_runtime.py:168: in scenario
+    assert isinstance(second[-1], TurnCompleted)
+E   AssertionError: assert False
+E    +  where False = isinstance(TurnFailed(thread_id='531efe07-86c0-4f6a-8f83-67d83773c81a', turn_id='f22ecdcb-b027-44ab-8120-aa05b88f9a97', error='RuntimeError: async generator raised StopIteration', error_kind='internal', retryable=False), TurnCompleted)
+_ test_background_generation_then_summary_search_read_and_citation[False-False-failed] _
+[gw6] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_pipeline_runtime.py:185: in test_background_generation_then_summary_search_read_and_citation
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_pipeline_runtime.py:168: in scenario
+    assert isinstance(second[-1], TurnCompleted)
+E   AssertionError: assert False
+E    +  where False = isinstance(TurnFailed(thread_id='68cc5aea-e6f8-4fd9-9666-05de007a87da', turn_id='6788c72f-c935-4f09-9c85-72e6c59db6eb', error='RuntimeError: async generator raised StopIteration', error_kind='internal', retryable=False), TurnCompleted)
+_ test_background_generation_then_summary_search_read_and_citation[False-False-cancelled] _
+[gw6] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_pipeline_runtime.py:185: in test_background_generation_then_summary_search_read_and_citation
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_pipeline_runtime.py:168: in scenario
+    assert isinstance(second[-1], TurnCompleted)
+E   AssertionError: assert False
+E    +  where False = isinstance(TurnFailed(thread_id='da9d496b-2afd-4ddb-8e8b-8190650e1459', turn_id='d67360b9-a711-420b-bdfa-0571e455688d', error='RuntimeError: async generator raised StopIteration', error_kind='internal', retryable=False), TurnCompleted)
+_ test_background_generation_then_summary_search_read_and_citation[False-True-completed] _
+[gw6] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_pipeline_runtime.py:185: in test_background_generation_then_summary_search_read_and_citation
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_pipeline_runtime.py:168: in scenario
+    assert isinstance(second[-1], TurnCompleted)
+E   AssertionError: assert False
+E    +  where False = isinstance(TurnFailed(thread_id='6d209d98-cd3f-429c-b3ec-d59ff3b95eba', turn_id='4351549d-1d55-4937-b21a-014d84db06df', error='RuntimeError: async generator raised StopIteration', error_kind='internal', retryable=False), TurnCompleted)
+_ test_background_generation_then_summary_search_read_and_citation[False-True-failed] _
+[gw6] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_pipeline_runtime.py:185: in test_background_generation_then_summary_search_read_and_citation
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_pipeline_runtime.py:168: in scenario
+    assert isinstance(second[-1], TurnCompleted)
+E   AssertionError: assert False
+E    +  where False = isinstance(TurnFailed(thread_id='0dae9c39-24e6-4f4c-8a0c-0d32b11d1d46', turn_id='8f0f284b-1236-4177-96e2-8a5b36fb67eb', error='RuntimeError: async generator raised StopIteration', error_kind='internal', retryable=False), TurnCompleted)
+_ test_background_generation_then_summary_search_read_and_citation[False-True-cancelled] _
+[gw6] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_pipeline_runtime.py:185: in test_background_generation_then_summary_search_read_and_citation
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_pipeline_runtime.py:168: in scenario
+    assert isinstance(second[-1], TurnCompleted)
+E   AssertionError: assert False
+E    +  where False = isinstance(TurnFailed(thread_id='228838c9-dca0-42a8-aef4-b1ef0aabb96b', turn_id='1dbbea6a-bef4-44db-94d8-fa135847e1ac', error='RuntimeError: async generator raised StopIteration', error_kind='internal', retryable=False), TurnCompleted)
+_ test_background_generation_then_summary_search_read_and_citation[True-False-completed] _
+[gw6] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_pipeline_runtime.py:185: in test_background_generation_then_summary_search_read_and_citation
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_pipeline_runtime.py:168: in scenario
+    assert isinstance(second[-1], TurnCompleted)
+E   AssertionError: assert False
+E    +  where False = isinstance(TurnFailed(thread_id='a55b0eca-c831-4f09-9966-932d0a078d31', turn_id='a9a1215c-7543-4d1a-a382-76cf21ec56ac', error='RuntimeError: async generator raised StopIteration', error_kind='internal', retryable=False), TurnCompleted)
+_ test_background_generation_then_summary_search_read_and_citation[True-False-failed] _
+[gw6] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_pipeline_runtime.py:185: in test_background_generation_then_summary_search_read_and_citation
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_pipeline_runtime.py:168: in scenario
+    assert isinstance(second[-1], TurnCompleted)
+E   AssertionError: assert False
+E    +  where False = isinstance(TurnFailed(thread_id='01c72c6f-f189-43bc-b54a-d460440aacb6', turn_id='c182aa9b-26cd-4cb5-8362-8d12b2781e4f', error='RuntimeError: async generator raised StopIteration', error_kind='internal', retryable=False), TurnCompleted)
+_ test_background_generation_then_summary_search_read_and_citation[True-False-cancelled] _
+[gw6] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_pipeline_runtime.py:185: in test_background_generation_then_summary_search_read_and_citation
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_pipeline_runtime.py:168: in scenario
+    assert isinstance(second[-1], TurnCompleted)
+E   AssertionError: assert False
+E    +  where False = isinstance(TurnFailed(thread_id='e596a6d4-2e82-4b24-ba61-008c40eec588', turn_id='2934080b-0aba-473c-96d7-3cdcb21875d3', error='RuntimeError: async generator raised StopIteration', error_kind='internal', retryable=False), TurnCompleted)
+_ test_background_generation_then_summary_search_read_and_citation[True-True-completed] _
+[gw6] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_pipeline_runtime.py:185: in test_background_generation_then_summary_search_read_and_citation
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_pipeline_runtime.py:168: in scenario
+    assert isinstance(second[-1], TurnCompleted)
+E   AssertionError: assert False
+E    +  where False = isinstance(TurnFailed(thread_id='ea75bda7-d26a-496c-87be-951626dd7787', turn_id='f2653ab3-ce4f-4522-8cb6-74d22f0b1880', error='RuntimeError: async generator raised StopIteration', error_kind='internal', retryable=False), TurnCompleted)
+_ test_background_generation_then_summary_search_read_and_citation[True-True-failed] _
+[gw6] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_pipeline_runtime.py:185: in test_background_generation_then_summary_search_read_and_citation
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_pipeline_runtime.py:168: in scenario
+    assert isinstance(second[-1], TurnCompleted)
+E   AssertionError: assert False
+E    +  where False = isinstance(TurnFailed(thread_id='0a216921-fc2a-463b-b3e8-62e2dfeaab9d', turn_id='01b944ef-bec1-4e6c-a6aa-65fef37a502f', error='RuntimeError: async generator raised StopIteration', error_kind='internal', retryable=False), TurnCompleted)
+_ test_file_editing_worker_repairs_tool_error_verifies_and_recalls[completed] __
+[gw7] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_agent_runtime.py:252: in test_file_editing_worker_repairs_tool_error_verifies_and_recalls
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_agent_runtime.py:239: in scenario
+    assert any(
+E   assert False
+E    +  where False = any(<generator object test_file_editing_worker_repairs_tool_error_verifies_and_recalls.<locals>.scenario.<locals>.<genexpr> at 0x127543d80>)
+------------------------------ Captured log call -------------------------------
+WARNING  corki.config.settings:settings.py:298 Unknown model fixture uses fallback window metadata (272000 tokens)
+_ test_background_generation_then_summary_search_read_and_citation[True-True-cancelled] _
+[gw6] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_pipeline_runtime.py:185: in test_background_generation_then_summary_search_read_and_citation
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_pipeline_runtime.py:168: in scenario
+    assert isinstance(second[-1], TurnCompleted)
+E   AssertionError: assert False
+E    +  where False = isinstance(TurnFailed(thread_id='43e7f8fc-8f8a-44c4-a882-6888d791c97b', turn_id='654c258d-15a8-43d8-9d80-4f8997555b28', error='RuntimeError: async generator raised StopIteration', error_kind='internal', retryable=False), TurnCompleted)
+_ test_file_editing_worker_repairs_tool_error_verifies_and_recalls[streaming] __
+[gw7] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_agent_runtime.py:252: in test_file_editing_worker_repairs_tool_error_verifies_and_recalls
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_agent_runtime.py:239: in scenario
+    assert any(
+E   assert False
+E    +  where False = any(<generator object test_file_editing_worker_repairs_tool_error_verifies_and_recalls.<locals>.scenario.<locals>.<genexpr> at 0x12443fca0>)
+------------------------------ Captured log call -------------------------------
+WARNING  corki.config.settings:settings.py:298 Unknown model fixture uses fallback window metadata (272000 tokens)
+_ test_explicit_note_then_cold_consolidation_preserves_source_and_marks_recalled_data _
+[gw6] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_pipeline_runtime.py:400: in test_explicit_note_then_cold_consolidation_preserves_source_and_marks_recalled_data
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_pipeline_runtime.py:390: in scenario
+    assert isinstance(
+E   assert False
+E    +  where False = isinstance(TurnFailed(thread_id='72849e7e-b641-4352-a78f-d4cd60cbf7e8', turn_id='1e802390-065a-4197-b117-6fa331cce1ec', error="As...4fb9-9bc9-66d99ea6b226', message_group_index=0, message_group_size=3).content", error_kind='internal', retryable=False), TurnCompleted)
+___ test_file_editing_worker_repairs_tool_error_verifies_and_recalls[nested] ___
+[gw7] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_agent_runtime.py:252: in test_file_editing_worker_repairs_tool_error_verifies_and_recalls
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_agent_runtime.py:239: in scenario
+    assert any(
+E   assert False
+E    +  where False = any(<generator object test_file_editing_worker_repairs_tool_error_verifies_and_recalls.<locals>.scenario.<locals>.<genexpr> at 0x126c0bca0>)
+------------------------------ Captured log call -------------------------------
+WARNING  corki.config.settings:settings.py:298 Unknown model fixture uses fallback window metadata (272000 tokens)
+_ test_runtime_consolidation_receives_named_change_and_cold_recall[none-delete] _
+[gw4] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_change_evidence.py:169: in scenario
+    context = next(
+E   StopIteration
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_memory_change_evidence.py:183: in test_runtime_consolidation_receives_named_change_and_cold_recall
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+E   RuntimeError: coroutine raised StopIteration
+_ test_runtime_consolidation_receives_named_change_and_cold_recall[none-modify] _
+[gw4] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_change_evidence.py:169: in scenario
+    context = next(
+E   StopIteration
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_memory_change_evidence.py:183: in test_runtime_consolidation_receives_named_change_and_cold_recall
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+E   RuntimeError: coroutine raised StopIteration
+_ test_runtime_consolidation_receives_named_change_and_cold_recall[model-delete] _
+[gw4] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_change_evidence.py:169: in scenario
+    context = next(
+E   StopIteration
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_memory_change_evidence.py:183: in test_runtime_consolidation_receives_named_change_and_cold_recall
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+E   RuntimeError: coroutine raised StopIteration
+_ test_runtime_consolidation_receives_named_change_and_cold_recall[model-modify] _
+[gw4] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_change_evidence.py:169: in scenario
+    context = next(
+E   StopIteration
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_memory_change_evidence.py:183: in test_runtime_consolidation_receives_named_change_and_cold_recall
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+E   RuntimeError: coroutine raised StopIteration
+_ test_runtime_consolidation_receives_named_change_and_cold_recall[lost_owner-delete] _
+[gw4] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_change_evidence.py:169: in scenario
+    context = next(
+E   StopIteration
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_memory_change_evidence.py:183: in test_runtime_consolidation_receives_named_change_and_cold_recall
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+E   RuntimeError: coroutine raised StopIteration
+_ test_runtime_consolidation_receives_named_change_and_cold_recall[lost_owner-modify] _
+[gw4] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_change_evidence.py:169: in scenario
+    context = next(
+E   StopIteration
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_memory_change_evidence.py:183: in test_runtime_consolidation_receives_named_change_and_cold_recall
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+E   RuntimeError: coroutine raised StopIteration
+_ test_runtime_consolidation_receives_named_change_and_cold_recall[summary_write-delete] _
+[gw4] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_change_evidence.py:169: in scenario
+    context = next(
+E   StopIteration
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_memory_change_evidence.py:183: in test_runtime_consolidation_receives_named_change_and_cold_recall
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+E   RuntimeError: coroutine raised StopIteration
+_ test_runtime_consolidation_receives_named_change_and_cold_recall[summary_write-modify] _
+[gw4] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_change_evidence.py:169: in scenario
+    context = next(
+E   StopIteration
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_memory_change_evidence.py:183: in test_runtime_consolidation_receives_named_change_and_cold_recall
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+E   RuntimeError: coroutine raised StopIteration
+_ test_runtime_consolidation_receives_named_change_and_cold_recall[skill_write-delete] _
+[gw4] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_change_evidence.py:169: in scenario
+    context = next(
+E   StopIteration
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_memory_change_evidence.py:183: in test_runtime_consolidation_receives_named_change_and_cold_recall
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+E   RuntimeError: coroutine raised StopIteration
+_______ test_runtime_reset_preserves_history_and_revokes_old_claim[True] _______
+[gw7] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_reset_runtime.py:129: in test_runtime_reset_preserves_history_and_revokes_old_claim
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_memory_reset_runtime.py:96: in scenario
+    assert updates and updates[-1].snapshot_content == ""
+E   AssertionError: assert ([ContextItem(key='memory.instructions', role=<ContextRole.DEVELOPER: 'developer'>, content='## Memory\n\nYou have acce...e_message=False, message_group_id='5c5b11fe-af2c-4a27-91e2-32cac6ff708e', message_group_index=0, message_group_size=3)] and None == '')
+E    +  where None = ContextItem(key='memory.instructions', role=<ContextRole.DEVELOPER: 'developer'>, content='## Memory\n\nYou have acces...te_message=False, message_group_id='5c5b11fe-af2c-4a27-91e2-32cac6ff708e', message_group_index=0, message_group_size=3).snapshot_content
+_ test_runtime_consolidation_receives_named_change_and_cold_recall[skill_write-modify] _
+[gw4] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_change_evidence.py:169: in scenario
+    context = next(
+E   StopIteration
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_memory_change_evidence.py:183: in test_runtime_consolidation_receives_named_change_and_cold_recall
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+E   RuntimeError: coroutine raised StopIteration
+___ test_polluted_published_source_enqueues_and_cold_runtime_rebuilds_memory ___
+[gw6] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_long_term_memory.py:311: in test_polluted_published_source_enqueues_and_cold_runtime_rebuilds_memory
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_long_term_memory.py:298: in scenario
+    assert "REBUILT_INDEX" in index.content and background.count == 1
+E   AssertionError: assert ('REBUILT_INDEX' in '## Memory\n\nYou have access to a memory folder with guidance from prior runs. It can save\ntime and help you stay co...S =========\n\nWhen memory is likely relevant, start with the quick memory pass above before\ndeep repo exploration.\n')
+E    +  where '## Memory\n\nYou have access to a memory folder with guidance from prior runs. It can save\ntime and help you stay co...S =========\n\nWhen memory is likely relevant, start with the quick memory pass above before\ndeep repo exploration.\n' = ContextItem(key='memory.instructions', role=<ContextRole.DEVELOPER: 'developer'>, content='## Memory\n\nYou have acces...te_message=False, message_group_id='d6cfdd05-b81c-44ab-8b46-ff3e641c8d5c', message_group_index=0, message_group_size=3).content
+_____ test_runtime_prunes_only_one_batch_then_consolidates_visible_inputs ______
+[gw7] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_memory_retention.py:140: in scenario
+    latest = next(
+E   StopIteration
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_memory_retention.py:150: in test_runtime_prunes_only_one_batch_then_consolidates_visible_inputs
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+E   RuntimeError: coroutine raised StopIteration
+=========================== short test summary info ============================
+SKIPPED [1] tests/unit/config/test_project_trust_selection.py:164: filesystem rejects non-UTF-8 filenames
+38 failed, 15481 passed, 1 skipped in 556.78s (0:09:16)
+

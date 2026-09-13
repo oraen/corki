@@ -63,20 +63,21 @@ def context_tokens_from_usage(
     tokens = usage.total_tokens + sum(
         estimate_item_tokens(item) for item in candidate if item.id not in counted
     )
-    if not usage.server_reasoning_included:
-        last_user = next(
-            (
-                index
-                for index in range(len(candidate) - 1, -1, -1)
-                if isinstance(candidate[index], UserMessageItem)
-            ),
-            0,
-        )
-        tokens += sum(
-            estimate_item_tokens(item)
-            for item in candidate[:last_user]
-            if isinstance(item, ReasoningItem)
-            and item.encrypted_content is not None
-            and item.id in counted
-        )
+    # Ordinary usage has no private server declaration controlling this estimate.
+    # Legacy ContextUsage flags must not reactivate that protocol on resume.
+    last_user = next(
+        (
+            index
+            for index in range(len(candidate) - 1, -1, -1)
+            if isinstance(candidate[index], UserMessageItem)
+        ),
+        0,
+    )
+    tokens += sum(
+        estimate_item_tokens(item)
+        for item in candidate[:last_user]
+        if isinstance(item, ReasoningItem)
+        and item.encrypted_content is not None
+        and item.id in counted
+    )
     return tokens

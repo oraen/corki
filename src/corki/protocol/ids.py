@@ -6,6 +6,7 @@ from typing import NewType
 from uuid import UUID, uuid4, uuid5
 
 ThreadId = NewType("ThreadId", str)
+SessionId = NewType("SessionId", str)
 TurnId = NewType("TurnId", str)
 MessageId = NewType("MessageId", str)
 ItemId = NewType("ItemId", str)
@@ -17,6 +18,11 @@ _TOOL_RESULT_NAMESPACE = UUID("9683cb9e-0f07-47ba-8ea4-91d94a1bd489")
 
 def new_thread_id() -> ThreadId:
     return ThreadId(str(uuid4()))
+
+
+def new_session_id() -> SessionId:
+    """Allocate independent host session identity for an internal task."""
+    return SessionId(str(uuid4()))
 
 
 def new_turn_id() -> TurnId:

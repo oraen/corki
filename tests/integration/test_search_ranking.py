@@ -7,12 +7,77 @@ import pytest
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted
+from corki.protocol.context import ModelContextInfo
 from corki.protocol.events import TurnCompleted
 from corki.protocol.ids import new_tool_call_id
 from corki.protocol.items import AssistantMessageItem, ToolCallItem, ToolResultItem, new_step_id
 from corki.protocol.tools import ToolCall, ToolExposure, ToolResult, ToolSpec
 from corki.tools import ToolRegistry
 from corki.tools import search as search_module
+
+
+@pytest.mark.parametrize("limit,count", [(None, 8), (1, 1), (20, 12)])
+def test_search_default_and_explicit_top_k_bound_loaded_definitions(tmp_path, limit, count):
+    async def scenario():
+        requests = []
+
+        class Tool:
+            def __init__(self, index):
+                self.spec = ToolSpec(
+                    f"candidate_{index}",
+                    "amber",
+                    {},
+                    exposure=ToolExposure.DEFERRED,
+                    search_text="amber",
+                )
+
+            async def execute(self, call, context):
+                pytest.fail("search must not execute a candidate")
+
+        class Model:
+            async def stream(self, request):
+                requests.append(request)
+                turn = request.items[-1].turn_id
+                candidates = [tool for tool in request.tools if tool.name.startswith("candidate_")]
+                if len(requests) == 1:
+                    assert candidates == []
+                    arguments = {"query": "amber"}
+                    if limit is not None:
+                        arguments["limit"] = limit
+                    call = ToolCall(new_tool_call_id(), "tool_search", arguments)
+                    yield ModelCompleted((ToolCallItem(call, turn, new_step_id()),))
+                else:
+                    result = [item for item in request.items if isinstance(item, ToolResultItem)][
+                        -1
+                    ]
+                    assert not result.is_error and len(result.discovered_tools) == count
+                    assert {tool.name for tool in candidates} == {
+                        tool.name for tool in result.discovered_tools
+                    }
+                    yield ModelCompleted((AssistantMessageItem("done", turn, new_step_id()),))
+
+            async def aclose(self):
+                pass
+
+        registry = ToolRegistry()
+        for index in range(12):
+            registry.register(Tool(index))
+        runtime = LangGraphRuntime.create(
+            settings=CorkiSettings(
+                working_directory=tmp_path, skills_enabled=False, plugins_enabled=False
+            ),
+            database_path=tmp_path / "top-k.db",
+            registry=registry,
+            model=Model(),
+        )
+        try:
+            events = [event async for event in runtime.stream("find amber tools")]
+            assert isinstance(events[-1], TurnCompleted)
+            assert len(requests) == 2
+        finally:
+            await runtime.aclose()
+
+    asyncio.run(scenario())
 
 
 def test_repeated_query_failures_remain_observations_without_rebuilding_index(
@@ -154,7 +219,7 @@ def test_search_ranking_loads_only_top_candidate_and_executes_it(
                     result = [i for i in request.items if isinstance(i, ToolResultItem)][-1]
                     assert [s.name for s in result.discovered_tools] == [expected]
                     advertised = {t.name for t in request.tools if t.name.startswith("candidate_")}
-                    assert advertised == ({expected} if mode == "compatible" else set())
+                    assert advertised == {expected}
                     call = ToolCall(new_tool_call_id(), result.discovered_tools[0].name, {})
                 else:
                     assert any(
@@ -176,6 +241,7 @@ def test_search_ranking_loads_only_top_candidate_and_executes_it(
                 working_directory=tmp_path,
                 skills_enabled=False,
                 tool_search_mode=mode,
+                model_contexts=(ModelContextInfo("gpt-5", supports_search_tool=True),),
                 api_mode="responses",
             ),
             database_path=tmp_path / "ranking.db",

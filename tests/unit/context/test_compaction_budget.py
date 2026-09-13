@@ -180,9 +180,7 @@ def test_mid_turn_current_input_is_not_truncated_to_make_summary_fit(tmp_path: P
             )
         assert raised.value.kind is ModelErrorKind.CONTEXT_WINDOW
         assert await repository.load_items(thread) == original
-        assert all(
-            current.id not in {item.id for item in request.items} for request in model.requests
-        )
+        assert all(current in request.items for request in model.requests)
 
     asyncio.run(scenario())
 
@@ -221,7 +219,7 @@ def test_auto_compact_limit_is_capped_at_ninety_percent(tmp_path: Path):
 
 
 @pytest.mark.parametrize("provider_overflow", [False, True])
-def test_compaction_reduces_oldest_tool_pair_and_preserves_pending_input(
+def test_compaction_only_reduces_oldest_pair_after_provider_overflow(
     tmp_path: Path, provider_overflow
 ):
     async def scenario():
@@ -261,13 +259,20 @@ def test_compaction_reduces_oldest_tool_pair_and_preserves_pending_input(
             assert isinstance(request.items[-1], UserMessageItem)
             assert "checkpoint compaction" in request.items[-1].content
             assert current.id not in {item.id for item in request.items}
-            assert estimate_request_tokens(request.instructions, request.items, request.tools) < 760
+            if provider_overflow:
+                assert (
+                    estimate_request_tokens(request.instructions, request.items, request.tools)
+                    < 760
+                )
             calls = {item.call.id for item in request.items if isinstance(item, ToolCallItem)}
             results = {item.call_id for item in request.items if isinstance(item, ToolResultItem)}
             assert calls == results
-        assert not any(
+        assert any(
             isinstance(item, (ToolCallItem, ToolResultItem)) for item in model.requests[-1].items
-        )
+        ) == (not provider_overflow)
+        if not provider_overflow:
+            request = model.requests[0]
+            assert estimate_request_tokens(request.instructions, request.items, ()) > 760
         assert any(
             isinstance(item, AssistantMessageItem) and item.content == "RECENT FACT"
             for item in model.requests[-1].items

@@ -8,6 +8,7 @@ import pytest
 
 from corki.memory import SQLiteMemoryRepository, StageOneMemory
 from corki.protocol.ids import ThreadId, new_thread_id, new_turn_id
+from corki.protocol.items import UserMessageItem
 from corki.sessions import TurnRecord, TurnStatus
 from corki.storage import SQLiteSessionRepository
 
@@ -16,6 +17,7 @@ async def seed(database, workspace, *, status=TurnStatus.COMPLETED):
     sessions = SQLiteSessionRepository(database)
     thread = new_thread_id()
     await sessions.create_thread(thread, workspace)
+    await sessions.append_items(thread, (UserMessageItem("attempt", new_turn_id()),))
     if status is not None:
         await sessions.save_turn(TurnRecord(new_turn_id(), thread, status, "attempt"))
     return thread
@@ -89,6 +91,47 @@ def test_global_running_cap_is_shared_by_independent_repositories(tmp_path):
         replacements = await claim(second, limit=2)
         assert len(replacements) == 2
         assert not await first.complete_extraction(active[0], None)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("takeover", [False, True])
+def test_expiry_allows_takeover_but_only_token_replacement_revokes_completion(
+    tmp_path, monkeypatch, takeover
+):
+    async def scenario():
+        database = tmp_path / "sessions.db"
+        source = await seed(database, tmp_path)
+        now = [datetime.now(UTC).timestamp()]
+        monkeypatch.setattr("corki.memory.sqlite.time.time", lambda: now[0])
+        version = datetime.fromtimestamp(now[0], UTC) - timedelta(hours=1)
+        set_version(database, source, version.isoformat())
+        first = SQLiteMemoryRepository(database)
+        (old,) = await claim(first, lease=60)
+        advanced = (version + timedelta(seconds=1)).isoformat()
+        set_version(database, source, advanced)
+        second = SQLiteMemoryRepository(database)
+        assert not await claim(second, lease=60)  # New input does not steal an active lease.
+        now[0] += 60  # Exact expiry, not an arbitrary time beyond the boundary.
+        if takeover:
+            (fresh,) = await claim(second, lease=60)
+            assert fresh.source_updated_at == advanced
+            assert fresh.ownership_token != old.ownership_token
+        memory = StageOneMemory(
+            source, tmp_path, old.source_updated_at, "old detail", "old summary"
+        )
+        assert await first.complete_extraction(old, memory) is (not takeover)
+        if not takeover:
+            (fresh,) = await claim(second, lease=60)
+            assert fresh.source_updated_at == advanced
+        assert await second.complete_extraction(
+            fresh,
+            StageOneMemory(source, tmp_path, fresh.source_updated_at, "new detail", "new summary"),
+        )
+        assert not await first.complete_extraction(old, memory)
+        assert not await claim(SQLiteMemoryRepository(database))
+        inputs = await second.load_consolidation_inputs(limit=10, max_unused_days=30)
+        assert len(inputs) == 1 and inputs[0].raw_memory == "new detail"
 
     asyncio.run(scenario())
 
@@ -188,7 +231,8 @@ def test_bounded_scan_precedes_memory_staleness_probes(
                 thread = f"source-{index:05}"
                 updated = (now - timedelta(seconds=index)).isoformat()
                 connection.execute(
-                    "INSERT INTO threads(id, cwd, updated_at) VALUES (?, ?, ?)",
+                    "INSERT INTO threads(id, cwd, updated_at, preview) "
+                    "VALUES (?, ?, ?, 'evidence')",
                     (thread, str(tmp_path), updated),
                 )
                 connection.execute(

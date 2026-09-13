@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from corki.config import CorkiSettings
+from corki.config.instructions import ProjectInstructionsConfig
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted, ModelRequest, ModelTextDelta
 from corki.models.types import ModelEvent
@@ -70,10 +71,11 @@ def test_langgraph_streams_and_recalls_complete_coding_loop(tmp_path: Path) -> N
                         "plan-1",
                         "update_plan",
                         {
+                            "explanation": "Inspect before changing files.",
                             "plan": [
                                 {"step": "inspect", "status": "in_progress"},
                                 {"step": "implement", "status": "pending"},
-                            ]
+                            ],
                         },
                     ),
                     ("exec-1", "exec_command", {"cmd": "printf observed"}),
@@ -108,6 +110,7 @@ def test_langgraph_streams_and_recalls_complete_coding_loop(tmp_path: Path) -> N
     )
     settings = CorkiSettings(
         working_directory=tmp_path,
+        project_instructions=ProjectInstructionsConfig(trust_level="trusted"),
         command_yield_seconds=1,
         command_timeout_seconds=3,
     )
@@ -129,7 +132,9 @@ def test_langgraph_streams_and_recalls_complete_coding_loop(tmp_path: Path) -> N
     assert "".join(
         event.delta for event in first_events if isinstance(event, AssistantTextDelta)
     ).endswith("Done.")
-    assert any(isinstance(event, PlanUpdated) for event in first_events)
+    assert [event.explanation for event in first_events if isinstance(event, PlanUpdated)] == [
+        "Inspect before changing files."
+    ]
     assert sum(isinstance(event, ToolCallCompleted) for event in first_events) == 4
     assert isinstance(first_events[-1], TurnCompleted)
     assert isinstance(second_events[-1], TurnCompleted)

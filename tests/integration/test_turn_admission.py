@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 
 import pytest
 
@@ -6,7 +7,7 @@ from corki.code_mode.service import CodeModeService
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted
-from corki.protocol.events import TurnCancelled, TurnCompleted
+from corki.protocol.events import TurnCancelled, TurnCompleted, TurnFailed, WarningEvent
 from corki.protocol.items import AssistantMessageItem, new_step_id
 from corki.tools import ToolRegistry
 
@@ -216,7 +217,7 @@ def test_queued_compact_replaces_the_worker_that_started_while_it_waited(tmp_pat
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("write_failed", [False, True])
+@pytest.mark.parametrize("write_failed", [False, "before", "after", "read_error", "conflict"])
 def test_resume_does_not_wait_for_old_terminal_observation_or_resample(tmp_path, write_failed):
     async def scenario():
         calls = []
@@ -244,26 +245,62 @@ def test_resume_does_not_wait_for_old_terminal_observation_or_resample(tmp_path,
             nonlocal failed
             if write_failed and not failed and record.status.value == "completed":
                 failed = True
+                if write_failed in {"after", "read_error", "conflict"}:
+                    await save(
+                        replace(record, final_answer="DIFFERENT")
+                        if write_failed == "conflict"
+                        else record
+                    )
                 raise OSError("terminal write fixture")
             await save(record)
 
         runtime._repository.save_turn = fail_once
+        if write_failed == "read_error":
+
+            async def unavailable(record):
+                raise OSError("confirmation unavailable")
+
+            runtime._repository.confirm_turn_terminal = unavailable
         old = runtime.stream("old")
         try:
             await anext(old)
             await asyncio.wait_for(runtime._active_run.done.wait(), 3)
+            terminal = runtime._active_run.terminal
+            unconfirmed = write_failed == "conflict"
+            assert isinstance(terminal, TurnFailed if unconfirmed else TurnCompleted)
+            if unconfirmed:
+                assert terminal.error_kind == "storage"
+                assert "terminal write fixture" in terminal.error
+            if write_failed == "after":
+                assert runtime._active_run.cleanup_error is None
+                warnings = [
+                    event
+                    for event in runtime._active_run.final_events
+                    if isinstance(event, WarningEvent)
+                ]
+                assert len(warnings) == 1 and "terminal write fixture" in warnings[0].message
 
             async def resume():
                 return [e async for e in runtime.resume_pending()]
 
             events = await asyncio.wait_for(resume(), 3)
-            if write_failed:
-                assert isinstance(events[-1], TurnCompleted)
-                assert events[0].resumed
-            else:
-                assert events == []
+            # Owned pending terminals drain before inspecting the recovery ledger;
+            # even a failed initial write no longer needs another graph execution.
+            assert events == []
             assert len(calls) == 1
             assert await runtime._repository.latest_running_turn(runtime.thread_id) is None
+            remaining = [event async for event in old]
+            if write_failed == "after":
+                assert isinstance(remaining[-1], TurnCompleted)
+                assert (
+                    sum(
+                        isinstance(event, WarningEvent)
+                        and "terminal write fixture" in event.message
+                        for event in remaining
+                    )
+                    == 1
+                )
+                assert not any(isinstance(event, TurnFailed) for event in remaining)
         finally:
             await old.aclose()
             await runtime.aclose()

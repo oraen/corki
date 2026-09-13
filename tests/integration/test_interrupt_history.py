@@ -175,7 +175,8 @@ def test_marker_is_compaction_input_not_retained_user_but_stays_in_memory_archiv
 
                 async def stream(self, request):
                     self.requests.append(request)
-                    if "raw_memory" in request.output_schema["properties"]:
+                    if request.output_schema_name == "corki_memory_extraction":
+                        assert request.output_schema is not None and not request.tools
                         assert '"type":"turn_aborted"' in request.items[0].content
                         assert "may have partially executed" in request.items[0].content
                         value = {
@@ -184,6 +185,7 @@ def test_marker_is_compaction_input_not_retained_user_but_stays_in_memory_archiv
                             "rollout_slug": "interrupted",
                         }
                     else:
+                        assert request.output_schema is None and request.tools
                         value = {
                             "memory": "Verify interrupted work.",
                             "memory_summary": "Interrupted work index.",
@@ -253,11 +255,14 @@ def test_committed_marker_prevents_cold_resume_after_cancel_terminal_write_failu
             await original(record)
 
         runtime._repository.save_turn = save
+        runtime._repository.retry_turn_terminal = save
         try:
             await cancel_turn(runtime, started)
             assert await runtime._repository.latest_running_turn(runtime.thread_id) is not None
             assert len(markers(await runtime._repository.load_items(runtime.thread_id))) == 1
             thread = runtime.thread_id
+            # Lose process-owned writes; keep durable cancellation facts for cold recovery.
+            runtime._pending_terminals.clear()
             await runtime.aclose()
             runtime = create(tmp_path, Model(), thread=thread, enabled=enabled_after)
             events = []

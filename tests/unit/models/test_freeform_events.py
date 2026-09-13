@@ -1,4 +1,4 @@
-"""Custom tool stream identity, terminal authorization and bounded raw input."""
+"""Legacy custom streams must fail without publishing executable items."""
 
 import asyncio
 import json
@@ -68,18 +68,18 @@ async def collect(body, *, limit=10000, capable=True):
 
 
 @pytest.mark.parametrize("identity", [{"item_id": "i"}, {"call_id": "c"}, {"output_index": 0}])
-def test_delta_aliases_done_and_repeated_final_item_produce_one_canonical_call(identity):
+def test_custom_aliases_and_repeated_terminal_cannot_publish_a_call(identity):
     body = packet("response.output_item.added", item={**ITEM, "input": ""}, output_index=0)
     body += packet("response.custom_tool_call_input.delta", delta=ITEM["input"], **identity)
     body += packet("response.output_item.done", item=ITEM, output_index=0)
     body += packet("response.output_item.done", item=ITEM)
     body += packet("response.completed", response={"id": "r", "output": [ITEM]})
-    events, error = asyncio.run(collect(body, limit=len(ITEM["input"])))
-    assert error is None
+    # Even a budget large enough for the old native item cannot authorize it.
+    metadata_chars = len(json.dumps({"id": ITEM["id"]}, separators=(",", ":")))
+    events, error = asyncio.run(collect(body, limit=len(ITEM["input"]) + metadata_chars))
+    assert error is not None and not error.retryable
     published = [event.item for event in events if isinstance(event, ModelItemCompleted)]
-    assert len(published) == 1
-    assert events[-1].items == tuple(published)
-    assert published[0].call.raw_arguments == ITEM["input"]
+    assert published == [] and events == []
 
 
 @pytest.mark.parametrize(
@@ -92,14 +92,14 @@ def test_delta_aliases_done_and_repeated_final_item_produce_one_canonical_call(i
         ),
     ],
 )
-def test_completed_input_is_immutable(suffix):
+def test_custom_completion_is_rejected_before_following_mutations(suffix):
     events, error = asyncio.run(collect(packet("response.output_item.done", item=ITEM) + suffix))
     assert error is not None and not error.retryable
-    assert len([event for event in events if isinstance(event, ModelItemCompleted)]) == 1
+    assert not any(isinstance(event, ModelItemCompleted) for event in events)
     assert not any(isinstance(event, ModelCompleted) for event in events)
 
 
-@pytest.mark.parametrize("patch", [{"input": None}, {"input": {}}, {"call_id": ""}, {"name": 3}])
+@pytest.mark.parametrize("patch", [{"input": None}, {"input": {}}, {"call_id": None}, {"name": 3}])
 def test_bad_custom_completion_never_publishes_a_call(patch):
     events, error = asyncio.run(
         collect(packet("response.output_item.done", item={**ITEM, **patch}))
@@ -115,20 +115,24 @@ def test_partial_input_never_becomes_an_executable_call(terminal):
         body += packet("response.completed", response={"id": "r"})
     events, error = asyncio.run(collect(body))
     assert not any(isinstance(event, ModelItemCompleted) for event in events)
-    if terminal:
-        assert error is None and events[-1].items == ()
-    else:
-        assert error is not None and error.retryable
+    assert error is not None and not error.retryable
+    assert events == []
 
 
-def test_raw_delta_counts_against_combined_response_budget():
+def test_custom_delta_after_text_is_fatal_not_a_successful_partial_response():
     body = packet("response.output_text.delta", item_id="m", delta="other")
     body += packet("response.custom_tool_call_input.delta", call_id="c", delta="x" * 10)
     events, error = asyncio.run(collect(body, limit=12))
-    assert error is not None
+    assert error is not None and not error.retryable
+    assert "native custom tool protocol" in str(error)
+    assert len(events) == 1 and events[0].delta == "other"
     assert not any(isinstance(event, ModelItemCompleted) for event in events)
+    assert not any(isinstance(event, ModelCompleted) for event in events)
 
 
-def test_native_protocol_requires_explicit_capability():
-    events, error = asyncio.run(collect("", capable=False))
-    assert events == [] and "capability" in str(error)
+@pytest.mark.parametrize("capable", [False, True])
+def test_capability_cannot_enable_custom_protocol(capable):
+    events, error = asyncio.run(
+        collect(packet("response.output_item.done", item=ITEM), capable=capable)
+    )
+    assert events == [] and "native custom tool protocol" in str(error)

@@ -4,9 +4,10 @@ from dataclasses import replace
 import pytest
 
 from corki.config import CorkiSettings
-from corki.context.tokens import estimate_encrypted_output_tokens, estimate_item_tokens
+from corki.context.tokens import estimate_item_tokens
 from corki.context.tool_output import truncate_content
 from corki.core.checkpoint import checkpoint_serializer
+from corki.models.media import UNSUPPORTED_ENCRYPTED
 from corki.protocol.ids import ThreadId, TurnId, new_tool_call_id
 from corki.protocol.items import (
     ToolResultItem,
@@ -59,16 +60,15 @@ def test_ciphertext_codec_and_ledger_are_lossless_without_text_projection(tmp_pa
 
 
 @pytest.mark.parametrize("length", [0, 1, 16, 1868, 8000])
-def test_encrypted_cost_uses_function_envelope_not_reasoning_formula(length):
+def test_opaque_cost_matches_unavailable_notice_not_archived_ciphertext(length):
     part = EncryptedContent("界" * length)
-    assert estimate_encrypted_output_tokens(part) == (length * 3 * 9 + 63) // 64
     item = ToolResultItem(
         new_tool_call_id(), "recover", "ignored", TurnId("turn"), content_items=(part,)
     )
-    empty = replace(item, content_items=(EncryptedContent(""),))
-    assert estimate_item_tokens(item) - estimate_item_tokens(empty) == (length * 3 * 9 + 63) // 64
+    projected = replace(item, content_items=(TextContent(UNSUPPORTED_ENCRYPTED),))
+    assert estimate_item_tokens(item) == estimate_item_tokens(projected)
     custom = replace(item, input_kind="freeform")
-    assert estimate_item_tokens(custom) - estimate_item_tokens(empty) == (length * 3 + 3) // 4
+    assert estimate_item_tokens(custom) == estimate_item_tokens(projected)
 
 
 @pytest.mark.parametrize("formatted", [False, True])
@@ -114,11 +114,12 @@ def test_oversize_cipher_is_observation_error_not_truncated_success(tmp_path):
     asyncio.run(scenario())
 
 
-def test_native_capability_loads_from_config_and_requires_responses(tmp_path):
+def test_legacy_native_capability_cannot_reenable_excluded_protocol(tmp_path):
     config = tmp_path / "corki.toml"
     config.write_text('[provider]\napi_mode = "responses"\nsupports_encrypted_tool_output = true\n')
-    assert CorkiSettings.for_directory(tmp_path, config_file=config).supports_encrypted_tool_output
-    with pytest.raises(ValueError, match="Responses"):
+    with pytest.raises(ValueError, match="unsupported"):
+        CorkiSettings.for_directory(tmp_path, config_file=config)
+    with pytest.raises(ValueError, match="unsupported"):
         CorkiSettings(working_directory=tmp_path, supports_encrypted_tool_output=True)
 
 

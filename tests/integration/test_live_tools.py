@@ -51,6 +51,9 @@ def test_responses_executes_complete_call_before_stream_terminal(tmp_path, trunc
             spec = ToolSpec("probe", "stream fixture", {"type": "object"}, input_kind=input_kind)
 
             async def execute(self, call, context):
+                assert call.input_kind == input_kind
+                if input_kind == "freeform":
+                    assert call.raw_arguments == "text('raw')" and call.arguments is None
                 history = await repository.load_items(runtime.thread_id)
                 assert any(isinstance(item, ToolCallItem) for item in history)
                 calls.append(call.id)
@@ -65,14 +68,13 @@ def test_responses_executes_complete_call_before_stream_terminal(tmp_path, trunc
                     {
                         "type": "response.output_item.done",
                         "item": {
-                            "type": "custom_tool_call"
-                            if input_kind == "freeform"
-                            else "function_call",
+                            "type": "function_call",
                             "id": "item-1",
                             "call_id": "call-1",
                             "name": "probe",
-                            "arguments": "{}",
-                            **({"input": "text('raw')"} if input_kind == "freeform" else {}),
+                            "arguments": json.dumps({"input": "text('raw')"})
+                            if input_kind == "freeform"
+                            else "{}",
                         },
                     }
                 )
@@ -88,7 +90,9 @@ def test_responses_executes_complete_call_before_stream_terminal(tmp_path, trunc
                 asyncio.get_running_loop().call_later(0.05, finish_tool.set)
 
         async def handle(request):
+            assert str(request.url) == "https://fixture.invalid/v1/responses"
             requests.append(json.loads(request.content))
+            assert all(tool["type"] == "function" for tool in requests[-1]["tools"])
             if len(requests) == 1:
                 return httpx.Response(200, stream=Stream())
             return httpx.Response(
@@ -211,6 +215,7 @@ def test_streamed_call_is_budget_checked_before_dispatch(tmp_path, limit):
 def test_steering_drains_live_results_before_accepting_input(tmp_path):
     async def scenario():
         started, release, model_closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        release_model = asyncio.Event()
         requests, executed = [], []
         repository = SQLiteSessionRepository(tmp_path / "sessions.db")
 
@@ -229,10 +234,12 @@ def test_steering_drains_live_results_before_accepting_input(tmp_path):
                 turn, step = request.items[-1].turn_id, new_step_id()
                 if len(requests) == 1:
                     try:
-                        yield ModelItemCompleted(
-                            ToolCallItem(ToolCall(ToolCallId("steered"), "probe", {}), turn, step)
+                        item = ToolCallItem(
+                            ToolCall(ToolCallId("steered"), "probe", {}), turn, step
                         )
-                        await asyncio.Event().wait()
+                        yield ModelItemCompleted(item)
+                        await release_model.wait()
+                        yield ModelCompleted((item,))
                     finally:
                         model_closed.set()
                 else:
@@ -263,6 +270,9 @@ def test_steering_drains_live_results_before_accepting_input(tmp_path):
         try:
             await asyncio.wait_for(started.wait(), 2)
             await runtime.steer("new input")
+            await asyncio.sleep(0.02)
+            assert not model_closed.is_set() and len(requests) == 1
+            release_model.set()
             await asyncio.wait_for(model_closed.wait(), 2)
             history = await repository.load_items(runtime.thread_id)
             assert not any(
@@ -284,6 +294,7 @@ def test_steering_drains_live_results_before_accepting_input(tmp_path):
             )
             assert result_index < input_index
         finally:
+            release_model.set()
             release.set()
             await runtime.aclose()
             await asyncio.gather(task, return_exceptions=True)

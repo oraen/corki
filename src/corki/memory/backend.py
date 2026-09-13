@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import re
+import stat
+from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
 
 from corki.memory.artifacts import ensure_memory_layout
 from corki.memory.inputs import truncate_memory_text
 from corki.memory.repository import MemoryRepository
-from corki.protocol.ids import ThreadId
 
-_THREAD_ID = re.compile(
-    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
-)
 AD_HOC_FILENAME_PATTERN = (
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-[a-z0-9][a-z0-9-]{0,79}\.md"
 )
@@ -24,32 +22,44 @@ class MemoryPathError(ValueError):
     """Raised when a requested path could escape or confuse the memory root."""
 
 
+class MemoryNotFoundError(FileNotFoundError):
+    """A requested memory is absent, rather than an in-flight I/O operation failing."""
+
+
+class MemoryNoteExistsError(FileExistsError):
+    """Create-new rejected a duplicate note; its existing contents are unchanged."""
+
+
 class LocalMemoryBackend:
     """Codex-style progressive disclosure without a vector database."""
 
     def __init__(self, root: Path, repository: MemoryRepository | None = None) -> None:
+        # Legacy constructor compatibility; completed assistant citations own
+        # usage feedback. Reading candidate text is not an adoption signal.
+        del repository
         self.root = root
-        self._repository = repository
         ensure_memory_layout(root)
 
     def list(self, path: str | None = None, *, cursor: int = 0, limit: int = 2_000) -> dict:
         target = self._resolve(path)
         if cursor < 0 or not 1 <= limit <= 2_000:
             raise ValueError("cursor must be non-negative and limit must be between 1 and 2000")
-        if not target.exists():
-            raise FileNotFoundError(path or "")
-        if target.is_symlink():
-            raise MemoryPathError("memory paths must not be symbolic links")
-        paths = [target] if target.is_file() else sorted(target.iterdir(), key=lambda p: p.name)
+        metadata = _required_metadata(target, path)
+        paths = (
+            [(target, metadata)]
+            if stat.S_ISREG(metadata.st_mode)
+            else _sorted_entries(target)
+            if stat.S_ISDIR(metadata.st_mode)
+            else []
+        )
         entries = [
             {
                 "path": item.relative_to(self.root).as_posix(),
-                "type": "directory" if item.is_dir() else "file",
+                "type": "directory" if stat.S_ISDIR(info.st_mode) else "file",
             }
-            for item in paths
+            for item, info in paths
             if not item.name.startswith(".")
-            and not item.is_symlink()
-            and (item.is_file() or item.is_dir())
+            and (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode))
         ]
         if cursor > len(entries):
             raise ValueError("cursor exceeds result count")
@@ -72,9 +82,8 @@ class LocalMemoryBackend:
         if line_offset < 1 or (max_lines is not None and max_lines < 1) or max_tokens < 0:
             raise ValueError("line_offset, max_lines, and max_tokens must be positive")
         target = self._resolve(path)
-        if not target.exists():
-            raise FileNotFoundError(path)
-        if target.is_symlink() or not target.is_file():
+        metadata = _required_metadata(target, path)
+        if not stat.S_ISREG(metadata.st_mode):
             raise MemoryPathError("memory read target must be a regular file")
         content = target.read_bytes().decode("utf-8")
         starts = [0, *(index + 1 for index, char in enumerate(content) if char == "\n")]
@@ -84,7 +93,6 @@ class LocalMemoryBackend:
         end = starts[end_line] if end_line < len(starts) else len(content)
         selected = content[starts[line_offset - 1] : end]
         text = truncate_memory_text(selected, max_tokens or 20_000)
-        await self._record_usage(text)
         return {
             "path": path,
             "start_line_number": line_offset,
@@ -113,25 +121,15 @@ class LocalMemoryBackend:
         if within_lines < 1 or context_lines < 0 or cursor < 0 or not 1 <= limit <= 200:
             raise ValueError("invalid search bounds")
         start = self._resolve(path)
-        if start.is_symlink():
-            raise MemoryPathError("memory paths must not be symbolic links")
-        if not start.exists():
-            raise FileNotFoundError(path or "")
+        metadata = _required_metadata(start, path)
         prepared_queries = [
             _prepare(value, case_sensitive=case_sensitive, normalized=normalized)
             for value in cleaned
         ]
         if any(not value for value in prepared_queries):
             raise ValueError("queries must not be empty after normalization")
-        files = [start] if start.is_file() else sorted(start.rglob("*"))
         matches: list[dict] = []
-        for file in files:
-            if (
-                not file.is_file()
-                or file.is_symlink()
-                or any(part.startswith(".") for part in file.relative_to(self.root).parts)
-            ):
-                continue
+        for file in _search_files(start, metadata):
             try:
                 content = file.read_bytes().decode("utf-8")
                 lines = _search_lines(content)
@@ -164,7 +162,6 @@ class LocalMemoryBackend:
             raise ValueError("cursor exceeds result count")
         end = min(len(matches), cursor + limit)
         page = matches[cursor:end]
-        await self._record_usage("\n".join(item["content"] for item in page))
         return {
             "queries": list(cleaned),
             "match_mode": match_mode,
@@ -177,17 +174,28 @@ class LocalMemoryBackend:
     def add_note(self, filename: str, note: str) -> dict:
         if len(filename.encode("utf-8")) > 128:
             raise ValueError("memory note filename must be at most 128 bytes")
-        if not re.fullmatch(AD_HOC_FILENAME_PATTERN, filename):
+        # The native backend permits a hyphen-first slug; the older schemars
+        # regex hint was narrower than its actual handler validation.
+        if not re.fullmatch(
+            AD_HOC_FILENAME_PATTERN.replace("[a-z0-9][a-z0-9-]{0,79}", "[a-z0-9-]{1,80}"), filename
+        ):
             raise ValueError("memory note filename must be YYYY-MM-DDTHH-MM-SS-<slug>.md")
         if not note.strip():
             raise ValueError("memory note must not be empty")
         content = note.encode("utf-8")
-        # A long-lived backend cannot rely on its construction-time path check.
+        # Validate only this operation's directories. A pre-existing non-directory
+        # is a semantic path error; a failed mkdir/open/write is storage I/O.
         # This rejects existing redirected ancestors, not adversarial rename races.
-        ensure_memory_layout(self.root)
-        directory = self.root / "extensions" / "ad_hoc" / "notes"
+        directory = self.root
+        for component in (None, "extensions", "ad_hoc", "notes"):
+            if component is not None:
+                directory /= component
+            _ensure_note_directory(directory)
         target = directory / filename
-        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError as exc:
+            raise MemoryNoteExistsError(f"ad-hoc note '{filename}' already exists") from exc
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(content)
         return {"path": target.relative_to(self.root).as_posix()}
@@ -199,22 +207,89 @@ class LocalMemoryBackend:
         if logical.is_absolute() or any(part in {"", ".", ".."} for part in logical.parts):
             raise MemoryPathError("memory path must stay within the memory root")
         if any(part.startswith(".") for part in logical.parts):
-            raise FileNotFoundError(relative)
+            raise MemoryNotFoundError(relative)
         current = self.root
         for index, part in enumerate(logical.parts):
             current = current / part
-            if current.is_symlink():
-                raise MemoryPathError("memory paths must not traverse symbolic links")
-            if current.exists() and index + 1 < len(logical.parts) and not current.is_dir():
+            metadata = _metadata_or_none(current)
+            if metadata is None:
+                return current.joinpath(*logical.parts[index + 1 :])
+            _reject_symlink(metadata)
+            if index + 1 < len(logical.parts) and not stat.S_ISDIR(metadata.st_mode):
                 raise MemoryPathError("memory path traverses a non-directory component")
         return current
 
-    async def _record_usage(self, content: str) -> None:
-        if self._repository is None:
-            return
-        ids = tuple(ThreadId(value) for value in dict.fromkeys(_THREAD_ID.findall(content)))
-        if ids:
-            await self._repository.mark_memories_used(ids)
+
+def _metadata_or_none(path: Path) -> os.stat_result | None:
+    try:
+        return path.lstat()
+    except FileNotFoundError:
+        return None
+    except ValueError as exc:
+        # Python rejects embedded NUL before the syscall. Rust reports the same
+        # path conversion as io::ErrorKind::InvalidInput, not a domain path error.
+        raise OSError(errno.EINVAL, str(exc)) from exc
+
+
+def _reject_symlink(metadata: os.stat_result) -> None:
+    if stat.S_ISLNK(metadata.st_mode):
+        raise MemoryPathError("memory paths must not traverse symbolic links")
+
+
+def _required_metadata(path: Path, relative: str | None) -> os.stat_result:
+    metadata = _metadata_or_none(path)
+    if metadata is None:
+        raise MemoryNotFoundError(relative or "")
+    _reject_symlink(metadata)
+    return metadata
+
+
+def _sorted_entries(directory: Path) -> list[tuple[Path, os.stat_result]]:
+    # Path.rglob can silently swallow directory I/O failures. Only disappearance
+    # at these enumeration points is ignorable under the native backend contract.
+    try:
+        iterator = os.scandir(directory)
+    except FileNotFoundError:
+        return []
+    with iterator:
+        entries = []
+        for entry in iterator:
+            try:
+                metadata = entry.stat(follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            entries.append((Path(entry.path), metadata))
+    return sorted(entries, key=lambda entry: entry[0])
+
+
+def _search_files(start: Path, metadata: os.stat_result) -> Iterator[Path]:
+    if stat.S_ISREG(metadata.st_mode):
+        yield start
+        return
+    if not stat.S_ISDIR(metadata.st_mode):
+        return
+    pending = [start]
+    while pending:
+        for path, _ in _sorted_entries(pending.pop()):
+            if path.name.startswith("."):
+                continue
+            current = _metadata_or_none(path)
+            if current is None or stat.S_ISLNK(current.st_mode):
+                continue
+            if stat.S_ISDIR(current.st_mode):
+                pending.append(path)
+            elif stat.S_ISREG(current.st_mode):
+                yield path
+
+
+def _ensure_note_directory(path: Path) -> None:
+    metadata = _metadata_or_none(path)
+    if metadata is None:
+        path.mkdir(mode=0o700)
+        metadata = _required_metadata(path, str(path))
+    _reject_symlink(metadata)
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise MemoryPathError(f"managed memory path must be a regular directory: {path}")
 
 
 def _prepare(value: str, *, case_sensitive: bool, normalized: bool) -> str:

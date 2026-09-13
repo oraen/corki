@@ -9,18 +9,22 @@ from contextlib import aclosing
 from dataclasses import dataclass
 from pathlib import Path
 
+from corki.config.managed_mcp import MCPRequirementsSnapshot
 from corki.config.settings import CorkiSettings
-from corki.context.tokens import estimate_text_tokens
+from corki.memory import git_baseline, workspace
+from corki.memory.agent import ConsolidationShutdownError, PreparedAgent, prepare_agent, run_agent
+from corki.memory.agent import _blocking as _owned_file_operation
+from corki.memory.agent_artifacts import AgentArtifacts, SharedAgentArtifacts
+from corki.memory.agent_artifacts import publish as publish_agent_artifacts
+from corki.memory.agent_shutdown import ConsolidationShutdowns, RetainedWorker
 from corki.memory.artifacts import (
-    baseline_matches,
-    ensure_memory_layout,
-    read_optional,
-    read_skill_artifacts,
-    stage_one_digest,
+    remove_workspace_diff,
     sync_stage_one_artifacts,
-    write_baseline,
+    validate_shared_artifacts,
     write_consolidated_artifacts,
 )
+from corki.memory.claim_handoff import handoff_claim
+from corki.memory.consolidation_prompt import seed_extension_instructions
 from corki.memory.inputs import extraction_token_budget, truncate_rollout
 from corki.memory.models import (
     ConsolidatedMemory,
@@ -29,13 +33,14 @@ from corki.memory.models import (
     MemorySkill,
     StageOneMemory,
 )
+from corki.memory.permissions import MemoryPermissionSnapshot, MemorySandboxPolicyError
 from corki.memory.repository import MemoryRepository
 from corki.memory.sanitizer import redact_secrets
 from corki.memory.transcript import render_transcript
 from corki.models import ModelCompleted, ModelRequest
 from corki.models.base import ModelPort
 from corki.prompting import PromptStore
-from corki.protocol.ids import ThreadId, new_turn_id
+from corki.protocol.ids import ThreadId, new_thread_id, new_turn_id
 from corki.protocol.items import (
     AssistantMessageItem,
     ConversationItem,
@@ -102,39 +107,123 @@ class LongTermMemoryService:
         root: Path,
         close_model: bool = False,
         prompt_store: PromptStore | None = None,
+        home_path: Path | None = None,
+        compatibility_home: Path | None = None,
+        configured_skill_roots: tuple[Path, ...] = (),
+        thread_id: ThreadId | None = None,
+        managed_requirements: MCPRequirementsSnapshot | None = None,
     ) -> None:
         self._settings = settings
+        self._managed_requirements = managed_requirements
+        self._request_thread_id = thread_id or new_thread_id()
         self._repository = repository
         self._model = model
         self._root = root
         self._close_model = close_model
         self._prompts = prompt_store or PromptStore()
+        self._home_path = home_path or root.parent
+        self._compatibility_home = compatibility_home
+        self._configured_skill_roots = configured_skill_roots
         self._task: asyncio.Task[MemoryRunReport] | None = None
+        self._tasks: set[asyncio.Task[MemoryRunReport]] = set()
         self._warnings: list[str] = []
-        ensure_memory_layout(root)
+        self._agent_shutdowns = ConsolidationShutdowns()
+        self._close_task: asyncio.Task | None = None
 
     @property
     def warnings(self) -> tuple[str, ...]:
-        return tuple(self._warnings)
+        return (*self._warnings, *self._agent_shutdowns.warnings)
 
-    def start(self, current_thread_id: ThreadId) -> None:
-        """Start at most one background pass for this runtime."""
+    @property
+    def retained_workers(self) -> tuple[RetainedWorker, ...]:
+        """Unconfirmed children remain inspectable after their background job ends."""
+        return self._agent_shutdowns.retained
+
+    def start(
+        self,
+        current_thread_id: ThreadId,
+        *,
+        parent_permissions: MemoryPermissionSnapshot | None = None,
+    ) -> None:
+        """Own one pass per eligible new Turn; database claims arbitrate overlap."""
 
         if (
             not self._settings.memories_enabled
-            or not self._settings.memories_generate
-            or self._task is not None
+            or not self._settings.memories_background_enabled
+            or self._close_task is not None
         ):
             return
         self._task = asyncio.create_task(
-            self.run_once(current_thread_id), name="corki-long-term-memory"
+            self.run_once(
+                current_thread_id,
+                parent_permissions=parent_permissions
+                or MemoryPermissionSnapshot(
+                    self._settings.execution_permissions, self._managed_requirements
+                ),
+            ),
+            name="corki-long-term-memory",
         )
+        self._tasks.add(self._task)
         self._task.add_done_callback(self._capture_background_failure)
 
     async def wait(self) -> MemoryRunReport | None:
-        return await self._task if self._task is not None else None
+        """Observe accepted passes without owning cancellation; return the latest report."""
+        latest = self._task
+        if latest is None:
+            return None
+        # Include an older active pass even if the latest has already skipped a
+        # busy claim. New Turns accepted after this snapshot are a later wait.
+        tasks = self._tasks | {latest}
+        await asyncio.shield(asyncio.gather(*tasks, return_exceptions=True))
+        return latest.result()
 
-    async def run_once(self, current_thread_id: ThreadId) -> MemoryRunReport:
+    async def run_once(
+        self,
+        current_thread_id: ThreadId,
+        *,
+        parent_permissions: MemoryPermissionSnapshot | None = None,
+    ) -> MemoryRunReport:
+        """Own an awaited pass independently of the embedding caller's task."""
+        if self._close_task is not None:
+            raise RuntimeError("memory service is closed")
+        if asyncio.current_task() in self._tasks:
+            # start() already registered this pass; retain its override and
+            # background-result semantics without introducing another owner.
+            return await self._run_once(current_thread_id, parent_permissions=parent_permissions)
+        task = asyncio.create_task(
+            self._run_once(current_thread_id, parent_permissions=parent_permissions),
+            name="corki-memory-direct-pass",
+        )
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+            await _join_owned((task,))
+            raise
+
+    async def _run_once(
+        self,
+        current_thread_id: ThreadId,
+        *,
+        parent_permissions: MemoryPermissionSnapshot | None = None,
+    ) -> MemoryRunReport:
+        parent_permissions = parent_permissions or MemoryPermissionSnapshot(
+            self._settings.execution_permissions, self._managed_requirements
+        )
+        if self._close_task is not None:
+            raise RuntimeError("memory service is closed")
+        try:
+            await _owned_file_operation(git_baseline.ensure_layout, self._root)
+        except (OSError, ValueError) as exc:
+            self._warnings.append(f"memory layout could not be prepared: {exc}")
+            return MemoryRunReport(failed=1)
+        try:
+            await _owned_file_operation(seed_extension_instructions, self._root)
+        except (OSError, ValueError) as exc:
+            self._warnings.append(f"memory extension instructions could not be seeded: {exc}")
         try:
             await self._repository.prune_stage_one_outputs(
                 max_unused_days=self._settings.memories_max_unused_days,
@@ -142,12 +231,16 @@ class LongTermMemoryService:
             )
         except Exception as exc:  # noqa: BLE001 - maintenance failure must not stop generation
             self._warnings.append(f"memory retention pruning failed: {exc}")
-        claims = await self._repository.claim_extraction_jobs(
-            current_thread_id=current_thread_id,
-            max_age_days=self._settings.memories_max_thread_age_days,
-            min_idle_hours=self._settings.memories_min_thread_idle_hours,
-            limit=self._settings.memories_max_threads_per_startup,
-            lease_seconds=self._settings.memories_lease_seconds,
+        claims = await handoff_claim(
+            self._repository.claim_extraction_jobs(
+                current_thread_id=current_thread_id,
+                max_age_days=self._settings.memories_max_thread_age_days,
+                min_idle_hours=self._settings.memories_min_thread_idle_hours,
+                limit=self._settings.memories_max_threads_per_startup,
+                lease_seconds=self._settings.memories_lease_seconds,
+            ),
+            on_cancel=self._cancel_extraction_claims,
+            warn=self._warnings.append,
         )
         semaphore = asyncio.Semaphore(_EXTRACTION_CONCURRENCY)
 
@@ -159,12 +252,6 @@ class LongTermMemoryService:
                     if not completed:
                         return "failed"
                     return "extracted" if memory is not None else "empty"
-                except asyncio.CancelledError:
-                    cleanup = asyncio.create_task(
-                        self._record_extraction_failure(claim, "memory extraction cancelled")
-                    )
-                    await _join_owned((cleanup,))
-                    raise
                 except Exception as exc:  # noqa: BLE001 - isolated background job boundary
                     await self._record_extraction_failure(claim, f"{type(exc).__name__}: {exc}")
                     self._warnings.append(f"phase-one memory extraction failed: {exc}")
@@ -172,25 +259,39 @@ class LongTermMemoryService:
 
         jobs = tuple(asyncio.create_task(extract(claim)) for claim in claims)
         try:
-            outcomes = await asyncio.gather(*jobs)
-        finally:
-            for job in jobs:
-                if not job.done():
-                    job.cancel()
-            await _join_owned(jobs)
+            try:
+                outcomes = await asyncio.gather(*jobs)
+            finally:
+                for job in jobs:
+                    if not job.done():
+                        job.cancel()
+                await _join_owned(jobs)
+        except asyncio.CancelledError:
+            # Includes jobs cancelled before first execution or while waiting
+            # for a semaphore slot. Join every worker before releasing claims;
+            # the running+owner fence preserves already committed successes.
+            cleanup = asyncio.create_task(
+                self._cancel_extraction_claims(claims, error="memory extraction cancelled")
+            )
+            await _join_owned((cleanup,))
+            raise
         report = MemoryRunReport(
             claimed=len(claims),
             extracted=outcomes.count("extracted"),
             empty=outcomes.count("empty"),
             failed=outcomes.count("failed"),
         )
-        claim = await self._repository.claim_consolidation(
-            lease_seconds=self._settings.memories_lease_seconds
+        claim = await handoff_claim(
+            self._repository.claim_consolidation(
+                lease_seconds=self._settings.memories_lease_seconds
+            ),
+            on_cancel=self._cancel_consolidation_claim,
+            warn=self._warnings.append,
         )
         if claim is None:
             return report
         try:
-            skipped = await self._run_owned_consolidation(claim)
+            skipped = await self._run_owned_consolidation(claim, parent_permissions)
             return MemoryRunReport(
                 claimed=report.claimed,
                 extracted=report.extracted,
@@ -199,20 +300,44 @@ class LongTermMemoryService:
                 consolidated=not skipped,
                 consolidation_skipped=skipped,
             )
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as exc:
+            if isinstance(exc.__cause__, ConsolidationShutdownError):
+                self._warnings.append(str(exc.__cause__))
+                raise
             cleanup = asyncio.create_task(
                 self._record_consolidation_failure(claim, "memory consolidation cancelled")
             )
             await _join_owned((cleanup,))
             raise
         except Exception as exc:  # noqa: BLE001 - isolate background consolidation failures
-            await self._record_consolidation_failure(claim, f"{type(exc).__name__}: {exc}")
+            if not isinstance(exc, ConsolidationShutdownError):
+                await self._record_consolidation_failure(
+                    claim,
+                    "failed_sandbox_policy"
+                    if isinstance(exc, MemorySandboxPolicyError)
+                    else f"{type(exc).__name__}: {exc}",
+                )
             self._warnings.append(f"phase-two memory consolidation failed: {exc}")
             return MemoryRunReport(
                 claimed=report.claimed,
                 extracted=report.extracted,
                 empty=report.empty,
                 failed=report.failed + 1,
+            )
+
+    async def _cancel_extraction_claims(
+        self,
+        claims: tuple[MemoryExtractionClaim, ...],
+        *,
+        error: str = "memory extraction cancelled before dispatch",
+    ) -> None:
+        for claim in claims:
+            await self._record_extraction_failure(claim, error)
+
+    async def _cancel_consolidation_claim(self, claim: ConsolidationClaim | None) -> None:
+        if claim is not None:
+            await self._record_consolidation_failure(
+                claim, "memory consolidation cancelled before dispatch"
             )
 
     async def _record_extraction_failure(self, claim: MemoryExtractionClaim, error: str) -> None:
@@ -235,29 +360,63 @@ class LongTermMemoryService:
                 f"could not persist consolidation failure (lease will expire): {exc}"
             )
 
-    async def _run_owned_consolidation(self, claim: ConsolidationClaim) -> bool:
-        work = asyncio.create_task(self._consolidation_work(claim), name="memory-consolidation")
+    async def _run_owned_consolidation(
+        self,
+        claim: ConsolidationClaim,
+        parent_permissions: MemoryPermissionSnapshot,
+    ) -> bool:
+        work = asyncio.create_task(
+            self._consolidation_work(claim, parent_permissions), name="memory-consolidation"
+        )
         heartbeat = asyncio.create_task(self._heartbeat(claim), name="memory-heartbeat")
+        failure: BaseException | None = None
         try:
             done, _ = await asyncio.wait((work, heartbeat), return_when=asyncio.FIRST_COMPLETED)
             if heartbeat in done:
                 # A failed heartbeat must stop sampling before we release the lease.
                 heartbeat.result()
                 raise RuntimeError("memory heartbeat unexpectedly stopped")
-            selected, digest, consolidated = work.result()
+            selected, digest, consolidated, sampled = work.result()
+        except BaseException as exc:
+            failure = exc
         finally:
             for task in (work, heartbeat):
                 if not task.done():
                     task.cancel()
-            await _join_owned((work, heartbeat))
+            try:
+                await _join_owned((work, heartbeat))
+            except asyncio.CancelledError as exc:
+                failure = exc
+            # Joining must not discard a failed shutdown just because heartbeat
+            # failure or parent cancellation won the race. That lease cannot be
+            # released while the child may still be running.
+            try:
+                work.result()
+            except BaseException as exc:
+                shutdown = exc if isinstance(exc, ConsolidationShutdownError) else exc.__cause__
+                if isinstance(shutdown, ConsolidationShutdownError):
+                    if isinstance(failure, asyncio.CancelledError):
+                        failure.__cause__ = shutdown
+                    else:
+                        failure = shutdown
+        if failure is not None:
+            raise failure
 
         # Stop heartbeats before the final transaction clears its token: a
         # heartbeat after a successful commit must not report false ownership
         # loss. Publication itself is fenced by the repository write lock.
         def publish() -> None:
             if consolidated is not None:
-                write_consolidated_artifacts(self._root, consolidated)
-                write_baseline(self._root, digest)
+                if isinstance(consolidated, SharedAgentArtifacts):
+                    git_baseline.reset(self._root)
+                    return
+                if isinstance(consolidated, AgentArtifacts):
+                    publish_agent_artifacts(self._root, consolidated)
+                else:
+                    write_consolidated_artifacts(self._root, consolidated)
+                remove_workspace_diff(self._root)
+                validate_shared_artifacts(self._root)
+                git_baseline.reset(self._root)
 
         if not await self._repository.complete_consolidation(claim, selected, publish=publish):
             raise RuntimeError("memory consolidation lease was lost before publication")
@@ -273,21 +432,46 @@ class LongTermMemoryService:
             await asyncio.sleep(interval)
 
     async def _consolidation_work(
-        self, claim: ConsolidationClaim
-    ) -> tuple[tuple[StageOneMemory, ...], str, ConsolidatedMemory | None]:
-        selected = await self._repository.load_consolidation_inputs(
-            limit=self._settings.memories_max_raw_for_consolidation,
-            max_unused_days=self._settings.memories_max_unused_days,
-        )
-        if not await self._repository.write_consolidation_workspace(
-            claim, lambda: sync_stage_one_artifacts(self._root, selected)
-        ):
-            raise RuntimeError("memory consolidation ownership lost before workspace sync")
-        digest = await asyncio.to_thread(stage_one_digest, self._root)
-        skipped = await asyncio.to_thread(baseline_matches, self._root, digest)
-        consolidated = None if skipped else await self._consolidate()
+        self,
+        claim: ConsolidationClaim,
+        parent_permissions: MemoryPermissionSnapshot,
+    ) -> tuple[
+        tuple[StageOneMemory, ...],
+        str,
+        ConsolidatedMemory | AgentArtifacts | SharedAgentArtifacts | None,
+        workspace.Snapshot,
+    ]:
+        async def prepare_shared() -> None:
+            if not await self._repository.write_consolidation_workspace(
+                claim, lambda: git_baseline.prepare(self._root)
+            ):
+                raise RuntimeError(
+                    "memory consolidation ownership lost before workspace preparation"
+                )
 
-        return selected, digest, consolidated
+        async with prepare_agent(
+            self._settings, parent_permissions, root=self._root, prepare_shared=prepare_shared
+        ) as prepared:
+
+            async def check_owner() -> None:
+                if not await self._repository.write_consolidation_workspace(claim, lambda: None):
+                    raise ValueError("memory consolidation ownership lost before model admission")
+
+            prepared.check_owner = check_owner
+            selected = await self._repository.load_consolidation_inputs(
+                limit=self._settings.memories_max_raw_for_consolidation,
+                max_unused_days=self._settings.memories_max_unused_days,
+            )
+            if not await self._repository.write_consolidation_workspace(
+                claim, lambda: sync_stage_one_artifacts(self._root, selected)
+            ):
+                raise RuntimeError("memory consolidation ownership lost before workspace sync")
+            sampled = await _owned_file_operation(git_baseline.capture, self._root)
+            digest = workspace.digest(sampled, outputs=False)
+            skipped = await _owned_file_operation(git_baseline.matches, self._root, sampled)
+            consolidated = None if skipped else await self._consolidate(sampled, prepared)
+
+            return selected, digest, consolidated, sampled
 
     async def _extract(self, claim: MemoryExtractionClaim) -> StageOneMemory | None:
         transcript = _render_transcript(claim.items)
@@ -324,26 +508,30 @@ class LongTermMemoryService:
             rollout_slug=_redact_secrets(slug_value) if slug_value is not None else None,
         )
 
-    async def _consolidate(self) -> ConsolidatedMemory:
-        content = _bounded_json_payload(
-            {
-                "previous_memory": read_optional(self._root / "MEMORY.md"),
-                "previous_summary": read_optional(self._root / "memory_summary.md"),
-                "previous_skills": json.dumps(read_skill_artifacts(self._root), ensure_ascii=False),
-                "raw_memories": read_optional(self._root / "raw_memories.md"),
-                "ad_hoc_notes": _read_memory_notes(self._root),
-            },
-            token_limit=max(1_024, self._settings.context_window_tokens * 7 // 10),
+    async def _consolidate(
+        self,
+        sampled: workspace.Snapshot,
+        prepared: PreparedAgent,
+    ) -> ConsolidatedMemory | AgentArtifacts | SharedAgentArtifacts:
+        diff = await _owned_file_operation(
+            lambda: workspace.render_diff(git_baseline.read(self._root), sampled)
         )
-        payload = await self._sample_json(
-            model=self._settings.resolved_memory_consolidation_model,
-            reasoning_effort="medium",
-            instructions=self._prompts.render("memory/consolidation"),
-            content=content,
-            required={"memory", "memory_summary", "skills"},
-            output_schema=_CONSOLIDATION_SCHEMA,
-            output_schema_name="corki_memory_consolidation",
+        result = await run_agent(
+            settings=self._settings,
+            prepared=prepared,
+            model=self._model,
+            sampled=sampled,
+            prompt_store=self._prompts,
+            workspace_diff=diff,
+            home_path=self._home_path,
+            compatibility_home=self._compatibility_home,
+            configured_skill_roots=self._configured_skill_roots,
+            source_directory=self._root,
+            shutdowns=self._agent_shutdowns,
         )
+        if isinstance(result, (AgentArtifacts, SharedAgentArtifacts)):
+            return result
+        payload = _structured_object(result, required=set(_CONSOLIDATION_SCHEMA["required"]))
         memory = _redact_secrets(_required_string(payload, "memory").strip())
         summary = _redact_secrets(_required_string(payload, "memory_summary").strip())
         if not memory or not summary:
@@ -386,6 +574,12 @@ class LongTermMemoryService:
         turn_id = new_turn_id()
         request = ModelRequest(
             model=model,
+            thread_id=str(self._request_thread_id),
+            content_item_kinds=self._settings.content_item_kinds,
+            model_info=self._settings.model_context_info(model),
+            reasoning_summary=self._settings.reasoning_summary,
+            service_tier=self._settings.session_service_tier,
+            fast_mode_enabled=self._settings.fast_mode,
             reasoning_effort=reasoning_effort,
             instructions=instructions,
             context_items=(),
@@ -405,22 +599,10 @@ class LongTermMemoryService:
         text = "\n".join(
             item.content for item in completed.items if isinstance(item, AssistantMessageItem)
         ).strip()
-        try:
-            value = json.loads(text, object_pairs_hook=_unique_json_object)
-        except json.JSONDecodeError as exc:
-            raise ValueError("memory model returned invalid JSON") from exc
-        if (
-            not isinstance(value, dict)
-            or not required <= value.keys()
-            or not value.keys() <= required | optional
-        ):
-            raise ValueError(
-                f"memory model output requires: {', '.join(sorted(required))}; "
-                f"allowed optional fields: {', '.join(sorted(optional)) or 'none'}"
-            )
-        return value
+        return _structured_object(text, required=required, optional=optional)
 
     def _capture_background_failure(self, task: asyncio.Task[MemoryRunReport]) -> None:
+        self._tasks.discard(task)
         if task.cancelled():
             return
         try:
@@ -429,12 +611,34 @@ class LongTermMemoryService:
             self._warnings.append(f"memory startup failed: {type(exc).__name__}: {exc}")
 
     async def aclose(self) -> None:
-        if self._task is not None and not self._task.done():
-            self._task.cancel()
-            await asyncio.gather(self._task, return_exceptions=True)
-        if self._close_model:
-            await self._model.aclose()
-        await self._repository.close()
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(
+                self._close_resources(), name="memory-service-close"
+            )
+        await asyncio.shield(self._close_task)
+
+    async def _close_resources(self) -> None:
+        error: BaseException | None = None
+        try:
+            tasks = tuple(self._tasks)
+            for task in tasks:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+            await _join_owned(tasks)
+        except BaseException as exc:
+            error = exc
+        for close in (
+            self._agent_shutdowns.settle,
+            *((self._model.aclose,) if self._close_model else ()),
+            self._repository.close,
+        ):
+            try:
+                await close()
+            except BaseException as exc:
+                if error is None:
+                    error = exc
+        if error is not None:
+            raise error
 
 
 async def _join_owned(tasks: tuple[asyncio.Task, ...]) -> None:
@@ -455,51 +659,21 @@ def _render_transcript(items: tuple[ConversationItem, ...]) -> str:
     return render_transcript(items, redact=_redact_secrets)
 
 
-def _truncate_head_tail(text: str, token_limit: int) -> str:
-    if estimate_text_tokens(text) <= token_limit:
-        return text
-    marker = "\n\n… middle of historical transcript omitted …\n\n"
-    budget = max(1, token_limit - estimate_text_tokens(marker))
-    target = budget // 2
-
-    def prefix(max_tokens: int, value: str) -> str:
-        low, high = 0, len(value)
-        while low < high:
-            middle = (low + high + 1) // 2
-            if estimate_text_tokens(value[:middle]) <= max_tokens:
-                low = middle
-            else:
-                high = middle - 1
-        return value[:low]
-
-    head = prefix(target, text)
-    tail = prefix(budget - estimate_text_tokens(head), text[::-1])[::-1]
-    return head.rstrip() + marker + tail.lstrip()
-
-
-def _bounded_json_payload(values: dict[str, str], *, token_limit: int) -> str:
-    """Bound large consolidation inputs without ever producing malformed JSON."""
-
-    def render(per_value_limit: int) -> str:
-        return json.dumps(
-            {key: _truncate_head_tail(value, per_value_limit) for key, value in values.items()},
-            ensure_ascii=False,
+def _structured_object(text: str, *, required: set[str], optional=frozenset()) -> dict[str, object]:
+    try:
+        value = json.loads(text, object_pairs_hook=_unique_json_object)
+    except json.JSONDecodeError as exc:
+        raise ValueError("memory model returned invalid JSON") from exc
+    if (
+        not isinstance(value, dict)
+        or not required <= value.keys()
+        or not value.keys() <= required | optional
+    ):
+        raise ValueError(
+            f"memory model output requires: {', '.join(sorted(required))}; "
+            f"allowed optional fields: {', '.join(sorted(optional)) or 'none'}"
         )
-
-    complete = json.dumps(values, ensure_ascii=False)
-    if estimate_text_tokens(complete) <= token_limit:
-        return complete
-    low, high = 1, token_limit
-    best = render(1)
-    while low <= high:
-        middle = (low + high) // 2
-        candidate = render(middle)
-        if estimate_text_tokens(candidate) <= token_limit:
-            best = candidate
-            low = middle + 1
-        else:
-            high = middle - 1
-    return best
+    return value
 
 
 def _required_string(value: dict[str, object], key: str) -> str:
@@ -507,21 +681,6 @@ def _required_string(value: dict[str, object], key: str) -> str:
     if not isinstance(result, str):
         raise ValueError(f"{key} must be a string")
     return result
-
-
-def _read_memory_notes(root: Path) -> str:
-    notes_root = root / "extensions"
-    entries: list[str] = []
-    for path in sorted(notes_root.rglob("*.md")):
-        if path.is_symlink() or any(part.startswith(".") for part in path.relative_to(root).parts):
-            continue
-        try:
-            entries.append(
-                f"## {path.relative_to(root).as_posix()}\n{path.read_text(encoding='utf-8')}"
-            )
-        except (OSError, UnicodeError):
-            continue
-    return "\n\n".join(entries)
 
 
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:

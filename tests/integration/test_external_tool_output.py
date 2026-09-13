@@ -77,6 +77,7 @@ def test_external_result_fact_reaches_memory_policy_and_ledger(
                 skills_enabled=False,
                 memories_enabled=True,
                 memories_generate=False,
+                memories_background_enabled=False,
                 memories_disable_on_external_context=enabled,
                 tool_mode="code_mode" if code_mode else "direct",
             ),
@@ -86,6 +87,8 @@ def test_external_result_fact_reaches_memory_policy_and_ledger(
             memory_root=tmp_path / "memories",
         )
         try:
+            # Keep an eligible source while suppressing this fixture's background worker.
+            await runtime.set_thread_memory_mode("enabled")
             assert isinstance([e async for e in runtime.stream("fetch data")][-1], TurnCompleted)
             assert external.calls == 1
             with sqlite3.connect(database) as connection:
@@ -144,6 +147,7 @@ def test_empty_tool_search_result_marks_thread(tmp_path):
                 skills_enabled=False,
                 memories_enabled=True,
                 memories_generate=False,
+                memories_background_enabled=False,
                 memories_disable_on_external_context=True,
             ),
             database_path=database,
@@ -213,6 +217,7 @@ def test_cold_resume_marks_cached_external_result_without_reexecuting(tmp_path):
                 skills_enabled=False,
                 memories_enabled=True,
                 memories_generate=False,
+                memories_background_enabled=False,
                 memories_disable_on_external_context=True,
             ),
             database_path=database,
@@ -235,7 +240,7 @@ def test_cold_resume_marks_cached_external_result_without_reexecuting(tmp_path):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("name", ["mcp__fixture__read", "fetch_record"])
+@pytest.mark.parametrize("name", ["mcp__fixture::read", "fetch_record"])
 @pytest.mark.parametrize("cancel", [False, True])
 def test_pollution_write_failure_warns_without_aborting_tool_or_turn(
     tmp_path, caplog, name, cancel
@@ -268,7 +273,7 @@ def test_pollution_write_failure_warns_without_aborting_tool_or_turn(
                 pass
 
         tool, registry = Tool(), ToolRegistry()
-        if name == "mcp__fixture__read":
+        if name == "mcp__fixture::read":
 
             class Client:
                 async def call_tool(self, remote_name, arguments):
@@ -284,6 +289,7 @@ def test_pollution_write_failure_warns_without_aborting_tool_or_turn(
                 skills_enabled=False,
                 memories_enabled=True,
                 memories_generate=False,
+                memories_background_enabled=False,
                 memories_disable_on_external_context=True,
             ),
             database_path=tmp_path / "sessions.db",

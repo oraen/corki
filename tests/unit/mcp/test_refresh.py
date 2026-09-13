@@ -50,6 +50,50 @@ class RefreshClient(MCPClient):
         self.closed.set()
 
 
+@pytest.mark.parametrize("failure", ["normalize", "publish"])
+def test_canonical_catalog_failure_preserves_previous_generation_and_closes_staging(
+    monkeypatch, failure
+):
+    async def scenario():
+        settings = MCPServerSettings("docs", "http", url="https://fixture.test")
+        first, failed, retried = [
+            RefreshClient(settings, word) for word in ("first", "failed", "retried")
+        ]
+        clients = iter((first, failed, retried))
+        monkeypatch.setattr("corki.mcp.manager.create_client", lambda _: next(clients))
+        registry = ToolRegistry()
+        manager = MCPManager((settings,), registry)
+        try:
+            await manager.start()
+            registry.seal()
+            previous = registry.specs()
+            original = registry.get("mcp__docs::lookup")
+            manager.request_refresh()
+
+            def fail(*args, **kwargs):
+                raise ValueError("catalog publication fixture")
+
+            with monkeypatch.context() as patch:
+                if failure == "normalize":
+                    patch.setattr("corki.mcp.manager.normalize_tool_names", fail)
+                else:
+                    patch.setattr(registry, "replace_owned", fail)
+                with pytest.raises(ValueError, match="catalog publication fixture"):
+                    await manager.refresh_if_dirty()
+            assert registry.specs() == previous
+            assert registry.get("mcp__docs::lookup") is original
+            assert not first.closed.is_set() and failed.closed.is_set()
+            assert manager.refresh_pending
+            await manager.refresh_if_dirty()
+            assert registry.spec("mcp__docs::lookup").description == "retried"
+            assert original.spec.description == "first"
+        finally:
+            await manager.aclose()
+        assert all(client.closed.is_set() for client in (first, failed, retried))
+
+    asyncio.run(scenario())
+
+
 def test_refresh_keeps_exact_in_flight_client_until_call_finishes(tmp_path, monkeypatch):
     async def scenario():
         settings = MCPServerSettings("docs", "http", url="https://fixture.test")
@@ -64,21 +108,21 @@ def test_refresh_keeps_exact_in_flight_client_until_call_finishes(tmp_path, monk
         executor = ToolExecutor(registry, output_char_budget=1000)
         call = asyncio.create_task(
             executor.execute(
-                ToolCall(ToolCallId("old"), "mcp__docs__lookup", {}), ToolContext(cwd=tmp_path)
+                ToolCall(ToolCallId("old"), "mcp__docs::lookup", {}), ToolContext(cwd=tmp_path)
             )
         )
         try:
             await first.entered.wait()
             manager.request_refresh()
             await manager.refresh_if_dirty()
-            assert registry.spec("mcp__docs__lookup").description == "cobalt"
+            assert registry.spec("mcp__docs::lookup").description == "cobalt"
             assert not first.closed.is_set() and not second.closed.is_set()
             first.release.set()
             assert (await call).content.split("\nOutput:\n", 1)[1] == "amber"
             await asyncio.wait_for(first.closed.wait(), 1)
             assert first.calls == 1 and second.calls == 0
             fresh = await executor.execute(
-                ToolCall(ToolCallId("new"), "mcp__docs__lookup", {}), ToolContext(cwd=tmp_path)
+                ToolCall(ToolCallId("new"), "mcp__docs::lookup", {}), ToolContext(cwd=tmp_path)
             )
             assert fresh.content.split("\nOutput:\n", 1)[1] == "cobalt" and second.calls == 1
         finally:
@@ -114,7 +158,7 @@ def test_cancelled_refresh_retains_old_publication_and_pending_retry(monkeypatch
         assert registry.specs() == before and manager.refresh_pending
         await manager.refresh_if_dirty()
         assert not manager.refresh_pending
-        assert registry.spec("mcp__docs__lookup").description == "cobalt"
+        assert registry.spec("mcp__docs::lookup").description == "cobalt"
         await manager.aclose()
         assert first.closed.is_set() and retry.closed.is_set()
 
@@ -144,7 +188,7 @@ def test_publication_failure_rolls_back_and_can_retry(monkeypatch):
         assert manager.refresh_pending and registry.specs() == before
         assert clients[1].closed.is_set() and not clients[0].closed.is_set()
         await manager.refresh_if_dirty()
-        assert registry.spec("mcp__docs__lookup").description == "cobalt"
+        assert registry.spec("mcp__docs::lookup").description == "cobalt"
         await manager.aclose()
         assert all(c.closed.is_set() for c in clients)
 
@@ -177,8 +221,8 @@ def test_optional_server_failure_publishes_other_sources(monkeypatch, constructi
         failing = True
         manager.request_refresh()
         await manager.refresh_if_dirty()
-        assert registry.get("mcp__docs__lookup") is None
-        assert registry.spec("mcp__notes__lookup").description == "cobalt"
+        assert registry.get("mcp__docs::lookup") is None
+        assert registry.spec("mcp__notes::lookup").description == "cobalt"
         assert len(manager.warnings) == 1 and "docs:" in manager.warnings[0]
         manager.request_refresh(())
         await manager.refresh_if_dirty()
@@ -206,8 +250,8 @@ def test_refresh_during_refresh_uses_latest_desired_state_and_serializes_waiters
         waiter = asyncio.create_task(manager.refresh_if_dirty())
         first.start_release.set()
         await asyncio.gather(task, waiter)
-        assert registry.get("mcp__docs__lookup") is None
-        assert registry.spec("mcp__notes__lookup").description == "cobalt"
+        assert registry.get("mcp__docs::lookup") is None
+        assert registry.spec("mcp__notes::lookup").description == "cobalt"
         assert not manager.refresh_pending
         await manager.aclose()
         assert first.closed.is_set() and second.closed.is_set()
@@ -229,7 +273,7 @@ def test_shutdown_cancels_old_in_flight_call_and_joins_all_connections(tmp_path,
         executor = ToolExecutor(registry, output_char_budget=1000)
         task = asyncio.create_task(
             executor.execute(
-                ToolCall(ToolCallId("old"), "mcp__docs__lookup", {}), ToolContext(cwd=tmp_path)
+                ToolCall(ToolCallId("old"), "mcp__docs::lookup", {}), ToolContext(cwd=tmp_path)
             )
         )
         await first.entered.wait()
@@ -274,12 +318,12 @@ def test_cancelled_close_waiter_does_not_abandon_owned_shutdown(monkeypatch):
 def test_aggregate_resource_call_captures_all_clients_before_refresh(monkeypatch):
     async def scenario():
         class ResourceClient(RefreshClient):
-            async def list_resources(self):
+            async def list_resources(self, cursor=None):
                 if self.version == "amber" and self.settings.name == "docs":
                     entered.set()
                     await release.wait()
                 assert not self.closed.is_set()
-                return ({"uri": self.version},)
+                return {"resources": [{"uri": self.version, "name": self.version}]}
 
         entered, release = asyncio.Event(), asyncio.Event()
         settings = tuple(
@@ -304,7 +348,12 @@ def test_aggregate_resource_call_captures_all_clients_before_refresh(monkeypatch
         await manager.refresh_if_dirty()
         assert not any(c.closed.is_set() for c in clients)
         release.set()
-        assert await task == {"docs": ({"uri": "amber"},), "notes": ({"uri": "amber"},)}
+        assert await task == {
+            "resources": [
+                {"server": "docs", "uri": "amber", "name": "amber"},
+                {"server": "notes", "uri": "amber", "name": "amber"},
+            ]
+        }
         await manager.aclose()
         assert all(c.closed.is_set() for c in clients)
 
@@ -321,7 +370,7 @@ def test_not_yet_admitted_tool_call_resolves_refreshed_exact_client(tmp_path, mo
         manager = MCPManager((settings,), registry)
         await manager.start()
         registry.seal()
-        frozen_spec = registry.spec("mcp__docs__lookup")
+        frozen_spec = registry.spec("mcp__docs::lookup")
         manager.request_refresh()
         # No explicit refresh_if_dirty call: tool admission itself must drain it.
         result = await ToolExecutor(registry, output_char_budget=1000).execute(

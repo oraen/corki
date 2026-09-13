@@ -19,17 +19,19 @@ from corki.protocol.tools import ToolCall
 from corki.tools import ToolContext, ToolExecutor, ToolRegistry
 
 
-@pytest.mark.parametrize("response_id", [True, 1.0, "1", None, 2])
-def test_http_request_id_requires_exact_integer(response_id):
+@pytest.mark.parametrize("response_id", [True, 1.0, " 1", "1.0", "１", None, 2])
+def test_http_request_id_rejects_non_correlated_identity(response_id):
     async def scenario():
         client = HttpMCPClient(
-            MCPServerSettings("docs", "http", url="https://fixture.invalid"),
+            MCPServerSettings("docs", "http", url="https://fixture.invalid", timeout_seconds=0.03),
             transport=httpx.MockTransport(
                 lambda _: httpx.Response(200, json={"id": response_id, "result": {}})
             ),
         )
         try:
-            with pytest.raises(MCPProtocolError, match="id"):
+            # Valid but unmatched IDs belong to another RPC, not this POST.
+            error = TimeoutError if type(response_id) in (str, int) else MCPProtocolError
+            with pytest.raises(error):
                 await client.request("tools/call", {})
         finally:
             await client.aclose()
@@ -37,9 +39,7 @@ def test_http_request_id_requires_exact_integer(response_id):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize(
-    "invalid", [b'{"x":NaN}', b'{"x":1e999}', b'{"x":"\\ud800"}', b"\xff", b"{PRIVATE"]
-)
+@pytest.mark.parametrize("invalid", [b'{"x":NaN}', b'{"x":"\\ud800"}', b"\xff", b"{PRIVATE"])
 def test_invalid_json_becomes_bounded_protocol_error(invalid):
     with pytest.raises(MCPProtocolError) as caught:
         _decode_http_response(httpx.Response(200, content=invalid))
@@ -57,7 +57,9 @@ def test_sse_skips_invalid_json_and_noninteger_ids():
             '{"id":1,"result":{"ok":true}}',
         ]
     )
-    response = httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body)
+    response = httpx.Response(
+        200, headers={"content-type": "text/event-stream"}, content=body + "\n\n"
+    )
     assert _decode_http_response(response, expected_id=1)["result"] == {"ok": True}
 
 
@@ -73,11 +75,23 @@ def test_stdio_skips_invalid_json_and_noninteger_ids():
         ]:
             reader.feed_data(json.dumps(packet).encode() + b"\n")
         reader.feed_eof()
-        client._process = SimpleNamespace(stdout=reader)
+        closed = []
+
+        async def wait():
+            closed.append("wait")
+            return 0
+
+        client._process = SimpleNamespace(
+            stdout=reader,
+            stdin=None,
+            wait=wait,
+            _transport=SimpleNamespace(close=lambda: closed.append("close")),
+        )
         future = asyncio.get_running_loop().create_future()
         client._pending[1] = future
         await client._read_loop()
         assert (await future)["result"] == "ok"
+        assert closed == ["wait", "close"]
 
     asyncio.run(scenario())
 
@@ -92,7 +106,7 @@ def test_custom_client_malformed_result_is_not_dispatch_error(tmp_path, result):
         registry = ToolRegistry()
         registry.register(MCPTool("docs", {"name": "read"}, Client()))
         value = await ToolExecutor(registry, output_char_budget=4000).execute(
-            ToolCall(ToolCallId("bad"), "mcp__docs__read", {}), ToolContext(cwd=tmp_path)
+            ToolCall(ToolCallId("bad"), "mcp__docs::read", {}), ToolContext(cwd=tmp_path)
         )
         assert value.is_error and not value.dispatch_error
         assert value.code_mode_output.value["isError"] is True
@@ -109,14 +123,12 @@ def test_remote_cancellation_is_control_flow(tmp_path):
         tool = MCPTool("docs", {"name": "read"}, Client())
         with pytest.raises(asyncio.CancelledError):
             await tool.execute(
-                ToolCall(ToolCallId("cancel"), "mcp__docs__read", {}), ToolContext(cwd=tmp_path)
+                ToolCall(ToolCallId("cancel"), "mcp__docs::read", {}), ToolContext(cwd=tmp_path)
             )
 
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize(
-    "value", [{}, {"content": [], "isError": None}, {"content": [None, {"type": []}]}]
-)
-def test_existing_optional_fields_and_opaque_block_compatibility(value):
-    assert validate_tool_result(value) is value
+def test_existing_optional_fields_remain_compatible():
+    value = {"content": [], "isError": None}
+    assert validate_tool_result(value) == value

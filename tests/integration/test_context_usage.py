@@ -15,9 +15,78 @@ from corki.models import (
 from corki.models.types import ModelUsage
 from corki.protocol.events import ContextCompacted, TurnCompleted, TurnFailed
 from corki.protocol.ids import new_tool_call_id
-from corki.protocol.items import AssistantMessageItem, ToolCallItem, new_step_id
+from corki.protocol.items import AssistantMessageItem, ReasoningItem, ToolCallItem, new_step_id
 from corki.protocol.tools import ToolCall, ToolResult, ToolSpec
 from corki.tools import ToolRegistry
+
+
+@pytest.mark.parametrize("legacy_flag", [False, True])
+def test_cold_legacy_usage_cannot_disable_ordinary_summary(tmp_path, legacy_flag):
+    async def scenario():
+        requests = []
+        archived = None
+
+        class Model:
+            async def stream(self, request):
+                nonlocal archived
+                requests.append(request)
+                turn, step = request.items[-1].turn_id, new_step_id()
+                if len(requests) == 1:
+                    # Seed a historical model-step as older versions stored it.
+                    archived = ModelCompleted(
+                        (
+                            ReasoningItem(
+                                "old reasoning", turn, step, encrypted_content="x" * 4000
+                            ),
+                            AssistantMessageItem("old answer", turn, step),
+                        ),
+                        ModelUsage(total_tokens=29_800),
+                        provider_metadata={"server_reasoning_included": legacy_flag},
+                    )
+                    yield archived
+                else:
+                    yield ModelCompleted((AssistantMessageItem("summary or final", turn, step),))
+
+            async def aclose(self):
+                pass
+
+        def create(thread=None):
+            return LangGraphRuntime.create(
+                settings=CorkiSettings(
+                    working_directory=tmp_path,
+                    skills_enabled=False,
+                    context_window_tokens=40_000,
+                    auto_compact_tokens=30_000,
+                ),
+                database_path=tmp_path / "sessions.db",
+                thread_id=thread,
+                registry=ToolRegistry(),
+                model=Model(),
+            )
+
+        runtime = create()
+        try:
+            events = [event async for event in runtime.stream("earlier instruction")]
+            assert isinstance(events[-1], TurnCompleted)
+            thread = runtime.thread_id
+            original = await runtime._repository.load_items(thread)
+            await runtime.aclose()
+            runtime = create(thread)
+            events = [event async for event in runtime.stream("continue")]
+            assert isinstance(events[-1], TurnCompleted)
+            assert sum(isinstance(event, ContextCompacted) for event in events) == 1
+            assert len(requests) == 3
+            assert not requests[1].tools  # Summary is an ordinary model request.
+            assert (
+                await runtime._repository.load_model_step(thread, archived.items[0].turn_id, 0)
+                == archived
+            )
+            restored = await runtime._repository.load_items(thread)
+            assert restored[: len(original)] == original
+        finally:
+            await runtime.aclose()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("path", ["continuation", "tool", "tool_tail", "cross_turn", "cold"])
@@ -188,7 +257,7 @@ def test_http_usage_reaches_real_runtime_window(tmp_path, mode, kind):
 
         def respond(request):
             payloads.append(json.loads(request.content))
-            usage = {}
+            usage = None
             if len(payloads) == 1 and kind != "missing":
                 usage = {
                     "total_tokens": {"high": 31_000, "low": 100, "invalid": True}[kind],
@@ -267,14 +336,11 @@ def test_http_usage_reaches_real_runtime_window(tmp_path, mode, kind):
                 assert usage is None
             else:
                 assert usage.total_tokens == (31_000 if kind == "high" else 100)
-                assert usage.server_reasoning_included is (mode == "responses")
+                assert not usage.server_reasoning_included
             events = [event async for event in runtime.stream("followup")]
             assert isinstance(events[-1], TurnCompleted)
             assert sum(isinstance(event, ContextCompacted) for event in events) == (kind == "high")
             assert len(payloads) == (3 if kind == "high" else 2)
-            if mode == "responses":
-                # Header presence, not its textual value, enables the sticky capability.
-                assert model._server_reasoning_included
         finally:
             await runtime.aclose()
             await client.aclose()

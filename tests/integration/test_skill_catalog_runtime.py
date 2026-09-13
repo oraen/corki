@@ -5,6 +5,7 @@ import pytest
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted
+from corki.protocol.context import ModelContextInfo
 from corki.protocol.events import TurnCompleted, WarningEvent
 from corki.protocol.ids import new_tool_call_id
 from corki.protocol.items import (
@@ -75,6 +76,8 @@ def test_runtime_catalog_budget_does_not_disable_reading_or_repeat_warnings(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 context_window_tokens=100_000,
+                # This fixture measures skill warnings, not unknown-model admission.
+                model_contexts=(ModelContextInfo("gpt-5", 100_000),),
                 skills_max_context_tokens=configured,
             ),
             database_path=tmp_path / "sessions.db",

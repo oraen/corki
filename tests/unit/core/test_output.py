@@ -2,6 +2,8 @@
 
 import asyncio
 
+import pytest
+
 from corki.core.output import ModelOutput
 from corki.models import ModelTextDelta
 from corki.protocol.events import AssistantMessageCompleted, AssistantTextDelta
@@ -38,7 +40,8 @@ def test_interleaved_message_citation_isolation_and_once_only_completion():
     asyncio.run(scenario())
 
 
-def test_legacy_unkeyed_delta_spanning_messages_is_not_duplicated():
+@pytest.mark.parametrize("plan_mode", [False, True])
+def test_legacy_unkeyed_delta_spanning_messages_is_not_duplicated(plan_mode):
     async def scenario():
         turn, thread = new_turn_id(), new_thread_id()
         first = AssistantMessageItem("first", turn, new_step_id())
@@ -48,7 +51,7 @@ def test_legacy_unkeyed_delta_spanning_messages_is_not_duplicated():
         async def emit(event):
             events.append(event)
 
-        output = ModelOutput(thread, turn, emit)
+        output = ModelOutput(thread, turn, emit, plan_mode=plan_mode)
         await output.delta(ModelTextDelta("firstsecond"))
         await output.complete(first)
         await output.complete(second)

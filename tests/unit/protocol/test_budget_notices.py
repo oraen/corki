@@ -79,7 +79,7 @@ def test_disabled_table_still_requires_valid_field_types(option):
         parse_token_budget({"enabled": False, **option})
 
 
-def test_native_notes_config_is_opt_in_and_backend_declaration_is_strict(tmp_path, monkeypatch):
+def test_notes_config_is_opt_in_and_legacy_backend_declaration_is_inert(tmp_path, monkeypatch):
     from corki.config import CorkiSettings
 
     monkeypatch.delenv("CORKI_API_KEY", raising=False)
@@ -91,10 +91,8 @@ def test_native_notes_config_is_opt_in_and_backend_declaration_is_strict(tmp_pat
         encoding="utf-8",
     )
     settings = CorkiSettings.for_directory(tmp_path, config_file=config)
-    assert settings.codex_backend and settings.token_budget.use_history_notes_extension
-    for invalid in ("true", 1, None):
-        with pytest.raises(ValueError, match="codex_backend"):
-            CorkiSettings(working_directory=tmp_path, codex_backend=invalid)
+    assert settings.token_budget.use_history_notes_extension
+    assert not hasattr(settings, "codex_backend")
 
 
 @pytest.mark.parametrize(

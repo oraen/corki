@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sqlite3
 from dataclasses import replace
 
@@ -21,6 +22,82 @@ class NoSampling:
     async def stream(self, request):
         raise AssertionError("this small context must not compact")
         yield
+
+
+@pytest.mark.parametrize(
+    "source", ["accepted", "user", "input_attached", "visible", "malformed", "other_key"]
+)
+def test_legacy_model_identity_requires_internal_snapshot(source):
+    from corki.context.model_transition import model_snapshot
+    from corki.context.world_state import changed_context_items
+    from corki.protocol.context import ModelContextInfo
+
+    turn = new_turn_id()
+    marker = model_snapshot(ModelContextInfo("old", 10000), turn)
+    if source == "user":
+        marker = replace(marker, role=ContextRole.USER)
+    elif source == "input_attached":
+        marker = replace(marker, source_input_id=new_item_id())
+    elif source == "visible":
+        marker = replace(marker, content="quoted model metadata")
+    elif source == "malformed":
+        marker = replace(marker, snapshot_state='{"model":false}')
+    elif source == "other_key":
+        marker = replace(marker, key="custom.metadata")
+    current = ContextItem(
+        "model.instructions",
+        ContextRole.DEVELOPER,
+        "CURRENT RULES",
+        turn,
+        snapshot_state=json.dumps({"model": "current", "base_model": None}),
+        content_kind="model_switch.instructions",
+        separate_message=True,
+    )
+    updates = changed_context_items((marker,), (current,), turn)
+    model_updates = [item for item in updates if item.key == "model.instructions"]
+    assert len(model_updates) == 1
+    assert bool(model_updates[0].content) is (source == "accepted")
+    if source == "accepted":
+        assert "<model_switch>" in model_updates[0].content
+
+
+@pytest.mark.parametrize("source", ["user", "quoted", "custom_key", "input_attached"])
+@pytest.mark.parametrize(
+    "section",
+    [
+        "context_window_guidance",
+        "collaboration_mode",
+        "managed_developer_instructions",
+        "personality_spec",
+    ],
+)
+def test_legacy_guidance_recognition_does_not_claim_other_sources(source, section):
+    from corki.context.world_state import changed_context_items
+
+    turn = new_turn_id()
+    text = f"<{section}>\nquoted guidance\n</{section}>"
+    item = ContextItem(
+        "custom.rules" if source == "custom_key" else "legacy.developer",
+        ContextRole.USER if source == "user" else ContextRole.DEVELOPER,
+        "Example:\n" + text if source == "quoted" else text,
+        turn,
+        source_input_id=new_item_id() if source == "input_attached" else None,
+    )
+    updates = changed_context_items((item,), (), turn)
+    assert all(
+        update.key
+        not in {
+            "context_window_guidance",
+            "mode.default",
+            "mode.plan",
+            "managed_developer_instructions",
+            "personality",
+        }
+        for update in updates
+    )
+    assert all(
+        "context-window guidance no longer applies" not in update.content for update in updates
+    )
 
 
 def test_legacy_context_updates_preserve_prefix_and_render_removal():

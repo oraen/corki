@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -20,17 +21,27 @@ from corki.models import (
 )
 from corki.protocol.events import ModelRetryScheduled, TurnCancelled, TurnCompleted, TurnFailed
 from corki.protocol.ids import ToolCallId
-from corki.protocol.items import AssistantMessageItem, ToolCallItem, ToolResultItem, new_step_id
+from corki.protocol.items import (
+    AssistantMessageItem,
+    ToolCallItem,
+    ToolResultItem,
+    UserMessageItem,
+    new_step_id,
+)
 from corki.protocol.tools import ToolCall, ToolExposure, ToolResult, ToolSpec
 from corki.storage import SQLiteSessionRepository
 from corki.tools import ToolRegistry
 
 
 @pytest.mark.parametrize("failures", [1, 4])
-def test_retry_after_tool_output_uses_updated_history_and_bounded_budget(tmp_path, failures):
+@pytest.mark.parametrize("close_fails", [False, True])
+def test_retry_after_tool_output_uses_updated_history_and_bounded_budget(
+    tmp_path, failures, close_fails
+):
     async def scenario():
         requests, executions = [], []
         executed = asyncio.Event()
+        closed = []
 
         class Tool:
             spec = ToolSpec("probe", "fixture", {"type": "object"})
@@ -64,6 +75,11 @@ def test_retry_after_tool_output_uses_updated_history_and_bounded_budget(tmp_pat
                     ).encode()
                     await asyncio.wait_for(executed.wait(), 1)
                 raise httpx.ReadError("fixture disconnect")
+
+            async def aclose(self):
+                closed.append(self)
+                if close_fails:
+                    raise RuntimeError("secondary response close failure")
 
         async def handle(request):
             requests.append(json.loads(request.content))
@@ -124,8 +140,26 @@ def test_retry_after_tool_output_uses_updated_history_and_bounded_budget(tmp_pat
             ]
             assert len(requests) == (2 if failures == 1 else 3)
             assert executions == ["c"]
+            assert len(closed) == min(failures, 3)
+            assert len({id(stream) for stream in closed}) == len(closed)
             retries = [event for event in events if isinstance(event, ModelRetryScheduled)]
             assert [event.attempt for event in retries] == ([1] if failures == 1 else [1, 2])
+            terminal = events[-1]
+            failure = await runtime._repository.load_model_failure(
+                terminal.thread_id, terminal.turn_id, 0
+            )
+            assert "fixture disconnect" in failure.message
+            assert "secondary response close failure" not in failure.message
+            assert (
+                await runtime._repository.load_model_step(terminal.thread_id, terminal.turn_id, 0)
+                is None
+            )
+            history = await runtime._repository.load_items(terminal.thread_id)
+            assert sum(isinstance(item, UserMessageItem) for item in history) == 1
+            assert (
+                sum(isinstance(item, ToolResultItem) and item.call_id == "c" for item in history)
+                == 1
+            )
         finally:
             await runtime.aclose()
             await client.aclose()
@@ -249,7 +283,10 @@ def test_retry_preserves_discovered_definitions_and_unknown_side_effects(tmp_pat
 
 
 @pytest.mark.parametrize("crash_retry", [0, 1])
-def test_failure_commit_crash_preserves_history_and_retry_budget(tmp_path, crash_retry):
+@pytest.mark.parametrize("legacy_payment", [False, True])
+def test_failure_commit_crash_preserves_history_and_retry_budget(
+    tmp_path, crash_retry, legacy_payment
+):
     async def scenario():
         fixture = Path(__file__).parents[1] / "fixtures" / "retry_crash.py"
         process = await asyncio.create_subprocess_exec(
@@ -271,6 +308,22 @@ def test_failure_commit_crash_preserves_history_and_retry_budget(tmp_path, crash
         thread = await repository.latest_thread(tmp_path)
         turn = await repository.latest_running_turn(thread)
         assert turn is not None
+        if legacy_payment:
+            # Emulate the old persisted 402 policy, including retryable=true,
+            # after an actual process died between failure commit/checkpoint.
+            with sqlite3.connect(repository.path) as connection:
+                row = connection.execute(
+                    "SELECT payload_json FROM model_failures WHERE turn_id=? AND step_index=?",
+                    (turn.id, crash_retry),
+                ).fetchone()
+                payload = json.loads(row[0])
+                payload.update(
+                    message="Insufficient Balance", kind="protocol", status_code=402, retryable=True
+                )
+                connection.execute(
+                    "UPDATE model_failures SET payload_json=? WHERE turn_id=? AND step_index=?",
+                    (json.dumps(payload), turn.id, crash_retry),
+                )
         requests = []
 
         class Tool:
@@ -308,13 +361,20 @@ def test_failure_commit_crash_preserves_history_and_retry_budget(tmp_path, crash
         )
         try:
             events = [event async for event in runtime.resume_pending()]
-            assert isinstance(events[-1], TurnCompleted if crash_retry == 0 else TurnFailed), (
-                events[-1]
-            )
-            assert len(requests) == (1 if crash_retry == 0 else 0)
+            should_recover = crash_retry == 0 and not legacy_payment
+            assert isinstance(events[-1], TurnCompleted if should_recover else TurnFailed), events[
+                -1
+            ]
+            assert len(requests) == int(should_recover)
+            if legacy_payment:
+                assert events[-1].error == "Insufficient Balance"
+                assert not any(isinstance(event, ModelRetryScheduled) for event in events)
             assert (tmp_path / "side-effect.txt").read_text() == "executed\n"
             failure = await repository.load_model_failure(thread, turn.id, crash_retry)
             assert failure.retries_used == crash_retry
+            if legacy_payment:
+                assert failure.retryable is True  # Historical fact was not rewritten.
+                assert failure.error().retryable is False
             assert await repository.load_model_step(thread, turn.id, crash_retry) is None
         finally:
             await runtime.aclose()
@@ -378,10 +438,17 @@ def test_runtime_retry_classification_and_logical_step_budget(tmp_path, status, 
 
 @pytest.mark.parametrize("action", ["cancel", "steer"])
 @pytest.mark.parametrize("kind", [ModelErrorKind.TRANSPORT, ModelErrorKind.CONNECTION])
-def test_backoff_is_owned_and_interruptible_by_user(tmp_path, action, kind):
+def test_backoff_is_owned_cancel_interrupts_but_steer_waits(tmp_path, monkeypatch, action, kind):
     async def scenario():
         backoff = asyncio.Event()
+        release_backoff = asyncio.Event()
         calls = []
+
+        async def controlled_wait(delay, realtime):
+            assert delay == (5 if kind == ModelErrorKind.CONNECTION else 60)
+            await release_backoff.wait()
+
+        monkeypatch.setattr("corki.core.graph.wait_retry", controlled_wait)
 
         class Model:
             async def stream(self, request):
@@ -393,7 +460,8 @@ def test_backoff_is_owned_and_interruptible_by_user(tmp_path, action, kind):
                         retryable=True,
                         retry_after_seconds=60,
                     )
-                assert request.items[-1].content == "new input"
+                users = [i.content for i in request.items if isinstance(i, UserMessageItem)]
+                assert users == (["run"] if len(calls) == 2 else ["run", "new input"])
                 yield ModelCompleted(
                     (AssistantMessageItem("done", request.items[-1].turn_id, new_step_id()),)
                 )
@@ -428,13 +496,17 @@ def test_backoff_is_owned_and_interruptible_by_user(tmp_path, action, kind):
                 await runtime.cancel_active()
             else:
                 await runtime.steer("new input")
+                await asyncio.sleep(0.02)
+                assert len(calls) == 1 and not task.done()
+                release_backoff.set()
             events = await asyncio.wait_for(task, 2)
             assert isinstance(events[-1], TurnCancelled if action == "cancel" else TurnCompleted)
-            assert len(calls) == (1 if action == "cancel" else 2)
+            assert len(calls) == (1 if action == "cancel" else 3)
             assert not any(
                 task.get_name().startswith("corki-retry-") for task in asyncio.all_tasks()
             )
         finally:
+            release_backoff.set()
             await runtime.aclose()
             await asyncio.gather(task, return_exceptions=True)
 

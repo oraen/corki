@@ -126,13 +126,15 @@ def test_prepare_gap_queues_old_cell_calls_and_notifications(
         monkeypatch.setattr(service, "invoke", track_invoke)
         monkeypatch.setattr(service, "notify", track_notify)
         target, method = (
-            (runtime._graph, "_refresh_tools")
+            (runtime._graph, "_refresh_input_tools")
             if phase == "refresh"
-            else (runtime._graph._context_builder, "build")
+            else (type(runtime._graph._context_builder), "build")
             if phase == "build"
             else (runtime._graph._window_manager, "prepare")
         )
         original = getattr(target, method)
+        # Context builders are copied when resolved permissions/Step settings
+        # are captured. An instance-bound wrapper would keep the old raw policy.
         checked = False
 
         async def prepare_gap(*args, **kwargs):

@@ -11,7 +11,11 @@ for line in sys.stdin:
     if "id" not in message:
         continue
     if message["method"] == "initialize":
-        result = {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}
+        result = {
+            "serverInfo": {"name": "fixture", "version": "1"},
+            "protocolVersion": "2025-06-18",
+            "capabilities": {"tools": {}},
+        }
     elif message["method"] == "tools/list":
         result = {
             "tools": [{"name": "lookup", "description": version, "inputSchema": {"type": "object"}}]

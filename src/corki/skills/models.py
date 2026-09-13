@@ -16,6 +16,22 @@ class SkillScope(StrEnum):
     PLUGIN = "plugin"
 
 
+class SkillDiscoveryMode(StrEnum):
+    RECURSIVE = "recursive"
+    DIRECT_CHILDREN = "direct_children"
+
+
+@dataclass(frozen=True, slots=True)
+class SkillToolDependency:
+    type: str
+    value: str
+    description: str | None = None
+    transport: str | None = None
+    command: str | None = None
+    url: str | None = None
+    oauth_callback_port: int | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class SkillMetadata:
     """Validated metadata for one materialized ``SKILL.md`` package."""
@@ -29,6 +45,9 @@ class SkillMetadata:
     allow_implicit_invocation: bool = True
     short_description: str | None = None
     discovery_path: Path | None = None
+    dependencies: tuple[SkillToolDependency, ...] = ()
+    plugin_id: str | None = None
+    plugin_root: Path | None = None
 
     @property
     def qualified_name(self) -> str:
@@ -56,12 +75,12 @@ class SkillSnapshot:
         return self.is_enabled(skill) and skill.allow_implicit_invocation
 
     def resolve(self, name: str) -> SkillMetadata | None:
-        """Resolve only an unambiguous enabled name or qualified name."""
+        """Exact names select the first enabled entry; bare namespace aliases stay unambiguous."""
 
         normalized = name.strip().removeprefix("$").casefold()
         enabled = [skill for skill in self.skills if self.is_enabled(skill)]
         exact = [skill for skill in enabled if skill.qualified_name.casefold() == normalized]
-        if len(exact) == 1:
+        if exact:
             return exact[0]
         bare = [skill for skill in enabled if skill.name.casefold() == normalized]
         return bare[0] if len(bare) == 1 else None

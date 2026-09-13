@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from corki.planning import validate_plan
-from corki.protocol.tools import ToolCall, ToolResult, ToolSpec, ToolStateUpdate
+from corki.protocol.tools import CodeModeOutput, ToolCall, ToolResult, ToolSpec, ToolStateUpdate
 from corki.tools.base import ToolContext
 
 
@@ -28,7 +28,7 @@ class UpdatePlanTool:
             parameters={
                 "type": "object",
                 "properties": {
-                    "plan": {"type": "array", "items": item_schema, "minItems": 1},
+                    "plan": {"type": "array", "items": item_schema},
                     "explanation": {"type": "string"},
                 },
                 "required": ["plan"],
@@ -37,16 +37,18 @@ class UpdatePlanTool:
         )
 
     async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        del context
+        if context.collaboration_mode == "plan":
+            raise ValueError("update_plan is a TODO/checklist tool and is not allowed in Plan mode")
         assert call.arguments is not None
         plan = validate_plan(call.arguments["plan"])
         rendered = tuple(item.as_dict() for item in plan)
-        explanation = str(call.arguments.get("explanation", "")).strip()
-        content = explanation or "Plan updated."
+        explanation = call.arguments.get("explanation")
         return ToolResult(
             call.id,
             call.name,
-            content,
-            display_content=content,
-            state_update=ToolStateUpdate(plan=rendered),
+            "Plan updated",
+            code_mode_output=CodeModeOutput({}),
+            # The dedicated plan event renders the explanation with its steps.
+            display_content="",
+            state_update=ToolStateUpdate(plan=rendered, plan_explanation=explanation),
         )

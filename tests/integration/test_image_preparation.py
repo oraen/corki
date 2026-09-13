@@ -10,6 +10,7 @@ import httpx
 import pytest
 from PIL import Image
 
+from corki import http_client
 from corki.code_mode.service import CodeModeService
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -137,18 +138,13 @@ def wire_response(transport, call):
         return "".join("data: " + json.dumps(c) + "\n\n" for c in chunks) + "data: [DONE]\n\n"
     body = ""
     if call:
-        custom = transport == "responses_native" and call["name"] == "exec"
         item = {
             "id": "i",
             "call_id": "c",
-            "type": "custom_tool_call" if custom else "function_call",
+            "type": "function_call",
             "name": call["name"],
         }
-        item.update(
-            {"input": json.loads(call["arguments"])["input"]}
-            if custom
-            else {"arguments": call["arguments"]}
-        )
+        item["arguments"] = call["arguments"]
         body = "data: " + json.dumps({"type": "response.output_item.done", "item": item}) + "\n\n"
     return body + 'data: {"type":"response.completed","response":{"id":"r"}}\n\n'
 
@@ -179,13 +175,17 @@ def test_real_view_image_reaches_wire_resized_but_js_and_ledger_keep_typed_origi
         requests = []
 
         def handle(request):
+            assert request.url.host == "fixture.invalid"
+            assert request.url.path == (
+                "/v1/chat/completions" if transport == "chat" else "/v1/responses"
+            )
             requests.append(json.loads(request.content))
             return httpx.Response(
                 200, text=wire_response(transport, call if len(requests) == 1 else None)
             )
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
-        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client)
+        monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
         database = tmp_path / "wire.db"
         runtime = LangGraphRuntime.create(
             settings=CorkiSettings(
@@ -193,6 +193,7 @@ def test_real_view_image_reaches_wire_resized_but_js_and_ledger_keep_typed_origi
                 skills_enabled=False,
                 tool_mode=mode,
                 api_key="fixture",
+                api_base="https://fixture.invalid/v1",
                 api_mode="chat_completions" if transport == "chat" else "responses",
                 tool_freeform_mode="native" if transport == "responses_native" else "compatible",
             ),

@@ -2,6 +2,7 @@ import asyncio
 import json
 
 import pytest
+from memory_evidence import inspect_worker_evidence
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -27,8 +28,9 @@ from corki.storage import SQLiteSessionRepository
         ("direct_priority", 1680),
     ],
 )
+@pytest.mark.parametrize("dedicated_consolidation", [False, True])
 def test_runtime_uses_selected_extraction_window_before_sampling_and_publication(
-    tmp_path, mode, budget
+    tmp_path, mode, budget, dedicated_consolidation
 ):
     async def scenario():
         database, root = tmp_path / "sessions.db", tmp_path / "memories"
@@ -49,6 +51,7 @@ def test_runtime_uses_selected_extraction_window_before_sampling_and_publication
             '[agent]\nmodel="main"\ncontext_window_tokens=8000\neffective_context_window_percent=80\n'
             "[skills]\nenabled=false\n[memories]\nenabled=true\nmin_thread_idle_hours=0\n"
             + f'extraction_model="{selected_model}"\n'
+            + ('consolidation_model="merge"\n' if dedicated_consolidation else "")
             + ("extraction_token_limit=1000\n" if mode == "cap" else "")
             + ("[models]\ncontext_window_override=100000\n" if mode == "max" else "")
             + (
@@ -69,6 +72,7 @@ def test_runtime_uses_selected_extraction_window_before_sampling_and_publication
                 if mode == "direct_priority"
                 else ""
             )
+            + ("[models.catalog.merge]\ncontext_window=64000\n" if dedicated_consolidation else "")
         )
         settings = CorkiSettings.for_directory(tmp_path, config_file=config)
 
@@ -102,7 +106,9 @@ def test_runtime_uses_selected_extraction_window_before_sampling_and_publication
                         assert transcript == raw
                     value = {"raw_memory": "preserved useful fact", "rollout_summary": "fact route"}
                 else:
-                    assert "preserved useful fact" in request.items[0].content
+                    assert (
+                        "preserved useful fact" in inspect_worker_evidence(request)["raw_memories"]
+                    )
                     value = {
                         "memory": "preserved useful fact",
                         "memory_summary": "fact route",
@@ -139,6 +145,21 @@ def test_runtime_uses_selected_extraction_window_before_sampling_and_publication
                 [event async for event in runtime.stream("initialize")][-1], TurnCompleted
             )
             report = await runtime._memory_service.wait()
+            if not dedicated_consolidation and mode != "max":
+                # The configured 8K main model cannot fit the consolidation
+                # instructions/tools. Do not silently switch to a vendor model.
+                assert report.extracted == 1 and not report.consolidated
+                assert len(memory_model.requests) == 1
+                assert any(
+                    "prepared context exceeds model window" in warning
+                    for warning in runtime._memory_service.warnings
+                )
+                assert not (root / "MEMORY.md").exists()
+                assert await repo.load_items(source) == (original,)
+                assert isinstance(
+                    [event async for event in runtime.stream("still usable")][-1], TurnCompleted
+                )
+                return
             assert report.extracted == 1 and report.consolidated and not report.failed, (
                 runtime._memory_service.warnings
             )

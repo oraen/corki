@@ -10,7 +10,7 @@ from hashlib import sha256
 from typing import Any
 
 from corki.protocol.tools import ToolCall, ToolConcurrency, ToolExposure, ToolResult, ToolSpec
-from corki.tools import ToolContext, ToolRegistry
+from corki.tools import ToolContext, ToolRegistry, ToolSource
 
 PluginHandler = Callable[[Mapping[str, Any], ToolContext], object | Awaitable[object]]
 
@@ -50,10 +50,21 @@ class PluginRegistrar:
         self.namespace = namespace
         self._registry = registry
         self._registered: list[str] = []
+        self._tools = []
+        self._owner = registry.create_owner(source=ToolSource.EXTENSION)
 
     @property
     def registered_tools(self) -> tuple[str, ...]:
         return tuple(self._registered)
+
+    @property
+    def tools(self):
+        return tuple(self._tools)
+
+    def rollback(self) -> None:
+        self._registry.replace_owned(self._owner, ())
+        self._registered.clear()
+        self._tools.clear()
 
     def register_tool(
         self,
@@ -82,6 +93,8 @@ class PluginRegistrar:
             concurrency=ToolConcurrency.PARALLEL if parallel else ToolConcurrency.EXCLUSIVE,
             output_char_budget=output_char_budget,
         )
-        self._registry.register(_PluginTool(spec, handler))
+        tool = _PluginTool(spec, handler)
+        self._registry.append_external(self._owner, tool)
+        self._tools.append(tool)
         self._registered.append(exposed_name)
         return exposed_name

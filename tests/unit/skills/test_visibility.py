@@ -78,11 +78,11 @@ def test_sidecar_create_edit_and_delete_invalidate_cached_policy(tmp_path):
     assert service.snapshot(tmp_path).skills[0].allow_implicit_invocation
 
 
-def test_disabling_winning_definition_does_not_reveal_lower_priority_duplicate(tmp_path):
+def test_disabled_path_does_not_remove_enabled_same_name_in_another_root(tmp_path):
     project = tmp_path / "project"
     home = tmp_path / "home"
     winner, _ = write_skill(project / ".corki/skills", "same")
-    write_skill(home / "skills", "same")
+    fallback, _ = write_skill(home / "skills", "same")
     service = SkillService(
         home=home,
         project_root=project,
@@ -90,9 +90,13 @@ def test_disabling_winning_definition_does_not_reveal_lower_priority_duplicate(t
         rules=(SkillRule(False, path=winner),),
     )
     snapshot = service.snapshot(project)
-    assert len(snapshot.skills) == 1 and snapshot.skills[0].path == winner.resolve()
-    assert not service.explicit_mentions("$same", project)
-    assert snapshot.resolve("same") is None and service.render_catalog(project) == ""
+    assert [skill.path for skill in snapshot.skills] == [winner.resolve(), fallback.resolve()]
+    assert [skill.path for skill in service.explicit_mentions("$same", project)] == [
+        fallback.resolve()
+    ]
+    assert snapshot.resolve("same").path == fallback.resolve()
+    assert str(home / "skills") in service.render_catalog(project)
+    assert str(project / ".corki/skills") not in service.render_catalog(project)
 
 
 @pytest.mark.parametrize("last_enabled", [False, True])

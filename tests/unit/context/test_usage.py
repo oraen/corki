@@ -27,7 +27,7 @@ def test_usage_total_is_latest_context_not_billing_subsets(total):
     assert ModelUsage().context_tokens is None
 
 
-@pytest.mark.parametrize("bad", [-1, True, 1.5, "100"])
+@pytest.mark.parametrize("bad", [-(2**63) - 1, True, 1.5, "100"])
 def test_usage_rejects_invalid_total(bad):
     with pytest.raises(ValueError):
         ModelUsage(total_tokens=bad)
@@ -51,7 +51,7 @@ def test_local_tail_counted_once_and_compaction_invalidates_anchor():
 
 
 @pytest.mark.parametrize("included", [False, True])
-def test_only_old_encrypted_reasoning_is_added_when_server_did_not_count_it(included):
+def test_old_encrypted_reasoning_uses_ordinary_estimate_despite_legacy_flag(included):
     turn = TurnId("turn")
     old = ReasoningItem(
         "summary not a second cost", turn, new_step_id(), encrypted_content="x" * 4000
@@ -61,9 +61,7 @@ def test_only_old_encrypted_reasoning_is_added_when_server_did_not_count_it(incl
     answer = AssistantMessageItem("last", turn, new_step_id())
     items = (old, user, current, answer)
     assert estimate_item_tokens(old) == 588  # ceil((4000 * 3 / 4 - 650) / 4)
-    assert context_tokens_from_usage(ContextUsage(100, answer.id, included), items, items) == (
-        100 if included else 688
-    )
+    assert context_tokens_from_usage(ContextUsage(100, answer.id, included), items, items) == (688)
 
 
 @pytest.mark.parametrize("empty", [False, True])

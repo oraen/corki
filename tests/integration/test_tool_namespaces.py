@@ -8,6 +8,7 @@ import pytest
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.models import OpenAICompatibleModel, OpenAIResponsesModel, resolve_capabilities
+from corki.protocol.context import ModelContextInfo
 from corki.protocol.events import TurnCompleted
 from corki.protocol.tools import ToolResult, ToolSpec
 from corki.tools import ToolRegistry
@@ -48,6 +49,7 @@ def test_same_leaf_names_route_independently_and_replay_after_restart(
             first = len(requests) == 1
             names = []
             for spec in payload.get("tools", []):
+                assert spec["type"] != "namespace"
                 if spec["type"] == "namespace":
                     for leaf in spec["tools"]:
                         names.append((spec["name"], leaf["name"]))
@@ -150,39 +152,23 @@ def test_same_leaf_names_route_independently_and_replay_after_restart(
             events = [event async for event in cold.stream("continue")]
             assert isinstance(events[-1], TurnCompleted)
             assert len(requests) == 3 and len(calls) == 3
-            if native:
-                assert [tool["type"] for tool in requests[0]["tools"]] == [
-                    "namespace",
-                    "namespace",
-                    "function",
-                ]
-            replay_native = native != switch_mode
-            if replay_native:
-                replay = [
-                    item for item in requests[-1]["input"] if item.get("type") == "function_call"
-                ]
-                assert [(item.get("namespace"), item["name"]) for item in replay] == [
-                    ("history", "read"),
-                    ("notes", "read"),
-                    (None, "read"),
-                ]
-            else:
-                from corki.protocol.tool_names import compatible_tool_name
+            assert all(tool["type"] == "function" for tool in requests[0]["tools"])
+            from corki.protocol.tool_names import compatible_tool_name
 
-                replay_names = (
-                    [
-                        item["name"]
-                        for item in requests[-1]["input"]
-                        if item.get("type") == "function_call"
-                    ]
-                    if mode == "responses"
-                    else [
-                        call["function"]["name"]
-                        for item in requests[-1]["messages"]
-                        for call in item.get("tool_calls", [])
-                    ]
-                )
-                assert replay_names == [compatible_tool_name(name) for name in calls]
+            replay_names = (
+                [
+                    item["name"]
+                    for item in requests[-1]["input"]
+                    if item.get("type") == "function_call"
+                ]
+                if mode == "responses"
+                else [
+                    call["function"]["name"]
+                    for item in requests[-1]["messages"]
+                    for call in item.get("tool_calls", [])
+                ]
+            )
+            assert replay_names == [compatible_tool_name(name) for name in calls]
             if not native:
                 names = [tool.get("function", tool)["name"] for tool in requests[0]["tools"]]
                 assert len(set(names)) == 3 and all(
@@ -260,16 +246,12 @@ def test_unknown_namespace_never_dispatches_to_default_leaf(tmp_path, namespace)
         )
         try:
             events = [event async for event in runtime.stream("read")]
-            assert isinstance(events[-1], TurnCompleted)
-            assert calls == (["read"] if namespace == "functions" else [])
-            output = next(
-                item["output"]
-                for item in requests[-1]["input"]
-                if item.get("type") == "function_call_output"
-            )
-            assert ("default result" in output) is (namespace == "functions")
-            if namespace == "alien":
-                assert "alien::read" in output
+            from corki.protocol.events import TurnFailed
+
+            assert isinstance(events[-1], TurnFailed)
+            assert "namespace" in events[-1].error
+            assert calls == []
+            assert len(requests) == 1
         finally:
             await runtime.aclose()
             await client.aclose()
@@ -277,8 +259,9 @@ def test_unknown_namespace_never_dispatches_to_default_leaf(tmp_path, namespace)
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("failure", ["alias", "description", "capability"])
-def test_namespace_fault_fails_before_any_provider_request(tmp_path, failure):
+@pytest.mark.parametrize("failure", ["alias", "description"])
+@pytest.mark.parametrize("api_mode", ["responses", "chat_completions"])
+def test_namespace_fault_fails_before_any_provider_request(tmp_path, failure, api_mode):
     from corki.protocol.events import TurnFailed
     from corki.protocol.tool_names import compatible_tool_name
 
@@ -305,12 +288,13 @@ def test_namespace_fault_fails_before_any_provider_request(tmp_path, failure):
                 Read(ToolSpec("notes::write", "write", {}, namespace_description="Different"))
             )
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
-        model = OpenAIResponsesModel(
+        model_type = OpenAIResponsesModel if api_mode == "responses" else OpenAICompatibleModel
+        model = model_type(
             api_key="fixture",
             base_url="https://fixture.invalid",
             client=client,
             capabilities=replace(
-                resolve_capabilities(base_url="https://fixture.invalid", api_mode="responses"),
+                resolve_capabilities(base_url="https://fixture.invalid", api_mode=api_mode),
                 supports_native_namespaces=failure != "capability",
             ),
         )
@@ -318,8 +302,13 @@ def test_namespace_fault_fails_before_any_provider_request(tmp_path, failure):
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
-                api_mode="responses",
-                tool_namespace_mode="compatible" if failure == "alias" else "native",
+                api_mode=api_mode,
+                tool_namespace_mode=(
+                    "native"
+                    if api_mode == "responses" and failure == "description"
+                    else "compatible"
+                ),
+                error_on_tool_collisions=failure == "description",
             ),
             database_path=tmp_path / "sessions.db",
             model=model,
@@ -332,7 +321,7 @@ def test_namespace_fault_fails_before_any_provider_request(tmp_path, failure):
             assert (
                 "collision"
                 if failure == "alias"
-                else "descriptions"
+                else "tool collision: notes"
                 if failure == "description"
                 else "capability"
             ) in events[-1].error
@@ -449,48 +438,29 @@ def test_namespaced_discovery_loads_freeform_and_survives_reopening(
             index = len(requests)
             if index == 1:
                 assert "vaultproof" not in str(payload["tools"])
-                item = (
-                    {
-                        "type": "tool_search_call",
-                        "call_id": "search",
-                        "execution": "client",
-                        "arguments": {"query": "vaultproof", "limit": 1},
-                    }
-                    if native_search
-                    else {
-                        "type": "function_call",
-                        "name": "tool_search",
-                        "call_id": "search",
-                        "arguments": json.dumps({"query": "vaultproof", "limit": 1}),
-                    }
-                )
+                item = {
+                    "type": "function_call",
+                    "name": "tool_search",
+                    "call_id": "search",
+                    "arguments": json.dumps({"query": "vaultproof", "limit": 1}),
+                }
             elif index == 2:
-                definitions = (
-                    next(
-                        item["tools"]
-                        for item in payload["input"]
-                        if item.get("type") == "tool_search_output"
-                    )
-                    if native_search
-                    else payload["tools"]
-                )
+                definitions = payload["tools"]
                 definitions = [spec for spec in definitions if spec.get("name") != "tool_search"]
                 assert len(definitions) == 1
-                outer = definitions[0]
-                definition = outer["tools"][0] if outer["type"] == "namespace" else outer
-                if native_namespace:
-                    assert outer["name"] == "vault"
-                namespace = {"namespace": outer["name"]} if outer["type"] == "namespace" else {}
+                definition = definitions[0]
+                assert definition["type"] == "function"
+                assert definition["parameters"] == {
+                    "type": "object",
+                    "properties": {"input": {"type": "string"}},
+                    "required": ["input"],
+                    "additionalProperties": False,
+                }
                 item = {
-                    "type": "custom_tool_call" if native_freeform else "function_call",
+                    "type": "function_call",
                     "name": definition["name"],
                     "call_id": "read",
-                    **namespace,
-                    **(
-                        {"input": "raw body"}
-                        if native_freeform
-                        else {"arguments": json.dumps({"input": "raw body"})}
-                    ),
+                    "arguments": json.dumps({"input": "raw body"}),
                 }
             else:
                 assert "RECOVERED" in str(payload["input"])
@@ -530,6 +500,7 @@ def test_namespaced_discovery_loads_freeform_and_survives_reopening(
                     api_mode="responses",
                     tool_namespace_mode="native" if native_namespace else "compatible",
                     tool_search_mode="native" if native_search else "compatible",
+                    model_contexts=(ModelContextInfo("gpt-5", supports_search_tool=True),),
                     tool_freeform_mode="native" if native_freeform else "compatible",
                 ),
                 database_path=tmp_path / "sessions.db",

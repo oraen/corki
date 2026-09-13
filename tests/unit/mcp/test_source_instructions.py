@@ -24,11 +24,15 @@ def test_initialize_instructions_validation_isolates_invalid_server(monkeypatch,
                 if method == "notifications/initialized":
                     return httpx.Response(202)
                 if method == "initialize":
-                    result = {"protocolVersion": PROTOCOL_VERSION}
+                    result = {
+                        "capabilities": {},
+                        "serverInfo": {"name": "fixture", "version": "1"},
+                        "protocolVersion": PROTOCOL_VERSION,
+                    }
                     if settings.name == "test":
                         result["instructions"] = instructions
                 elif method == "tools/list":
-                    result = {"tools": [{"name": "lookup"}]}
+                    result = {"tools": [{"name": "lookup", "inputSchema": {"type": "object"}}]}
                 else:
                     raise AssertionError(method)
                 return httpx.Response(
@@ -51,21 +55,21 @@ def test_initialize_instructions_validation_isolates_invalid_server(monkeypatch,
         )
         try:
             await manager.start()
-            assert registry.spec("mcp__healthy__lookup").source_description is None
+            assert registry.spec("mcp__healthy::lookup").source_description is None
             if valid:
                 assert clients["test"].server_instructions == instructions
-                assert registry.spec("mcp__test__lookup").source_description == (
+                assert registry.spec("mcp__test::lookup").source_description == (
                     (instructions or "").strip() or None
                 )
                 assert not manager.warnings
             else:
-                assert registry.get("mcp__test__lookup") is None
+                assert registry.get("mcp__test::lookup") is None
                 assert not clients["test"]._initialized
                 assert clients["test"].server_instructions is None
                 assert clients["test"]._client.is_closed
                 assert [method for name, method in requests if name == "test"] == ["initialize"]
                 assert len(manager.warnings) == 1
-                assert "initialize instructions must be a string" in manager.warnings[0]
+                assert "Invalid MCP initialize result" in manager.warnings[0]
         finally:
             await manager.aclose()
         assert all(client._client.is_closed for client in clients.values())

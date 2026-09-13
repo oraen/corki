@@ -13,7 +13,13 @@ from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted
 from corki.protocol.events import ToolOutputDelta, TurnCancelled, TurnCompleted
 from corki.protocol.ids import new_tool_call_id
-from corki.protocol.items import AssistantMessageItem, ToolCallItem, ToolResultItem, new_step_id
+from corki.protocol.items import (
+    AssistantMessageItem,
+    ContextItem,
+    ToolCallItem,
+    ToolResultItem,
+    new_step_id,
+)
 from corki.protocol.tools import ToolCall, ToolConcurrency, ToolExposure, ToolResult, ToolSpec
 from corki.tools import FatalToolError, ToolRegistry
 
@@ -32,19 +38,25 @@ def request_call(request, name, value):
 
 
 @pytest.mark.parametrize("mode", ["code_mode", "code_mode_only"])
+@pytest.mark.parametrize("namespace_context", [False, True])
 @pytest.mark.parametrize(
     "exposure", [ToolExposure.DIRECT, ToolExposure.DEFERRED, ToolExposure.CODE_MODE_ONLY]
 )
-def test_real_cell_discovers_and_invokes_normal_ledger_backed_tool(tmp_path, mode, exposure):
+def test_real_cell_discovers_and_invokes_normal_ledger_backed_tool(
+    tmp_path, mode, exposure, namespace_context
+):
     async def scenario():
         calls, requests = [], []
+        name = "vault::probe" if namespace_context else "probe"
+        alias = "vault__probe" if namespace_context else "probe"
 
         class Probe:
             spec = ToolSpec(
-                "probe",
+                name,
                 "multiply a number",
                 {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]},
                 exposure=exposure,
+                namespace_description="private calculations" if namespace_context else None,
             )
 
             async def execute(self, call, context):
@@ -54,15 +66,23 @@ def test_real_cell_discovers_and_invokes_normal_ledger_backed_tool(tmp_path, mod
         class Model:
             async def stream(self, request):
                 requests.append(request)
+                catalogs = [
+                    i
+                    for i in request.items
+                    if isinstance(i, ContextItem) and i.key == "tools.deferred_namespaces"
+                ]
+                assert len(catalogs) == int(namespace_context and exposure == ToolExposure.DEFERRED)
+                if catalogs:
+                    assert "- vault: private calculations" in catalogs[0].content
                 if len(requests) == 1:
                     assert "exec" in {spec.name for spec in request.tools}
-                    assert ("probe" in {spec.name for spec in request.tools}) == (
+                    assert (name in {spec.name for spec in request.tools}) == (
                         mode == "code_mode" and exposure == ToolExposure.DIRECT
                     )
                     yield request_call(
                         request,
                         "exec",
-                        "const found = ALL_TOOLS.find(t => t.name === 'probe'); "
+                        f"const found = ALL_TOOLS.find(t => t.name === '{alias}'); "
                         "const r = await tools[found.name]({n:21}); text(r);",
                     )
                 else:
@@ -75,7 +95,7 @@ def test_real_cell_discovers_and_invokes_normal_ledger_backed_tool(tmp_path, mod
                         result.content
                     )
                     assert not any(
-                        isinstance(item, ToolCallItem) and item.call.name == "probe"
+                        isinstance(item, ToolCallItem) and item.call.name == name
                         for item in request.items
                     )
                     yield ModelCompleted(
@@ -89,7 +109,10 @@ def test_real_cell_discovers_and_invokes_normal_ledger_backed_tool(tmp_path, mod
         registry.register(Probe())
         runtime = LangGraphRuntime.create(
             settings=CorkiSettings(
-                working_directory=tmp_path, skills_enabled=False, tool_mode=mode
+                working_directory=tmp_path,
+                skills_enabled=False,
+                tool_mode=mode,
+                deferred_tool_world_state=namespace_context,
             ),
             database_path=tmp_path / "sessions.db",
             registry=registry,
@@ -102,7 +125,7 @@ def test_real_cell_discovers_and_invokes_normal_ledger_backed_tool(tmp_path, mod
             with sqlite3.connect(tmp_path / "sessions.db") as connection:
                 assert connection.execute(
                     "SELECT tool_name,status FROM tool_executions ORDER BY tool_name"
-                ).fetchall() == [("exec", "completed"), ("probe", "completed")]
+                ).fetchall() == [("exec", "completed"), (name, "completed")]
             assert not runtime._code_mode.cells
         finally:
             await runtime.aclose()
@@ -128,10 +151,16 @@ def test_yield_wait_incremental_output_and_session_store(tmp_path):
                 elif len(requests) == 2:
                     emitted = [part.text for part in results[-1].content_items[1:]]
                     assert emitted == ["first"]
+                    assert not await runtime._repository.code_mode_parent_finished(
+                        runtime.thread_id, results[-1].call_id
+                    )
                     cell_id = re.search(r"cell ID (\S+)", results[-1].content)[1]
                     yield request_call(request, "wait", {"cell_id": cell_id})
                 elif len(requests) == 3:
                     assert "second" in results[-1].content and "first" not in results[-1].content
+                    assert await runtime._repository.code_mode_parent_finished(
+                        runtime.thread_id, results[-2].call_id
+                    )
                     yield request_call(request, "exec", "text(load('value')); text(typeof value);")
                 else:
                     assert '{"n":42}' in results[-1].content and "undefined" in results[-1].content

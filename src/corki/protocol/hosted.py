@@ -1,6 +1,6 @@
 """Bounded native hosted-tool facts, without a local execution identity."""
 
-import json
+from corki.protocol.wire_json import loads_wire, materialize
 
 # Transport/storage protection, not the model's output truncation policy.
 HOSTED_ITEM_MAX_BYTES = 32_000_000
@@ -18,9 +18,7 @@ def is_hosted_tool_payload(payload: dict) -> bool:
 def decode_hosted_payload(value: str) -> dict:
     if not isinstance(value, str) or len(value.encode("utf-8")) > HOSTED_ITEM_MAX_BYTES:
         raise ValueError("hosted tool payload exceeds transport byte limit or is not text")
-    payload = json.loads(value)
-    # JSON's non-finite extension is not part of the persisted/wire contract.
-    json.dumps(payload, allow_nan=False)
+    payload = materialize(loads_wire(value), preserve_pairs=False)
     if not isinstance(payload, dict) or not is_hosted_tool_payload(payload):
         raise ValueError("unsupported hosted tool payload")
     for key in ("id", "call_id", "name", "namespace", "status"):

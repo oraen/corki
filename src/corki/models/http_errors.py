@@ -20,7 +20,11 @@ def http_error(response: httpx.Response, body: str) -> ModelError:
     if not isinstance(message, str) or not message.strip():
         message = body
     retryable = False
-    if status == 503 and code in ("server_is_overloaded", "slow_down"):
+    if status == 402:
+        # Payment is an external prerequisite, not a transient stream failure.
+        # Apply equally to every ordinary compatible provider and response body.
+        kind = ModelErrorKind.PROTOCOL
+    elif status == 503 and code in ("server_is_overloaded", "slow_down"):
         kind = ModelErrorKind.SERVER_OVERLOADED
     elif status in (400, 403) and code == "misalignment_policy_violation":
         kind = ModelErrorKind.MISALIGNMENT_POLICY

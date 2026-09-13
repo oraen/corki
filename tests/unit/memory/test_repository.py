@@ -91,6 +91,7 @@ def test_expired_extraction_lease_can_be_reclaimed_but_old_owner_cannot_commit(
         await sessions.save_turn(
             TurnRecord(turn_id, thread_id, TurnStatus.COMPLETED, "remember", "done")
         )
+        await sessions.append_items(thread_id, (UserMessageItem("remember", turn_id),))
         repository = SQLiteMemoryRepository(database)
         old = (
             await repository.claim_extraction_jobs(
@@ -135,6 +136,7 @@ def test_polluted_thread_is_not_eligible_for_extraction(tmp_path: Path) -> None:
         await sessions.save_turn(
             TurnRecord(turn_id, thread_id, TurnStatus.COMPLETED, "external", "result")
         )
+        await sessions.append_items(thread_id, (UserMessageItem("external", turn_id),))
         repository = SQLiteMemoryRepository(database)
         await repository.mark_thread_mode(thread_id, "polluted")
         assert not await repository.claim_extraction_jobs(
@@ -159,6 +161,7 @@ def test_failed_extraction_obeys_backoff_then_can_be_reclaimed(tmp_path: Path) -
         await sessions.save_turn(
             TurnRecord(turn_id, thread_id, TurnStatus.COMPLETED, "remember", "done")
         )
+        await sessions.append_items(thread_id, (UserMessageItem("remember", turn_id),))
         repository = SQLiteMemoryRepository(database)
         claim = (
             await repository.claim_extraction_jobs(
@@ -195,7 +198,7 @@ def test_failed_extraction_obeys_backoff_then_can_be_reclaimed(tmp_path: Path) -
     asyncio.run(scenario())
 
 
-def test_extraction_commit_rejects_thread_polluted_after_claim(tmp_path: Path) -> None:
+def test_owned_extraction_commit_retained_but_polluted_source_not_selected(tmp_path: Path) -> None:
     database = tmp_path / "corki.db"
     sessions = SQLiteSessionRepository(database)
     thread_id = new_thread_id()
@@ -206,6 +209,7 @@ def test_extraction_commit_rejects_thread_polluted_after_claim(tmp_path: Path) -
         await sessions.save_turn(
             TurnRecord(turn_id, thread_id, TurnStatus.COMPLETED, "question", "answer")
         )
+        await sessions.append_items(thread_id, (UserMessageItem("question", turn_id),))
         repository = SQLiteMemoryRepository(database)
         claim = (
             await repository.claim_extraction_jobs(
@@ -225,13 +229,15 @@ def test_extraction_commit_rejects_thread_polluted_after_claim(tmp_path: Path) -
             "must not publish",
         )
 
-        assert not await repository.complete_extraction(claim, output)
+        assert await repository.complete_extraction(claim, output)
         assert not await repository.load_consolidation_inputs(limit=10, max_unused_days=30)
+        await repository.mark_thread_mode(thread_id, "enabled")
+        assert await repository.load_consolidation_inputs(limit=10, max_unused_days=30) == (output,)
 
     asyncio.run(scenario())
 
 
-def test_extraction_commit_rejects_stale_source_and_requeues_latest_version(
+def test_extraction_commits_snapshot_and_leaves_newer_source_claimable(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "corki.db"
@@ -244,7 +250,14 @@ def test_extraction_commit_rejects_stale_source_and_requeues_latest_version(
         await sessions.save_turn(
             TurnRecord(turn_id, thread_id, TurnStatus.COMPLETED, "question", "answer")
         )
+        await sessions.append_items(thread_id, (UserMessageItem("question", turn_id),))
         repository = SQLiteMemoryRepository(database)
+        with repository._connect() as connection:
+            connection.execute(
+                "UPDATE threads SET updated_at="
+                "strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-2 minutes') WHERE id=?",
+                (str(thread_id),),
+            )
         stale = (
             await repository.claim_extraction_jobs(
                 current_thread_id=new_thread_id(),
@@ -268,7 +281,7 @@ def test_extraction_commit_rejects_stale_source_and_requeues_latest_version(
             "stale summary",
         )
 
-        assert not await repository.complete_extraction(stale, stale_output)
+        assert await repository.complete_extraction(stale, stale_output)
         replacement = await repository.claim_extraction_jobs(
             current_thread_id=new_thread_id(),
             max_age_days=10,

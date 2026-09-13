@@ -82,3 +82,27 @@ def test_dequeued_unrecorded_input_is_not_discarded_on_deactivate_or_new_turn() 
         assert controller.unrecorded_items == ()
 
     asyncio.run(scenario())
+
+
+def test_retry_wait_only_observes_stop_and_does_not_consume_pending_text():
+    from corki.core.retry import wait_retry
+
+    async def scenario():
+        controller = RealtimeController(2)
+        controller.activate(new_turn_id())
+        task = asyncio.create_task(wait_retry(0.04, controller))
+        await controller.steer("pending")
+        await asyncio.sleep(0.005)
+        assert not task.done()
+        assert await asyncio.wait_for(task, 1) is None
+        task = asyncio.create_task(wait_retry(60, controller))
+        await controller.stop()
+        assert isinstance(await asyncio.wait_for(task, 1), RealtimeStop)
+        commands = controller.take_pending()
+        assert commands == (RealtimeInput("pending"), RealtimeStop())
+        controller.acknowledge((commands[0].item,))
+        controller.deactivate()
+        controller.activate(new_turn_id())
+        assert await wait_retry(0, controller) is None
+
+    asyncio.run(scenario())

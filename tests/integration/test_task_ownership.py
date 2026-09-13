@@ -11,13 +11,229 @@ import pytest
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
-from corki.models import ModelCompleted, ModelRequest, ModelTextDelta
-from corki.protocol.events import TurnCancelled, TurnCompleted, TurnFailed
+from corki.models import ModelCompleted, ModelItemCompleted, ModelRequest, ModelTextDelta
+from corki.protocol.events import TurnCancelled, TurnCompleted, TurnFailed, WarningEvent
 from corki.protocol.ids import ToolCallId
-from corki.protocol.items import AssistantMessageItem, ToolCallItem, new_step_id
+from corki.protocol.items import AssistantMessageItem, ToolCallItem, ToolResultItem, new_step_id
 from corki.protocol.tools import ToolCall, ToolConcurrency, ToolResult, ToolSpec
 from corki.storage import SQLiteSessionRepository
 from corki.tools import ToolContext, ToolRegistry
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+def test_turn_cancel_during_fatal_sibling_cleanup_waits_for_cleanup(tmp_path, streamed):
+    async def scenario():
+        from corki.tools.errors import FatalToolError
+
+        started, cleaning, release, cleaned = (asyncio.Event() for _ in range(4))
+        executions = {}
+
+        class Tool:
+            def __init__(self, name):
+                self.spec = ToolSpec(
+                    name, "fixture", {"type": "object"}, concurrency=ToolConcurrency.PARALLEL
+                )
+
+            async def execute(self, call, context):
+                executions[call.name] = asyncio.current_task()
+                if call.name == "fatal":
+                    await started.wait()
+                    raise FatalToolError("fatal sibling")
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cleaning.set()
+                    await release.wait()
+                    cleaned.set()
+
+        class Model:
+            async def stream(self, request):
+                turn, step = request.items[-1].turn_id, new_step_id()
+                calls = tuple(
+                    ToolCallItem(ToolCall(ToolCallId(name), name, {}), turn, step)
+                    for name in ("slow", "fatal")
+                )
+                if streamed:
+                    for call in calls:
+                        yield ModelItemCompleted(call)
+                yield ModelCompleted(calls)
+
+            async def aclose(self):
+                pass
+
+        registry = ToolRegistry()
+        for name in ("slow", "fatal"):
+            registry.register(Tool(name))
+        runtime = await LangGraphRuntime.acreate(
+            settings=CorkiSettings(tmp_path, skills_enabled=False, plugins_enabled=False),
+            registry=registry,
+            model=Model(),
+            database_path=tmp_path / "state.db",
+            home_path=tmp_path,
+        )
+        observed = []
+
+        async def consume():
+            async for event in runtime.stream("run"):
+                observed.append(event)
+
+        consumer = asyncio.create_task(consume())
+        canceller = None
+        try:
+            async with asyncio.timeout(3):
+                await cleaning.wait()
+            canceller = asyncio.create_task(runtime.cancel_active())
+            # Give owner cancellation a chance to propagate into an unshielded
+            # gather. A second cancel must not interrupt admitted cleanup.
+            for _ in range(20):
+                await asyncio.sleep(0)
+            assert not executions["slow"].done()
+            assert not consumer.done()
+            release.set()
+            await asyncio.wait_for(asyncio.gather(consumer, return_exceptions=True), 3)
+            assert cleaned.is_set()
+            assert all(task.done() for task in executions.values())
+            assert isinstance(observed[-1], TurnCancelled), observed[-1]
+            assert (
+                sum(
+                    isinstance(event, (TurnCompleted, TurnCancelled, TurnFailed))
+                    for event in observed
+                )
+                == 1
+            )
+        finally:
+            release.set()
+            if not consumer.done():
+                consumer.cancel()
+            await asyncio.gather(consumer, return_exceptions=True)
+            if canceller is not None:
+                await canceller
+            await runtime.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+@pytest.mark.parametrize("exception", [False, True])
+@pytest.mark.parametrize("fast_starts_first", [False, True])
+def test_recoverable_parallel_error_preserves_barrier_and_call_order(
+    tmp_path, streamed, exception, fast_starts_first
+):
+    async def scenario():
+        slow_started, fast_finished, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        fast_started = asyncio.Event()
+        order, requests = [], []
+
+        class Tool:
+            def __init__(self, name):
+                self.name = name
+                self.spec = ToolSpec(
+                    name,
+                    "fixture",
+                    {"type": "object"},
+                    concurrency=ToolConcurrency.EXCLUSIVE
+                    if name == "tail"
+                    else ToolConcurrency.PARALLEL,
+                )
+
+            async def execute(self, call, context):
+                if self.name == "slow" and fast_starts_first:
+                    await fast_started.wait()
+                order.append("start:" + self.name)
+                if self.name == "slow":
+                    slow_started.set()
+                    await release.wait()
+                elif self.name == "fast":
+                    fast_started.set()
+                    await slow_started.wait()
+                    order.append("finish:fast")
+                    fast_finished.set()
+                    if exception:
+                        raise ValueError("recoverable fixture error")
+                    return ToolResult(
+                        call.id, call.name, "recoverable fixture error", is_error=True
+                    )
+                else:
+                    assert "finish:slow" in order and "finish:fast" in order
+                order.append("finish:" + self.name)
+                return ToolResult(call.id, call.name, "ok:" + self.name)
+
+        class Model:
+            async def stream(self, request):
+                requests.append(request)
+                turn, step = request.items[-1].turn_id, new_step_id()
+                if len(requests) == 1:
+                    calls = tuple(
+                        ToolCallItem(ToolCall(ToolCallId(name), name, {}), turn, step)
+                        for name in ("slow", "fast", "tail")
+                    )
+                    if streamed:
+                        for item in calls:
+                            yield ModelItemCompleted(item)
+                    yield ModelCompleted(calls)
+                else:
+                    results = [i for i in request.items if isinstance(i, ToolResultItem)]
+                    assert [(i.call_id, i.is_error) for i in results] == [
+                        ("slow", False),
+                        ("fast", True),
+                        ("tail", False),
+                    ]
+                    yield ModelCompleted(())
+
+            async def aclose(self):
+                pass
+
+        registry = ToolRegistry()
+        for name in ("slow", "fast", "tail"):
+            registry.register(Tool(name))
+        runtime = await LangGraphRuntime.acreate(
+            settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
+            model=Model(),
+            registry=registry,
+            database_path=tmp_path / "session.db",
+            home_path=tmp_path / "home",
+            load_plugins=False,
+        )
+
+        async def consume():
+            return [e async for e in runtime.stream("run all")]
+
+        task = asyncio.create_task(consume())
+        try:
+            await asyncio.wait_for(fast_finished.wait(), 3)
+            assert not task.done() and "start:tail" not in order
+            release.set()
+            events = await asyncio.wait_for(task, 3)
+            assert isinstance(events[-1], TurnCompleted), events[-1]
+            assert not any(isinstance(e, (TurnFailed, TurnCancelled)) for e in events)
+            # Parallel handlers may reach execute in either order after their
+            # asynchronous claims. Only completion/barrier/result order is fixed.
+            assert sorted(order[:2]) == ["start:fast", "start:slow"]
+            if fast_starts_first:
+                assert order[0] == "start:fast"
+            assert order[2:] == [
+                "finish:fast",
+                "finish:slow",
+                "start:tail",
+                "finish:tail",
+            ]
+            assert len(requests) == 2
+            history = await runtime._repository.load_items(runtime.thread_id)
+            assert [i.call_id for i in history if isinstance(i, ToolResultItem)] == [
+                "slow",
+                "fast",
+                "tail",
+            ]
+            assert not any(t.get_name().startswith("corki-live-tool-") for t in asyncio.all_tasks())
+        finally:
+            release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await runtime.aclose()
+
+    asyncio.run(scenario())
 
 
 class OwnedIterator:
@@ -75,14 +291,14 @@ def test_realtime_parent_cancellation_closes_response_and_both_waiters(tmp_path:
         )
         command_started = asyncio.Event()
         command_tasks: list[asyncio.Task] = []
-        original_next = runtime._realtime.next
+        original_next = runtime._realtime.next_stop
 
         async def tracked_next():
             command_tasks.append(asyncio.current_task())
             command_started.set()
             return await original_next()
 
-        runtime._realtime.next = tracked_next
+        runtime._realtime.next_stop = tracked_next
         events = []
 
         async def consume() -> None:
@@ -100,7 +316,7 @@ def test_realtime_parent_cancellation_closes_response_and_both_waiters(tmp_path:
                 await asyncio.wait_for(consumer, timeout=3)
             assert model.iterator.closed, "response iterator leaked after turn cancellation"
             assert model.iterator.task.done(), "model read survived its parent"
-            assert all(task.done() for task in command_tasks), "steering reader survived its parent"
+            assert all(task.done() for task in command_tasks), "stop waiter survived its parent"
             assert sum(isinstance(event, TurnCancelled) for event in events) == 1
             assert not any(isinstance(event, (TurnCompleted, TurnFailed)) for event in events)
         finally:
@@ -169,7 +385,9 @@ def test_closing_consumer_joins_graph_and_response_under_backpressure(
         stream = runtime.stream("burst", realtime=realtime)
         try:
             await anext(stream)  # TurnStarted
-            await anext(stream)  # Consume one delta; subsequent events fill the queue.
+            # Admission warnings do not drain the owned model data queue.
+            while isinstance(await anext(stream), WarningEvent):
+                pass
             await asyncio.wait_for(model.third_delta.wait(), timeout=3)
             await asyncio.wait_for(stream.aclose(), timeout=3)
             assert model.closed_response, "closing consumer did not close the running response"
@@ -240,22 +458,28 @@ class FastTool:
 
 
 class ParallelModel:
+    def __init__(self, *, streamed=False):
+        self.streamed = streamed
+
     async def stream(self, request: ModelRequest):
         step = new_step_id()
-        yield ModelCompleted(
-            tuple(
-                ToolCallItem(ToolCall(ToolCallId(name), name, {}), request.items[-1].turn_id, step)
-                for name in ("fast", "block")
-            )
+        calls = tuple(
+            ToolCallItem(ToolCall(ToolCallId(name), name, {}), request.items[-1].turn_id, step)
+            for name in ("fast", "block")
         )
+        if self.streamed:
+            for item in calls:
+                yield ModelItemCompleted(item)
+        yield ModelCompleted(calls)
 
     async def aclose(self) -> None:
         pass
 
 
 @pytest.mark.parametrize("fault", ["claim", "complete"])
+@pytest.mark.parametrize("streamed", [False, True])
 def test_parallel_storage_failure_joins_siblings_before_turn_failure(
-    tmp_path: Path, fault: str
+    tmp_path: Path, fault: str, streamed: bool
 ) -> None:
     async def scenario() -> None:
         block = BlockingTool()
@@ -280,7 +504,7 @@ def test_parallel_storage_failure_joins_siblings_before_turn_failure(
         runtime = LangGraphRuntime.create(
             settings=CorkiSettings(working_directory=tmp_path),
             database_path=repository.path,
-            model=ParallelModel(),
+            model=ParallelModel(streamed=streamed),
             repository=repository,
             registry=registry,
         )

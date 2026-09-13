@@ -102,3 +102,15 @@ def test_silent_snapshot_has_no_template_or_model_text(tmp_path):
             input_scoped=True,
             snapshot_state="hidden",
         )
+
+
+@pytest.mark.parametrize("phase", ["extension", "world_state", True, 1, object()])
+def test_invalid_phase_does_not_silently_select_an_initial_order(phase):
+    with pytest.raises(TypeError, match="phase must be"):
+        PromptContribution(
+            "fixture",
+            "modes/default",
+            PromptRole.DEVELOPER,
+            PromptSlot.EXTENSIONS,
+            phase=phase,
+        )

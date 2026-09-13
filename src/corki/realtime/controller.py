@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass, field
 
 from corki.protocol.ids import ItemId, TurnId
+from corki.protocol.input_mentions import validate_mentions
 from corki.protocol.items import UserMessageItem
 
 
@@ -36,6 +37,7 @@ class RealtimeController:
         self._accepted = 0
         self._turn_id: TurnId | None = None
         self._stop_queued = False
+        self._stop_event = asyncio.Event()
         self._accepting = False
         self._unrecorded: dict[ItemId, UserMessageItem] = {}
 
@@ -81,6 +83,7 @@ class RealtimeController:
         self._accepting = True
         self._accepted = 0
         self._stop_queued = False
+        self._stop_event.clear()
         while not self._queue.empty():
             self._queue.get_nowait()
 
@@ -92,17 +95,18 @@ class RealtimeController:
         while not self._queue.empty():
             self._queue.get_nowait()
 
-    async def steer(self, text: str) -> None:
+    async def steer(self, text: str, *, mentions=()) -> None:
         if not self.active or not self._accepting:
             raise RealtimeTurnClosedError("no realtime turn is accepting input (turn closed)")
+        mentions = validate_mentions(mentions)
         text = text.strip()
-        if not text:
+        if not text and not mentions:
             raise ValueError("realtime input must not be empty")
         if self._accepted >= self._max_inputs:
             raise RuntimeError("realtime input limit reached for this turn")
         self._accepted += 1
         assert self._turn_id is not None
-        item = UserMessageItem(text, self._turn_id)
+        item = UserMessageItem(text, self._turn_id, mentions=mentions)
         self._unrecorded[item.id] = item
         self._queue.put_nowait(RealtimeInput(text, item))
 
@@ -112,6 +116,12 @@ class RealtimeController:
             # is immediate and repeated Ctrl+C requests remain idempotent.
             self._queue.put_nowait(RealtimeStop())
             self._stop_queued = True
+            self._stop_event.set()
+
+    async def next_stop(self) -> RealtimeStop:
+        """Cancellation can interrupt sampling without consuming queued user input."""
+        await self._stop_event.wait()
+        return RealtimeStop()
 
     async def next(self) -> RealtimeCommand:
         return await self._queue.get()

@@ -6,6 +6,7 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from memory_evidence import inspect_worker_evidence
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -42,7 +43,7 @@ def test_new_empty_source_retracts_old_inputs_then_reopen_deduplicates(tmp_path,
 
             async def stream(self, request):
                 self.requests.append(request)
-                assert not request.tools
+                assert bool(request.tools) == (request.output_schema is None)
                 index = len(self.requests)
                 if index == 1:
                     value = {
@@ -59,7 +60,7 @@ def test_new_empty_source_retracts_old_inputs_then_reopen_deduplicates(tmp_path,
                 elif index == 3:
                     value = {"raw_memory": raw, "rollout_summary": summary, "rollout_slug": None}
                 elif index == 4:
-                    inputs = json.loads(request.items[0].content)
+                    inputs = inspect_worker_evidence(request)
                     assert "Old preference." in inputs["previous_memory"]
                     assert "Old preference." not in inputs["raw_memories"]
                     assert not tuple((root / "rollout_summaries").glob("*.md"))

@@ -38,7 +38,7 @@ def test_exec_command_and_write_stdin_resume_process(tmp_path: Path) -> None:
             first = await execute.execute(
                 call(
                     "exec_command",
-                    {"cmd": "printf start; sleep 0.1; printf end", "login": False},
+                    {"cmd": "printf start; sleep 0.4; printf end", "login": False},
                 ),
                 ToolContext(tmp_path),
             )
@@ -113,7 +113,9 @@ def test_process_termination_escalates_to_the_entire_process_group(monkeypatch) 
             process.returncode = -int(sent)
             process.reaped.set()
 
-    monkeypatch.setattr(process_module.os, "killpg", kill_group)
+    # Patch this manager's boundary, not the shared os module: MCP cleanup
+    # timers may still signal their own real process groups on another thread.
+    monkeypatch.setattr(process_module, "signal_owned_group", kill_group)
     monkeypatch.setattr(process_module, "_TERMINATE_GRACE_SECONDS", 0.001)
 
     asyncio.run(ProcessManager._terminate(process))  # type: ignore[arg-type]
@@ -240,7 +242,7 @@ def test_apply_patch_rolls_back_all_files_if_commit_fails(monkeypatch, tmp_path:
     assert stat.S_IMODE(first.stat().st_mode) == 0o744
 
 
-def test_update_plan_enforces_single_active_step(tmp_path: Path) -> None:
+def test_update_plan_preserves_step_status(tmp_path: Path) -> None:
     async def scenario() -> None:
         tool = UpdatePlanTool()
         result = await tool.execute(

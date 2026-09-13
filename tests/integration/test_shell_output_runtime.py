@@ -23,11 +23,15 @@ def test_shell_actual_process_runtime_budget_and_cold_history(tmp_path, nested, 
         raw = "HEAD" + "字" * 20000 + "TAIL"
         script = (
             "import sys; "
-            + ("print('READY', flush=True); sys.stdin.readline(); " if poll else "")
+            + (
+                "import tty; tty.setraw(0); print('READY', flush=True); sys.stdin.readline(); "
+                if poll
+                else ""
+            )
             + "sys.stdout.write('HEAD'+'字'*20000+'TAIL')"
         )
         command = shlex.join([sys.executable, "-c", script])
-        args = {"cmd": command, "login": False, "yield_time_ms": 50 if poll else 1000}
+        args = {"cmd": command, "login": False, "tty": poll, "yield_time_ms": 50 if poll else 1000}
         if poll:
             args["max_output_tokens"] = 1
         elif requested is not None:

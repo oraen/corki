@@ -4,6 +4,7 @@ import json
 import httpx
 import pytest
 
+from corki import http_client
 from corki.config import CorkiSettings, TokenBudgetConfig
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted
@@ -99,13 +100,14 @@ def test_local_recovery_real_provider_payload_and_no_native_http(
         payloads, clients = [], []
 
         def respond(request):
+            assert request.url.host == "fixture.invalid"
             assert request.url.path.endswith(
                 "/responses" if mode == "responses" else "/chat/completions"
             )
             body = json.loads(request.content)
             payloads.append(body)
             assert "client_metadata" not in body and "x-codex-turn-metadata" not in request.headers
-            assert '"encrypted": true' not in json.dumps(body["tools"])
+            assert '"encrypted": true' not in json.dumps(body.get("tools", []))
             index = len(payloads)
             name, args = (
                 ("notes::write_file", {"path": "p", "text": "LOCAL_SAVED_NOTE"})
@@ -114,18 +116,18 @@ def test_local_recovery_real_provider_payload_and_no_native_http(
                 if index == 2
                 else ("notes::read_file", {"path": "p"})
             )
-            calling = index in (1, 2, 3, 5)
+            calling = index in (1, 2, 4, 6)
+            if index == 3:
+                assert not body.get("tools")
             wire_name = compatible_tool_name(name)
             if mode == "responses":
-                ns, _, leaf = name.rpartition("::")
                 output = (
                     [
                         {
                             "type": "function_call",
                             "id": f"i-{index}",
                             "call_id": f"c-{index}",
-                            "name": leaf if namespace == "native" else wire_name,
-                            **({"namespace": ns} if ns and namespace == "native" else {}),
+                            "name": wire_name,
                             "arguments": json.dumps(args),
                         }
                     ]
@@ -176,7 +178,7 @@ def test_local_recovery_real_provider_payload_and_no_native_http(
             clients.append(client)
             return client
 
-        monkeypatch.setattr(httpx, "AsyncClient", create_client)
+        monkeypatch.setattr(http_client, "OwnedHTTPClient", create_client)
 
         def create(thread=None):
             return LangGraphRuntime.create(
@@ -197,16 +199,16 @@ def test_local_recovery_real_provider_payload_and_no_native_http(
         thread = runtime.thread_id
         try:
             assert isinstance([e async for e in runtime.stream("ORIGINAL_TASK")][-1], TurnCompleted)
-            assert "ORIGINAL_TASK" not in json.dumps(payloads[2])
-            assert "LOCAL_SAVED_NOTE" not in json.dumps(payloads[2])
-            assert "LOCAL_SAVED_NOTE" in json.dumps(payloads[3])
+            assert "ORIGINAL_TASK" in json.dumps(payloads[3])
+            assert "LOCAL_SAVED_NOTE" not in json.dumps(payloads[3])
+            assert "LOCAL_SAVED_NOTE" in json.dumps(payloads[4])
         finally:
             await runtime.aclose()
         cold = create(thread)
         try:
             assert isinstance([e async for e in cold.stream("continue")][-1], TurnCompleted)
-            assert "LOCAL_SAVED_NOTE" in json.dumps(payloads[5])
-            assert len(payloads) == 6
+            assert "LOCAL_SAVED_NOTE" in json.dumps(payloads[6])
+            assert len(payloads) == 7
         finally:
             await cold.aclose()
         assert all(client.is_closed for client in clients)
@@ -219,6 +221,7 @@ def settings(tmp_path, **overrides):
     return CorkiSettings(
         working_directory=tmp_path,
         skills_enabled=False,
+        api_base="https://fixture.invalid/v1",
         token_budget_enabled=True,
         token_budget=TokenBudgetConfig(use_history_notes_extension=True),
         **overrides,
@@ -226,7 +229,7 @@ def settings(tmp_path, **overrides):
 
 
 @pytest.mark.parametrize("mode", ["chat_completions", "responses"])
-def test_malformed_provider_call_is_recalled_after_reset_and_cold_start(
+def test_malformed_provider_call_is_recalled_after_summary_and_cold_start(
     tmp_path, monkeypatch, mode
 ):
     from corki.protocol.tool_names import compatible_tool_name
@@ -234,6 +237,7 @@ def test_malformed_provider_call_is_recalled_after_reset_and_cold_start(
 
     async def scenario():
         payloads, recovered_ids, clients = [], [], []
+        summaries = []
         raw = '{ "RECOVERY_RAW_界": '
 
         class Guarded:
@@ -248,6 +252,31 @@ def test_malformed_provider_call_is_recalled_after_reset_and_cold_start(
 
         def respond(request):
             body = json.loads(request.content)
+            assert request.url.host == "fixture.invalid"
+            if not body.get("tools"):
+                summaries.append(body)
+                packet = (
+                    {
+                        "type": "response.completed",
+                        "response": {
+                            "id": "summary",
+                            "output": [
+                                {
+                                    "type": "message",
+                                    "role": "assistant",
+                                    "content": [{"type": "output_text", "text": "summary"}],
+                                }
+                            ],
+                        },
+                    }
+                    if mode == "responses"
+                    else {
+                        "choices": [
+                            {"index": 0, "delta": {"content": "summary"}, "finish_reason": "stop"}
+                        ]
+                    }
+                )
+                return httpx.Response(200, text=f"data: {json.dumps(packet)}\n\n")
             payloads.append(body)
             index = len(payloads)
             items = body["input"] if mode == "responses" else body["messages"]
@@ -357,7 +386,7 @@ def test_malformed_provider_call_is_recalled_after_reset_and_cold_start(
             clients.append(client)
             return client
 
-        monkeypatch.setattr(httpx, "AsyncClient", client_factory)
+        monkeypatch.setattr(http_client, "OwnedHTTPClient", client_factory)
 
         def create(thread=None):
             registry = ToolRegistry()
@@ -393,6 +422,7 @@ def test_malformed_provider_call_is_recalled_after_reset_and_cold_start(
             ]
             assert len(errors) == 1 and errors[0].is_error
             assert guarded.calls == 0 and len(payloads) == 9
+            assert len(summaries) == 2
         finally:
             await cold.aclose()
         assert len(clients) == 2 and all(client.is_closed for client in clients)
@@ -400,12 +430,13 @@ def test_malformed_provider_call_is_recalled_after_reset_and_cold_start(
     asyncio.run(scenario())
 
 
-def test_automatic_small_window_reset_recovers_a_target_near_end_of_large_output(tmp_path):
+def test_automatic_small_window_summary_recovers_a_target_near_end_of_large_output(tmp_path):
     from corki.protocol.events import ContextCompacted
     from corki.protocol.tools import ToolResult, ToolSpec
 
     async def scenario():
         requests = []
+        summaries = []
 
         class Large:
             spec = ToolSpec("long_output", "Large output fixture", {"type": "object"})
@@ -415,13 +446,19 @@ def test_automatic_small_window_reset_recovers_a_target_near_end_of_large_output
 
         class Model:
             async def stream(self, request):
+                if not request.tools:
+                    summaries.append(request)
+                    yield ModelCompleted(
+                        (AssistantMessageItem("summary", request.items[-1].turn_id, new_step_id()),)
+                    )
+                    return
                 requests.append(request)
                 turn = request.items[-1].turn_id
                 index = len(requests)
                 if index == 1:
                     name, args = "long_output", {}
                 elif index == 2:
-                    assert "ORIGINAL_TASK" not in str(request.items)
+                    assert "ORIGINAL_TASK" in str(request.items)
                     assert "padding padding" not in str(request.items)
                     name, args = (
                         "history::search_contents",
@@ -470,13 +507,17 @@ def test_automatic_small_window_reset_recovers_a_target_near_end_of_large_output
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert sum(isinstance(e, ContextCompacted) for e in events) == 1
             assert len(requests) == 4
+            assert len(summaries) == 1
         finally:
             await runtime.aclose()
 
     asyncio.run(scenario())
 
 
-def test_another_thread_cannot_read_notes_or_archive_even_with_spoofed_context(tmp_path):
+@pytest.mark.parametrize("shared_session", [False, True])
+def test_another_thread_cannot_read_notes_or_archive_even_with_spoofed_context(
+    tmp_path, shared_session
+):
     async def scenario():
         model = SequenceModel(
             [
@@ -491,10 +532,18 @@ def test_another_thread_cannot_read_notes_or_archive_even_with_spoofed_context(t
             database_path=tmp_path / "sessions.db",
             registry=ToolRegistry(),
             model=model,
+            session_id="shared-host-session" if shared_session else None,
         )
         try:
             assert isinstance(
                 [e async for e in first.stream("PRIVATE_USER_TASK")][-1], TurnCompleted
+            )
+            from corki.protocol.items import UserMessageItem
+
+            private_item = next(
+                item
+                for item in await first._repository.load_items(first.thread_id)
+                if isinstance(item, UserMessageItem)
             )
         finally:
             await first.aclose()
@@ -512,6 +561,14 @@ def test_another_thread_cannot_read_notes_or_archive_even_with_spoofed_context(t
                         "context": {"session_id": str(first.thread_id)},
                     },
                 ),
+                (
+                    "history::read_item",
+                    {
+                        "window_id": f"{first.thread_id}:0",
+                        "item_id": str(private_item.id),
+                        "context": {"session_id": str(first.thread_id)},
+                    },
+                ),
             ]
         )
         other = LangGraphRuntime.create(
@@ -519,13 +576,23 @@ def test_another_thread_cannot_read_notes_or_archive_even_with_spoofed_context(t
             database_path=tmp_path / "sessions.db",
             registry=ToolRegistry(),
             model=model,
+            session_id="shared-host-session" if shared_session else None,
         )
         try:
             assert isinstance([e async for e in other.stream("inspect")][-1], TurnCompleted)
             results = [i for i in model.requests[-1].items if isinstance(i, ToolResultItem)]
             assert results[0].is_error and "does not exist" in results[0].content
             assert json.loads(results[1].content)["items"] == []
+            assert results[2].is_error and "not found" in results[2].content
+            assert all(
+                item.id != private_item.id for request in model.requests for item in request.items
+            )
+            assert all("PRIVATE_USER_TASK" not in result.content for result in results)
             assert "PRIVATE_NOTE" not in str(model.requests)
+            assert all(request.client_metadata is None for request in model.requests)
+            if shared_session:
+                assert first.session_id == other.session_id == "shared-host-session"
+                assert first.thread_id != other.thread_id
         finally:
             await other.aclose()
 
@@ -581,10 +648,13 @@ def test_local_write_survives_history_fault_without_repeating_side_effect(
             await save_turn(turn)
 
         runtime._repository.append_items, runtime._repository.save_turn = append, save
+        runtime._repository.retry_turn_terminal = save
         try:
             assert isinstance([e async for e in runtime.stream("append")][-1], TurnFailed)
             assert len(writes) == len(model.requests) == 1
         finally:
+            # Preserve the simulated crash instead of gracefully committing its terminal.
+            runtime._pending_terminals.clear()
             await runtime.aclose()
         cold = create(thread)
         try:
@@ -680,12 +750,19 @@ def test_optional_local_store_failure_remains_an_observation(tmp_path):
     asyncio.run(scenario())
 
 
-def test_plaintext_recovery_survives_reset_and_cold_runtime(tmp_path):
+def test_plaintext_recovery_survives_summary_and_cold_runtime(tmp_path):
     async def scenario():
         requests = []
+        summaries = []
 
         class Model:
             async def stream(self, request):
+                if not request.tools:
+                    summaries.append(request)
+                    yield ModelCompleted(
+                        (AssistantMessageItem("summary", request.items[-1].turn_id, new_step_id()),)
+                    )
+                    return
                 requests.append(request)
                 assert request.client_metadata is None
                 assert "history::search_contents" in {s.name for s in request.tools}
@@ -700,7 +777,7 @@ def test_plaintext_recovery_survives_reset_and_cold_runtime(tmp_path):
                 elif index == 2:
                     name, args = "new_context", {}
                 elif index == 3:
-                    assert "ORIGINAL_SECRET_TASK" not in str(request.items)
+                    assert "ORIGINAL_SECRET_TASK" in str(request.items)
                     name, args = (
                         "history::search_contents",
                         {"query": "ORIGINAL_SECRET_TASK", "role": "user"},
@@ -754,6 +831,7 @@ def test_plaintext_recovery_survives_reset_and_cold_runtime(tmp_path):
         try:
             assert isinstance([e async for e in cold.stream("continue")][-1], TurnCompleted)
             assert len(requests) == 8
+            assert len(summaries) == 1
         finally:
             await cold.aclose()
 

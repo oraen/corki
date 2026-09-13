@@ -18,9 +18,9 @@ from corki.tools import ToolRegistry
 @pytest.mark.parametrize("streamed", [False, True])
 @pytest.mark.parametrize("phase", ["model", "prepare"])
 def test_model_step_executes_captured_handler_after_registry_publication(
-    tmp_path, change, streamed, phase
+    tmp_path, monkeypatch, change, streamed, phase
 ):
-    asyncio.run(run_replacement(tmp_path, change, streamed, "direct", phase))
+    asyncio.run(run_replacement(tmp_path, change, streamed, "direct", phase, monkeypatch))
 
 
 @pytest.mark.parametrize("change", ["same", "schema"])
@@ -29,7 +29,7 @@ def test_code_mode_table_and_dispatch_use_captured_step(tmp_path, change, stream
     asyncio.run(run_replacement(tmp_path, change, streamed, "code_mode"))
 
 
-async def run_replacement(tmp_path, change, streamed, tool_mode, phase="model"):
+async def run_replacement(tmp_path, change, streamed, tool_mode, phase="model", monkeypatch=None):
     executed, requests = [], []
     original = ToolSpec(
         "lookup",
@@ -115,12 +115,13 @@ async def run_replacement(tmp_path, change, streamed, tool_mode, phase="model"):
         model=Model(),
     )
     if phase == "prepare":
-        build = runtime._graph._context_builder.build
+        builder_type = type(runtime._graph._context_builder)
+        build = builder_type.build
         changed = False
 
-        async def build_and_publish(**kwargs):
+        async def build_and_publish(builder, **kwargs):
             nonlocal changed
-            result = await build(**kwargs)
+            result = await build(builder, **kwargs)
             if not changed:
                 changed = True
                 registry.replace_owned(
@@ -128,7 +129,8 @@ async def run_replacement(tmp_path, change, streamed, tool_mode, phase="model"):
                 )
             return result
 
-        runtime._graph._context_builder.build = build_and_publish
+        # Instrument the admitted copy, not a bound method of the raw builder.
+        monkeypatch.setattr(builder_type, "build", build_and_publish)
     try:
         events = [e async for e in runtime.stream("use the captured tool")]
         assert isinstance(events[-1], TurnCompleted), events[-1]

@@ -1,0 +1,752 @@
+....................................              [100%]
+=================================== FAILURES ===================================
+___________ test_worker_runtime_resolves_its_own_model_window[None] ____________
+tests/unit/memory/test_agent_ownership.py:122: in test_worker_runtime_resolves_its_own_model_window
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/unit/memory/test_agent_ownership.py:112: in scenario
+    await agent.run_agent(
+src/corki/memory/agent.py:196: in run_agent
+    return await _run_prepared_agent(
+src/corki/memory/agent.py:324: in _run_prepared_agent
+    raise error
+src/corki/memory/agent.py:284: in _run_prepared_agent
+    raise ValueError(f"consolidation agent did not complete: {terminal}")
+E   ValueError: consolidation agent did not complete: TurnFailed(thread_id='8bf90e7a-5216-4367-9330-78bf7def3060', turn_id='20dfa3f8-e929-41a1-bbe3-632033dca146', error='prepared context exceeds model window (2931/2850 estimated tokens)', error_kind='context_window', retryable=False)
+_ test_automatic_compaction_reinjects_full_current_map_and_releases_loaded_tool _
+tests/integration/test_deferred_namespace_compaction.py:133: in test_automatic_compaction_reinjects_full_current_map_and_releases_loaded_tool
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_deferred_namespace_compaction.py:116: in scenario
+    assert isinstance(events[-1], TurnCompleted), events[-1]
+E   AssertionError: TurnFailed(thread_id='30a47edc-72d8-4e1b-ab5c-63e73e6e37f7', turn_id='c01ca68d-d9d5-422f-bcbb-c7af2e45af53', error='As...l.<locals>.scenario.<locals>.Model.stream.<locals>.<genexpr> at 0x3074066c0>)', error_kind='internal', retryable=False)
+E   assert False
+E    +  where False = isinstance(TurnFailed(thread_id='30a47edc-72d8-4e1b-ab5c-63e73e6e37f7', turn_id='c01ca68d-d9d5-422f-bcbb-c7af2e45af53', error='As...l.<locals>.scenario.<locals>.Model.stream.<locals>.<genexpr> at 0x3074066c0>)', error_kind='internal', retryable=False), TurnCompleted)
+____ test_runtime_environment_delta_steps_compaction_and_cold_reopen[False] ____
+tests/integration/test_runtime_environment_context.py:137: in test_runtime_environment_delta_steps_compaction_and_cold_reopen
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_runtime_environment_context.py:107: in scenario
+    assert delta.content == (
+E   assert '<environment...nt_context>\n' == '<environment...nt_context>\n'
+E     
+E     Skipping 81 identical leading characters in diff, use -v to show
+E       timezone>
+E     +   <filesystem><permission_profile type="managed"><file_system type="restricted"><entry access="read"><special>:root</special></entry></file_system></permission_profile></filesystem>
+E       </environment_context>
+____ test_runtime_environment_delta_steps_compaction_and_cold_reopen[True] _____
+tests/integration/test_runtime_environment_context.py:137: in test_runtime_environment_delta_steps_compaction_and_cold_reopen
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_runtime_environment_context.py:107: in scenario
+    assert delta.content == (
+E   assert '<environment...nt_context>\n' == '<environment...nt_context>\n'
+E     
+E     Skipping 81 identical leading characters in diff, use -v to show
+E       timezone>
+E     +   <filesystem><permission_profile type="managed"><file_system type="restricted"><entry access="read"><special>:root</special></entry></file_system></permission_profile></filesystem>
+E       </environment_context>
+____ test_batch_admission_precedes_every_hook_effect[insert_failure-False] _____
+tests/integration/test_stop_batch_admission.py:135: in test_batch_admission_precedes_every_hook_effect
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_batch_admission.py:108: in scenario
+    assert len(requests) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+_____ test_batch_admission_precedes_every_hook_effect[insert_failure-True] _____
+tests/integration/test_stop_batch_admission.py:135: in test_batch_admission_precedes_every_hook_effect
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_batch_admission.py:108: in scenario
+    assert len(requests) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+__ test_batch_admission_precedes_every_hook_effect[cancel_before_write-False] __
+tests/integration/test_stop_batch_admission.py:135: in test_batch_admission_precedes_every_hook_effect
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_batch_admission.py:108: in scenario
+    assert len(requests) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+__ test_batch_admission_precedes_every_hook_effect[cancel_before_write-True] ___
+tests/integration/test_stop_batch_admission.py:135: in test_batch_admission_precedes_every_hook_effect
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_batch_admission.py:108: in scenario
+    assert len(requests) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+_ test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command[False-False-False-True-None-command-Stop-unknown] _
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_stop_hook_recovery.py:373: in test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_hook_recovery.py:272: in scenario
+    await asyncio.wait_for(entered.wait(), 5)
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+_ test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command[False-False-False-True-None-command-Stop-completed] _
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_stop_hook_recovery.py:373: in test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_hook_recovery.py:272: in scenario
+    await asyncio.wait_for(entered.wait(), 5)
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+_ test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command[False-False-False-True-None-command-Stop-feedback] _
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_stop_hook_recovery.py:373: in test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_hook_recovery.py:272: in scenario
+    await asyncio.wait_for(entered.wait(), 5)
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+_ test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command[False-False-False-True-None-command-SubagentStop-unknown] _
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_stop_hook_recovery.py:373: in test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_hook_recovery.py:272: in scenario
+    await asyncio.wait_for(entered.wait(), 5)
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+_ test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command[False-False-False-True-None-command-SubagentStop-completed] _
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_stop_hook_recovery.py:373: in test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_hook_recovery.py:272: in scenario
+    await asyncio.wait_for(entered.wait(), 5)
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+_ test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command[False-False-False-True-None-command-SubagentStop-feedback] _
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_stop_hook_recovery.py:373: in test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_hook_recovery.py:272: in scenario
+    await asyncio.wait_for(entered.wait(), 5)
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+_ test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command[False-False-False-2-None-command-Stop-unknown] _
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_stop_hook_recovery.py:373: in test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_hook_recovery.py:272: in scenario
+    await asyncio.wait_for(entered.wait(), 5)
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+_ test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command[False-False-False-2-None-command-Stop-completed] _
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_stop_hook_recovery.py:373: in test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_hook_recovery.py:272: in scenario
+    await asyncio.wait_for(entered.wait(), 5)
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+_ test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command[False-False-False-2-None-command-Stop-feedback] _
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_stop_hook_recovery.py:373: in test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_hook_recovery.py:272: in scenario
+    await asyncio.wait_for(entered.wait(), 5)
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+_ test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command[False-False-False-2-None-command-SubagentStop-unknown] _
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_stop_hook_recovery.py:373: in test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_hook_recovery.py:272: in scenario
+    await asyncio.wait_for(entered.wait(), 5)
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+_ test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command[False-False-False-2-None-command-SubagentStop-completed] _
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_stop_hook_recovery.py:373: in test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_hook_recovery.py:272: in scenario
+    await asyncio.wait_for(entered.wait(), 5)
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+_ test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command[False-False-False-2-None-command-SubagentStop-feedback] _
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+tests/integration/test_stop_hook_recovery.py:373: in test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_hook_recovery.py:272: in scenario
+    await asyncio.wait_for(entered.wait(), 5)
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+__ test_pending_input_does_not_bypass_prior_hook_claim[1-removed-False-None] ___
+tests/integration/test_stop_pending_recovery.py:224: in test_pending_input_does_not_bypass_prior_hook_claim
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_pending_recovery.py:201: in scenario
+    assert isinstance(events[-1], TurnCompleted if completed else TurnFailed), events[-1]
+E   AssertionError: TurnCompleted(thread_id='acb37db6-3d2a-439a-b2fd-840cc711ebd7', turn_id='c9780d48-02f4-4d0c-a427-106082102dfe', final_answer='done')
+E   assert False
+E    +  where False = isinstance(TurnCompleted(thread_id='acb37db6-3d2a-439a-b2fd-840cc711ebd7', turn_id='c9780d48-02f4-4d0c-a427-106082102dfe', final_answer='done'), <class 'corki.protocol.events.TurnFailed'>)
+___ test_pending_input_does_not_bypass_prior_hook_claim[1-removed-True-None] ___
+tests/integration/test_stop_pending_recovery.py:224: in test_pending_input_does_not_bypass_prior_hook_claim
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_pending_recovery.py:201: in scenario
+    assert isinstance(events[-1], TurnCompleted if completed else TurnFailed), events[-1]
+E   AssertionError: TurnCompleted(thread_id='940a42bb-822e-4e2f-9a8e-eec3048116ef', turn_id='ac717da8-ab5c-4906-b6c8-07f600052079', final_answer='done')
+E   assert False
+E    +  where False = isinstance(TurnCompleted(thread_id='940a42bb-822e-4e2f-9a8e-eec3048116ef', turn_id='ac717da8-ab5c-4906-b6c8-07f600052079', final_answer='done'), <class 'corki.protocol.events.TurnFailed'>)
+__ test_pending_input_does_not_bypass_prior_hook_claim[1-revoked-False-None] ___
+tests/integration/test_stop_pending_recovery.py:224: in test_pending_input_does_not_bypass_prior_hook_claim
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_pending_recovery.py:201: in scenario
+    assert isinstance(events[-1], TurnCompleted if completed else TurnFailed), events[-1]
+E   AssertionError: TurnCompleted(thread_id='7984c67c-433c-410c-895d-f675fafea059', turn_id='6672ae17-549d-462c-a4a5-5f7a2f87d9f9', final_answer='done')
+E   assert False
+E    +  where False = isinstance(TurnCompleted(thread_id='7984c67c-433c-410c-895d-f675fafea059', turn_id='6672ae17-549d-462c-a4a5-5f7a2f87d9f9', final_answer='done'), <class 'corki.protocol.events.TurnFailed'>)
+___ test_pending_input_does_not_bypass_prior_hook_claim[1-revoked-True-None] ___
+tests/integration/test_stop_pending_recovery.py:224: in test_pending_input_does_not_bypass_prior_hook_claim
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_pending_recovery.py:201: in scenario
+    assert isinstance(events[-1], TurnCompleted if completed else TurnFailed), events[-1]
+E   AssertionError: TurnCompleted(thread_id='86527bd5-b7f1-4537-800e-de944e2b4ed9', turn_id='b4724822-45a8-406f-ad56-711634ef5b33', final_answer='done')
+E   assert False
+E    +  where False = isinstance(TurnCompleted(thread_id='86527bd5-b7f1-4537-800e-de944e2b4ed9', turn_id='b4724822-45a8-406f-ad56-711634ef5b33', final_answer='done'), <class 'corki.protocol.events.TurnFailed'>)
+___ test_pending_input_does_not_bypass_prior_hook_claim[1-added-False-None] ____
+tests/integration/test_stop_pending_recovery.py:224: in test_pending_input_does_not_bypass_prior_hook_claim
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_pending_recovery.py:211: in scenario
+    assert actual == ["once"] * (
+E   AssertionError: assert ['once', 'once'] == ['once']
+E     
+E     Left contains one more item: 'once'
+E     Use -v to get more diff
+____ test_pending_input_does_not_bypass_prior_hook_claim[1-added-True-None] ____
+tests/integration/test_stop_pending_recovery.py:224: in test_pending_input_does_not_bypass_prior_hook_claim
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_pending_recovery.py:211: in scenario
+    assert actual == ["once"] * (
+E   AssertionError: assert ['once', 'once'] == ['once']
+E     
+E     Left contains one more item: 'once'
+E     Use -v to get more diff
+__ test_pending_input_does_not_bypass_prior_hook_claim[1-changed-False-None] ___
+tests/integration/test_stop_pending_recovery.py:224: in test_pending_input_does_not_bypass_prior_hook_claim
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_pending_recovery.py:201: in scenario
+    assert isinstance(events[-1], TurnCompleted if completed else TurnFailed), events[-1]
+E   AssertionError: TurnCompleted(thread_id='f2741aee-36ad-4568-82cf-d73f4feda577', turn_id='c5b65d6b-44be-40c3-9592-a74c902bf674', final_answer='done')
+E   assert False
+E    +  where False = isinstance(TurnCompleted(thread_id='f2741aee-36ad-4568-82cf-d73f4feda577', turn_id='c5b65d6b-44be-40c3-9592-a74c902bf674', final_answer='done'), <class 'corki.protocol.events.TurnFailed'>)
+___ test_pending_input_does_not_bypass_prior_hook_claim[1-changed-True-None] ___
+tests/integration/test_stop_pending_recovery.py:224: in test_pending_input_does_not_bypass_prior_hook_claim
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_pending_recovery.py:201: in scenario
+    assert isinstance(events[-1], TurnCompleted if completed else TurnFailed), events[-1]
+E   AssertionError: TurnCompleted(thread_id='3fa55846-34e3-48db-8829-cf9f8976a91b', turn_id='ee9bf03e-fe59-480a-80c7-41632dcaaef4', final_answer='done')
+E   assert False
+E    +  where False = isinstance(TurnCompleted(thread_id='3fa55846-34e3-48db-8829-cf9f8976a91b', turn_id='ee9bf03e-fe59-480a-80c7-41632dcaaef4', final_answer='done'), <class 'corki.protocol.events.TurnFailed'>)
+__ test_pending_input_does_not_bypass_prior_hook_claim[2-removed-False-None] ___
+tests/integration/test_stop_pending_recovery.py:224: in test_pending_input_does_not_bypass_prior_hook_claim
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_pending_recovery.py:201: in scenario
+    assert isinstance(events[-1], TurnCompleted if completed else TurnFailed), events[-1]
+E   AssertionError: TurnCompleted(thread_id='d458a74f-4068-4d11-ab56-722029f35471', turn_id='7479bc5e-5005-4f62-b152-d40bc0619059', final_answer='done')
+E   assert False
+E    +  where False = isinstance(TurnCompleted(thread_id='d458a74f-4068-4d11-ab56-722029f35471', turn_id='7479bc5e-5005-4f62-b152-d40bc0619059', final_answer='done'), <class 'corki.protocol.events.TurnFailed'>)
+___ test_pending_input_does_not_bypass_prior_hook_claim[2-removed-True-None] ___
+tests/integration/test_stop_pending_recovery.py:224: in test_pending_input_does_not_bypass_prior_hook_claim
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_pending_recovery.py:201: in scenario
+    assert isinstance(events[-1], TurnCompleted if completed else TurnFailed), events[-1]
+E   AssertionError: TurnCompleted(thread_id='e7a3e37a-8f7e-433f-bb0b-0e5e3a778c37', turn_id='f7b4c9e9-ebf5-4b8c-a148-fdde2d49b6ba', final_answer='done')
+E   assert False
+E    +  where False = isinstance(TurnCompleted(thread_id='e7a3e37a-8f7e-433f-bb0b-0e5e3a778c37', turn_id='f7b4c9e9-ebf5-4b8c-a148-fdde2d49b6ba', final_answer='done'), <class 'corki.protocol.events.TurnFailed'>)
+__ test_pending_input_does_not_bypass_prior_hook_claim[2-revoked-False-None] ___
+tests/integration/test_stop_pending_recovery.py:224: in test_pending_input_does_not_bypass_prior_hook_claim
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_pending_recovery.py:201: in scenario
+    assert isinstance(events[-1], TurnCompleted if completed else TurnFailed), events[-1]
+E   AssertionError: TurnCompleted(thread_id='22978fbb-23f0-42aa-8094-f0cf127aa471', turn_id='667bc2a9-5d31-4048-972f-8f7ea26cfdd6', final_answer='done')
+E   assert False
+E    +  where False = isinstance(TurnCompleted(thread_id='22978fbb-23f0-42aa-8094-f0cf127aa471', turn_id='667bc2a9-5d31-4048-972f-8f7ea26cfdd6', final_answer='done'), <class 'corki.protocol.events.TurnFailed'>)
+___ test_pending_input_does_not_bypass_prior_hook_claim[2-revoked-True-None] ___
+tests/integration/test_stop_pending_recovery.py:224: in test_pending_input_does_not_bypass_prior_hook_claim
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_pending_recovery.py:201: in scenario
+    assert isinstance(events[-1], TurnCompleted if completed else TurnFailed), events[-1]
+E   AssertionError: TurnCompleted(thread_id='51a4be6e-e85f-44fa-b9eb-42b086ed3e24', turn_id='9ae6ad04-3cf3-473c-91a4-b26ead56276b', final_answer='done')
+E   assert False
+E    +  where False = isinstance(TurnCompleted(thread_id='51a4be6e-e85f-44fa-b9eb-42b086ed3e24', turn_id='9ae6ad04-3cf3-473c-91a4-b26ead56276b', final_answer='done'), <class 'corki.protocol.events.TurnFailed'>)
+___ test_pending_input_does_not_bypass_prior_hook_claim[2-added-False-None] ____
+tests/integration/test_stop_pending_recovery.py:224: in test_pending_input_does_not_bypass_prior_hook_claim
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_pending_recovery.py:211: in scenario
+    assert actual == ["once"] * (
+E   AssertionError: assert ['once', 'once', 'once'] == ['once', 'once']
+E     
+E     Left contains one more item: 'once'
+E     Use -v to get more diff
+____ test_pending_input_does_not_bypass_prior_hook_claim[2-added-True-None] ____
+tests/integration/test_stop_pending_recovery.py:224: in test_pending_input_does_not_bypass_prior_hook_claim
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_pending_recovery.py:211: in scenario
+    assert actual == ["once"] * (
+E   AssertionError: assert ['once', 'once', 'once'] == ['once', 'once']
+E     
+E     Left contains one more item: 'once'
+E     Use -v to get more diff
+__ test_pending_input_does_not_bypass_prior_hook_claim[2-changed-False-None] ___
+tests/integration/test_stop_pending_recovery.py:224: in test_pending_input_does_not_bypass_prior_hook_claim
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_pending_recovery.py:201: in scenario
+    assert isinstance(events[-1], TurnCompleted if completed else TurnFailed), events[-1]
+E   AssertionError: TurnCompleted(thread_id='a539cb29-c096-4e6e-a87d-5304b52ff7d1', turn_id='5c0a4248-dd26-48a1-9293-e9229ea14235', final_answer='done')
+E   assert False
+E    +  where False = isinstance(TurnCompleted(thread_id='a539cb29-c096-4e6e-a87d-5304b52ff7d1', turn_id='5c0a4248-dd26-48a1-9293-e9229ea14235', final_answer='done'), <class 'corki.protocol.events.TurnFailed'>)
+___ test_pending_input_does_not_bypass_prior_hook_claim[2-changed-True-None] ___
+tests/integration/test_stop_pending_recovery.py:224: in test_pending_input_does_not_bypass_prior_hook_claim
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_stop_pending_recovery.py:201: in scenario
+    assert isinstance(events[-1], TurnCompleted if completed else TurnFailed), events[-1]
+E   AssertionError: TurnCompleted(thread_id='4f54901b-4080-4d6f-a61e-e768b098f69b', turn_id='61e7396f-43dd-4a71-b21f-906baadd059b', final_answer='done')
+E   assert False
+E    +  where False = isinstance(TurnCompleted(thread_id='4f54901b-4080-4d6f-a61e-e768b098f69b', turn_id='61e7396f-43dd-4a71-b21f-906baadd059b', final_answer='done'), <class 'corki.protocol.events.TurnFailed'>)
+=========================== short test summary info ============================
+SKIPPED [1] tests/unit/config/test_project_trust_selection.py:164: filesystem rejects non-UTF-8 filenames
+SKIPPED [2] tests/integration/test_metadata_compiler_contract.py:20: requires an actual pre-product-metadata compiler
+SKIPPED [1] tests/integration/test_native_patch.py:119: requires real native-read-only compiler
+SKIPPED [1] tests/integration/test_native_read_helper.py:245: requires actual pre-native-fs compiler
+SKIPPED [1] tests/integration/test_patch_approvals.py:223: requires real batch214 compiler
+SKIPPED [1] tests/integration/test_patch_deltas.py:110: requires real native patch approval compiler
+36 failed, 14848 passed, 7 skipped in 2599.51s (0:43:19)

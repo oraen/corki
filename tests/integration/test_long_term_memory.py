@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+from memory_evidence import inspect_worker_evidence
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -15,7 +16,13 @@ from corki.models import ModelCompleted, ModelRequest
 from corki.models.types import ModelEvent
 from corki.protocol.events import TurnCompleted
 from corki.protocol.ids import ToolCallId, new_thread_id, new_turn_id
-from corki.protocol.items import AssistantMessageItem, ContextItem, ToolCallItem, new_step_id
+from corki.protocol.items import (
+    AssistantMessageItem,
+    ContextItem,
+    ToolCallItem,
+    UserMessageItem,
+    new_step_id,
+)
 from corki.protocol.tools import ToolCall
 from corki.sessions import TurnRecord, TurnStatus
 from corki.storage import SQLiteSessionRepository
@@ -98,6 +105,7 @@ def test_runtime_injects_summary_and_registers_optional_memory_tools(tmp_path: P
         skills_enabled=False,
         memories_enabled=True,
         memories_generate=False,
+        memories_background_enabled=False,
         memories_dedicated_tools=True,
     )
     runtime = LangGraphRuntime.create(
@@ -122,9 +130,12 @@ def test_runtime_injects_summary_and_registers_optional_memory_tools(tmp_path: P
     ]
     assert len(memory_context) == 1
     assert "alpha repository convention" in memory_context[0].content
-    assert {"memory_add_note", "memory_list", "memory_read", "memory_search"}.issubset(
-        {spec.name for spec in registry.specs()}
-    )
+    assert {
+        "memories::add_ad_hoc_note",
+        "memories::list",
+        "memories::read",
+        "memories::search",
+    }.issubset({spec.name for spec in registry.specs()})
 
 
 def test_external_mcp_use_marks_thread_ineligible_for_memory_generation(tmp_path: Path) -> None:
@@ -133,12 +144,13 @@ def test_external_mcp_use_marks_thread_ineligible_for_memory_generation(tmp_path
     memories = SQLiteMemoryRepository(database)
     registry = ToolRegistry()
     registry.register(ExternalMCPTool())
-    model = RuntimeModel([("tool", "mcp__docs__search"), ("answer", "used external docs")])
+    model = RuntimeModel([("tool", "mcp__docs::search"), ("answer", "used external docs")])
     settings = CorkiSettings(
         working_directory=tmp_path,
         skills_enabled=False,
         memories_enabled=True,
         memories_generate=False,
+        memories_background_enabled=False,
         memories_use=False,
         memories_disable_on_external_context=True,
     )
@@ -206,11 +218,12 @@ def test_polluted_published_source_enqueues_and_cold_runtime_rebuilds_memory(tmp
                 skills_enabled=False,
                 memories_enabled=True,
                 memories_generate=False,
+                memories_background_enabled=False,
                 memories_disable_on_external_context=True,
             ),
             database_path=database,
             thread_id=source,
-            model=RuntimeModel([("tool", "mcp__docs__search"), ("answer", "done")]),
+            model=RuntimeModel([("tool", "mcp__docs::search"), ("answer", "done")]),
             registry=registry,
             memory_root=root,
         )
@@ -241,8 +254,8 @@ def test_polluted_published_source_enqueues_and_cold_runtime_rebuilds_memory(tmp
 
             async def stream(self, request):
                 self.count += 1
-                assert request.output_schema_name == "corki_memory_consolidation"
-                data = json.loads(request.items[0].content)
+                assert request.tools and request.output_schema is None
+                data = inspect_worker_evidence(request)
                 assert "RETRACT_THIS_SOURCE" in data["previous_memory"]
                 assert "RETRACT_THIS_SOURCE" not in data["raw_memories"]
                 assert not tuple((root / "rollout_summaries").glob("*.md"))
@@ -260,7 +273,7 @@ def test_polluted_published_source_enqueues_and_cold_runtime_rebuilds_memory(tmp
                 )
 
         main, background = (
-            RuntimeModel([("answer", "ready"), ("answer", "recalled")]),
+            RuntimeModel([("answer", "ready"), ("answer", "summary"), ("answer", "recalled")]),
             MemoryModel(),
         )
         cold = LangGraphRuntime.create(
@@ -276,7 +289,10 @@ def test_polluted_published_source_enqueues_and_cold_runtime_rebuilds_memory(tmp
             assert isinstance([e async for e in cold.stream("initialize")][-1], TurnCompleted)
             report = await cold._memory_service.wait()
             assert report.claimed == 0 and report.consolidated and not report.failed
+            prefix = await cold._repository.load_items(cold.thread_id)
+            assert isinstance([e async for e in cold.compact()][-1], TurnCompleted)
             assert isinstance([e async for e in cold.stream("recall")][-1], TurnCompleted)
+            assert (await cold._repository.load_items(cold.thread_id))[: len(prefix)] == prefix
             index = next(
                 i
                 for i in reversed(main.requests[-1].items)
@@ -315,6 +331,7 @@ def test_memory_citation_is_hidden_persisted_and_updates_usage(tmp_path: Path) -
                 "old answer",
             )
         )
+        await sessions.append_items(source_thread, (UserMessageItem("old question", source_turn),))
         memories = SQLiteMemoryRepository(database)
         claim = (
             await memories.claim_extraction_jobs(
@@ -351,6 +368,7 @@ MEMORY.md:2-3|note=[durable command]
                 skills_enabled=False,
                 memories_enabled=True,
                 memories_generate=False,
+                memories_background_enabled=False,
                 memories_use=False,
             ),
             database_path=database,
@@ -365,9 +383,9 @@ MEMORY.md:2-3|note=[durable command]
         await runtime.aclose()
 
         assert isinstance(events[-1], TurnCompleted)
-        assert events[-1].final_answer == "Use the durable command."
+        assert events[-1].final_answer == "Use the durable command.\n"
         answer = next(item for item in items if isinstance(item, AssistantMessageItem))
-        assert answer.content == "Use the durable command."
+        assert answer.content == "Use the durable command.\n"
         assert answer.memory_citation is not None
         assert answer.memory_citation.thread_ids == (source_thread,)
         assert selected[0].usage_count == 1

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from corki.prompting import PromptContribution, PromptRole, PromptSlot
+from corki.prompting import PromptContribution, PromptPhase, PromptRole, PromptSlot
 
 
 class RealtimeContextContributor:
@@ -15,6 +15,8 @@ class RealtimeContextContributor:
         return (
             PromptContribution(
                 key="realtime.active",
+                phase=PromptPhase.WORLD_STATE,
+                content_kind="corki.realtime.instructions",
                 template_name="realtime/start",
                 role=PromptRole.DEVELOPER,
                 slot=PromptSlot.REALTIME,

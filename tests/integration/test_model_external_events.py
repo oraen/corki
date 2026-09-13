@@ -69,7 +69,7 @@ def external_payload(kind):
 )
 @pytest.mark.parametrize("failed", [False, True])
 @pytest.mark.parametrize("enabled", [False, True])
-def test_completed_external_item_is_durable_before_response_terminal(
+def test_live_external_protocol_is_rejected_but_ordinary_call_is_durable(
     tmp_path, kind, failed, enabled
 ):
     async def scenario():
@@ -78,6 +78,7 @@ def test_completed_external_item_is_durable_before_response_terminal(
         source = external_payload(kind)
 
         def respond(request):
+            assert str(request.url) == "https://fixture.invalid/v1/responses"
             requests.append(json.loads(request.content))
             if len(requests) == 1:
                 events = [{"type": "response.output_item.done", "output_index": 0, "item": source}]
@@ -109,10 +110,10 @@ def test_completed_external_item_is_durable_before_response_terminal(
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
         model = OpenAIResponsesModel(
             api_key="fixture",
-            base_url="https://api.openai.com/v1",
+            base_url="https://fixture.invalid/v1",
             client=client,
             capabilities=replace(
-                resolve_capabilities(base_url="https://api.openai.com/v1", api_mode="responses"),
+                resolve_capabilities(base_url="https://fixture.invalid/v1", api_mode="responses"),
                 supports_native_tool_search=True,
             ),
         )
@@ -124,6 +125,7 @@ def test_completed_external_item_is_durable_before_response_terminal(
                 tool_search_mode="native",
                 memories_enabled=True,
                 memories_generate=False,
+                memories_background_enabled=False,
                 memories_disable_on_external_context=enabled,
             ),
             database_path=database,
@@ -132,24 +134,33 @@ def test_completed_external_item_is_durable_before_response_terminal(
             memory_root=tmp_path / "memories",
         )
         try:
+            # Public source enable does not start the disabled background generator.
+            await runtime.set_thread_memory_mode("enabled")
             events = [e async for e in runtime.stream("test external event")]
-            assert isinstance(events[-1], TurnFailed if failed else TurnCompleted), events[-1]
+            rejected = kind != "ordinary_search"
+            assert isinstance(events[-1], TurnFailed if failed or rejected else TurnCompleted)
+            if rejected:
+                assert events[-1].error_kind == "protocol"
+                assert not events[-1].retryable
+                assert len(requests) == 1
             with sqlite3.connect(database) as db:
-                assert db.execute("SELECT memory_mode FROM threads").fetchone()[0] == (
-                    "enabled" if kind == "ordinary_search" or not enabled else "polluted"
-                )
+                assert db.execute("SELECT memory_mode FROM threads").fetchone()[0] == "enabled"
             stored = await runtime._repository.load_items(runtime.thread_id)
-            if kind in {"native_search", "ordinary_search"}:
-                calls = [i for i in stored if hasattr(i, "call")]
-                assert len(calls) == 1
-                assert calls[0].contains_external_context == (kind == "native_search")
-            else:
-                hosted = [i for i in stored if type(i).__name__ == "HostedToolItem"]
-                assert len(hosted) == 1 and json.loads(hosted[0].payload_json) == source
-            if not failed:
-                assert isinstance([e async for e in runtime.stream("follow up")][-1], TurnCompleted)
-                if kind not in {"native_search", "ordinary_search"}:
-                    assert source in requests[-1]["input"]
+            calls = [i for i in stored if hasattr(i, "call")]
+            assert len(calls) == (0 if rejected else 1)
+            if calls:
+                assert not calls[0].contains_external_context
+            assert not [i for i in stored if type(i).__name__ == "HostedToolItem"]
+            assert isinstance([e async for e in runtime.stream("follow up")][-1], TurnCompleted)
+            assert (await runtime._repository.load_items(runtime.thread_id))[
+                : len(stored)
+            ] == stored
+            assert all(
+                item.get("type")
+                not in {"tool_search_call", "tool_search_output", "web_search_call"}
+                and "namespace" not in item
+                for item in requests[-1]["input"]
+            )
         finally:
             await runtime.aclose()
             await client.aclose()
@@ -197,6 +208,7 @@ def test_cold_hosted_history_uses_chat_compatibility_and_notification_startup_po
                 skills_enabled=False,
                 memories_enabled=True,
                 memories_generate=False,
+                memories_background_enabled=False,
                 memories_disable_on_external_context=True,
             ),
             database_path=database,
@@ -227,18 +239,31 @@ def test_cold_hosted_history_uses_chat_compatibility_and_notification_startup_po
 
 
 @pytest.mark.parametrize("cancel", [False, True])
-def test_hosted_mark_failure_isolated_but_cancellation_preserves_durable_item(
+def test_ordinary_external_mark_failure_isolated_but_cancellation_preserves_durable_item(
     tmp_path, caplog, cancel
 ):
     from corki.models import ModelCompleted, ModelItemCompleted
     from corki.protocol.events import TurnCancelled
-    from corki.protocol.items import HostedToolItem, new_step_id
+    from corki.protocol.ids import new_tool_call_id
+    from corki.protocol.items import AssistantMessageItem, ToolCallItem, new_step_id
+    from corki.protocol.tools import ToolCall
 
     async def scenario():
         class Model:
+            count = 0
+
             async def stream(self, request):
-                item = HostedToolItem(
-                    json.dumps(external_payload("web")), request.items[-1].turn_id, new_step_id()
+                self.count += 1
+                turn, step = request.items[-1].turn_id, new_step_id()
+                item = (
+                    ToolCallItem(
+                        ToolCall(new_tool_call_id(), "external_fixture", {}),
+                        turn,
+                        step,
+                        contains_external_context=True,
+                    )
+                    if self.count == 1
+                    else AssistantMessageItem("done", turn, step)
                 )
                 yield ModelItemCompleted(item)
                 yield ModelCompleted((item,))
@@ -252,6 +277,7 @@ def test_hosted_mark_failure_isolated_but_cancellation_preserves_durable_item(
                 skills_enabled=False,
                 memories_enabled=True,
                 memories_generate=False,
+                memories_background_enabled=False,
                 memories_disable_on_external_context=True,
             ),
             database_path=tmp_path / "sessions.db",
@@ -280,7 +306,7 @@ def test_hosted_mark_failure_isolated_but_cancellation_preserves_durable_item(
                 await collect()
             assert isinstance(events[-1], TurnCancelled if cancel else TurnCompleted)
             stored = await runtime._repository.load_items(runtime.thread_id)
-            assert len([i for i in stored if isinstance(i, HostedToolItem)]) == 1
+            assert len([i for i in stored if isinstance(i, ToolCallItem)]) == 1
             if not cancel:
                 assert "pollution" in caplog.text
         finally:
@@ -311,14 +337,9 @@ def test_hosted_event_survives_compaction_and_actual_history_search_read(tmp_pat
                 self.count += 1
                 turn, step = request.items[-1].turn_id, new_step_id()
                 if self.count == 1:
-                    self.original = HostedToolItem(
-                        json.dumps(external_payload("notification")), turn, step
-                    )
-                    item = self.original
-                elif self.count == 2:
                     assert self.original in request.items and request.tools == ()
                     item = AssistantMessageItem("Archive available; details omitted", turn, step)
-                elif self.count == 3:
+                elif self.count == 2:
                     assert self.original not in request.items
                     item = ToolCallItem(
                         ToolCall(
@@ -329,7 +350,7 @@ def test_hosted_event_survives_compaction_and_actual_history_search_read(tmp_pat
                         turn,
                         step,
                     )
-                elif self.count == 4:
+                elif self.count == 3:
                     result = next(
                         i for i in reversed(request.items) if isinstance(i, ToolResultItem)
                     )
@@ -362,6 +383,7 @@ def test_hosted_event_survives_compaction_and_actual_history_search_read(tmp_pat
                 skills_enabled=False,
                 memories_enabled=True,
                 memories_generate=False,
+                memories_background_enabled=False,
                 memories_disable_on_external_context=True,
             ),
             database_path=tmp_path / "sessions.db",
@@ -370,7 +392,13 @@ def test_hosted_event_survives_compaction_and_actual_history_search_read(tmp_pat
             memory_root=tmp_path / "memories",
         )
         try:
-            assert isinstance([e async for e in runtime.stream("receive")][-1], TurnCompleted)
+            from corki.protocol.ids import new_turn_id
+
+            await runtime._ensure_ready()
+            model.original = HostedToolItem(
+                json.dumps(external_payload("notification")), new_turn_id(), new_step_id()
+            )
+            await runtime._repository.append_items(runtime.thread_id, (model.original,))
             assert isinstance([e async for e in runtime.compact()][-1], TurnCompleted)
             thread = runtime.thread_id
             settings = replace(
@@ -390,7 +418,7 @@ def test_hosted_event_survives_compaction_and_actual_history_search_read(tmp_pat
             assert isinstance(
                 [e async for e in runtime.stream("recall the event")][-1], TurnCompleted
             )
-            assert model.count == 5
+            assert model.count == 4
             assert model.original in await runtime._repository.load_items(runtime.thread_id)
         finally:
             await runtime.aclose()
@@ -440,7 +468,7 @@ def test_cold_recovery_reuses_hosted_fact_without_resampling_original_step(tmp_p
             body = json.loads(request.content)
             requests.append(body)
             if not local_call:
-                assert source in body["input"]
+                assert {"role": "user", "content": item.compatibility_content} in body["input"]
             return httpx.Response(
                 200, text='data: {"type":"response.completed","response":{"id":"new-step"}}\n\n'
             )
@@ -463,6 +491,7 @@ def test_cold_recovery_reuses_hosted_fact_without_resampling_original_step(tmp_p
                 tool_search_mode="native",
                 memories_enabled=True,
                 memories_generate=False,
+                memories_background_enabled=False,
                 memories_disable_on_external_context=True,
             ),
             database_path=database,

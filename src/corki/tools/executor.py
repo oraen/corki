@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from copy import deepcopy
+from dataclasses import replace
 from typing import Any
 
 from corki.context.hosted_output import truncate_output_text
@@ -20,9 +22,12 @@ from corki.protocol.tools import (
     ToolSpec,
     ToolStateUpdate,
     content_text,
+    same_tool_spec,
+    tool_spec_to_payload,
 )
 from corki.protocol.truncation import TruncationPolicy
-from corki.tools.base import ToolContext
+from corki.protocol.wire_numbers import dumps_wire
+from corki.tools.base import ToolCallArgumentParser, ToolContext
 from corki.tools.errors import FatalToolError
 from corki.tools.registry import ToolRegistry, ToolRegistrySnapshot
 from corki.tools.search import ToolSearchTool
@@ -51,29 +56,57 @@ class ToolExecutor:
         if tool is None:
             return self.error(call, f"unknown tool: {call.name}")
         current = registry.spec(call.name)
-        if spec is not None and spec != current:
+        if spec is not None and not same_tool_spec(spec, current):
             return self.error(call, f"tool definition changed since this step: {call.name}")
         spec = spec or current
         if spec is None:
             raise FatalToolError(f"registered tool has no definition: {call.name}")
         if call.input_kind != spec.input_kind:
             raise FatalToolError(f"tool {call.name} invoked with incompatible payload")
-        if call.parse_error is not None or (call.input_kind == "json" and call.arguments is None):
-            return self.error(call, f"invalid JSON arguments: {call.parse_error}", spec=spec)
+        execution_input = call
+        if context.before_tool is not None:
+            execution_input = await context.before_tool(deepcopy(call), tool)
+            if isinstance(execution_input, str):
+                return self.error(call, execution_input, spec=spec)
+        task = asyncio.current_task()
+        cancellations = task.cancelling() if task is not None else 0
         try:
-            if call.input_kind == "json":
-                _validate(call.arguments, spec.parameters, path="arguments")
+            execution_call = deepcopy(execution_input)
+            if call.input_kind == "json" and isinstance(tool, ToolCallArgumentParser):
+                arguments = tool.parse_call_arguments(execution_call)
+                if arguments is not None and not isinstance(arguments, Mapping):
+                    raise FatalToolError("tool call parser did not return an argument object")
+                execution_call = replace(
+                    execution_call,
+                    arguments=deepcopy(dict(arguments)) if arguments is not None else None,
+                    parse_error=None,
+                )
+            elif execution_call.parse_error is not None or (
+                call.input_kind == "json" and execution_call.arguments is None
+            ):
+                return self.error(call, f"invalid JSON arguments: {call.parse_error}", spec=spec)
+            elif call.input_kind == "json":
+                _validate(execution_call.arguments, spec.parameters, path="arguments")
             else:
                 _text(call.raw_arguments, "input")
             # The handler cannot mutate the durable model call's arguments
             # through nested dict/list aliases after the ledger was claimed.
-            result = await tool.execute(deepcopy(call), context)
+            execution_input_json = dumps_wire(
+                {
+                    "version": 1,
+                    "input_kind": execution_call.input_kind,
+                    "arguments": execution_call.arguments,
+                    "raw_arguments": execution_call.raw_arguments,
+                }
+            )
+            result = await tool.execute(execution_call, context)
             result = self._normalize_result(
                 call,
                 result,
                 spec,
                 is_search=isinstance(tool, ToolSearchTool),
             )
+            result = replace(result, execution_input_json=execution_input_json)
             return await self._media.prepare_result(result) if self._media is not None else result
         except FatalToolError as exc:
             raise FatalToolError(truncate_text(_exception_message(exc), 4_000)) from exc
@@ -86,6 +119,12 @@ class ToolExecutor:
             )
         except Exception as exc:  # noqa: BLE001 - tool boundary normalizes failures
             return self.error(call, _exception_message(exc), spec=spec)
+        finally:
+            # A handler (or media preparer) may mask CancelledError with a
+            # return value or cleanup exception. Do not publish that as a
+            # completed result while this execution still has a new cancellation.
+            if task is not None and task.cancelling() > cancellations:
+                raise asyncio.CancelledError
 
     def _normalize_result(
         self,
@@ -106,6 +145,20 @@ class ToolExecutor:
             raise ValueError("result.is_error must be a boolean")
         if not isinstance(result.contains_external_context, bool):
             raise ValueError("result.contains_external_context must be a boolean")
+        discovered = ()
+        if is_search:
+            if any(not isinstance(tool, ToolSpec) for tool in result.discovered_tools):
+                raise ValueError("discovered tool definitions must be ToolSpec instances")
+            # Own the validated definition snapshot, not aliases a handler could
+            # mutate after its result has crossed the execution boundary.
+            discovered = deepcopy(result.discovered_tools) if not result.is_error else ()
+            # Match the durable ledger's encoding before handing it a result.
+            # Never stringify unknown values or let invalid Unicode reach SQLite.
+            encoded_definitions = dumps_wire(
+                [tool_spec_to_payload(tool) for tool in discovered]
+            ).encode("utf-8")
+            if len(encoded_definitions) > MAX_RAW_TOOL_RESULT_BYTES:
+                raise ValueError("discovered tool definitions exceed raw transport limit")
         if result.fallback_token_limit_override is not None and (
             type(result.fallback_token_limit_override) is not int
             or result.fallback_token_limit_override < 0
@@ -129,6 +182,8 @@ class ToolExecutor:
         if not isinstance(result.state_update, ToolStateUpdate):
             raise ValueError("result.state_update must be a ToolStateUpdate")
         plan = result.state_update.plan
+        if result.state_update.plan_explanation is not None:
+            _text(result.state_update.plan_explanation, "plan.explanation")
         if plan is not None:
             if not isinstance(plan, (tuple, list)):
                 raise ValueError("result plan must be an array")
@@ -206,14 +261,20 @@ class ToolExecutor:
             state_update=ToolStateUpdate(
                 plan=plan,
                 new_context_requested=result.state_update.new_context_requested,
+                plan_explanation=result.state_update.plan_explanation,
             ),
-            discovered_tools=result.discovered_tools if is_search else (),
+            discovered_tools=discovered,
             code_mode_output=code_mode_output,
             content_items=parts,
             contains_external_context=result.contains_external_context,
             fallback_token_limit_override=result.fallback_token_limit_override,
             legacy_output_char_budget=spec.output_char_budget,
             is_tool_search_output=is_search,
+            mcp_result_json=result.mcp_result_json,
+            mcp_error=result.mcp_error,
+            patch_delta_json=result.patch_delta_json,
+            post_tool_use_json=result.post_tool_use_json,
+            code_mode_lifecycle_json=result.code_mode_lifecycle_json,
         )
 
     def error(self, call: ToolCall, message: str, *, spec: ToolSpec | None = None) -> ToolResult:
@@ -253,6 +314,27 @@ def _exception_message(exc: Exception) -> str:
     return f"{type(exc).__name__}: {text}".encode("utf-8", errors="replace").decode("utf-8")
 
 
+def _json_equal(value: object, other: object) -> bool:
+    """Compare enum values without Python's boolean/numeric coercion."""
+    if isinstance(value, bool) or isinstance(other, bool):
+        return type(value) is type(other) and value == other
+    if isinstance(value, Mapping) or isinstance(other, Mapping):
+        return (
+            isinstance(value, Mapping)
+            and isinstance(other, Mapping)
+            and value.keys() == other.keys()
+            and all(_json_equal(item, other[key]) for key, item in value.items())
+        )
+    if isinstance(value, list) or isinstance(other, list):
+        return (
+            isinstance(value, list)
+            and isinstance(other, list)
+            and len(value) == len(other)
+            and all(_json_equal(a, b) for a, b in zip(value, other, strict=True))
+        )
+    return value == other
+
+
 def _validate(value: object, schema: Mapping[str, Any], *, path: str) -> None:
     """Validate the JSON-Schema subset used by Corki's built-in tools."""
 
@@ -275,13 +357,21 @@ def _validate(value: object, schema: Mapping[str, Any], *, path: str) -> None:
         "boolean": bool,
         "null": type(None),
     }
-    if isinstance(expected, str) and expected in type_map:
-        expected_type = type_map[expected]
-        if not isinstance(value, expected_type) or (
-            expected in {"integer", "number"} and isinstance(value, bool)
+    expected_types = [expected] if isinstance(expected, str) else expected
+    if "type" in schema:
+        if (
+            not isinstance(expected_types, list)
+            or not expected_types
+            or any(not isinstance(kind, str) or kind not in type_map for kind in expected_types)
         ):
-            raise ValueError(f"{path} must be {expected}")
-    if "enum" in schema and value not in schema["enum"]:
+            raise ValueError(f"{path} has an unsupported type declaration")
+        if not any(
+            isinstance(value, type_map[kind])
+            and not (kind in {"integer", "number"} and isinstance(value, bool))
+            for kind in expected_types
+        ):
+            raise ValueError(f"{path} must be {' or '.join(expected_types)}")
+    if "enum" in schema and not any(_json_equal(value, option) for option in schema["enum"]):
         raise ValueError(f"{path} must be one of {schema['enum']}")
     if isinstance(value, Mapping):
         properties = schema.get("properties", {})
@@ -297,9 +387,10 @@ def _validate(value: object, schema: Mapping[str, Any], *, path: str) -> None:
             child = properties.get(key)
             if isinstance(child, Mapping):
                 _validate(item, child, path=f"{path}.{key}")
-    if isinstance(value, list) and isinstance(schema.get("items"), Mapping):
-        for index, item in enumerate(value):
-            _validate(item, schema["items"], path=f"{path}[{index}]")
+    if isinstance(value, list):
+        if isinstance(schema.get("items"), Mapping):
+            for index, item in enumerate(value):
+                _validate(item, schema["items"], path=f"{path}[{index}]")
         if "minItems" in schema and len(value) < schema["minItems"]:
             raise ValueError(f"{path} requires at least {schema['minItems']} items")
         if "maxItems" in schema and len(value) > schema["maxItems"]:

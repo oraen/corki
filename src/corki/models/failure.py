@@ -31,7 +31,9 @@ class ModelFailure:
         return ModelError(
             self.message,
             kind=ModelErrorKind(self.kind),
-            retryable=self.retryable,
+            # Keep immutable archived facts intact, but do not resurrect the
+            # old policy that automatically retried payment-required failures.
+            retryable=self.retryable and self.status_code != 402,
             status_code=self.status_code,
             retry_after_seconds=self.retry_after_seconds,
         )

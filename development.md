@@ -23,7 +23,7 @@ Corki 使用 Python 和 LangGraph 实现一个以本地代码仓库为工作对�
 
 当前版本明确不实现：
 
-- 命令审批、危险操作判断和用户确认；
+- 命令审批、危险操作判断和完整 CLI 用户确认；MCP 已有独立宿主输入接口，见 README；
 - OS sandbox、网络权限和文件访问策略；
 - 多 Agent、后台 Agent 和代码审查子 Agent；
 - Telegram、Discord、Web、桌面端等其他入口；
@@ -106,15 +106,15 @@ Corki 因此采用“小而明确的 orchestration 层 + 独立 adapter”，不
 
 - LangGraph 显式节点循环：prepare -> model -> evaluate -> tools/continue/finalize/fail；
 - OpenAI-compatible Chat Completions 与 Responses 流式 provider adapter；
-- freeform 原始输入契约：Responses custom call/output，兼容 JSON input wrapper，
+- freeform 原始输入契约：统一普通函数 JSON input wrapper，不发送 custom call/output，
   搜索加载后的定义类型、真实工具调度及持久化回放；不等于 Code Mode 执行环境；
 - 独立的 thinking/reasoning 流式事件、UI 展示、SQLite 持久化和工具回合原样回传；
 - `exec_command`、`write_stdin`、`apply_patch`、`update_plan`、`view_image`；
 - 类型化 assistant/tool/plan/turn runtime events，CLI 实时消费 token delta；
 - provider-neutral `ConversationItem` 协议和逐 item SQLite 存储；
 - context/world-state 变更与本轮 user item 按确定顺序原子写入，当前输入永不参与 pre-step compaction；
-- 每次模型采样冻结 advertised / dispatch 两份工具计划；兼容 provider 只加载已检索的 deferred
-  定义，原生 Responses 则通过 tool_search_output 历史提供定义；
+- 每次模型采样冻结 advertised / dispatch 两份工具计划；所有 provider 统一通过普通
+  tool_search 加载已检索的 deferred 定义，不使用原生搜索输出或 namespace 协议；
 - LangGraph SQLite checkpoint、`corki resume` 和崩溃后 Turn 恢复；
 - 连续历史、保守 token 估算、模型生成的自动 compaction；
 - capability profile、SSE 完整性校验、分类错误、退避重试和 usage；
@@ -428,10 +428,18 @@ START
 `ModelCompleted` 表示一次采样完成，不等于 Turn 完成。Responses 的 `end_turn=false`
 经模型账本和 graph state 保留，即使无工具或无正文也继续；工具调用优先处理。
 未指定继续标志且无工具的有效 completed 可以空正文结束，缺失/畸形协议终态仍失败。
-续接受 `max_steps` 限制。finalize 在检查本次请求未见的已持久化输入后，原子检查队列并关闭
+继续执行仅在宿主显式配置时接受 `max_steps`／`max_tool_calls` 正整数限制；默认不设
+次数上限，仍受上下文、取消和资源准入约束。已有配置中的数值不会被自动删除。
+finalize 在检查本次请求未见的已持久化输入后，原子检查队列并关闭
 接收；存在新输入时返回 prepare。关闭后的 steer 抛出专门错误，CLI 保留为下一 Turn 输入。
 输入 dequeue 不等于已记录；稳定 item id + 写入后 ack 支持失败/取消收尾的幂等补写。
 普通和 realtime 模式的 cancel_active 现在都取消 Runtime 持有的 TurnRun。
+第113批补齐CLI的输入所有权：realtime输出consumer与read_message任务统一cancel/join；
+重复取消不再次打断prompt清理，正常完成或renderer错误也不能遗留输入reader。事件渲染器
+显式关闭支持aclose的Runtime迭代器，避免错误路径靠GC才释放Turn；普通async iterator
+没有aclose时仍兼容。清理错误按类型记录，不泄漏prompt数据或替换原始错误/取消。
+实际LangGraphRuntime验证取消、正常完成、renderer失败及重复取消/清理失败组合。
+这只是MCP elicitation宿主输入通道的前置修复，不代表审批、提问、暂停预算或CLI表单已实现。
 graph 的 finalize 只选择结果；TurnRun 的 producer 负责清理与持久化终态，consumer 只转发事件，
 因此暂停消费或 bounded queue 满不会阻止 Runtime 取消收尾。共享 aclose task 等待 active run
 后再关闭依赖；重复取消不会打断 terminal commit，取消某个 close 等待者不会取消实际清理。
@@ -557,8 +565,9 @@ ToolResult  执行状态、模型可见内容、可选元数据
 预计算文档tf权重、倒排候选、query重复词逐项f32累加。索引先完整构建再一次发布snapshot，
 构建失败不会让新specs和旧索引混用；输入与返回的嵌套schema均隔离复制。显式空search_text
 保持空；freeform默认搜索文本含grammar syntax而不含完整definition。同分按注册顺序稳定
-排序，上游HashSet同分顺序不确定；分词normalization/stemming/stopwords与u32 hash身份仍待
-下一阶段对齐，不得由评分测试通过推断完整排名一致。
+排序，上游HashSet同分顺序不确定；tokenizer.py已接入锁定版本的normalization、stemming、
+stopwords与u32 hash身份并有golden验证。Rust直接差分与big-endian运行未执行，不得由评分
+测试通过推断所有查询的完整排名位级一致。
 
 虽然暂不做安全审批，但必须做到：
 
@@ -589,6 +598,16 @@ MCP 的 per-server wait_for 到期返回“执行结果可能未知”的 Observ
 
 ## 10. 上下文层
 
+`[tools].deferred_tool_world_state` 默认false，对齐Codex同名实验开关；search_mode=disabled
+时不注入目录。Runtime组合DeferredToolsContextContributor，ContextBuilder只提供通用
+StepContextContributor入口，接收本Step已捕获的ToolSpec tuple，不在await后重读registry。
+prepare、steering、token-budget手动reset均传入对应冻结定义；搜索handler缓存包含来源目录
+Include/Omit策略。目录是非默认deferred namespaces，不是MCP source标签，也不是完整schema。
+world_state按完整版本化map比较，只对模型文本应用首行250字符/XML转义/4096字节限制；
+支持增改、删除、最后删除提示和压缩后全量注入。未知旧metadata回退完整目录。
+空map仅作为Corki静默比较记录，下次非空按Absent处理；Codex不持久化空section。
+Markdown片段保留Corki资源的末尾换行，并计入字节预算；metadata不使用Codex RFC7386 wire。
+
 `ContextBuilder` 使用固定顺序构造模型输入：
 
 ```text
@@ -601,13 +620,29 @@ MCP 的 per-server wait_for 到期返回“执行结果可能未知”的 Observ
 ```
 
 顺序是存储与模型请求共同遵守的不变量，而不只是 UI 展示约定。每个 model step 先形成候选
-上下文；若预计超阈值，只压缩此前已经存在且未受保护的历史。Turn 开始前压缩的模型可见顺序是
+上下文；若预计超阈值，摘要请求使用此前已经接收的历史，不包含尚未接收的 pending input。
+mid-turn 已接收的当前 user 仍要进入摘要请求，和其原文副本的保留是独立规则。
+Turn 开始前压缩的模型可见顺序是
 `保留的旧 user -> compaction -> 当前 context -> 当前 user input`；工具回合中的 mid-turn 压缩会把
 当前 context 放在最近一条保留 user 之前，并把 compaction summary 放在最后，与 Codex 的注入语义
 一致。存储仍保持 append-only，因此 checkpoint marker 会先物理落库，再通过 marker 中的 replacement
-长度和 summary index 重建上述模型顺序。当前用户消息必须以原文保留，不能先交给摘要模型改写。
+长度和 summary index 重建上述模型顺序。当前用户消息的保留副本不由摘要模型改写。
 没有触发压缩时，context diff 与 pending user item 在同一次 repository append 中提交，保证崩溃
 恢复仍保持顺序。
+
+本地 CompactionItem 的摘要正文仍以原值持久化；HTTP 与历史读取视图共享
+prompting/compaction.py，在投影时添加固定 Codex 交接前缀并使用 user 角色，不能把
+模型生成的历史提升成 system/developer 指令。Responses 的 compaction.summary 分类
+继续服从 provider metadata 与 content_item_kinds 门；估算包含完整前缀及分类成本。
+旧 checkpoint 无字段迁移，ID、append-only 档案、summary index 和当前输入保护不变。
+opaque remote compaction 与 Token Budget reset 不套用本地文本前缀。
+
+第161批本地摘要输入：不再因为本地 token 估算过大而在请求前删除历史。按 compact.rs
+先提交已接收的模型可见历史，仅在 provider 返回 ContextWindowExceeded 后删除最老完整
+message/tool pair，并重置本地 retry 计数。不采集或回传官方 turn-state 路由令牌；通用重试/取消语义保留。
+只剩摘要请求仍被 provider 拒绝时终止，不无限删减或重新采样；取消保留原始记录。
+普通请求和压缩后窗口的预算检查没有移除；remote/Token Budget 路径不受此改动影响。
+当前仍有 pre-turn 触发估算、保留 user 的预算/选择及其他 C 项差异，不代表完整压缩对齐。
 
 文本估算对 ASCII/code 使用约 4 字符/token，对 Unicode 使用更保守的 UTF-8 权重；图片采用与
 Codex 相同的 resized 固定预算，`detail=original` 对常见图片格式按 32px patch 估算并设置硬上限。
@@ -633,9 +668,23 @@ audio/wav、audio/mpeg、audio/mp4、audio/webm、audio/ogg，检查严格base64
 时长估算是独立逻辑：现有PCM/float WAV实际字节解析继续用于tiny clip与token估算，
 压缩音频的Symphonia等价容器duration探测及32项缓存仍未完成，不能把规范化等同于时长支持。
 
-项目指令遵循 Codex 的层级策略：从项目根到当前 cwd 逐级查找 `AGENTS.override.md`/`AGENTS.md`，
-同目录优先 override，越接近当前目录的指令越具体。不越过 Git/project root，并按 root 到 cwd
-的顺序分配总字节预算；无效 UTF-8 使用 replacement character 保留其余有效指令。
+项目指令从最近配置 marker（默认仅 `.git`；无 marker 时仅 cwd）到当前 cwd 查找
+`AGENTS.override.md`/`AGENTS.md`/配置 fallback；先完成所有候选发现再按 root 到 cwd
+分配总字节预算，无效 UTF-8 使用 replacement character。空白项目 override 遮蔽 default，
+但不扣减预算。全局 home provider 独立加载 override/default，空 override 会回退，
+读取失败警告后尝试 default；global 不占 project_doc_max_bytes，也不受 project trust 禁用。
+全局指令在 root Runtime 创建/冷重开时加载；non-root 不自行重读home，可由宿主显式
+传入父快照，Guardian 两种来源不继承。完整活父查找/root fork/多环境API仍未实现。
+
+InstructionManager 是会话所有者：环境、权限及 host trust 不变时不因文件编辑刷新。
+初始化失败或取消会在读取任务 join 后丢弃未发布快照，下一次创建尝试重新读取。
+项目指令读取必须遵守显式执行权限；受限策略在固定 sandbox helper 内发现和读取，
+失败在采样前拒绝；非受限项目读取异常保留 global 并发出警告。配置支持
+`project_doc_max_bytes`、`project_doc_fallback_filenames`、`project_root_markers`；
+第199批接入显式用户配置中的 `[projects]` active trust 选择，联动项目指令、已配置
+执行的默认审批与隐式profile；第200批接入本地用户/项目配置层准入、来源目录与规则加载。
+完整system/cloud/MDM/session层及动态环境/权限更新宿主链路仍未完成，
+不能视为全部上下文对齐。详见 harness-alignment/audit.md 的当前验证与剩余边界。
 
 工具输出先经过 truncation，再进入模型历史。完整终端输出是否持久化可以后续决定，但不能用
 完整输出无上限地填充 prompt。
@@ -654,7 +703,8 @@ user message:      用户问题原文
 tools:             独立 JSON Schema，不属于提示词模板
 ```
 
-后续同一 Thread 只追加发生变化的上下文，但不从模型历史删除旧版本。AGENTS 更新/删除
+后续同一 Thread 只追加发生变化的上下文，但不从模型历史删除旧版本。AGENTS 文件编辑
+本身不使当前 Runtime 快照失效；冷重开加载的快照与旧历史比较后，更新/删除才
 追加 replacement/removal notice；其它当前整段 contributor 使用显式 keyed replacement
 兼容语义，尚不等于所有 Codex section 的专属 diff。`ContextItem.content` 是已渲染消息，
 可选 `snapshot_content` 保存未带 notice 的比较值（空串表示删除），只比较当前 compaction
@@ -706,6 +756,7 @@ SESSION -> REALTIME -> PROJECT_INSTRUCTIONS -> PERMISSIONS
 ├── memories/                   # 分层检索文件，不是业务事实主存储
 └── sessions/
     ├── corki.db                 # thread/turn/item/tool + memory job/output
+    ├── corki.db.thread-writer-locks/ # canonical Thread 的存活写入所有权
     └── checkpoints.db           # LangGraph node checkpoint
 ```
 
@@ -719,6 +770,43 @@ SESSION -> REALTIME -> PROJECT_INSTRUCTIONS -> PERMISSIONS
 - `LongTermMemoryService`：后台执行每 Thread 的 Phase 1 抽取和全局 Phase 2 合并；失败只记录
   warning，不能拖垮交互 Turn；发布前模型失败保留旧文件，发布中的多文件 I/O/crash 原子性仍未完成；
 - `LangGraphRuntime`：管理创建、完成、失败和取消，不写 SQL。
+
+Runtime 在首次 Thread 初始化之前取得 OS-backed writer lock，跨 Turn 持有，全部关闭清理
+结束后释放。同一 resolved 业务库路径与 Thread ID 的竞争者在输入/采样前收到
+ThreadWriterConflict；不同 Thread 可以并行。锁文件名是 opaque Thread ID 的 SHA-256，
+独立 coordination lock 串行化 acquire、stale cleanup 和 close/unlink，避免活跃 inode 被
+误删。没有按 PID、TTL 或等待时长猜测死亡；进程退出由内核释放锁。
+阻塞锁操作在线程执行，取消时 join 已启动 acquisition 并关闭返回的 guard。初始化失败可重试，
+关闭错误在其余资源清理和释放 writer 后报告；取消 close waiter 不取消共享清理任务。
+这是合作 Runtime 的本机写入所有权，不保护任意直接 SQL/管理元数据写入，也不涵盖 hard-link
+别名、分布式锁或完整安全沙箱。macOS 实际跨进程竞争/退出恢复已测试；Windows 分支尚未执行。
+
+单 Thread 归档由 sessions/archive.py 的宿主控制器驱动：Runtime.archive 先检查已有 canonical
+history，再关闭当前 Runtime，最后调用 archive store。关闭等待上限10秒，超时/关闭错误先记录，
+存储仍必须取得同一 writer 锁；不能据超时抢写。取消已接纳归档时 join 真实任务。独立
+storage/thread_archive.py 使用 SQLite 事务更新 archived_at，不复制虚构的 JSONL 文件，不删除
+history、checkpoint、tool ledger、模型配置、source 或 memory_mode。旧库迁移只补 NULL 列。
+archive 保留 updated_at；unarchive 清 archived_at 并刷新 updated_at，因此重新开始 idle 窗口。
+普通 Runtime/CLI resume 拒绝归档源，latest 排除归档；显式 include_archived=True 是宿主选择的
+底层 core 路径，读取/继续执行不会自动取消归档。关闭后的 Runtime.unarchive 只恢复集合，继续
+对话需要新 Runtime；自定义存储可注入 ThreadArchiveStore，并负责共享写入所有权。
+Stage1 在 scan limit 前排除 archived_at 非 NULL 的源；Phase2 既有 derived inputs 仍按原来的
+memory_mode/retention 规则筛选，不把归档误当遗忘。当前只覆盖单 Thread host API，尚无 spawned
+subtree 关闭/部分成功语义、app-server 通知或 CLI archive 命令；不能因此宣布完整 A/D 对齐。
+
+宿主可传 Runtime.create(ephemeral=True) 创建独立非持久化会话。VolatileSessionRepository
+复用 canonical SQL 的身份校验、tool claim、model/partial/failure 事务，但使用独占 :memory:
+连接，以 RLock 串行化完整工作线程事务，temp_store=MEMORY。graph saver 同样使用 :memory:
+及内存临时表，不生成业务库/checkpoint/writer 文件。连接在 fallible 扩展装配后才分配，Runtime
+构造失败同步释放，正常/取消关闭在 join 所有写入者后释放。默认持久化路径不变。
+内部 consolidation worker 已选择此真实路径；其 artifact 工作副本可以存在，但不再以删除
+临时数据库作为 ephemeral 实现。临时会话仍能多 Turn、按需检索/执行、压缩与同一进程内状态
+恢复；无后台memory pass，无持久化memory-mode/archive控制。read-memory prompt/tools仍按
+原feature/use开关可用，repository可为None，不关闭全部Memory功能。
+该模式拥有私有状态，不接受外部session/archive/memory repository覆盖；新建时不会因传入
+旧Thread ID就导入磁盘历史。完整durable-source fork/resume导入及CLI ephemeral参数仍未实现。
+显式工具写文件、ad-hoc note、独立history/notes服务、provider留存不属于此处canonical会话
+非持久化保证；不声称安全擦除、无任何文件写入或权限沙箱。
 
 Phase 2 在工作期间 heartbeat 续租；workspace 写与最终 publish callback 在 SQLite matching-token
 写事务内执行，不能先覆盖 artifact 再检查 owner。阻塞写已经启动时，取消需要 join 真正的 worker，
@@ -735,8 +823,10 @@ Corki 缺失的能力；当前已验证部分写失败重试和 baseline 已写�
 
 模型 step 的 usage、metadata 和 items 在一个事务内提交，并以
 `(thread_id, turn_id, step_index)` 幂等读取，消除业务提交与 graph checkpoint 之间的重复采样
-窗口。工具执行先 claim ledger：完成后可复用；若进程死于外部副作用之后、结果提交之前，状态
-记为 `interrupted` 并返回“结果未知”，不会擅自重复副作用。
+窗口。工具执行先 claim ledger：完成后可复用；若进程死于外部副作用之后、结果提交之前，恢复
+遇到未完成的 claim 时返回“结果未知”，不会擅自重复副作用。构造 repository 不再全库把 running
+改成 interrupted，否则另一个仍存活 Thread 的工具会被误判；旧 interrupted 与未完成 running
+都不能凭状态名推断安全重放。
 
 复用前同时核对 thread、turn、tool name 和 arguments_sha256；解析后的 JSON 忽略空白/键顺序，
 非法 JSON 按原始参数区分。旧 ledger 缺参数证据时返回 unverified，不补写猜测的 hash 或复用旧结果。
@@ -763,8 +853,8 @@ Codex 默认 Stable 的 unbounded_connection_retries 已映射为 provider 同�
 true）。请求层耗尽后，主采样 CONNECTION 错误采用独立 5→10→20→40→60s 退避，
 不消耗 model_max_retries。
 普通 TRANSPORT/流错误使用有界预算；两类等待都能取消/steer，结束前 join sleep/input tasks。
-connection counter 持久化，崩溃后不会重新从 5s 开始。关闭开关或显式 provider_name 为
-bedrock/amazon_bedrock 时有界；没有原生 Bedrock adapter，不以名称分支冒充平台支持。
+connection counter 持久化，崩溃后不会重新从 5s 开始。显式关闭开关时有界；
+provider_name 不改变重试策略，没有原生 Bedrock adapter，不按名称启用专属分支。
 内部 memory/compaction 请求不进入主图无界路径。图递归保护不替代逻辑 Step/tool 上限，也
 不能提前切断持续网络恢复。当前仅 HTTP，没有 WS session，因此没有 WS→HTTPS fallback。
 
@@ -800,8 +890,14 @@ running Turn 和 checkpoint 时从 node 边界继续，否则由已持久化 use
   本地开发兼容，必须使用 `0600` 权限且不得提交；
 - `[provider]` 可配置 `thinking` 和 `reasoning_effort`；reasoning 作为独立消息字段保存、计入
   context 预算，并在工具续接请求中按 provider 要求回传；
-- `[memories]` 默认关闭；`enabled` 是总 feature gate，`generate` 和 `use` 分离，
-  `dedicated_tools` 单独控制 scoped memory tools；
+- `[memories]` 默认关闭；`enabled` 是总 feature gate，`generate` 只决定新 Thread 的来源资格，
+  `use` 控制召回，`dedicated_tools` 单独控制 scoped memory tools；Corki 专属
+  `background_enabled`（默认 true）暂停自动后台任务，不能再把它与 generate 混为一谈；
+- 自动记忆 pass 在每个新普通输入 Turn 首笔持久化完成后启动；初始化、手动压缩、pending
+  恢复和 steer 不启动新 pass。所有并发 pass 都由 service 持有，DB claims 仲裁重复工作；
+  wait 只观察已经接收的任务，返回最新报告，取消 waiter 不取消后台工作；close 先取消/join
+  全部 pass，再关闭依赖。此前使用 generate=false 暂停后台的配置应显式增加
+  background_enabled=false，不自动重写用户配置；
 - 配置在 Turn 开始时生成不可变快照；
 - prompt 正文存放在项目根目录 `prompts/`，按 `agent`、`modes`、`context`、`tasks` 分类；
 - wheel 构建时将根目录资源映射到 `corki/_prompt_templates`，运行时优先使用
@@ -891,9 +987,19 @@ running Turn 和 checkpoint 时从 node 边界继续，否则由已持久化 use
 - external MCP 污染策略、过期 lease 接管、失败退避、旧 artifact 保留和 symlink 边界均有测试。
 
 与当前 Codex 一致，这不是 embedding/vector RAG。它用模型做语义抽取和归并，用小型 summary
-路由，再对 Markdown 做关键词搜索和按需读取。Corki 当前 Phase 2 直接使用隔离的 `ModelPort`
-请求；Codex 使用内部 consolidation sub-agent。等 Corki 开启多 Agent 后，可替换 orchestration，
-但不能据此认定 repository、artifact 或 read path 契约已经一致；完整差异以源码审计为准。
+路由，再对 Markdown 做关键词搜索和按需读取。Corki 当前 Phase 2 已使用独立临时 Runtime，
+复用正常多 Step、工具调度、Observation、上下文和关闭流程，不再用单次 ModelPort 请求
+替代合并 Agent。它借用模型传输但不关闭父传输；禁用递归记忆、MCP 和插件。
+合并说明是用户任务，历史证据是独立 ContextItem，不触发显式输入的技能展开；保留正常
+base instructions、环境、规则、用户/系统及配置目录技能。规则和工作目录技能以原始记忆
+目录为发现来源，工具 cwd 则是暂存副本；父线程历史和插件能力不继承。
+可编辑产物后返回普通完成正文，也保留完整 JSON 产物的兼容输出。确认子 Runtime 关闭
+后才通过既有租约检查发布并更新基线。关闭等待上限 10 秒，超时/失败保留 Runtime、
+关闭任务、副本和租约；晚到的关闭成功只回收副本，不发布记忆或更新作业/基线。
+失败状态通过 retained_workers 和 warnings 保留；父服务的关闭等待独立有界，取消
+等待者不放弃共享清理。这是进程内任务所有权，不是重启后恢复操作系统进程。
+暂存不是 OS 沙箱，跨文件/SQLite 原子性、权限配置及完整原生配置/模型指令对齐仍未完成；
+不能据此认定 repository、artifact 或 read path 契约已经一致，完整差异以源码审计为准。
 
 记忆阶段model按显式memories.extraction_model/consolidation_model→provider的
 memory_extraction_model/memory_consolidation_model→固定Codex默认gpt-5.6-luna/
@@ -910,7 +1016,29 @@ running lease总量。每来源最多3次记录失败，新版本才重置次数
 新提取任一raw/summary为空时成功删除旧stage1输入，实际删除才enqueue合并；产物同步去掉
 旧rollout summary，最终MEMORY.md仍由合并发布，不在提取节点直接改写。旧库新增列时保持
 既有owner/lease/backoff，无法还原的历史失败次数从3开始。完整来源类型/归档/ephemeral、
-启动quota、远程模型目录和完整Phase 2策略仍是开放对齐项。
+官方账户 quota、官方认证及远程目录属于用户明确排除项；Phase 2 核心策略仍需逐项核对。
+
+已领取提取的提交按running job的owner校验，不因Thread后来禁用/污染或更新时间改变而
+拒绝已采样结果。开关用于领取和Phase2选输入，不能把DB保留等同于继续召回；重新启用后
+原提取可再次被选入。产物upsert只允许来源版本不早于已存版本，等版本允许刷新；精确解析
+UTC/offset/legacy时间避免julianday丢失微秒而误覆盖更新内容。job成功、水位、产物和enqueue
+同事务，失败回滚，取消join已开始写线程。空输出仍删除旧输入，不另加版本过滤。
+
+Thread来源开关现通过Runtime.set_thread_memory_mode和/memory mode enabled|disabled
+持久化，普通/realtime CLI都不采样或steer模型。当前Thread可在首Turn前materialize；
+显式其他UUID只能更新已存Thread，缺失报错，不创建虚假来源。SessionRepository初始化同一
+memory_mode列，旧库无列默认enabled、已有mode保留，不依赖可选memory service或生成开关。
+公开枚举仅enabled/disabled，polluted继续由内部污染流程负责；不修改global generate/use、
+source更新时间、jobs、水位、历史或已发布内容。宿主控制器串行写入，取消join已开始的创建/
+更新；Runtime关闭立即拒绝排队操作，等待已拥有写任务后才关闭repository。自定义会话存储
+必须实现setter，不能把缺能力当成功。完整archived/ephemeral和live全局配置联动仍未对齐。
+
+新Thread的初始mode现由memories_generate决定，独立于feature enabled和recall/use；
+Runtime._ensure_thread把typed mode交给SessionRepository.create_thread的keyword参数，
+SQLite在同一INSERT中写入，不留下先enabled后改disabled的跨连接窗口。INSERT OR IGNORE
+保留已有Thread的显式/polluted模式、cwd和历史，重开时不按当前配置覆盖；旧库已有行不
+追溯禁用。直接storage调用省略keyword仍默认enabled；自定义Runtime session adapter需
+接收该创建元数据，不支持时明确失败，不能静默忽略禁用请求。
 
 提取使用memory/transcript.py对原始append-only items构建provider-neutral JSON档案，不
 使用active_history，也不伪造历史provider wire字段。保留调用ID/结果ID、freeform输入、
@@ -948,6 +1076,27 @@ memory/inputs.py的源码式截断按4 UTF-8 bytes/token保留头尾各半并附
 用generic max272000替代Luna/Terra的max872000。该静态快照不是实时provider容量保证，
 远程/缓存权威性、主模型默认配置来源以及原生phase2 agent上下文仍未宣称完成。
 
+Thread preview由SessionRepository在canonical UserMessageItem写入事务中维护，首个有效值
+不被后续消息覆盖；Rust Unicode trim及用户前缀剥离后非空文本优先，其次图片/音频占位。
+ContextItem(user角色)、assistant和压缩retained副本不提供来源资格。旧库在legacy message
+迁移后、同一schema事务中回填，不改原始历史或updated_at。Stage1 SQL在scan LIMIT前排除
+空preview，不要求源Turn成功。
+
+SessionSource为宿主类型，不从模型metadata推断；Runtime.create传入，create_thread初建时
+持久化，重开不覆盖原来源。CLI传Cli、内部合并传Internal(memory_consolidation)，通用宿主及
+旧库默认VSCode。当前启动者Internal/SubAgent跳过后台pass，root Exec/Mcp不被误禁用。
+历史来源SQL在scan前匹配cli/vscode/atlas/chatgpt；固定Codex版本的Custom写入JSON而
+allowlist使用Display，canonical Custom(atlas/chatgpt)并不命中，legacy裸字符串仍命中。
+保留该实际区别；读取未知持久化tag降为Unknown，外部startup前缀不赋予内部来源身份。
+后台服务构造不再准备目录；run_once先执行cancellation-owned准备，失败告警返回failed报告、
+不prune/claim、不失败主Turn。显式dedicated工具backend初始化是独立路径。单Thread归档和
+独立RAM会话见第11节；完整ephemeral源导入、subtree、动态认证和父权限继承仍未关闭，不把
+source门当作这些功能的替代。
+
+官方账户配额路径已按用户范围排除：移除专用传输、解码和记忆启动门禁。
+记忆只使用配置的模型服务，不查询 Codex/ChatGPT 账户。旧配额阈值不再读取；
+普通模型限流错误与后台失败隔离继续保留，通用 MCP OAuth 不受影响。
+
 生成pass开始前经MemoryRepository.prune_stage_one_outputs清理最多200条未selected的
 过期输出；recency=last_used_at或source_updated_at，不使用generated_at。清理不删除
 jobs/成功水位、conversation或直接改写已发布MEMORY，失败告警继续，取消会等待已启动的
@@ -959,6 +1108,19 @@ thread_id DESC；结果另按thread_id ASC返回。usage port按每个输入信�
 
 Phase2领取不使用DB水位作为dirty gate：缺行也可原子创建/领取，持锁后同步输入并检查
 workspace指纹/产物合法性。成功（含无变化跳过采样）后默认冷却6小时；新输入不绕过。
+同步输入在既有SQLite owner写事务内清理扩展过期资源，再采样workspace/检查baseline。
+只处理带instructions.md的extension中resources/直接regular .md文件；文件名UTC时间戳
+达到七天即过期，不按mtime判断。notes、嵌套目录、其他类型和无效时间戳不删除，链接不跟随。
+单项I/O失败日志告警继续；取消必须join已开始的写线程。过期删除不因后续模型失败回滚，
+旧发布与成功baseline保持，重试仍能看到删除diff；不提供新增归档或conversation遗忘。
+显式reset独立于ad_hoc忘记指令：Runtime.reset_memory与确认后的/memory reset confirm
+清除outputs/两种memory jobs，再清理实际memory root与capability home的memories_extensions。
+预览从Runtime.memory_reset_targets取得真实目录，不由UI猜测。目录本身保留；包含notes、
+skills和私有baseline，无新增备份。线程、原历史、checkpoint与memory_mode不删除，之后仍
+可能重新提取。DB与文件不是原子集合，失败报告database_cleared；旧owner不得晚到发布。
+宿主内串行、开始后的取消join、Runtime关闭先等reset；不声称跨进程阻止新claim或撤回旧
+上下文正文。custom root拒绝workspace/home/数据库祖先等宽泛目标；根链接拒绝、子链接
+仅删除链接。自定义repository需提供clear_memory_data能力，未提供时不删除文件。
 失败retry_at独立于status检查，不因重复启动变pending而失效；run_once不再根据文件/
 stage1是否存在而无条件enqueue。真实提取输入变化或显式enqueue才推进单调水位，并在
 非running时清除退避；保留已有finished_at/error，仍遵守成功冷却。Phase2失败计数会
@@ -968,6 +1130,81 @@ stage1是否存在而无条件enqueue。真实提取输入变化或显式enqueue
 模型合并初始化；失败仍不影响主Turn。完整原生subagent/git diff内容协议仍未声称完成。
 
 ## 14. 测试策略
+
+执行策略增量（第187批）：显式配置execution后，Runtime在Thread/MCP/model之前读取
+home/rules/*.rules，并用固定Codex解析器校验。普通文件按名排序，文件链接不纳入；
+目录缺失忽略，其他IO/UTF-8错误致命；语法错误清空用户规则并告警。有效文本冻结进
+执行快照，普通/Code Mode shell共用Never准入；全部子命令显式allow才可绕过沙箱，
+独立拒读仍有效。Never不是危险命令自动许可，prompt规则在该模式下被拒绝。
+启动失败重试重新加载，冷启动重新加载；显式父快照继承须配置目录/声明来源一致。
+仅复制settings不构成继承，后台记忆新内部会话重新加载。编译器须同时支持
+exec_policy_loaded与exec_policy_checked，否则明确失败。当前只接通home和宿主文本，
+未完成默认无编译器路径、项目/系统规则层、托管exec规则、交互审批、自动规则更新和
+持久化恢复；见native/sandbox/README.md与harness-alignment/audit.md的阶段证据。
+
+第188批已进一步接入托管requirements的[rules].prefix_rules，固定native组合器保留
+各层规则，再与用户规则取最严格结果；非法托管规则致命，坏用户规则回退不删除托管
+约束。父快照复用在native端比较规则指纹及来源，规则重排等价，规则/来源变化重载。
+普通/Code Mode/后台memory均使用捕获的托管规则；编译器新增managed_exec_policy确认。
+该增量关闭上述“托管exec规则未接线”部分，不代表交互审批或整个权限系统完成。
+
+第191批接入显式execution下的规则/危险命令交互审批：顶层approval_policy="on-request"
+或granular策略经native检查后交给独立宿主审批router；CLI共享输入锁但不复用MCP授权。
+accept+remember才缓存精确命令/cwd/tty/环境规则指纹，批准仍受沙箱约束；外部取消join
+审批和准备，表单cancel返回工具错误。后台记忆和基础guardian保持Never。缺少编译器或
+typed shell_approval/exec_approval合同不能静默执行。默认trust选择、提权、规则修改、
+托管审批约束、Guardian/hooks及网络重试仍未完成；不要把此显式路径称为整个审批完成。
+
+第192批接入模型主动require_escalated及justification：Direct/Code Mode共享实际native
+准入和审批，Never/Granular禁用的override先于显式allow拒绝；获准也保留独立deny_read。
+缓存区分原始权限意图，普通命令的批准不能用于提权，提权不修改后续命令/后台策略。
+justification有值时必须显式sandbox_permissions，反向不要求必填justification。
+编译器必须确认model_escalation，未配置execution不能隐式提权。额外权限、prefix_rule/
+规则修改、sticky授权及完整默认/托管审批/网络重试仍未完成；以审计中的最终验证为准。
+
+第193批纠正191的表单cancel结论：Codex客户端Cancel经ExecApproval(Abort)中断整个
+Turn，不等同内部审批receiver的Abort→工具错误。Runtime验证待处理shell token后
+直接触发active run取消，清理并行审批/Code Mode且不再采样；迟到/伪token不能中断新Turn。
+Decline仍是Observation错误，MCP取消语义未改。Python stream继续遵循既有约定：
+先发TurnCancelled，再抛CancelledError。见审计中本批最终验证，不再引用旧cancel测试
+作为一致证据。
+
+第194批接入prefix_rule候选→宿主once/session/rule选择→native文件锁追加→会话overlay及
+冷启动规则读取。模型候选不自动授权或落盘；保存失败发Warning但保留当前批准，不发布
+规则或附带session缓存；取消join已授权保存后终止模型命令。native按所有解析命令验证
+候选并应用原生fallback，缓存使用原executable+native canonical command。已存在的
+model_specialty=cyber元数据现在经ToolContext抑制用户Allow前缀/规则建议，保留其他规则。
+managed auto_review.ignore_rules、动态父snapshot继承、Guardian/网络重试和额外权限仍
+未完成。规则保存不是原子rename/fsync事务；实际原生append合同与验证见审计及native说明。
+
+第195批将实际执行策略接入模型上下文：配置执行权限时复用固定Codex原生渲染器，
+未配置compiler的legacy路径明确显示Disabled/Never。默认发送权限说明；顶层
+include_permissions_instructions=false切换为原生简略模式（初始静默、仅通知新前缀）。
+已保存规则只追加增量，删除规则/压缩丢失基线时重发完整说明，失败保存不误报成功。
+与工具执行共享会话规则owner、用户规则过滤及独立托管overlay；实际接入Direct/CodeMode，
+包含跨Turn、冷恢复及手动压缩组合验证。渲染使用有归属、可取消的native子进程及单视图缓存；
+旧compiler缺typed ack会在模型采样前显式失败，须重建，不会猜测权限或静默省略。
+30KB/10000估算token硬边界拒绝超大权限片段，不截断策略；模型自定义权限文案、自动审批者
+和额外权限工具仍需另行对齐。全量/安装态阶段证据见审计，不以本段表示A–E整体完成。
+
+第196批接通models.catalog的审批/权限文案：缺失/null回退、空串抑制；文案进入类型化
+ModelContextInfo、业务snapshot和白名单checkpoint，并保留内置目录覆盖。权限文字只
+替换精确network占位符，其他内容原样保留；legacy Disabled/Never与原生渲染逐字对照。
+消费者保持该参考版本的冻结Turn模型语义，Step切换不提前改文案，下个Turn可采用新文案。
+覆盖审批说明不取消保存规则的独立增量通知，也不关闭实际Never/沙箱执行检查。native
+需要新model_permission_messages确认位；模型文案数据不等于自动reviewer或Guardian实现。
+
+第197批为宿主显式父子Runtime增加execution_policy_handle：与旧不可变快照入口兼容，
+但只有配置目录、声明sources和native managed identity一致才共享后续规则更新与锁。
+每会话独立保留落盘路径、审批router/session cache、进程和关闭；权限上下文与执行端
+读取同一live状态。handle不进入持久化字段，跨event-loop拒绝，basic guardian及独立
+memory不自动共享。这不是完整AgentControl/fork实现；本批未更改native协议或二进制。
+
+第198批将保存与live发布分开：共享锁内捕获完整current policy，由native先append再检查
+提案是否已有真实Allow覆盖；被覆盖的窄规则仍落盘，但不额外发布或通知。raw用户规则、
+当前live前缀和managed约束均参与，不以磁盘重读或cyber模型过滤视图替代。需要重建桥接
+以返回独立typed publication确认；旧/非法ack仅警告并保留当前批准，不发新授权或自动重试。
+取消继续join写入与发布，匹配结果不改变当前命令的既有审批/沙箱意图。
 
 ### Unit
 
@@ -1039,6 +1276,25 @@ python examples/extensions_demo.py
 测试的必要条件。
 
 ## 17. 下一步
+
+CLI 冷恢复先读取 Thread 的 model/provider/selected effort 元数据，再在 composition
+root 解析配置和构造 Runtime。任一显式 model/provider/effort 覆盖跳过整组持久化值；
+旧库无记录时使用当前配置，记录中的 effort=None 则清除新配置 effort。provider 身份
+与 adapter capability name 分离；从当前命名 profile 解析传输与凭证，不从历史恢复密钥。
+Runtime 初始化在 checkpoint 编译成功后、Turn admission 前以 cancellation-joined 写入
+完整组；写入失败关闭本次 checkpoint，不能继续采样。该记录不是业务历史 item，不受
+压缩替换影响，也不修改 memory source mode。
+
+独立 `update_thread_settings` 只更新未来 Turn 的模型/effort/summary/tier；与 admission
+共用生命周期锁，取消等待者也必须等待持久化和内存发布结束。已接纳 Turn 使用独立 graph、
+window 和技能预算视图，共享 Thread body-prefix 状态。模型选择与 ModelInfo 快照随首次
+TurnRecord 原子落库并进入 checkpoint；恢复校验两份快照和 provider 身份，终态写入保留
+原快照。它不是全部 Config 的持久化。Code Mode 已接纳调用保留原 worker，新调用进入
+当前 worker。`step_model_switching` 默认关闭；独立 `update_turn_settings` 为同一个存活任务
+串行解析并发布稀疏更新，不改变未来 Turn 默认值。capture 节点在异步 prepare 前以同步
+checkpoint 持久化；采样、重试与工具使用捕获的视图，工具策略/预算限制仍属于接纳 Turn。
+恢复不重新解析已捕获 metadata；尚未被捕获的更新不承诺跨崩溃持久化。当前只覆盖无托管
+审批、固定 full-access 的 host 路径；托管审批、reviewer、环境和协作模式更新仍未完成。
 
 当前已有纵向闭环和离线测试，不代表恢复、长任务稳定性与长期记忆已完整对齐。
 优先完成 [Harness 源码审计](harness-alignment/audit.md) 中的差异修复与验收；
@@ -1131,7 +1387,7 @@ no/off不再被PyYAML的YAML 1.1规则解释成false，quoted false也不作为b
 
 在 `config.toml` 的 `[mcp.servers.<name>]` 配置 `transport = "stdio"` 加 command/args，或
 `transport = "http"` 加 URL/headers。Manager 在 graph 编译前初始化各 server、分页调用
-`tools/list`，并注册为 `mcp__<server>__<tool>`。每个 server 独立失败；工具结果和异常仍经过
+`tools/list`，并注册为 `mcp__<server>::<tool>`。每个 server 独立失败；工具结果和异常仍经过
 统一 ToolExecutor 的 schema 校验、输出预算和 runtime event。资源侧通过
 `list_mcp_resources`、`list_mcp_resource_templates`、`read_mcp_resource`、
 `list_mcp_prompts`、`get_mcp_prompt` 聚合，但 JSON-RPC 始终留在 MCP 包内，core 不直接处理。
@@ -1145,6 +1401,17 @@ no/off不再被PyYAML的YAML 1.1规则解释成false，quoted false也不作为b
 中消费刷新，先暂存后发布，取消恢复 pending。已准入调用保留精确连接，旧连接在调用释放
 后关闭，不能重放副作用；尚未准入调用先解析最新 binding，移除的 server/tool 返回错误。
 普通 registry 仍然 sealed，只有 composition 时取得的 owner 能原子替换自己名下工具。
+
+第95批接入整个暂存catalog的canonical namespace/leaf命名：ASCII字母数字下划线保留，
+其他字符（包括连字符）转下划线；同一raw工具首条保留，sanitized namespace/leaf碰撞双方
+加SHA1/12位后缀，按raw identity排序分配namespace+两字节预留+leaf总长<=128的名字。
+标准MCP不信任tool._meta的connector信息，namespace说明来自initialize，独立512KiB字节上限。
+搜索文本的flat identity严格按Codex helper直接拼接namespace与leaf，不额外插入分隔符；
+这与hook式展示名及兼容provider的hash alias不同。空namespace说明在native wire保持空。
+`[tools].non_prefixed_mcp_tool_names` 默认false；启用后server列表缺省=全部去前缀，
+空列表=不去前缀，非空列表按原始server名选择。Raw server/tool路由不随canonical改名变化。
+旧历史/账本不改名，compatible旧发现失效后重新检索；native历史原样保留。工具目录不能覆盖
+claim返回的已验证完成结果、结果未知拒绝或call-id冲突错误，也不能猜测旧扁平名的新执行目标。
 模型 Step 使用隔离的 schema 快照；源码参考的后台预热、auth/environment 自动失效和完整
 MCP surface policy 尚未全部实现，不将显式刷新描述为所有动态路径一致。
 
@@ -1168,7 +1435,310 @@ prepare 发布搜索入口前构建，handler 冻结语料、不持有 registry�
 dispatch 使用当前 Step 的设置，历史结果内容保持原样。schema、名称、来源、输入类型和
 曝光策略变化仍按兼容路径的身份约束处理；原生历史保留不等于绕过当前 router 的可调用
 集合。这两种路径不能再用同一个“注册表变化就清空旧搜索结果”的规则处理。
-namespace wire、DeferredToolWorldState 的增量来源/Omit 仍待对齐。
+第94–95批已接入namespace wire与DeferredToolWorldState增量目录/Omit策略；完整动态来源、
+hosted provenance和catalog revision仍未对齐。
+
+第96批接入server级enabled_tools/disabled_tools：可选字符串数组按原始remote name精确
+匹配，不trim/改大小写，不接受canonical/provider alias作为替代。enabled缺省全允许，
+空数组全禁用，disabled优先。每个暂存连接持有冻结集合；先过滤再生成MCPTool并参与全局
+命名，过滤掉的碰撞项不影响剩余名称。Manager实际调用准入在remote调用/污染回调之前
+再次检查；刷新失败不改变旧发布策略，重试成功应用新策略。已准入调用不追溯取消或重放。
+配置经普通TOML与插件MCP声明同一路径加载；资源/prompts不受工具名单影响。这不是OS
+权限、交互审批或完整Codex连接复用/动态配置事件机制。
+
+第97批将MCPConnection变为独立策略/调用视图，MCPTransportOwner持有共享物理client和
+初始化时未过滤catalog。request_mcp_reconcile经同一prepare/准入gate应用完整配置和
+metadata；健康同identity连接不重启、不重列工具，新视图的filter/输出预算/timeout/污染
+metadata不覆盖已准入旧调用。retire释放单个视图，最后视图在其调用结束后才关闭transport；
+暂存回滚释放复用引用而不关闭当前发布连接。request_mcp_refresh与/mcp refresh仍强制重连。
+force请求不会被后来的reconcile抹掉，取消/发布失败恢复已领取的force标记。
+HTTP URL/headers或stdio command/args/cwd/env配置参与hashed identity；不打印凭据。
+HTTP关闭状态、stdio退出或reader结束阻止复用。第98批将stdio环境改为默认名单与显式
+env_vars引用；identity保留引用形式、顺序和非remote引用的父进程值，不再跟踪全量环境。
+即使literal覆盖同名值，显式引用值改变仍失效；未引用的默认环境变化不自动重启。
+超时按client身份+task上下文绑定，
+HTTP request和wait_for都使用当前调用值，不修改共享client.settings；多个资源lease可共存。
+配置更新不持久化或自动watch文件，尚未接入OAuth/remote环境/pending启动复用和完整catalog
+revision授权路径。原始历史与已记录结果不改写，冷启动按调用方提供的当前设置重新建连接。
+
+第159批普通MCP用户审批：`[mcp] approval_policy`只接受`never`与`on-request`；默认
+never对应当前无OS沙箱host，与Codex Never+Disabled一样跳过所有工具模式，包括prompt，
+不是“禁止执行”。OnRequest按server.default_tools_approval_mode及tools.<raw>.approval_mode
+的auto/prompt/writes/approve决定是否询问；per-tool覆盖server，插件mapping走同一解析器。
+Manager在最新binding准入后持有精确connection lease等待可信host，再标记污染和执行；
+取消/关闭必须传播并清理等待。普通重连不撤回旧prepared权限，也不得重定向旧调用。
+ElicitationRequest.kind区分server与tool_approval，server保留拒绝privileged metadata的
+规则。Auto只记住本Runtime的raw server/tool，不按arguments分key；Prompt/Writes不能
+记住。CLI额外remember布尔字段是宿主交互适配，原生meta.persist=session也可使用；
+不声称复刻原生空form UI。拒绝/取消/host失败是MCP错误Observation，不触发远端或污染。
+完整Guardian、managed权限/hook、永久配置amendment、hosted Apps原地catalog revision
+写锁及旧request_user_input feature-off分支仍未完成；不可把这些新配置当成全局权限执行。
+
+第160批MCP服务器准入：Runtime.create的独立host参数mcp_requirements在资源分配前
+校验并冻结，Manager在每次启动/reconcile/forced refresh创建client前检查。工具过滤、
+工具审批、remote metadata或用户server配置不能放宽此约束。全局空表禁用全部服务器，
+非空全局表只约束普通server；插件规则使用loader保留的原始声明名与package身份，
+任一package显式指定mcp_servers后才启动插件名单约束。发布失败保留旧generation并
+恢复pending标记，下一次调用必须先重试准入；已进入审批的调用持有原connection lease。
+本批只接通原生legacy精确command/URL身份：command故意不检查args，URL不归一化且
+授权其余HTTP设置。typed规则现由mcp_matchers.py实现：executable完全一致、args数量及位置
+逐项exact/prefix/regex；URL matcher仍授权完整HTTP配置。typed各层拒绝未知字段，legacy
+字符串分支优先并保留忽略siblings语义。mcp_regex.py运行打包的regex-lite0.1.8 WASM，而非
+Python re语法；先校验原pattern及完整值wrapper，每次匹配独立Store并关闭，无WASI/import。
+Wasm host限制256MiB/1亿fuel，超限配置失败或匹配拒绝，不扩大权限。原生引擎没有这些host
+ceiling，因此不声明任意大小输入完全等价；未改变普通legacy身份规则。构建源码/lock在
+native/mcp_regex，Rust1.85.1+wasm32-unknown-unknown重建，运行时只需Wasmtime48.0.0和
+随wheel携带的二进制/MIT notice。只隔离正则计算，不是工具sandbox。系统文件默认加载与
+MCP层合并现见第170批；云端/MDM加载、实时更新、selected plugin和实际OS/reviewer权限
+仍是未完成项，不可声称完成整体权限对齐。托管约束不持久化进业务历史。
+
+第169批MCP声明目录：Runtime默认先按原始logical server name保留插件来源（按package名
+排序），再加入config声明；不再靠package__前缀隐藏重名。PluginManager.mcp_servers仍是
+旧manifest兼容投影，Runtime改用mcp_registrations。配置解析保留enabled=false并校验bool，
+只启动最终enabled赢家。MCPCatalog记录声明、同tier冲突、Remove action及已materialize的
+disabled name veto；Plugin<SelectedPlugin<Config<Compatibility<Extension，插件较早order胜，
+extension较晚order胜，同priority按插入顺序。disabled selected-plugin不产生永久name veto，
+其他disabled赢家会；disabled loser不是veto。controller约束在base构建前检查，随后host
+overlay仍继承base veto。显式host compatibility/extension不是普通用户配置，不直接按全局
+MCP名单过滤；此处对齐HostOnly目录路径，不代表完成远端environment authority或OS sandbox。
+Runtime.mcp_catalog返回独立副本，request_mcp_catalog提交新来源；旧request_mcp_reconcile仅
+materialize settings并保留已知来源。manager在同次无await发布中更换registry、连接、目录，
+失败保留旧view和pending；已准入调用保留原lease，新调用先刷新。旧包前缀不自动alias，历史
+不改写；调用者需使用raw server canonical name。selected-root自动发现、云端/MDM加载及更新、
+环境选择/attachment权限仍是必需未完成项，不能用目录的source枚举声称这些链路已实现。
+
+第170批托管MCP加载：默认CLI与Runtime.create先读Unix /etc/corki/requirements.toml；
+Windows取OS ProgramData known folder/Corki/requirements.toml，查询失败告警并用
+C:/ProgramData，绝不从ProgramData环境变量、CORKI_HOME或workspace推导系统authority。
+只有NotFound视为缺省；读失败、UTF-8/TOML/结构/最终regex错误在目录、DB、插件、client
+分配前失败。CLI在ensure_exists前捕获一次，交给Runtime，不二次读取；reconcile沿用快照。
+managed_mcp.load_mcp_requirements的system_path是显式host绝对路径覆盖；layers是宿主提供的
+MCPRequirementsLayer(source, contents)，系统层后按低到高优先级合并。每层先验shape，表
+递归合并，scalar/array替换，高空表不清空低规则；合并后再编译有效regex。mcp_shapes是
+共享wire结构校验，不产生未经编译的可执行policy。旧legacy sibling原文保留参与合并。
+runtime.mcp_requirements_snapshot提供不可变policy与分字段、高到低去重source。显式旧
+mcp_requirements mapping/typed policy或新snapshot都是完整host authority，替代默认加载；
+不是用户配置选项或模型工具参数。直接使用底层Runtime构造器的宿主仍自行负责依赖与authority。
+不支持的非MCP要求明确失败，不静默接受未执行权限。实际cloud获取、macOS preferences、
+legacy全局权限转换、热更新和远端executor仍缺；不能把host fragments称为已支持云/MDM。
+
+第171批保留MCP environment_id：缺省/null映射local，其余字符串不trim或alias，非字符串
+在解析时失败。默认Runtime有隐式local绑定，未知环境由Manager在复用/创建client之前
+作为单server启动失败隔离，其他server继续；底层本地stdio/HTTP构造器也在分配前拒绝。
+transport identity包含环境名，unknown赢家不回退到同名低优先级local插件；已准入调用
+保留原lease，新调用重新查当前绑定。普通非本地配置cwd不expanduser、不补controller默认
+目录；插件来源路径规范化另有原生规则，尚未完整对齐，不把来源与environment_id混同。
+冷恢复已有发现结果不授予调用权限：native原历史保留，compatible请求投影移除失效schema，
+原业务历史不改写。系统MCP文件收紧后，同Thread新Turn和待执行checkpoint都重新准入，
+不重复采样、已完成搜索或用户输入。此批是未知绑定拒绝的必要安全阶段，不是永久禁止
+remote后宣称完成；实际executor绑定/transport、远端环境变量和attachment owner policy仍需实现。
+
+第172批接入宿主显式MCPRuntimeContext/MCPHTTPEnvironment：create时验证typed context后才
+分配Runtime资源；捕获不可变环境列表但保留具体binding/transport身份，不deepcopy载体。
+HTTP client通过该实际AsyncBaseTransport发送请求和消费流，404新session继续使用原绑定。
+环境owner requirements在catalog所有来源的winner解析前执行，controller policy仍独立。
+request_mcp_runtime_context经prepare/call admission发布；同名不同对象重建连接，已准入
+调用保留原lease。共享carrier由宿主在所有消费者结束后关闭，MCP仅关闭自己的session/response。
+该批仅接入宿主能力；原生exec-server HTTP RPC在第173批接通，CLI executor discovery、
+远端stdio和selected-root/attachment状态来源仍缺。
+
+第173批ExecutorHttpTransport.connect显式连接宿主给定WebSocket，按executor独立RPC方言
+握手，再通过http/request与bodyDelta转发真实MCP Runtime请求。reader在发送前注册response/
+body路由，不等待满body队列；单流256帧、单帧1MiB、共享16MiB，溢出/断连保留失败终态。
+早到分片、取消前后迟到response/delta、消费者drop、同连接多请求和共享字节释放独立处理。
+executor_wire执行字节/节点/深度限制、重复key拒绝、严格ID/整数、canonical base64及header
+边界；不改用MCP数字字符串ID别名规则。MCP初始化传播剩余毫秒deadline，普通请求不重置
+远端总timeout，仍由现有MCP active-time控制。WebSocket连接本身不自动重连或重放请求。
+bearer_token_env_var按真实executor capability选择远端valueEnvVar，移除已有Authorization，
+不发送controller token；旧握手缺metadata时才懒读environment/info。cap=false才走controller
+解析；畸形cap拒绝，不隐式降级。HTTP404新session保留原凭证来源。env_http_headers仍按普通
+controller声明路径解析。websockets成为显式依赖。Noise/stdio连接、远端进程、透明executor
+会话恢复、attachment状态与owner-policy-only刷新仍未完成；测试不冒充live executor验证。
+
+第174批MCPHttpSession在真实HttpMCPClient统一处理POST、common GET、SSE恢复GET和DELETE。
+底层每跳禁用自动redirect；外层按原始origin核验Location、10跳/共享deadline、方法/body转换、
+proxy/referer规则和response拥有者关闭。helper位于单跳内部，401/403刷新不污染后续跳的
+显式Authorization；HTTP helper proxy认证重定向仍拒绝。MCPCatalogSource新增宿主agent_plugin
+标记，仅plugin/selected_plugin可携带；winner/materialize保留，连接复用比较该标记。普通插件
+仍走legacy；agent plugin的configured/auth请求、discovery和2026-07-28协议请求停止重定向。
+SSE GET的redirect/helper拒绝进入原有GET重连退避，不重放已接受POST；外层操作预算仍有效。
+这不是完整modern MCP/Agent Plugin来源发现或权限隔离实现；实际测试和未完成项见审计。
+
+第174批回归进一步稳定复现AnyIO TCP race交接与HTTPcore TLS upgrade的取消泄漏：真实socket
+已连接但尚未交给pool，client.aclose后仍未关闭。http_connect只给本地默认/代理pool安装
+OwnedConnectBackend，并在winning-stream交接与TLS upgrade所有异常路径回收原stream；
+不全局patch第三方库，不修改宿主显式carrier。保留Happy Eyeballs地址顺序/竞速、HTTPcore
+stream/TLS实现，AnyIO衍生逻辑随包附MIT许可。私有接缝集中在HTTP session构造hooks和
+backend安装；依赖范围限定HTTPX0.28、HTTPcore1.0，AnyIO成为显式依赖。
+历史第175批在chat/Responses、V2/legacy压缩、memory quota和history/notes真实HTTP消费者中（quota 消费者现已删除；其他专有路径待清理）
+分别复现TCP交接与TLS握手取消后的socket泄漏，再将连接拥有者提取到顶层http_client/
+http_connect。MCPHttpSession继承共享OwnedHTTPClient，其他消费者仅更换自建默认client；
+不会继承MCP redirect/helper/session规则，也不修改外部注入的client/transport/mount。
+AnyIO许可随模块移至包根。Runtime自建模型在普通/实时路径取消和关闭时，验证唯一取消
+终态、持久化Turn结束及socket/reader回收；这不是所有网络故障或非协作宿主carrier的保证。
+
+第98批local stdio环境构建先取Unix11/Windows23默认名和env_vars，然后加入非空继承CA
+路径（基于父进程cwd转绝对路径，不resolve符号链接），最后应用literal env并过滤内部
+身份变量。Windows覆盖及所有平台的CA literal覆盖按ASCII大小写不敏感去别名；普通Unix
+变量保持大小写敏感。string与{name,source?}引用均经严格解析，未知字段/来源报错。
+source=remote配置可解析但本地启动在spawn之前失败；Manager隔离该server，其他server
+继续搜索/调用。HTTP显式env_vars连空数组也拒绝，null视为缺省。插件走同一配置和实际
+启动路径。不修改os.environ，不代表OS沙箱；真实Windows/远端运行仍未验证/对齐。
+CA边缘路径表示与原始配置Option表示的剩余差异见审计。
+
+第99批POSIX stdio使用process_group=0，只保留刚创建的组ID；leader退出后仍清理该组。
+MCPProcessGroup一次TERM，成功后独立两秒Timer发送KILL；组不存在不排期，TERM失败
+记录警告且不升级。复用既有Darwin精确组成员fallback，不向父进程组发信号。启动交接
+与close均有独立task；重复取消仍等待清理后传播CancelledError，清理错误保留在task供
+后续close观察，不替换取消控制流。close等直接child最多三秒后kill，并回收reader与
+所属subprocess transport的pipe。后台reader只持pipe和pending回复，不反向保活client；
+weakref finalizer与显式close共享一次性组终止，真实GC测试验证最后引用释放的清理。
+刷新退休仍等已准入调用完成，shutdown则取消调用；不重放历史工具。Windows Job/远端
+清理、逃离组的子进程和宿主突然退出仍非已验证对齐范围。
+
+第100批HTTP配置支持URL-only推断、http_headers/env_http_headers/bearer_token_env_var。
+新字段严格校验并冻结，headers为旧别名，不能与http_headers同时声明；跨transport字段
+连显式空表/空数组也拒绝。client首次start/request快照默认UA、literal/env头及bearer，
+复用连接不重新读取父环境。无效header项安全警告并跳过，env空白按Rust White_Space
+判定；无效或缺失bearer不回退到literal Authorization，而是隔离该server启动失败。
+POST强制Accept/Content-Type、协议版本和session，bearer覆盖Authorization；DELETE
+复用同一快照。HTTP identity包含新配置的None/empty区分及排序去重的引用父环境值。
+改变未引用变量不重连；已有调用与最终DELETE保持旧认证，冷恢复不重放旧工具结果。
+HTTPX LocalProtocolError可能包含认证值，因此转为安全MCPProtocolError且不自动重试。
+真实loopback验证UTF-8 header字节；h11外缘空白限制与Codex HeaderValue仍有载体差异，
+不将MockTransport成功当完整wire等价。OAuth/helper/remote/完整redirect仍待对齐。
+
+第101批接入http_headers_helper（当前POSIX本地执行）：sh -c使用MCP默认环境与本地cwd，
+stdin/stderr丢弃，stdout限64KiB，10秒超时，完成/取消/失败均立即清理自有进程组。
+JSON必须是单个字符串表，重复及大小写别名、协议保留头、无效名称/值均安全报错。
+每连接共享一次attempt及失败缓存；取消等待者不取消缓存任务，owner关闭/释放才取消并
+join进程清理。返回的Headers副本不允许调用方修改缓存。认证拒绝刷新有cohort epoch，
+失败/未变化也推进epoch但失败不替换旧凭据；并发拒绝共享一次refresh。仅同源POST
+401/403可尝试刷新，Bearer insufficient_scope不刷新，有效helper值未变化不重发，
+explicit Authorization遮蔽的变化不算变化；最多一次重发且保留body/id/session，
+不重放网络错误或结果未知调用。helper应用前后共享请求deadline，DELETE不认证重试。
+HTTP helper禁止跟随重定向，HTTP Proxy-Authorization重定向安全失败。HTTP close任务
+独立拥有DELETE/helper/client清理，取消仍join；helper command和cwd参与reconcile身份。
+原有第100批carrier空白、完整OAuth/redirect、Windows Job和remote差异仍未关闭。
+
+第102批HTTP非2xx的有效JSON-RPC错误在符合条件时保留code/message，再经过既有ID匹配、
+MCPTool错误值与Observation路径；session 404、认证challenge和生命周期瞬态status优先，
+不新增自动重试。响应改为逐块收集，在追加前检查现有16MiB解码字节限额；正常完成、
+超限、读失败或取消均退出所持HTTP响应。POST 202/204不读取body、不更新session。
+HTTPX没有有界aread，适配器使用其同一_content缓存保存已解码正文，避免gzip二次解码；
+依赖版本变化需保留gzip与真实carrier回归。该限额不是Codex所有legacy请求的数值合同，
+也不限制解码器单次分配。完整SSE/GET及握手/会话恢复仍开放。
+第103批响应stream独立拥有一次close task，覆盖HTTPX在EOF自动关闭及提前设置is_closed
+的路径；重复取消只取消等待者，仍join真实清理，再传播取消。清理同时失败不能覆盖原始
+取消/读错误，只记录异常类型；无原始错误时关闭失败仍失败，不报告成功。真实Runtime
+在清理完成前不发布终态，取消后冷恢复不重放工具。该路径不强制终止不协作的自定义
+transport，也不声称已经处理HTTP headers交接前的全部依赖内部取消窗口。
+
+第104批tools/call的HTTP401 challenge在helper处理后变为Authentication required错误值，
+合并全部WWW-Authenticate值进入私有_meta，不再次重发；读取到challenge headers后不等body。
+initialize/list、bare401和403不混为同一结果。ToolResult与ToolCallCompleted新增可选
+mcp_result_json/mcp_error：前者是不可变JSON宿主副本，后者是传输失败，两者互斥。
+MCP事件结果序列化<=1MiB时保留完整content/structuredContent/isError/_meta，超过时
+整段序列化文本按源码头尾预览，移除structured/_meta并保留isError；最终JSON转义可更大。
+输入沿用32MB有界JSON校验，事件最终字节另设转义上限。executor验证后经ledger到宿主
+完成事件；新字段缺省不写入旧账本，读取旧行保留None，旧记录不回写。ToolResultItem不带
+这两个字段，Code Mode/普通日志仍排除顶层_meta；元数据不能改变权限或触发自动登录。
+真实Runtime原生/兼容检索、Code Mode、事件、账本与冷恢复验证，不代表OAuth交互或404恢复。
+
+第105批HTTP由独立HttpRecovery持有generation和操作任务。初始化/initialized通知的
+瞬态传输及408/429/500/502/503/504最多三次，250ms/1s退避共享启动deadline，每次重建
+会话和helper。普通操作仅tools/list做瞬态重试；tools/call/resources/prompts不重放
+结果未知失败。只有实际协商session的POST404才按旧generation身份串行恢复、完整握手
+后发布并重试原操作一次；第二个404直接回传，未来独立调用可正常继续。客户端内部记录
+发送时的session权威，不能由literal同名header或后来变化的session冒充。恢复保留原始
+静态认证/cwd快照，工具timeout按原调用视图绑定，恢复本身使用保存的startup timeout。
+旧generation等已准入调用退出才清理，不重新列catalog；新握手失败/取消不替换旧会话。
+关闭立即拒绝准入、取消并join已拥有操作，禁止晚到发布；response cleanup继续遵守第103批。
+注入的HTTP carrier由外层唯一关闭，各会话仅借用，不随一次退休提前关闭。普通默认HTTP
+client每代独立池。真实loopback/Runtime检索与Code Mode、账本、冷历史和恢复中取消验证；
+完整OAuth/scope、现代协议、SSE/GET、远端和其他Harness缺口继续见审计。
+
+第106批按Cargo.lock校验下载的rmcp3.2.0/sse-stream0.2.5源码继续追踪：请求级SSE
+改为逐块解析完整事件，不等服务器EOF；HTTP JSON/非2xx仍用原有有界body路径。CR/LF/
+CRLF、UTF-8跨块/BOM、multiline data、仅去冒号后一个空格、重复/未知字段等按锁定
+解析器处理；不把未结束的最后事件、control事件或同ID服务器请求当成工具完成。
+普通JSON损坏事件跳过，SSE字段/UTF-8错误失败。16MiB改为未完成事件/行的有界状态，
+不累计已完成heartbeat/comment；此数值仍是Corki与Codex legacy adapter的已声明差异。
+POST成功后的SSE读流失败变成协议失败，不误走第105批send重试；取消/提前返回仍join
+response close。原生/兼容/Code Mode的真实Runtime检索、Observation、账本和冷恢复验证。
+此前严格整数ID的结论被依赖源码纠正：HTTP/stdio接受Rust i64规则的数字字符串fallback，
+不接受bool/float/空白/Unicode数字，原业务tool call id与账本不改写。GET续传、常驻
+通知流、服务器请求处理及50ms后台连接复用drain在当批尚未实现；GET续传现见第107批，
+不声称完整SSE对齐。
+
+第107批请求级SSE使用独立sse_resume状态管理，普通请求收到完整事件ID后可以GET续读，
+无协商session也适用；冻结原始URI/认证/协议/session/RPC身份，只更新已完成事件的cursor。
+空ID按锁定rmcp的Some("")处理；未完成事件ID不发布；控制/坏JSON帧也可更新ID/retry。
+EOF消耗服务器retry或默认1秒；带cursor的读流/字段错误立即GET，超限永不续传。
+GET失败默认无限指数退避，但始终受原调用deadline/取消控制；GET404不能误入POST
+会话重建，GET关闭异常也不能成为初始化/tools-list发送重试。旧response先join关闭，
+再等待或建立新carrier；独立http_stream模块复用原有重复取消/首错保留的owned close。
+initialize按源码expect_initialized分支不启用此wrapper，其完整独立payload验证待继续核齐。
+真实Runtime原生/兼容检索及Code Mode续传、超时Observation、账本与冷历史，以及真实
+HTTP/1 chunked POST→GET验证；共享通知流、入站服务器请求、动态认证刷新和50ms连接
+复用drain仍开放。未新增持久化字段，恢复旧历史不重新连接/重放已完成操作。
+
+第108批加入initialization.py，对默认legacy握手统一验证JSON-RPC envelope和
+InitializeResult必填protocolVersion/capabilities/serverInfo，递归验证已知capabilities、
+Implementation及Icon字段。未知字段忽略、optional null允许；字符串按锁定rmcp类型规则
+允许空值/未知版本，不额外发明版本白名单。无效结果在initialized通知和工具目录发布前
+失败；会话404恢复的替代握手同样验证，不能发布无效generation或重发原调用。
+HTTP initialize SSE不再套普通响应筛选：忽略event类型，跳过空data/非Response消息，
+非空坏JSON立即失败，首个Response交给握手层校验ID/result；不GET续读。
+initialized通知接受202/204或有效JSON-RPC JSON，拒绝SSE及未类型化body，关闭仍受owned
+response保护。stdio真实LocalStdioTransport的legacy AsyncRw路径则跳过语法坏JSON/BOM，
+对typed envelope错误发Invalid Request后继续等；首个response/error交握手层，不静默等过
+冲突ID。reader持有初始化future/写管道及锁，不持有client引用，原有GC/进程关闭所有权不变。
+成功fixture补齐真实必填字段；实际Runtime验证坏server隔离、健康server检索/调用/
+Observation/账本/冷恢复。仍不代表所有普通消息serde、日志/服务器请求分发或现代discovery。
+
+第109批HTTP generation新增共享pending response路由和初始化成功后的公共GET接收任务。
+202/204只表示POST发送被接受，RPC等待GET或其他POST中的对应ID；未知/重复/已取消ID
+不误配到当前调用。公共流收到结果后继续接收，无cursor也可续GET；请求级流仍要求cursor，
+首个Response关闭该请求流并按ID路由，不能一直跳过其他请求的响应。初始GET405视为不支持，
+其他初始GET失败隔离，不进入POST重试或会话恢复。请求deadline/取消与公共接收器寿命分开，
+后台发送与接收由generation持有，关闭join后才DELETE，新旧generation同数字ID不串结果。
+真实Runtime原生/兼容搜索、Code Mode的结果/错误/超时Observation、账本和冷历史均覆盖。
+此批仅响应路由，服务端请求/通知处理、完整serde、精确队列backpressure/50ms drain及
+会话恢复barrier仍开放；不新增数据库或checkpoint字段，不声称完整协议等价。
+
+第110批InboundService接HTTP JSON、POST SSE、公共GET和stdio的method消息分发。
+默认ping返回空对象、roots/list返回空roots、未实现sampling/custom返回MethodNotFound；
+精确保留服务端请求ID，不与同数字的出站RPC混淆。HTTP回复走原generation控制POST，不进入
+会话恢复；stdio reader仅持有pending、pipe和锁，不持有client强引用。回复任务归transport
+所有，关闭先停止/等待回复，再关闭管道或DELETE；完整Codex EOF/shutdown drain仍待核齐。
+远端cancelled通知按精确RequestId查找，非法类型不强制转换；MCPRemoteCancelled继承
+MCPProtocolError，经真实MCPTool错误值边界进入Observation，不等同asyncio取消整个Turn。
+进度/resource/list/log通知按已知字段类型和severity记录日志，不自动重列/发布catalog，
+不把私有_meta注入模型。真实stdio及HTTP Runtime的原生/兼容搜索、Code Mode、账本和冷历史
+覆盖反向ping与远端取消。elicitation权限/用户输入/暂停timeout、订阅适用性、全部serde和
+精确backpressure仍开放；未新增数据库字段、capability声明或自动批准外部请求。
+源码复核纠正：Codex rmcp_client.rs初始化成功后显式关闭RMCP response cache及stale-on-error，
+不能将上游库默认缓存当成当前Codex路径的待补功能。EOF与主动关闭需分别追踪：库级5s/2s
+排空不是Codex所有关闭路径的统一保证，Codex主动关闭stdio先终止进程再drop service。
+
+第111批修复自然stdio EOF的入站回复丢失：停止新请求准入，已排队/发送中的回复最多排空5s，
+随后关闭stdin写端，等待子进程3s后必要时kill/reap。legacy I/O读取错误与EOF同类；内部
+异常和显式取消不套用自然EOF grace。InboundService拥有唯一close任务；显式host close可
+中断grace，重复取消不重复打断reply cleanup，reader待处理RPC在清理完成后收到关闭错误。
+EOF收尾仅持有process，不保活client；HTTP SSE EOF仍走重连，不触发此stdio收尾。
+stdio排空期间关闭普通出站call/notify准入，锁内再次检查关闭状态；反向回复独立写路径保留。
+实际子进程在收到ping回复和stdin EOF后才退出，原生/兼容搜索及Code Mode Runtime验证
+此前工具结果仍成功回灌、账本一次写入、冷恢复不重放。完整HTTP关闭/调度和其他A–E仍开放。
+
+第112批普通MCP请求在params._meta注入独立progressToken；初始化和通知不分配token。
+计数器归连接generation所有，按锁定rmcp的AtomicU64/signed i64语义编码；不复用JSON-RPC
+request ID。生成token覆盖调用方同名meta键，保留其他metadata及arguments并深拷贝输入。
+同连接新RPC重试取新token，404换代从新序列开始，SSE GET仅续原请求不消耗token。
+错误_meta类型在发送前变为MCPProtocolError；不修改默认超时、重试、model schema或账本参数。
+真实HTTP/stdio Runtime验证进度通知、Observation、一次ledger完成与冷恢复，私有通知meta
+不进入模型/日志。普通legacy调用没有开启SDK progress idle-timeout reset；elicitation暂停
+预算是独立未完成路径，不能将两者混淆。
 
 进程内 prepare 通过 ToolRegistry.snapshot 同时捕获 handler 与 spec；采样 retry 保留同一个
 快照，仅从更新后的 durable history 重建请求，不刷新 handler 或重置嵌套执行门。GraphRunContext
@@ -1201,6 +1771,90 @@ Code Mode或上下文管理已整体完成。
 是显式信任的本地代码，工具强制命名为 `plugin__<plugin>__<tool>`；加载失败必须回滚其已注册
 工具、移除临时 Python module 并记录 warning，不得破坏其他插件。每次加载使用独立 module key，
 两个嵌入式 Corki runtime 关闭插件时不能互相卸载；`aclose()` 必须幂等。
+
+第176批将普通宿主MCP声明归一化提取为plugins/mcp.py：包装/裸server map统一解析，坏server
+与坏可选MCP文件分别隔离，PluginManifest携带诊断供宿主和原有插件上下文发布；有效技能/工具
+不因MCP错误被丢弃。缺省cwd留给Runtime，显式相对cwd在共享settings解析前以插件root作
+词法拼接，避免错误的进程cwd或shell展开。HTTP helper不再被强制放到插件目录运行。
+mcpServers文件路径遵循原生./前缀/禁止父路径约束，无效声明回退默认文件，缺失可选文件
+不报错；默认路径先检查is_file，不打开目录/FIFO。普通插件允许文件symlink，不能复用到
+Agent Plugin的regular-file和canonical containment检查。type注解只做提示，普通配置解析
+仍保持自身严格校验。此批不代表Agent Plugin、executor来源、OAuth或所有来源策略完成。
+
+第177批实现将目录加载的Agent Plugin来源独立处理：manifest_path保留发现时的root/format，
+不靠包目录名猜测；root plugin.json按schema优先选择，不支持的版本及symlink/nonfile不降级。
+agent_manifest验证核心元数据并固定skills/mcp.json，agent_mcp执行严格字段、HTTP头及可选文件
+隔离；agent_paths先解析现存symlink再检查command/cwd，args/env占位符只替换一次。
+目录加载使用root/.plugin-data且不主动mkdir。agent_overlay只向既有stdio追加本地env_vars，
+移除同名同引用的占位符以允许继承，但不替换literal、不增加服务或HTTP凭据。
+typed MCP envelope及legacy overlay拒绝重复字段；根清单和单个server的Value对象保留后值。
+来源身份由PluginManager传入Runtime catalog，驱动已有认证重定向策略。普通manifest还支持
+.claude-plugin和.cursor-plugin的原生fallback顺序。Agent URL及重定向使用固定url 2.5.8解析器；
+legacy覆盖配置保留数字的原生分支选择，hook元数据准入校验不等于执行hook或授予权限。
+本批目录来源/MCP加载范围已通过源码6687项和隔离安装6387项全量验证；普通MCP URL方言、
+Windows实际执行及完整插件能力仍分别保留审计边界，不代表A–E整体已验收。
+
+第178批正在接入显式本地执行权限。`[execution]` 指定宿主编译器与原生权限对象，
+普通/Code Mode 共用不可变配置和 policy cwd；shell/PTY、patch、image 通过实际OS策略执行。
+编译失败不回退无约束执行，编译期间取消后会在命令准入前重验。构建和显式配置方法见
+`native/sandbox/README.md`。40个新增场景和233项隔离安装相关回归已通过；随后全量回归报告
+6727项通过。本次后台权限继续变更后需重新验收，不能复用此结果证明新快照已通过。
+当前没有配置时仍是旧宿主执行路径；默认/命名权限、托管约束、审批编排、持久化/恢复、
+记忆工作者派生和Linux/Windows后端尚未完成，不以这一增量宣布权限或核心Harness对齐。
+
+第179批已接入记忆后台pass独立父权限捕获，以及Disabled/External/Managed三分支工作者
+派生；Managed的实际命令只写私有记忆工作区且禁网，不继承父工作区或默认临时目录写权限。
+策略失败先于工作者采样，记录failed_sandbox_policy并释放claim；取消仍是独立控制流。
+该增量的托管配置约束、持久化/恢复、配置默认选择及跨平台部分仍未完成，详见权限审计。
+
+第180批接入 `allowed_sandbox_modes` 与独立托管 `permissions.filesystem.deny_read`：
+系统文件/宿主fragment按来源冻结，原生codex-config解析每层相对路径并组合拒读并集。
+Runtime在Thread创建、MCP启动及模型采样前解析有效权限，模式按实际文件权限分类；
+不允许的workspace等配置可回退只读并提示，FullAccess在当前无审批升级能力时不能回退。
+工具执行严格重验，记忆工作者使用同一托管快照，不重新读取后来变化的系统配置；
+子任务仅继承独立托管拒读，不把所有父用户deny都当成托管规则。其他托管域仍明确拒绝。
+该批次不是默认/命名profile、权限持久化/恢复、审批编排或跨平台完成声明；
+记忆输入准备与配置构造的完整原生顺序仍有差异。验证终态记录在harness-alignment审计中。
+
+第181批将用户default_permissions与命名permissions表接入真实Runtime，直接编译固定
+Codex源码中的命名profile解析模块；[execution]只指定compiler时走unknown-trust只读
+builtin。原始execution.profile形式仍兼容，两种配置形式互斥；不支持的proxy配置明确
+失败。实际权限、选中profile身份及profile roots在采样前一起发布，受托管模式约束回退时
+清空身份/roots，memory子策略不携带父命名身份。Thread模型设置更新和启动重试保留已解析值。
+当前这些值仅为运行时快照，不是持久化恢复完成；project trust、完整配置层选择及无
+编译器时的原生默认行为仍需继续实现。
+
+第182批接入独立托管命名目录、allowlist和default；用户/托管双向继承，跨来源同名
+明确拒绝。名称不允许时先选托管默认再编译；具体模式不允许时回退只读并清空身份。
+配置准入保留原始用户目录以供重试；memory的具体子策略携带目录用于校验，但不重新
+选择父profile。宿主重新准入可传入当前约束；这不是自动配置重载或持久化恢复。
+编译器新增managed_catalog能力确认，旧后端不得静默忽略目录规则。其他proxy和审批
+约束仍未接入。验证范围、剩余差异及最终门状态见权限审计，不作为整体Harness完成声明。
+
+第183批把phase2子配置准入提前到DB输入选择、同步和no-change判断之前；配置无效时
+即使输入没变也按failed_sandbox_policy失败，而非成功skip。PreparedAgent在同一
+claim/heartbeat拥有期内保留临时工作目录和完整child settings，run_agent直接复用；
+直接调用run_agent也先建立配置再复制输入。skip和输入处理失败释放准备目录，关闭
+未确认的Runtime把清理权留给ConsolidationShutdowns，不能被外层finally提前删除。
+这不意味着私有副本已经变成Codex共享memory_root，也不代表完整权限/恢复对齐。
+
+第184批主合并流程改为实际共享memory_root作为工具cwd和权限派生根；临时目录只保存
+worker运行资源，清理不删除memory_root。已完成的工具写入即时可见，失败不回滚普通
+文件，但不推进基线/DB成功。确认关闭后验证实际文件并清除symlink（不跟随目标）；
+owner fence只控制基线/状态提交，不再复制发布文件编辑产物，也不再次删除外部重建的
+摘要。文件编辑路径不再额外改写model写出的字节或以输入快照差异拒绝整个任务。
+独立run_agent与最终JSON保留明确兼容路径；原生Git基线/完整配置与恢复仍待对齐。
+
+第185批主链使用真实内部Git HEAD/index基线，宿主需提供Git（本机验证2.39.5）；
+无需原生权限编译器也走同一基线路径，Git不可用时后台失败，不回退为虚假成功。
+准备阶段在child config/输入选择之前建基线；隐藏文件、二进制和执行位纳入，FIFO
+等非Git文件类型忽略。启动清链接、完成后清链接并判失败；均不跟随目标。diff不写
+对象，每次成功重建无父提交基线并清除旧对象和生成的diff文件，不留副本。v3 JSON
+迁移保留旧内容证据，未知旧版本强制正常合并。只重建拥有标记的内部.git或已识别的
+原生单提交基线；误配用户项目仓库会拒绝，不能删用户历史。JSON兼容输出也记录当前
+共享树，不再拼接采样前输入和完成后输出。Git仓库边界同步作用于项目规则/仓库技能。
+正文diff仍使用Python renderer而非Rust similar，同名hunk分组不保证字节一致；全局
+配置、恢复及A–E整体仍未完成。回归和打包终态以harness-alignment/audit.md为准。
 
 ### 18.4 Realtime
 
@@ -1238,8 +1892,8 @@ Code Mode或上下文管理已整体完成。
 5. 可选扩展单点失败要降级为 warning/tool error，不能破坏无关的核心工具或整个 CLI。
 
 与 Codex 仍存在的实现差异：Corki 使用支持 Unicode 与图片的 provider-neutral token
-estimator，没有 Codex 的逐模型 tokenizer 与远程 compaction；Phase 2 目前用隔离模型请求而非
-内部 sub-agent；模型/工具 capability plan 比 Codex 的动态 hosted tool selection 简化；Code Mode
+estimator，没有 Codex 的逐模型 tokenizer 与远程 compaction；Phase 2 已接入独立多 Step Runtime，
+但完整内部线程管理与权限配置尚未对齐；模型/工具 capability plan 比 Codex 的动态 hosted tool selection 简化；Code Mode
 已部分接入，shell/MCP 结构化结果及有序媒体/helper 已支持，其余工具 typed return、媒体预处理、V8 host 与全部边界
 仍待对齐；hosted web search、语音 Realtime
 API、审批/sandbox 和多 Agent 尚未进入本阶段。新增其中任何能力时，应扩展 `ModelPort`、`ContextContributor`、

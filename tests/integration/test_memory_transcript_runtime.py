@@ -4,6 +4,7 @@ import asyncio
 import json
 
 import pytest
+from memory_evidence import inspect_worker_evidence
 
 from corki.config import CorkiSettings
 from corki.context import active_history
@@ -142,7 +143,7 @@ def test_original_archive_survives_compaction_without_reextracting_retained_copi
 
             async def stream(self, request):
                 self.requests.append(request)
-                assert not request.tools
+                assert bool(request.tools) == (request.output_schema is None)
                 if len(self.requests) == 1:
                     transcript = (
                         request.items[0]
@@ -176,7 +177,7 @@ def test_original_archive_survives_compaction_without_reextracting_retained_copi
                         "rollout_slug": "facts",
                     }
                 else:
-                    assert "verification fact" in request.items[0].content
+                    assert "verification fact" in inspect_worker_evidence(request)["raw_memories"]
                     value = {
                         "memory": "verification fact",
                         "memory_summary": "Facts index",

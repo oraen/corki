@@ -136,7 +136,7 @@ def test_codex_compatible_project_and_user_skill_roots_are_discovered(tmp_path: 
     assert "project agents" in service.read(shared)
 
 
-def test_native_corki_skill_root_wins_over_compatible_project_roots(tmp_path: Path) -> None:
+def test_same_scope_skill_paths_are_retained_and_sorted_by_name_then_path(tmp_path: Path) -> None:
     _write_skill(tmp_path / ".corki" / "skills", "native", "same", "corki")
     _write_skill(tmp_path / ".codex" / "skills", "compatible", "same", "codex")
     _write_skill(tmp_path / ".agents" / "skills", "portable", "same", "agents")
@@ -146,10 +146,13 @@ def test_native_corki_skill_root_wins_over_compatible_project_roots(tmp_path: Pa
         bundled_enabled=False,
     )
 
-    skill = service.snapshot(tmp_path).resolve("same")
+    snapshot = service.snapshot(tmp_path)
+    skill = snapshot.resolve("same")
 
     assert skill is not None
-    assert "corki" in service.read(skill)
+    assert len(snapshot.skills) == 3
+    assert [s.path for s in snapshot.skills] == sorted(s.path for s in snapshot.skills)
+    assert "agents" in service.read(skill)
 
 
 def test_user_agents_skill_directory_symlink_is_followed_once(tmp_path: Path) -> None:

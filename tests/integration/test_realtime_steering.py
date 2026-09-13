@@ -43,7 +43,9 @@ class SteerableModel:
 
 
 @pytest.mark.parametrize("initial_skill", [False, True])
-def test_live_input_interrupts_sampling_and_rebuilds_context(tmp_path: Path, initial_skill) -> None:
+def test_live_input_waits_for_sampling_and_rebuilds_next_context(
+    tmp_path: Path, initial_skill
+) -> None:
     skill = tmp_path / ".corki" / "skills" / "steering" / "SKILL.md"
     skill.parent.mkdir(parents=True)
     skill.write_text(
@@ -64,22 +66,18 @@ def test_live_input_interrupts_sampling_and_rebuilds_context(tmp_path: Path, ini
             events.append(event)
             if isinstance(event, AssistantTextDelta) and event.delta == "stale prefix":
                 await runtime.steer("use $steering and the new direction")
+                model.release_first.set()
         await runtime.aclose()
         return events
 
     events = asyncio.run(scenario())
 
-    assert any(isinstance(event, AssistantMessageInterrupted) for event in events)
+    assert not any(isinstance(event, AssistantMessageInterrupted) for event in events)
     assert any(isinstance(event, RealtimeInputAccepted) for event in events)
-    interrupted_at = next(
-        index
-        for index, event in enumerate(events)
-        if isinstance(event, AssistantMessageInterrupted)
+    assert any(
+        isinstance(item, AssistantMessageItem) and item.content == "stale"
+        for item in model.requests[-1].items
     )
-    accepted_at = next(
-        index for index, event in enumerate(events) if isinstance(event, RealtimeInputAccepted)
-    )
-    assert interrupted_at < accepted_at
     assert isinstance(events[-1], TurnCompleted)
     assert events[-1].final_answer == "fresh answer"
     assert len(model.requests) == 2

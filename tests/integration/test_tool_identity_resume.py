@@ -1,6 +1,9 @@
 """The actual checkpoint recovery route must never reuse a different invocation."""
 
 import asyncio
+import json
+
+import pytest
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -20,7 +23,19 @@ from corki.storage import SQLiteSessionRepository
 from corki.tools import ToolRegistry
 
 
-def test_resumed_committed_step_does_not_use_mismatched_cached_result(tmp_path):
+@pytest.mark.parametrize("completed", [False, True], ids=["unknown", "completed"])
+@pytest.mark.parametrize(
+    "raw,changed",
+    [
+        ('{"path":"one.txt"}', '{"path":"two.txt"}'),
+        ('{"n":1.234567890123456781}', '{"n":1.234567890123456789}'),
+        ('{"n":1e-999}', '{"n":2e-999}'),
+    ],
+    ids=["path", "rounded-decimal", "underflow"],
+)
+def test_resumed_committed_step_does_not_use_mismatched_cached_result(
+    tmp_path, completed, raw, changed
+):
     async def scenario():
         database = tmp_path / "sessions.db"
         repository = SQLiteSessionRepository(database)
@@ -28,15 +43,19 @@ def test_resumed_committed_step_does_not_use_mismatched_cached_result(tmp_path):
         await repository.create_thread(thread, tmp_path)
         await repository.save_turn(TurnRecord(turn, thread, TurnStatus.RUNNING, "write two"))
         await repository.append_items(thread, (UserMessageItem("write two", turn),))
-        old = ToolCall(call_id, "write", {"path": "one.txt"})
+        old = ToolCall(call_id, "write", json.loads(raw), raw_arguments=raw)
         await repository.claim_tool_call(thread, turn, old)
-        await repository.complete_tool_call(
-            thread, turn, ToolResult(call_id, "write", "wrote one.txt")
-        )
-        current = ToolCall(call_id, "write", {"path": "two.txt"})
+        if completed:
+            await repository.complete_tool_call(
+                thread, turn, ToolResult(call_id, "write", "wrote one.txt")
+            )
+        current = ToolCall(call_id, "write", json.loads(changed), raw_arguments=changed)
+        if "n" in old.arguments:
+            assert old.arguments == current.arguments
         await repository.commit_model_step(
             thread, turn, 0, ModelCompleted((ToolCallItem(current, turn, new_step_id()),))
         )
+        repository = SQLiteSessionRepository(database)
 
         class Tool:
             spec = ToolSpec("write", "write fixture", {"type": "object"})
@@ -65,7 +84,7 @@ def test_resumed_committed_step_does_not_use_mismatched_cached_result(tmp_path):
 
         registry, tool, model = ToolRegistry(), Tool(), Model()
         registry.register(tool)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=database,
             repository=repository,
@@ -78,7 +97,10 @@ def test_resumed_committed_step_does_not_use_mismatched_cached_result(tmp_path):
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert tool.calls == 0 and model.calls == 1
             old_result = await repository.claim_tool_call(thread, turn, old)
-            assert old_result.content == "wrote one.txt" and not old_result.is_error
+            if completed:
+                assert old_result.content == "wrote one.txt" and not old_result.is_error
+            else:
+                assert old_result.is_error and "unknown" in old_result.content
         finally:
             await runtime.aclose()
 

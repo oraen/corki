@@ -4,6 +4,7 @@ import pytest
 
 from corki.config import CorkiSettings
 from corki.protocol.context import ModelContextInfo
+from corki.protocol.model_authority import ModelAuthority
 
 
 @pytest.mark.parametrize(
@@ -60,7 +61,13 @@ def test_matched_maximum_applies_to_override_without_mutating_catalog(tmp_path):
         working_directory=tmp_path, model_contexts=(info,), model_context_window_override=20000
     )
     resolved = settings.model_context_info("vendor/model-preview")
-    assert resolved == replace(info, model="vendor/model-preview", context_window=5000)
+    assert resolved == replace(
+        info,
+        model="vendor/model-preview",
+        context_window=5000,
+        used_fallback_model_metadata=False,
+        activation_authority=ModelAuthority(),
+    )
     assert settings.model_contexts == (info,)
 
 

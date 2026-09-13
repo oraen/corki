@@ -11,6 +11,7 @@ import httpx
 import pytest
 from PIL import Image
 
+from corki import http_client
 from corki.code_mode.service import CodeModeService
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -529,7 +530,7 @@ def test_mcp_content_blocks_can_be_forwarded_without_loss(tmp_path):
                 "content": [
                     {
                         "type": "image",
-                        "mime_type": "image/png",
+                        "mimeType": "image/png",
                         "data": _IMAGE_URLS["data:image/png;base64,YWJj"].split(",")[1],
                         "_meta": {"codex/imageDetail": "original"},
                     },
@@ -573,6 +574,9 @@ def test_provider_wire_preserves_order_and_audio_capability(
         source = _source(source)
 
         def handle(request):
+            assert str(request.url) == "https://media.fixture.invalid/v1/" + (
+                "chat/completions" if transport == "chat" else "responses"
+            )
             payload = json.loads(request.content)
             requests.append(payload)
             if transport == "chat":
@@ -614,16 +618,14 @@ def test_provider_wire_preserves_order_and_audio_capability(
                     + "\n\ndata: [DONE]\n\n"
                 )
             else:
-                native = transport == "responses_native"
                 item = {
-                    "type": "custom_tool_call" if native else "function_call",
+                    "type": "function_call",
                     "name": "exec",
                     "id": "i",
                     "call_id": "c",
                 }
-                item.update(
-                    {"input": source} if native else {"arguments": json.dumps({"input": source})}
-                )
+                item["arguments"] = json.dumps({"input": source})
+                assert all(tool["type"] == "function" for tool in payload.get("tools", []))
                 body = (
                     "data: "
                     + json.dumps({"type": "response.output_item.done", "item": item})
@@ -635,12 +637,13 @@ def test_provider_wire_preserves_order_and_audio_capability(
             return httpx.Response(200, text=body)
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
-        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client)
+        monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
         runtime = LangGraphRuntime.create(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
                 api_key="fixture",
+                api_base="https://media.fixture.invalid/v1",
                 tool_mode="code_mode_only",
                 supports_audio_input=audio_enabled,
                 api_mode="chat_completions" if transport == "chat" else "responses",

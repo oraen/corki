@@ -33,6 +33,7 @@ def render(
         chunk_id="abc123",
         original_token_count=count,
         output_omitted_bytes=omitted,
+        terminal_info=None,
     )
 
     class Manager:
@@ -154,6 +155,11 @@ def test_observation_wall_time_is_per_call_not_process_age(monkeypatch):
         processes = ProcessManager()
         session = _ProcessSession("fixture", SimpleNamespace(returncode=0), 100, started_at=10)
         session.append(b"12345")
+
+        async def terminate(_):
+            pass
+
+        monkeypatch.setattr(processes, "_terminate", terminate)
         monkeypatch.setattr("corki.tools.builtin.process.time.monotonic", lambda: 101)
         observation = await processes._observe(session, 100)
         assert observation.wall_time_seconds == 1

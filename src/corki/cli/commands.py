@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum, auto
 
 from corki.config import CorkiPaths, CorkiSettings
@@ -12,11 +12,17 @@ class CommandAction(Enum):
     """Side effects requested by a built-in command."""
 
     NONE = auto()
+    PLAN = auto()
+    CYCLE_MODE = auto()
     CLEAR = auto()
     REALTIME_ON = auto()
     REALTIME_OFF = auto()
     MCP_REFRESH = auto()
     COMPACT = auto()
+    MEMORY_RESET = auto()
+    MEMORY_RESET_PREVIEW = auto()
+    MEMORY_MODE_ENABLED = auto()
+    MEMORY_MODE_DISABLED = auto()
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +32,7 @@ class CommandResult:
     handled: bool
     output: str = ""
     action: CommandAction = CommandAction.NONE
+    input_text: str = ""
 
 
 class CommandDispatcher:
@@ -39,10 +46,25 @@ class CommandDispatcher:
     def set_realtime_enabled(self, enabled: bool) -> None:
         self._realtime_enabled = enabled
 
+    def set_model_settings(self, snapshot) -> None:
+        self._settings = replace(
+            self._settings,
+            model=snapshot.model,
+            collaboration_mode=snapshot.collaboration_mode,
+            reasoning_effort=snapshot.reasoning_effort,
+        )
+
     def dispatch(self, message: str) -> CommandResult:
         """Return ``handled=False`` when ``message`` belongs to the agent."""
 
         command = message.strip().lower()
+        parts = message.strip().split(maxsplit=1)
+        if parts and parts[0].lower() == "/plan":
+            return CommandResult(
+                handled=True,
+                action=CommandAction.PLAN,
+                input_text=parts[1] if len(parts) == 2 else "",
+            )
         # ``?`` mirrors Codex's footer shortcut even though it is the only
         # built-in command that deliberately has no leading slash.
         if command != "?" and not command.startswith("/"):
@@ -57,7 +79,10 @@ class CommandDispatcher:
                     "  /status  show the current session configuration\n"
                     "  /clear   clear the terminal and redraw the header\n"
                     "  /model   show how to configure the current model\n"
+                    "  /plan [prompt]  enter Plan mode, optionally planning a request\n"
                     "  /compact summarize history in a standalone turn\n"
+                    "  /memory reset  review explicit memory reset confirmation\n"
+                    "  /memory mode enabled|disabled  set this thread's memory source eligibility\n"
                     "  /mcp refresh  reconnect before preparation or the next MCP call\n"
                     "  /realtime [on|off]  configure live turn steering\n"
                     "  /stop    stop an active realtime turn"
@@ -69,6 +94,7 @@ class CommandDispatcher:
                 handled=True,
                 output=(
                     f"Model:       {self._settings.model}\n"
+                    f"Mode:        {self._settings.collaboration_mode.title()}\n"
                     f"Directory:   {self._settings.working_directory}\n"
                     f"Corki home:  {self._paths.home}"
                 ),
@@ -79,6 +105,32 @@ class CommandDispatcher:
 
         if command == "/compact":
             return CommandResult(handled=True, action=CommandAction.COMPACT)
+
+        if command == "/memory reset":
+            return CommandResult(
+                handled=True,
+                action=CommandAction.MEMORY_RESET_PREVIEW,
+                output=(
+                    "Reset deletes generated memory, notes, skills and memory job state. "
+                    "No backup is created. "
+                    "Conversations and memory settings remain; "
+                    "future generation may rebuild memory. "
+                    "To confirm, enter /memory reset confirm."
+                ),
+            )
+
+        if command == "/memory reset confirm":
+            return CommandResult(handled=True, action=CommandAction.MEMORY_RESET)
+
+        if command in {"/memory mode enabled", "/memory mode disabled"}:
+            return CommandResult(
+                handled=True,
+                action=(
+                    CommandAction.MEMORY_MODE_ENABLED
+                    if command.endswith(" enabled")
+                    else CommandAction.MEMORY_MODE_DISABLED
+                ),
+            )
 
         if command == "/mcp refresh":
             return CommandResult(

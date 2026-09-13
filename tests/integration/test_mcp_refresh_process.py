@@ -37,7 +37,7 @@ def test_refresh_does_not_kill_old_stdio_process_with_an_in_flight_call(tmp_path
             executor.execute(
                 ToolCall(
                     ToolCallId("in-flight"),
-                    "mcp__docs__lookup",
+                    "mcp__docs::lookup",
                     {"entered": str(entered), "release": str(release)},
                 ),
                 ToolContext(cwd=tmp_path),

@@ -28,6 +28,7 @@ def test_mcp_source_output_precedence_and_order(tmp_path, kind):
                 {
                     "type": "image",
                     "data": "data:image/png;base64,AAAA",
+                    "mimeType": "image/png",
                     "_meta": {"codex/imageDetail": "low"},
                 },
                 {"type": "text", "text": "after"},
@@ -51,6 +52,11 @@ def test_mcp_source_output_precedence_and_order(tmp_path, kind):
             and "\nOutput:" in result.display_content
         )
         assert "PRIVATE" not in result.display_content
+        if kind == "unknown":
+            assert result.is_error and not result.dispatch_error
+            assert "MCPProtocolError" in result.content
+            assert result.code_mode_output.value["isError"] is True
+            return
         if kind == "structured":
             assert result.content.split("\nOutput:\n", 1)[1] == '{"count":1}'
             assert not result.content_items and "ignored" not in result.content
@@ -69,9 +75,6 @@ def test_mcp_source_output_precedence_and_order(tmp_path, kind):
                     TextContent("after"),
                 )
                 assert "base64" not in result.display_content
-            else:
-                # Unsupported audio is sanitized before fallback conversion.
-                assert result.content_items[1:3] == (TextContent("null"), TextContent("42"))
         assert "_meta" not in result.code_mode_output.value
         assert result.code_mode_output.value.get("structuredContent") == raw.get(
             "structuredContent"
@@ -85,7 +88,8 @@ def test_mcp_source_output_precedence_and_order(tmp_path, kind):
 
 @pytest.mark.parametrize("kind", ["image", "audio"])
 @pytest.mark.parametrize("mime_key", [None, "mimeType", "mime_type"])
-def test_mcp_media_data_url_and_mime_defaults(tmp_path, kind, mime_key):
+def test_mcp_media_requires_wire_mime_type_before_data_url_conversion(tmp_path, kind, mime_key):
+    from corki.mcp.client import MCPProtocolError
     from corki.mcp.output import mcp_output
     from corki.protocol.tools import AudioAttachment
     from corki.protocol.truncation import TruncationPolicy
@@ -93,9 +97,24 @@ def test_mcp_media_data_url_and_mime_defaults(tmp_path, kind, mime_key):
     block = {"type": kind, "data": "AAAA", "_meta": {"codex/imageDetail": "original"}}
     if mime_key:
         block[mime_key] = "fixture/mime"
+    if mime_key != "mimeType":
+        with pytest.raises(MCPProtocolError):
+            mcp_output(
+                ToolCall(new_tool_call_id(), "read", {}),
+                {"content": [block]},
+                context=ToolContext(tmp_path, supports_audio_input=True),
+                policy=TruncationPolicy(),
+                wall_time=1.25,
+            )
+        return
     result = mcp_output(
         ToolCall(new_tool_call_id(), "read", {}),
-        {"content": [block, {"type": kind, "data": "data:already;raw"}]},
+        {
+            "content": [
+                block,
+                {"type": kind, "data": "data:already;raw", "mimeType": "fixture/mime"},
+            ]
+        },
         context=ToolContext(tmp_path, supports_audio_input=True),
         policy=TruncationPolicy(),
         wall_time=1.25,
@@ -103,9 +122,7 @@ def test_mcp_media_data_url_and_mime_defaults(tmp_path, kind, mime_key):
     cls = ImageAttachment if kind == "image" else AudioAttachment
     assert result.content_items == (
         TextContent("Wall time: 1.2500 seconds\nOutput:"),
-        cls(
-            "data:" + ("fixture/mime" if mime_key else "application/octet-stream") + ";base64,AAAA"
-        ),
+        cls("data:fixture/mime;base64,AAAA"),
         cls("data:already;raw"),
     )
     assert result.display_content == "Wall time: 1.2500 seconds\nOutput:"
@@ -164,22 +181,20 @@ def test_mcp_per_tool_config_parses_distinct_limits():
 
 
 @pytest.mark.parametrize("tag", [[], {}])
-def test_malformed_mcp_type_is_json_evidence_not_an_adapter_exception(tmp_path, tag):
+def test_malformed_mcp_type_is_a_protocol_error(tmp_path, tag):
+    from corki.mcp.client import MCPProtocolError
     from corki.mcp.output import mcp_output
     from corki.protocol.truncation import TruncationPolicy
 
     block = {"type": tag, "data": "raw"}
-    result = mcp_output(
-        ToolCall(new_tool_call_id(), "read", {}),
-        {"content": [block]},
-        context=ToolContext(tmp_path),
-        policy=TruncationPolicy(),
-        wall_time=0,
-    )
-    assert result.content_items[1] == TextContent(
-        json.dumps(block, sort_keys=True, separators=(",", ":"))
-    )
-    assert not result.is_error
+    with pytest.raises(MCPProtocolError):
+        mcp_output(
+            ToolCall(new_tool_call_id(), "read", {}),
+            {"content": [block]},
+            context=ToolContext(tmp_path),
+            policy=TruncationPolicy(),
+            wall_time=0,
+        )
 
 
 def test_mcp_inflight_call_keeps_its_output_policy_while_connection_retires(tmp_path):

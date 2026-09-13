@@ -8,6 +8,7 @@ from corki.config import CorkiSettings, MCPServerSettings
 from corki.core import LangGraphRuntime
 from corki.mcp.client import PROTOCOL_VERSION, HttpMCPClient
 from corki.models import ModelCompleted
+from corki.protocol.context import ModelContextInfo
 from corki.protocol.events import TurnCompleted, TurnFailed
 from corki.protocol.ids import new_tool_call_id
 from corki.protocol.items import AssistantMessageItem, ToolCallItem, ToolResultItem, new_step_id
@@ -33,9 +34,22 @@ def test_mcp_admission_refresh_does_not_change_current_search_handler_corpus(
                 if method == "notifications/initialized":
                     return httpx.Response(202)
                 if method == "initialize":
-                    result = {"protocolVersion": PROTOCOL_VERSION, "instructions": word}
+                    result = {
+                        "capabilities": {},
+                        "serverInfo": {"name": "fixture", "version": "1"},
+                        "protocolVersion": PROTOCOL_VERSION,
+                        "instructions": word,
+                    }
                 elif method == "tools/list":
-                    result = {"tools": [{"name": "lookup", "description": word}]}
+                    result = {
+                        "tools": [
+                            {
+                                "name": "lookup",
+                                "description": word,
+                                "inputSchema": {"type": "object"},
+                            }
+                        ]
+                    }
                 elif method == "resources/list":
                     result = {"resources": []}
                 elif method == "tools/call":
@@ -83,7 +97,7 @@ def test_mcp_admission_refresh_does_not_change_current_search_handler_corpus(
                         for i in request.items
                         if isinstance(i, ToolResultItem) and i.tool_name == "tool_search"
                     )
-                    assert bool(visible.discovered_tools) == (mode == "native" or not changed)
+                    assert bool(visible.discovered_tools) == (not changed)
                     word = "cobalt" if changed else "amber"
                     calls = (ToolCall(new_tool_call_id(), "tool_search", {"query": word}),)
                 elif step == 3:
@@ -96,7 +110,7 @@ def test_mcp_admission_refresh_does_not_change_current_search_handler_corpus(
                     assert result.discovered_tools[0].source_description == (
                         "cobalt" if changed else "amber"
                     )
-                    calls = (ToolCall(new_tool_call_id(), "mcp__docs__lookup", {}),)
+                    calls = (ToolCall(new_tool_call_id(), "mcp__docs::lookup", {}),)
                 else:
                     assert step == 4 and executed == ["cobalt" if changed else "amber"]
                     yield ModelCompleted((AssistantMessageItem("done", turn, new_step_id()),))
@@ -114,6 +128,7 @@ def test_mcp_admission_refresh_does_not_change_current_search_handler_corpus(
                 skills_enabled=False,
                 api_mode="responses",
                 tool_search_mode=mode,
+                model_contexts=(ModelContextInfo("gpt-5", supports_search_tool=True),),
                 mcp_servers=(MCPServerSettings("docs", "http", url="https://docs.test/mcp"),),
             ),
             database_path=tmp_path / "cache.db",

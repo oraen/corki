@@ -6,6 +6,7 @@ import asyncio
 import base64
 from pathlib import Path
 
+from corki.execution.backend import file_operation
 from corki.media.images import joined_work, validate_image_bytes
 from corki.protocol.tools import (
     CodeModeOutput,
@@ -56,11 +57,21 @@ class ViewImageTool:
         assert call.arguments is not None
         path = Path(str(call.arguments["path"]))
         path = path if path.is_absolute() else context.cwd / path
-        path = path.resolve()
-        if not path.is_file():
-            raise ValueError(f"image does not exist: {path}")
         async with self._gate:
-            data = await joined_work(self._read, path)
+            if context.execution_permissions is None:
+                path = path.resolve()
+                if not path.is_file():
+                    raise ValueError(f"image does not exist: {path}")
+                data = await joined_work(self._read, path)
+            else:
+                encoded = await file_operation(
+                    context.execution_permissions,
+                    context.cwd,
+                    "image",
+                    {"path": str(path), "max_bytes": self._max_bytes},
+                    output_limit=self._max_bytes * 2 + 4096,
+                )
+                data = base64.b64decode(encoded, validate=True)
         mime_type = "application/octet-stream"
         requested_detail = str(call.arguments.get("detail", "high"))
         if requested_detail not in {"high", "original"}:

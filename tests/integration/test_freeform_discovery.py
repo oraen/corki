@@ -6,9 +6,11 @@ import json
 import httpx
 import pytest
 
+from corki import http_client
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
-from corki.protocol.events import TurnCompleted, TurnFailed
+from corki.protocol.context import ModelContextInfo
+from corki.protocol.events import TurnCompleted
 from corki.protocol.items import ToolResultItem
 from corki.protocol.tools import ToolExposure, ToolResult, ToolSpec
 from corki.storage import SQLiteSessionRepository
@@ -48,44 +50,31 @@ def test_search_then_raw_call_retains_wire_kind_and_durable_definition(
                 return ToolResult(call.id, call.name, "raw executed")
 
         def handle(request):
+            assert str(request.url) == "https://fixture.invalid/v1/responses"
             payload = json.loads(request.content)
             requests.append(payload)
+            assert all(tool["type"] == "function" for tool in payload["tools"])
+            assert not any(
+                item.get("type")
+                in {"tool_search_output", "custom_tool_call", "custom_tool_call_output"}
+                for item in payload["input"]
+            )
             if len(requests) == 1:
                 assert not any(tool.get("name") == "raw_probe" for tool in payload["tools"])
                 item = {"id": "s", "call_id": "search"}
-                if search == "native":
-                    item.update(
-                        type="tool_search_call",
-                        execution="client",
-                        arguments={"query": "raw_probe"},
-                    )
-                else:
-                    item.update(
-                        type="function_call",
-                        name="tool_search",
-                        arguments=json.dumps({"query": "raw_probe"}),
-                    )
+                item.update(
+                    type="function_call",
+                    name="tool_search",
+                    arguments=json.dumps({"query": "raw_probe"}),
+                )
             elif len(requests) == 2:
-                if search == "native":
-                    assert not any(tool.get("name") == "raw_probe" for tool in payload["tools"])
-                    output = next(
-                        item
-                        for item in payload["input"]
-                        if item.get("type") == "tool_search_output"
-                    )
-                    definition = output["tools"][0]["tools"][0]
-                else:
-                    definition = next(
-                        tool for tool in payload["tools"] if tool.get("name") == "raw_probe"
-                    )
+                definition = next(
+                    tool for tool in payload["tools"] if tool.get("name") == "raw_probe"
+                )
                 item = {"id": "r", "call_id": "raw", "name": "raw_probe"}
-                if freeform == "native":
-                    assert (definition["type"], definition["format"]) == ("custom", grammar)
-                    item.update(type="custom_tool_call", input="text('ok')")
-                else:
-                    assert definition["type"] == "function"
-                    assert definition["parameters"]["required"] == ["input"]
-                    item.update(type="function_call", arguments=json.dumps({"input": "text('ok')"}))
+                assert definition["type"] == "function" and "format" not in definition
+                assert definition["parameters"]["required"] == ["input"]
+                item.update(type="function_call", arguments=json.dumps({"input": "text('ok')"}))
             else:
                 assert any(item.get("output") == "raw executed" for item in payload["input"])
                 return httpx.Response(
@@ -98,7 +87,7 @@ def test_search_then_raw_call_retains_wire_kind_and_durable_definition(
             )
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
-        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client)
+        monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
         registry = ToolRegistry()
         registry.register(Tool())
         repository = SQLiteSessionRepository(tmp_path / "sessions.db")
@@ -110,6 +99,7 @@ def test_search_then_raw_call_retains_wire_kind_and_durable_definition(
                 api_key="fixture",
                 api_base="https://fixture.invalid/v1",
                 tool_search_mode=search,
+                model_contexts=(ModelContextInfo("gpt-5", supports_search_tool=True),),
                 tool_freeform_mode=freeform,
             ),
             database_path=repository.path,
@@ -138,7 +128,7 @@ def test_search_then_raw_call_retains_wire_kind_and_durable_definition(
 @pytest.mark.parametrize(
     "arguments", ["{}", '{"input":7}', '{"input":"ok","extra":1}', "{bad", "[]", None]
 )
-def test_bad_wrapper_is_observation_but_native_wrong_payload_kind_is_fatal(
+def test_bad_wrapper_is_observation_even_with_legacy_native_configuration(
     tmp_path, monkeypatch, arguments
 ):
     async def scenario():
@@ -175,7 +165,7 @@ def test_bad_wrapper_is_observation_but_native_wrong_payload_kind_is_fatal(
             )
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
-        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client)
+        monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
         registry = ToolRegistry()
         registry.register(Tool())
         runtime = LangGraphRuntime.create(
@@ -193,10 +183,8 @@ def test_bad_wrapper_is_observation_but_native_wrong_payload_kind_is_fatal(
         try:
             events = [event async for event in runtime.stream("run")]
             assert calls == []
-            assert isinstance(events[-1], TurnFailed if arguments is None else TurnCompleted), (
-                events[-1]
-            )
-            assert len(requests) == (1 if arguments is None else 2)
+            assert isinstance(events[-1], TurnCompleted), events[-1]
+            assert len(requests) == 2
         finally:
             await runtime.aclose()
             await client.aclose()

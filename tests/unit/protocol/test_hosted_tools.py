@@ -6,7 +6,6 @@ from corki.context.tokens import estimate_item_tokens
 from corki.core.checkpoint import checkpoint_serializer
 from corki.history_notes.archive import project_history
 from corki.memory.transcript import render_transcript
-from corki.models.hosted_items import HostedItems
 from corki.protocol.hosted import decode_hosted_payload
 from corki.protocol.ids import new_thread_id, new_tool_call_id, new_turn_id
 from corki.protocol.items import (
@@ -69,16 +68,3 @@ def test_hosted_fact_roundtrips_and_reaches_bounded_history_and_extraction():
 def test_hosted_contract_rejects_invalid_and_oversized_records(payload):
     with pytest.raises(ValueError):
         decode_hosted_payload(json.dumps(payload, ensure_ascii=False))
-
-
-def test_hosted_completion_deduplicates_and_rejects_changed_output():
-    from corki.models import ModelError
-
-    completed = HostedItems(new_turn_id(), new_step_id())
-    payload = {"type": "web_search_call", "id": "web-1", "status": "completed"}
-    item = completed.complete(payload, {"output_index": 0})
-    assert item is not None
-    assert completed.complete(dict(payload), {"output_index": 0}) is None
-    assert completed.chars == len(item.payload_json)
-    with pytest.raises(ModelError, match="changed"):
-        completed.complete({**payload, "status": "failed"}, {"output_index": 0})

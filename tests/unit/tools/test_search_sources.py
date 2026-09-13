@@ -96,7 +96,7 @@ def test_regular_mcp_search_uses_complete_instructions_and_raw_callable_frequenc
         server_instructions=" " + instructions + " ",
     )
     assert tool.spec.search_text == (
-        "mcp___docs___createEvent createEvent createEvent  docs  Create event Plan an event. "
+        "mcp___docs_createEvent createEvent createEvent  docs  Create event Plan an event. "
         + instructions
         + " attendees zebra"
     )

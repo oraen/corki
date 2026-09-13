@@ -5,6 +5,7 @@ import pytest
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted
+from corki.protocol.context import ModelContextInfo
 from corki.protocol.events import TurnCompleted, WarningEvent
 from corki.protocol.ids import new_tool_call_id
 from corki.protocol.items import (
@@ -26,7 +27,10 @@ def test_hidden_automatic_catalog_preserves_explicit_input_and_requested_tools(t
             "---\ndescription: Fixture description\n---\nBODY fixture", encoding="utf-8"
         )
         config = tmp_path / "config.toml"
-        config.write_text("[skills]\ninclude_instructions = false\nmax_context_tokens = 1\n")
+        config.write_text(
+            "[skills]\ninclude_instructions = false\nmax_context_tokens = 1\n"
+            "[models.catalog.gpt-5]\ncontext_window = 65536\n"
+        )
         requests = []
 
         class Model:
@@ -60,7 +64,13 @@ def test_hidden_automatic_catalog_preserves_explicit_input_and_requested_tools(t
                 for request in requests
                 for item in request.items
             )
-            assert not any(isinstance(e, WarningEvent) for e in events)
+            # Unknown project trust disables config/rules, not explicit skills.
+            # The separate startup warning must not be confused with a hidden
+            # automatic skill catalog's token-budget warning.
+            warnings = [e.message for e in events if isinstance(e, WarningEvent)]
+            assert warnings == [
+                f"Project-local config and rules disabled for {tmp_path}: project trust is unknown."
+            ]
             bodies = [
                 i for i in requests[0].items if isinstance(i, ContextItem) and i.source_input_id
             ]
@@ -109,7 +119,9 @@ def test_catalog_state_transitions_survive_cold_reopen(tmp_path, monkeypatch, in
                 skill.write_text(document)
             runtime = LangGraphRuntime.create(
                 settings=CorkiSettings(
-                    working_directory=tmp_path, skills_include_instructions=include
+                    working_directory=tmp_path,
+                    skills_include_instructions=include,
+                    model_contexts=(ModelContextInfo("gpt-5", 65536),),
                 ),
                 database_path=tmp_path / "sessions.db",
                 home_path=tmp_path / "home",

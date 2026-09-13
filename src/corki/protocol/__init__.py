@@ -6,6 +6,7 @@ storage implementations so every adapter can exchange stable domain values.
 
 from corki.protocol.events import RuntimeEvent
 from corki.protocol.ids import ItemId, ModelStepId, ThreadId, TurnId
+from corki.protocol.input_mentions import InputMention
 from corki.protocol.items import (
     AssistantMessageItem,
     BudgetNoticeItem,
@@ -43,6 +44,7 @@ __all__ = [
     "ConversationItem",
     "HostedToolItem",
     "ItemId",
+    "InputMention",
     "ImageAttachment",
     "Message",
     "MessageRole",

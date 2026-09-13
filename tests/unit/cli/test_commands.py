@@ -58,3 +58,22 @@ def test_mcp_refresh_is_an_explicit_local_command(tmp_path):
     result = dispatcher(tmp_path).dispatch("/mcp refresh")
     assert result.action is CommandAction.MCP_REFRESH
     assert "not retried" in result.output
+
+
+def test_memory_reset_requires_explicit_confirmation(tmp_path):
+    commands = dispatcher(tmp_path)
+    preview = commands.dispatch("/memory reset")
+    assert preview.handled and preview.action is CommandAction.MEMORY_RESET_PREVIEW
+    assert "No backup" in preview.output and "Conversations" in preview.output
+    assert commands.dispatch("/memory reset confirm").action is CommandAction.MEMORY_RESET
+    assert commands.dispatch("/memory reset yes").action is CommandAction.NONE
+
+
+def test_memory_mode_dispatches_only_public_modes(tmp_path):
+    commands = dispatcher(tmp_path)
+    assert commands.dispatch("/memory mode enabled").action is CommandAction.MEMORY_MODE_ENABLED
+    assert commands.dispatch("/memory mode disabled").action is CommandAction.MEMORY_MODE_DISABLED
+    for text in ("/memory mode polluted", "/memory mode", "/memory mode disabled extra"):
+        result = commands.dispatch(text)
+        assert result.handled and result.action is CommandAction.NONE
+        assert "Unknown command" in result.output

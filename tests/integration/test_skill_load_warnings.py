@@ -5,6 +5,7 @@ import pytest
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted
+from corki.protocol.context import ModelContextInfo
 from corki.protocol.events import TurnCancelled, TurnCompleted, TurnFailed, WarningEvent
 from corki.protocol.ids import new_tool_call_id
 from corki.protocol.items import AssistantMessageItem, ContextItem, ToolCallItem, new_step_id
@@ -55,7 +56,11 @@ def create_runtime(tmp_path, model, **settings):
     registry = ToolRegistry()
     registry.register(Ping())
     return LangGraphRuntime.create(
-        settings=CorkiSettings(working_directory=tmp_path, **settings),
+        settings=CorkiSettings(
+            working_directory=tmp_path,
+            model_contexts=(ModelContextInfo("gpt-5", 65536),),
+            **settings,
+        ),
         database_path=tmp_path / "sessions.db",
         home_path=tmp_path / ".corki",
         registry=registry,

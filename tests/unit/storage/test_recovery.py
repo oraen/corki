@@ -193,4 +193,11 @@ def test_legacy_message_schema_migrates_once(tmp_path: Path) -> None:
     assert items[0].content == "legacy text"
     assert repeated == items
     with sqlite3.connect(path) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM schema_migrations "
+                "WHERE name='legacy_messages_to_conversation_items_v1'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert connection.execute("SELECT preview FROM threads").fetchone() == ("legacy text",)

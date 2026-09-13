@@ -1,11 +1,11 @@
-"""Explicit token-budget preferences; model/account activation is separate."""
+"""Explicit token-budget preferences for Harness-owned ordinary summaries."""
 
 from dataclasses import dataclass, fields
 
 DEFAULT_REMINDER = (
     "Your context window is nearly exhausted (only {n_remaining} tokens remaining) and will be "
-    "automatically reset for you soon. Once reset, message items in current context window will "
-    "be cleared in the new window, but notes and history items will be persistent across windows."
+    "automatically summarized soon. After a successful summary, the model-visible history will "
+    "be replaced; original history and notes remain available across windows."
 )
 
 

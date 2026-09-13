@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 
 from corki.context import ContextSnapshot, ContextWindowManager, active_history
@@ -112,7 +113,7 @@ def test_removed_context_source_appends_notice_without_rewriting_history(tmp_pat
             tools=(),
         )
 
-        assert prepared.items[0] == first.items[0]
+        assert prepared.items[0] == replace(first.items[0], message_group_id=first.items[0].id)
         assert (
             "previously provided AGENTS.md instructions no longer apply"
             in prepared.items[-1].content
@@ -160,9 +161,10 @@ def test_pending_user_input_is_atomically_appended_after_context_updates(tmp_pat
         )
         stored = await repository.load_items(thread_id)
 
-        assert prepared.items == (context, user)
+        recorded = replace(context, message_group_id=context.id)
+        assert prepared.items == (recorded, user)
         assert repeated.items == prepared.items
-        assert stored == (context, user)
+        assert stored == (recorded, user)
         await repository.close()
 
     asyncio.run(scenario())

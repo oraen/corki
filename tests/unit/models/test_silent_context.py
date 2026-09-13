@@ -50,7 +50,10 @@ def test_direct_adapter_call_excludes_snapshot_only_items(mode):
             )
         messages = payload["input" if mode == "responses" else "messages"]
         assert [m["content"] for m in messages] == (
-            ["VISIBLE NOTICE", [{"type": "input_text", "text": "hello"}]]
+            [
+                [{"type": "input_text", "text": "VISIBLE NOTICE"}],
+                [{"type": "input_text", "text": "hello"}],
+            ]
             if mode == "responses"
             else ["base", "VISIBLE NOTICE", "hello"]
         )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from corki.protocol.tools import ToolCall, ToolConcurrency, ToolResult, ToolSpec
+from corki.skills.io import run_skill_io
 from corki.skills.service import SkillService
 from corki.tools.base import ToolContext
 
@@ -31,6 +32,9 @@ class SkillListTool:
         )
 
     async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
+        return await run_skill_io(self._execute, call, context)
+
+    def _execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
         snapshot = self._service.snapshot(context.cwd)
         payload = {
             "skills": [
@@ -39,6 +43,7 @@ class SkillListTool:
                     "description": skill.description,
                     "scope": skill.scope.value,
                     "path": str(skill.path),
+                    **({"plugin_id": skill.plugin_id} if skill.plugin_id is not None else {}),
                 }
                 for skill in snapshot.skills
                 if snapshot.is_visible(skill)
@@ -74,6 +79,9 @@ class SkillReadTool:
         )
 
     async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
+        return await run_skill_io(self._execute, call, context)
+
+    def _execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
         assert call.arguments is not None
         name = str(call.arguments["name"])
         snapshot = self._service.snapshot(context.cwd)

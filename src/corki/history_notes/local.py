@@ -14,8 +14,6 @@ from corki.sessions.repository import SessionRepository
 class LocalHistoryNotesBackend:
     """Use this thread's archive and transactionally persisted virtual notes."""
 
-    native = False
-
     def __init__(self, repository: SessionRepository, path: Path, thread_id: ThreadId) -> None:
         self._repository, self._thread_id = repository, thread_id
         self._notes = NotesStore(path, thread_id)

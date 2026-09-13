@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sqlite3
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 from corki.config import CorkiSettings
-from corki.memory import LocalMemoryBackend, LongTermMemoryService, SQLiteMemoryRepository
+from corki.memory import (
+    LocalMemoryBackend,
+    LongTermMemoryService,
+    SQLiteMemoryRepository,
+    workspace,
+)
 from corki.models import ModelCompleted, ModelRequest
 from corki.models.types import ModelEvent
 from corki.protocol.ids import new_thread_id, new_turn_id
@@ -21,9 +27,14 @@ class ScriptedMemoryModel:
         self.responses = responses
         self.requests: list[ModelRequest] = []
         self.closed = False
+        self.snapshots = []
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelEvent]:
         self.requests.append(request)
+        if request.output_schema is None:
+            env = next(i for i in request.items if getattr(i, "key", None) == "environment.primary")
+            root = Path(re.search(r"<cwd>(.*?)</cwd>", env.content, re.S)[1])
+            self.snapshots.append(workspace.capture(root))
         response = self.responses.pop(0)
         yield ModelCompleted(
             (
@@ -114,15 +125,13 @@ def test_two_phase_pipeline_extracts_consolidates_redacts_and_skips_unchanged(
         assert model.requests[0].output_schema_name == "corki_memory_extraction"
         assert model.requests[0].output_schema is not None
         assert model.requests[0].output_schema["additionalProperties"] is False
-        assert model.requests[1].output_schema_name == "corki_memory_consolidation"
-        assert model.requests[1].output_schema is not None
-        assert set(json.loads(model.requests[1].items[0].content)) == {
-            "previous_memory",
-            "previous_summary",
-            "previous_skills",
-            "raw_memories",
-            "ad_hoc_notes",
-        }
+        assert model.requests[1].tools
+        assert model.requests[1].output_schema is None
+        assert not any(
+            getattr(i, "key", None) == "memory.consolidation.inputs"
+            for i in model.requests[1].items
+        )
+        assert all("Run pytest." not in i.content for i in model.requests[1].items)
 
         with sqlite3.connect(database) as connection:
             connection.execute("UPDATE memory_jobs SET finished_at=0 WHERE job_key='global'")
@@ -153,7 +162,7 @@ def test_failed_consolidation_preserves_previously_published_memory(tmp_path: Pa
                         "rollout_slug": None,
                     }
                 ),
-                "not-json",
+                "{invalid-json",
             ]
         )
         settings = CorkiSettings(
@@ -252,7 +261,11 @@ def test_ad_hoc_note_alone_triggers_global_consolidation(tmp_path: Path) -> None
 
         assert report.claimed == 0
         assert report.consolidated
-        assert "Prefer concise explanations" in model.requests[0].items[0].content
+        assert all("Prefer concise explanations" not in i.content for i in model.requests[0].items)
+        assert any(
+            "Prefer concise explanations" in workspace.text(model.snapshots[0], name)
+            for name in model.snapshots[0]
+        )
         assert "concise answers" in (root / "memory_summary.md").read_text(encoding="utf-8")
         await service.aclose()
 

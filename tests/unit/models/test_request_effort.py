@@ -33,14 +33,19 @@ def test_request_effort_overrides_only_its_request_and_obeys_capability(mode, su
             request = ModelRequest("model", "", (), (), (), reasoning_effort="low")
             first = model._build_payload(request)
             following = model._build_payload(replace(request, reasoning_effort=None))
+            cleared = model._build_payload(
+                replace(request, reasoning_effort=None, reasoning_effort_resolved=True)
+            )
             if mode == "chat_completions":
                 assert first.get("reasoning_effort") == ("low" if supported else None)
                 assert following.get("reasoning_effort") == ("high" if supported else None)
+                assert "reasoning_effort" not in cleared
             else:
                 assert first.get("reasoning", {}).get("effort") == ("low" if supported else None)
                 assert following.get("reasoning", {}).get("effort") == (
                     "high" if supported else None
                 )
+                assert "reasoning" not in cleared
         finally:
             await model.aclose()
             await client.aclose()

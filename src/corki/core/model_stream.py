@@ -1,4 +1,4 @@
-"""Own one response iterator and any tasks racing it against user steering."""
+"""Own one response iterator and tasks racing it against cancellation."""
 
 import asyncio
 import logging
@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 
 from corki.models import ModelCompleted, ModelPort, ModelRequest
 from corki.models.types import ModelEvent
-from corki.realtime.controller import RealtimeCommand, RealtimeController
+from corki.realtime.controller import RealtimeController, RealtimeStop
 
 _LOG = logging.getLogger(__name__)
 
@@ -16,8 +16,8 @@ async def model_events(
     request: ModelRequest,
     realtime: RealtimeController | None,
     failure: asyncio.Future[BaseException] | None = None,
-) -> AsyncIterator[ModelEvent | RealtimeCommand]:
-    """Yield response/steering events; the caller must explicitly close this generator.
+) -> AsyncIterator[ModelEvent | RealtimeStop]:
+    """Yield response/stop events; ordinary user input waits for the next Step.
 
     No response read or input consumer may outlive this scope. ModelCompleted is
     authoritative: do not wait for the provider to close its iterator afterwards.
@@ -32,7 +32,7 @@ async def model_events(
                 if live_input or failure is not None:
                     model_task = asyncio.create_task(anext(iterator), name="corki-model-read")
                     input_task = (
-                        asyncio.create_task(realtime.next(), name="corki-steering-read")
+                        asyncio.create_task(realtime.next_stop(), name="corki-stop-read")
                         if live_input
                         else None
                     )

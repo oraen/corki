@@ -7,7 +7,7 @@ from corki.memory.inputs import extraction_token_budget
 @pytest.mark.parametrize(
     "provider,stage,expected",
     [
-        ("", "", ("gpt-5.6-luna", "gpt-5.6-terra")),
+        ("", "", ("main", "main")),
         (
             'memory_extraction_model="small"\nmemory_consolidation_model="large"',
             "",
@@ -21,7 +21,7 @@ from corki.memory.inputs import extraction_token_budget
         ),
     ],
 )
-def test_stage_override_precedes_provider_preferences_then_codex_defaults(
+def test_stage_override_precedes_provider_preferences_then_main_model(
     tmp_path, provider, stage, expected
 ):
     config = tmp_path / "config.toml"
@@ -40,7 +40,7 @@ def test_stage_override_precedes_provider_preferences_then_codex_defaults(
 def test_bundled_memory_window_and_authoritative_custom_catalog(tmp_path, catalog, expected):
     config = tmp_path / "config.toml"
     config.write_text(
-        "[models]\ncontext_window_override=1000000\n"
+        '[memories]\nextraction_model="gpt-5.6-luna"\n[models]\ncontext_window_override=1000000\n'
         + ("[models.catalog]\n" if catalog == "" else catalog or "")
     )
     settings = CorkiSettings.for_directory(tmp_path, config_file=config)

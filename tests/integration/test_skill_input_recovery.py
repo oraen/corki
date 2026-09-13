@@ -4,6 +4,7 @@ import json
 import httpx
 import pytest
 
+from corki import http_client
 from corki.config import CorkiSettings
 from corki.context import active_history
 from corki.core import LangGraphRuntime
@@ -167,7 +168,7 @@ def test_selected_skill_wire_follows_user_and_omits_internal_input_identity(
             return httpx.Response(200, text=text, headers={"content-type": "text/event-stream"})
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
-        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client)
+        monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
         runtime = LangGraphRuntime.create(
             settings=CorkiSettings(
                 working_directory=tmp_path,

@@ -1,4 +1,4 @@
-"""Native raw protocol is an independent, explicit capability assertion."""
+"""Legacy raw protocol settings cannot reactivate custom wire tools."""
 
 import pytest
 
@@ -15,18 +15,15 @@ def test_invalid_freeform_configuration_is_rejected(tmp_path, mode):
         CorkiSettings(working_directory=tmp_path, tool_freeform_mode=mode)
 
 
-def test_native_raw_requires_responses_independently_of_search(tmp_path):
-    with pytest.raises(ValueError, match="Responses"):
-        CorkiSettings(
-            working_directory=tmp_path, api_mode="chat_completions", tool_freeform_mode="native"
-        )
+@pytest.mark.parametrize("mode", ["responses", "chat_completions"])
+def test_native_raw_setting_uses_ordinary_functions(tmp_path, mode):
     settings = CorkiSettings(
         working_directory=tmp_path,
-        api_mode="responses",
+        api_mode=mode,
         tool_search_mode="disabled",
         tool_freeform_mode="native",
     )
-    assert settings.tool_freeform_mode == "native"
+    assert settings.tool_freeform_mode == "compatible"
 
 
 def test_compatible_source_escaping_is_counted_in_context():
@@ -41,5 +38,7 @@ def test_grammar_snapshot_cannot_be_mutated_through_caller_aliases():
     spec = ToolSpec("raw", "fixture", {}, input_kind="freeform", freeform_format=grammar)
     grammar["definition"] = "changed"
     payload = spec.as_response_tool(native_freeform=True)
-    payload["format"]["definition"] = "also changed"
+    assert payload["type"] == "function" and "format" not in payload
+    payload["parameters"]["properties"]["input"]["type"] = "integer"
+    assert spec.compatible_parameters()["properties"]["input"]["type"] == "string"
     assert spec.freeform_format["definition"] == "start: /.+/"

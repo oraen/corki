@@ -8,7 +8,7 @@ from corki.models import ModelCompleted
 from corki.models.types import ModelUsage
 from corki.protocol.events import ContextCompacted, TurnCompleted
 from corki.protocol.ids import new_tool_call_id
-from corki.protocol.items import AssistantMessageItem, ToolCallItem, new_step_id
+from corki.protocol.items import AssistantMessageItem, ContextItem, ToolCallItem, new_step_id
 from corki.protocol.tools import ToolCall, ToolResult, ToolSpec
 from corki.tools import ToolRegistry
 
@@ -48,6 +48,96 @@ class CompletingModel:
 
     async def aclose(self):
         pass
+
+
+@pytest.mark.parametrize("guidance", [None, "", " \n\t", "keep useful context"])
+def test_host_guidance_uses_same_blank_semantics_as_configuration(tmp_path, guidance):
+    async def scenario():
+        model = CompletingModel(output=0)
+        runtime = budget_runtime(tmp_path, model, guidance_message=guidance)
+        try:
+            for _ in range(2):
+                events = [event async for event in runtime.stream("work")]
+                assert isinstance(events[-1], TurnCompleted)
+            expected = bool(guidance and guidance.strip())
+            for request in model.requests:
+                items = [
+                    i
+                    for i in request.items
+                    if isinstance(i, ContextItem) and i.key == "context_window_guidance"
+                ]
+                assert len(items) == int(expected)
+                if expected:
+                    assert guidance in items[0].content
+            stored = await runtime._repository.load_items(runtime.thread_id)
+            assert sum(
+                isinstance(i, ContextItem) and i.key == "context_window_guidance" for i in stored
+            ) == int(expected)
+        finally:
+            await runtime.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("guidance", ["new guidance", None, " \n\t"])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_guidance_cold_update_retires_previous_instructions_once(tmp_path, guidance, legacy):
+    async def scenario():
+        model = CompletingModel(output=0)
+        runtime = budget_runtime(tmp_path, model, guidance_message="old guidance")
+        thread = runtime.thread_id
+        try:
+            if legacy:
+                from corki.protocol.ids import new_turn_id
+                from corki.protocol.messages import Message, MessageRole
+
+                await runtime._ensure_ready()
+                await runtime._repository.save_messages(
+                    thread,
+                    (
+                        Message.create(
+                            role=MessageRole.DEVELOPER,
+                            content=(
+                                "<context_window_guidance>\nold guidance\n"
+                                "</context_window_guidance>"
+                            ),
+                            turn_id=new_turn_id(),
+                        ),
+                    ),
+                )
+            else:
+                assert isinstance([e async for e in runtime.stream("first")][-1], TurnCompleted)
+            prefix = await runtime._repository.load_items(thread)
+        finally:
+            await runtime.aclose()
+        runtime = budget_runtime(tmp_path, model, thread=thread, guidance_message=guidance)
+        try:
+            for _ in range(2):
+                assert isinstance([e async for e in runtime.stream("next")][-1], TurnCompleted)
+            stored = await runtime._repository.load_items(thread)
+            assert stored[: len(prefix)] == prefix
+            updates = [
+                i
+                for i in stored
+                if isinstance(i, ContextItem) and i.key == "context_window_guidance"
+            ]
+            assert len(updates) == (1 if legacy else 2)
+            body = (
+                "This context-window guidance replaces all previously provided "
+                "context-window guidance." + "\n\n" + guidance
+                if guidance and guidance.strip()
+                else "The previously provided context-window guidance no longer applies."
+            )
+            assert (
+                updates[-1].content
+                == f"<context_window_guidance>\n{body}\n</context_window_guidance>"
+            )
+            for request in model.requests[0 if legacy else 1 :]:
+                assert updates[-1] in request.items
+        finally:
+            await runtime.aclose()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("scope", ["total", "body_after_prefix"])
@@ -139,7 +229,8 @@ def test_completion_records_once_across_turns_and_cold_runtime_then_new_window(t
             assert str(model.requests[-1].items).count("SAVE_BEFORE_RESET") == 1
             [event async for event in cold.compact()]
             [event async for event in cold.stream("FOURTH_FACT")]
-            assert len(model.requests) == 4
+            assert len(model.requests) == 5
+            assert not model.requests[-2].tools
             assert "SAVE_BEFORE_RESET" not in str(model.requests[-1].items)
             stored = await cold._repository.load_items(thread)
             notices = [item for item in stored if isinstance(item, BudgetNoticeItem)]
@@ -184,9 +275,10 @@ def test_immediate_rollover_skips_fallback_even_with_large_buffer(tmp_path, reas
         try:
             events = [event async for event in runtime.stream("BEFORE_RESET")]
             assert isinstance(events[-1], TurnCompleted)
-            assert len(model.requests) == 2
+            assert len(model.requests) == 3
+            assert not model.requests[1].tools
             assert sum(isinstance(event, ContextCompacted) for event in events) == 1
-            assert "BEFORE_RESET" not in str(model.requests[-1].items)
+            assert "BEFORE_RESET" in str(model.requests[-1].items)
             notices = [
                 item
                 for item in await runtime._repository.load_items(runtime.thread_id)
@@ -339,7 +431,7 @@ def test_completed_usage_notices_reach_actual_provider_payload(tmp_path, mode):
 
 @pytest.mark.parametrize("ending", ["new_context", "buffer", "complete"])
 @pytest.mark.parametrize("scope", ["total", "body_after_prefix"])
-def test_fallback_preserves_work_then_resets_without_summary(tmp_path, ending, scope):
+def test_fallback_preserves_work_then_summarizes(tmp_path, ending, scope):
     from corki.config.token_budget import TokenBudgetConfig
 
     async def scenario():
@@ -411,7 +503,7 @@ def test_fallback_preserves_work_then_resets_without_summary(tmp_path, ending, s
         try:
             events = [event async for event in runtime.stream("ORIGINAL_REQUEST")]
             assert isinstance(events[-1], TurnCompleted)
-            assert len(requests) == (3 if ending == "complete" else 4)
+            assert len(requests) == (3 if ending == "complete" else 5)
             for request in requests[1:3]:
                 assert str(request.items).count("SAVE_BEFORE_RESET") == 1
                 assert str(request.items).count("REMINDER 0") == 1
@@ -422,8 +514,9 @@ def test_fallback_preserves_work_then_resets_without_summary(tmp_path, ending, s
                 ending != "complete"
             )
             if ending != "complete":
+                assert not requests[-2].tools
                 assert "SAVE_BEFORE_RESET" not in str(requests[-1].items)
-                assert "ORIGINAL_REQUEST" not in str(requests[-1].items)
+                assert "ORIGINAL_REQUEST" in str(requests[-1].items)
         finally:
             await runtime.aclose()
 

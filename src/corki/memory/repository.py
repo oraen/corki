@@ -10,6 +10,10 @@ from corki.protocol.ids import ThreadId
 
 
 class MemoryRepository(Protocol):
+    async def clear_memory_data(self) -> None:
+        """Clear generated outputs and memory jobs, preserving threads and their modes."""
+        ...
+
     async def prune_stage_one_outputs(self, *, max_unused_days: int, limit: int) -> int:
         """Remove a bounded batch of stale unselected outputs, preserving job watermarks."""
         ...

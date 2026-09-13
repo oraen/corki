@@ -2,11 +2,14 @@
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
-from corki.config import CorkiSettings
+from corki import http_client
+from corki.cli.application import CorkiApplication
+from corki.config import CorkiPaths, CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.protocol.events import ModelRetryScheduled, TurnCancelled, TurnCompleted, TurnFailed
 from corki.storage import SQLiteSessionRepository
@@ -29,6 +32,7 @@ from corki.storage import SQLiteSessionRepository
         (401, {}, "authentication", 2, 1),
         (403, {}, "authentication", 2, 1),
         (404, {}, "protocol", 2, 1),
+        (402, {"message": "Insufficient Balance"}, "protocol", 1, 0),
     ],
 )
 def test_default_request_tier_precedes_stream_classification(
@@ -43,7 +47,7 @@ def test_default_request_tier_precedes_stream_classification(
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
         # Exercise Runtime's composition, not a separately configured injected model.
-        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client)
+        monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
         repository = SQLiteSessionRepository(tmp_path / "sessions.db")
         runtime = LangGraphRuntime.create(
             settings=CorkiSettings(
@@ -66,6 +70,8 @@ def test_default_request_tier_precedes_stream_classification(
             events = await asyncio.wait_for(collect(), 3)
             assert isinstance(events[-1], TurnFailed), events[-1]
             assert events[-1].error_kind == kind
+            if status == 402:
+                assert "Insufficient Balance" in events[-1].error
             assert len(requests) == count
             assert requests == [requests[0]] * count
             assert (
@@ -73,6 +79,25 @@ def test_default_request_tier_precedes_stream_classification(
                 == stream_retries
             )
             terminal = events[-1]
+            notices, errors = [], []
+            app = CorkiApplication(
+                CorkiSettings(working_directory=tmp_path),
+                CorkiPaths.from_home(tmp_path / "home"),
+                runtime,
+                SimpleNamespace(
+                    show_notice=notices.append,
+                    show_assistant_message=lambda text, **kwargs: errors.append(text),
+                ),
+            )
+
+            async def replay_events():
+                for event in events:
+                    yield event
+
+            await app._consume_events(replay_events())
+            assert terminal.error in errors
+            for retry in (event for event in events if isinstance(event, ModelRetryScheduled)):
+                assert any("Reason: " + retry.error in notice for notice in notices)
             assert await repository.load_model_step(terminal.thread_id, terminal.turn_id, 0) is None
             assert (
                 await repository.load_model_failure(
@@ -124,7 +149,7 @@ def test_composed_budgets_and_successful_http_retry_not_a_failed_sample(
             )
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
-        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client)
+        monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
         repository = SQLiteSessionRepository(tmp_path / "sessions.db")
         runtime = LangGraphRuntime.create(
             settings=CorkiSettings(
@@ -183,14 +208,15 @@ def test_composed_budgets_and_successful_http_retry_not_a_failed_sample(
 
 
 @pytest.mark.parametrize("action", ["cancel", "steer"])
-def test_http_backoff_closes_failed_response_and_is_interruptible(tmp_path, monkeypatch, action):
+def test_http_backoff_closes_failed_response_and_queues_steer(tmp_path, monkeypatch, action):
     async def scenario():
         waiting, requests, responses = asyncio.Event(), [], []
+        release = asyncio.Event()
 
         async def wait(delay):
             assert responses[-1].is_closed
             waiting.set()
-            await asyncio.Event().wait()
+            await release.wait()
 
         monkeypatch.setattr("corki.models.http_stream.wait_http_retry", wait)
 
@@ -199,7 +225,9 @@ def test_http_backoff_closes_failed_response_and_is_interruptible(tmp_path, monk
             if len(requests) == 1:
                 response = httpx.Response(503, text="unavailable")
             else:
-                assert requests[-1]["input"][-1]["content"][0]["text"] == "new input"
+                assert requests[-1]["input"][-1]["content"][0]["text"] == (
+                    "run" if len(requests) == 2 else "new input"
+                )
                 response = httpx.Response(
                     200, text='data: {"type":"response.completed","response":{"id":"done"}}\n\n'
                 )
@@ -207,7 +235,7 @@ def test_http_backoff_closes_failed_response_and_is_interruptible(tmp_path, monk
             return response
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
-        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client)
+        monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
         runtime = LangGraphRuntime.create(
             settings=CorkiSettings(
                 working_directory=tmp_path,
@@ -234,13 +262,17 @@ def test_http_backoff_closes_failed_response_and_is_interruptible(tmp_path, monk
                 await runtime.cancel_active()
             else:
                 await runtime.steer("new input")
+                await asyncio.sleep(0.02)
+                assert len(requests) == 1 and not task.done()
+                release.set()
             await asyncio.wait_for(task, 2)
             assert isinstance(events[-1], TurnCancelled if action == "cancel" else TurnCompleted), (
                 events[-1]
             )
-            assert len(requests) == (1 if action == "cancel" else 2)
+            assert len(requests) == (1 if action == "cancel" else 3)
             assert all(response.is_closed for response in responses)
         finally:
+            release.set()
             await runtime.aclose()
             await asyncio.gather(task, return_exceptions=True)
             await client.aclose()

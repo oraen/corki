@@ -38,7 +38,11 @@ def test_mcp_output_budget_comes_from_admitted_connection_and_survives_reopen(
                 if method == "notifications/initialized":
                     return httpx.Response(202)
                 if method == "initialize":
-                    value = {"protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {}}}
+                    value = {
+                        "serverInfo": {"name": "fixture", "version": "1"},
+                        "protocolVersion": PROTOCOL_VERSION,
+                        "capabilities": {"tools": {}},
+                    }
                 elif method == "tools/list":
                     value = {
                         "tools": [
@@ -94,7 +98,7 @@ def test_mcp_output_budget_comes_from_admitted_connection_and_survives_reopen(
                             input_kind="freeform",
                         )
                         if nested
-                        else ToolCall(new_tool_call_id(), "mcp__docs__read", {})
+                        else ToolCall(new_tool_call_id(), "mcp__docs::read", {})
                     )
                     yield ModelCompleted((ToolCallItem(call, turn, step),))
                 else:
@@ -137,7 +141,7 @@ def test_mcp_output_budget_comes_from_admitted_connection_and_survives_reopen(
             assert calls == [1]
             with sqlite3.connect(database) as connection:
                 (encoded,) = connection.execute(
-                    "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs__read'"
+                    "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs::read'"
                 ).fetchone()
                 ledger = json.loads(encoded)
                 assert ledger["fallback_token_limit_override"] == expected
@@ -162,7 +166,7 @@ def test_mcp_output_budget_comes_from_admitted_connection_and_survives_reopen(
             with sqlite3.connect(database) as connection:
                 assert (
                     connection.execute(
-                        "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs__read'"
+                        "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs::read'"
                     ).fetchone()[0]
                     == encoded
                 )
@@ -239,7 +243,7 @@ def test_remote_mcp_errors_resolve_to_code_mode_error_values(tmp_path, failure):
             assert calls == ["read"] and len(requests) == 2
             with sqlite3.connect(database) as db:
                 (value,) = db.execute(
-                    "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs__read'"
+                    "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs::read'"
                 ).fetchone()
                 result = json.loads(value)
                 assert result["is_error"] and not result.get("dispatch_error", False)

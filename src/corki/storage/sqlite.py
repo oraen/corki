@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import sqlite3
+from contextlib import AbstractContextManager
 from dataclasses import asdict
 from hashlib import sha256
 from pathlib import Path
@@ -13,7 +14,16 @@ from typing import Any
 
 from corki.models.failure import ModelFailure
 from corki.models.types import ModelCompleted, ModelUsage
-from corki.protocol.ids import ItemId, MessageId, ModelStepId, ThreadId, ToolCallId, TurnId
+from corki.prompting.compaction import render_compaction_summary
+from corki.protocol.execution_identity import ExecutionIdentity
+from corki.protocol.ids import (
+    MessageId,
+    ModelStepId,
+    SessionId,
+    ThreadId,
+    ToolCallId,
+    TurnId,
+)
 from corki.protocol.items import (
     AssistantMessageItem,
     BudgetNoticeItem,
@@ -32,7 +42,10 @@ from corki.protocol.items import (
     item_to_payload,
     items_from_messages,
 )
+from corki.protocol.memory import ThreadMemoryMode
 from corki.protocol.messages import Message, MessageRole
+from corki.protocol.session_source import DEFAULT_SESSION_SOURCE, SessionSource
+from corki.protocol.settings import ModelSettingsSnapshot, ThreadModelSettings
 from corki.protocol.tools import (
     CodeModeOutput,
     ImageAttachment,
@@ -43,7 +56,22 @@ from corki.protocol.tools import (
     content_to_payload,
     tool_spec_from_payload,
 )
-from corki.sessions.models import ContextUsage, TurnRecord
+from corki.protocol.wire_json import loads_wire, materialize
+from corki.protocol.wire_numbers import dumps_wire, loads_number_values
+from corki.sessions.display import (
+    DisplayItemsCursor,
+    DisplayItemsPage,
+    DisplayTurnsCursor,
+    DisplayTurnsPage,
+)
+from corki.sessions.models import ContextUsage, DisplayHistory, TurnRecord, TurnStatus
+from corki.storage.display_pages import (
+    contains_display_item,
+    display_turn_from_row,
+    read_display_items_page,
+    read_display_turns_page,
+)
+from corki.storage.preview import migrate_thread_previews, user_preview
 
 
 class StorageIntegrityError(RuntimeError):
@@ -63,7 +91,7 @@ class SQLiteSessionRepository:
     def path(self) -> Path:
         return self._path
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
         connection = sqlite3.connect(self._path, timeout=10)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
@@ -98,6 +126,53 @@ class SQLiteSessionRepository:
                     error TEXT,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS thread_base_instructions (
+                    thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+                    model TEXT NOT NULL,
+                    instructions TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS thread_forks (
+                    thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+                    source_thread_id TEXT NOT NULL,
+                    request_json TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS inherited_context_usage (
+                    thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+                    ordinal INTEGER NOT NULL,
+                    total_tokens INTEGER,
+                    anchor_id TEXT,
+                    input_tokens INTEGER,
+                    sample_id TEXT,
+                    PRIMARY KEY (thread_id, ordinal)
+                );
+                CREATE TABLE IF NOT EXISTS transcript_threads (
+                    thread_id TEXT PRIMARY KEY REFERENCES threads(id)
+                );
+                CREATE TABLE IF NOT EXISTS transcript_pending (
+                    thread_id TEXT PRIMARY KEY REFERENCES threads(id)
+                );
+                CREATE INDEX IF NOT EXISTS turns_thread_order ON turns(thread_id);
+                CREATE TABLE IF NOT EXISTS hook_executions (
+                    execution_key TEXT PRIMARY KEY,
+                    thread_id TEXT NOT NULL REFERENCES threads(id),
+                    turn_id TEXT NOT NULL,
+                    request_json TEXT NOT NULL,
+                    result_json TEXT
+                );
+                CREATE TABLE IF NOT EXISTS hook_batches (
+                    batch_key TEXT PRIMARY KEY,
+                    thread_id TEXT NOT NULL REFERENCES threads(id),
+                    turn_id TEXT NOT NULL,
+                    snapshot_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS hook_executions_scope
+                    ON hook_executions(thread_id, turn_id);
+                CREATE TABLE IF NOT EXISTS thread_model_settings (
+                    thread_id TEXT PRIMARY KEY REFERENCES threads(id),
+                    model TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    reasoning_effort TEXT
+                );
                 CREATE TABLE IF NOT EXISTS messages (
                     id TEXT PRIMARY KEY,
                     thread_id TEXT NOT NULL REFERENCES threads(id),
@@ -125,6 +200,14 @@ class SQLiteSessionRepository:
                     ON conversation_items(thread_id, sequence);
                 CREATE INDEX IF NOT EXISTS conversation_items_turn
                     ON conversation_items(thread_id, turn_id, sequence);
+                CREATE INDEX IF NOT EXISTS conversation_items_compaction_sequence
+                    ON conversation_items(thread_id, sequence) WHERE kind='compaction';
+                CREATE TRIGGER IF NOT EXISTS transcript_pending_after_item
+                AFTER INSERT ON conversation_items
+                WHEN EXISTS (SELECT 1 FROM transcript_threads WHERE thread_id=NEW.thread_id)
+                BEGIN
+                    INSERT OR IGNORE INTO transcript_pending(thread_id) VALUES (NEW.thread_id);
+                END;
                 CREATE TABLE IF NOT EXISTS model_steps (
                     step_id TEXT PRIMARY KEY,
                     thread_id TEXT NOT NULL REFERENCES threads(id),
@@ -170,7 +253,57 @@ class SQLiteSessionRepository:
             )
             # Serialize legacy column inspection/ALTER with other openers.
             connection.execute("BEGIN IMMEDIATE")
+            base_columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(thread_base_instructions)")
+            }
+            if "provenance" not in base_columns:
+                connection.execute(
+                    "ALTER TABLE thread_base_instructions ADD COLUMN "
+                    "provenance TEXT DEFAULT 'model'"
+                )
+            if not connection.execute(
+                "SELECT 1 FROM schema_migrations WHERE name='transcript_pending_v1'"
+            ).fetchone():
+                connection.execute(
+                    "INSERT OR IGNORE INTO transcript_pending "
+                    "SELECT thread_id FROM transcript_threads"
+                )
+                connection.execute(
+                    "INSERT INTO schema_migrations(name) VALUES ('transcript_pending_v1')"
+                )
+            settings_columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(thread_model_settings)")
+            }
+            if "collaboration_mode" not in settings_columns:
+                connection.execute(
+                    "ALTER TABLE thread_model_settings ADD COLUMN "
+                    "collaboration_mode TEXT NOT NULL DEFAULT 'default'"
+                )
+            if "collaboration_instructions" not in settings_columns:
+                connection.execute(
+                    "ALTER TABLE thread_model_settings ADD COLUMN collaboration_instructions TEXT"
+                )
+            if "personality" not in settings_columns:
+                connection.execute("ALTER TABLE thread_model_settings ADD COLUMN personality TEXT")
+            thread_columns = {row[1] for row in connection.execute("PRAGMA table_info(threads)")}
+            if "archived_at" not in thread_columns:
+                connection.execute("ALTER TABLE threads ADD COLUMN archived_at TEXT")
+            if "memory_mode" not in thread_columns:
+                connection.execute(
+                    "ALTER TABLE threads ADD COLUMN memory_mode TEXT NOT NULL DEFAULT 'enabled'"
+                )
+            if "session_id" not in thread_columns:
+                connection.execute("ALTER TABLE threads ADD COLUMN session_id TEXT")
+                connection.execute("UPDATE threads SET session_id=id")
+            if "source" not in thread_columns:
+                connection.execute(
+                    "ALTER TABLE threads ADD COLUMN source TEXT NOT NULL DEFAULT 'vscode'"
+                )
             turn_columns = {row[1] for row in connection.execute("PRAGMA table_info(turns)")}
+            if "base_instructions" not in turn_columns:
+                connection.execute("ALTER TABLE turns ADD COLUMN base_instructions TEXT")
+            if "model_settings_json" not in turn_columns:
+                connection.execute("ALTER TABLE turns ADD COLUMN model_settings_json TEXT")
             if "operation" not in turn_columns:
                 connection.execute(
                     "ALTER TABLE turns ADD COLUMN operation TEXT NOT NULL DEFAULT 'normal'"
@@ -202,6 +335,11 @@ class SQLiteSessionRepository:
                 connection.execute("ALTER TABLE model_steps ADD COLUMN total_tokens INTEGER")
             if "usage_anchor_id" not in step_columns:
                 connection.execute("ALTER TABLE model_steps ADD COLUMN usage_anchor_id TEXT")
+            if "usage_details_json" not in step_columns:
+                connection.execute(
+                    "ALTER TABLE model_steps ADD COLUMN usage_details_json "
+                    "TEXT NOT NULL DEFAULT '{}'"
+                )
             connection.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS model_steps_turn_index
@@ -210,9 +348,7 @@ class SQLiteSessionRepository:
                 """
             )
             self._migrate_legacy_messages(connection)
-            connection.execute(
-                "UPDATE tool_executions SET status='interrupted' WHERE status='running'"
-            )
+            migrate_thread_previews(connection)
 
     def _migrate_legacy_messages(self, connection: sqlite3.Connection) -> None:
         migration = "legacy_messages_to_conversation_items_v1"
@@ -246,24 +382,271 @@ class SQLiteSessionRepository:
             next_sequence[thread_id] = sequence
         connection.execute("INSERT INTO schema_migrations(name) VALUES (?)", (migration,))
 
-    async def create_thread(self, thread_id: ThreadId, cwd: Path) -> None:
-        await _joined_write(self._create_thread, thread_id, cwd)
+    async def thread_exists(self, thread_id: ThreadId) -> bool:
+        return await asyncio.to_thread(self._thread_exists, thread_id)
 
-    def _create_thread(self, thread_id: ThreadId, cwd: Path) -> None:
+    def _thread_exists(self, thread_id: ThreadId) -> bool:
+        with self._connect() as connection:
+            return (
+                connection.execute("SELECT 1 FROM threads WHERE id=?", (str(thread_id),)).fetchone()
+                is not None
+            )
+
+    async def create_thread(
+        self,
+        thread_id: ThreadId,
+        cwd: Path,
+        *,
+        memory_mode: ThreadMemoryMode = ThreadMemoryMode.ENABLED,
+        session_id: SessionId | None = None,
+        session_source: SessionSource = DEFAULT_SESSION_SOURCE,
+    ) -> None:
+        """Create the complete initial metadata once, without overwriting resumed settings."""
+        if not isinstance(session_source, SessionSource):
+            raise ValueError("session source must be host-validated")
+        identity = ExecutionIdentity(
+            thread_id, SessionId(str(thread_id)) if session_id is None else session_id
+        )
+        await _joined_write(
+            self._create_thread,
+            thread_id,
+            cwd,
+            ThreadMemoryMode(memory_mode),
+            identity.session_id,
+            session_source,
+        )
+
+    def _create_thread(
+        self,
+        thread_id: ThreadId,
+        cwd: Path,
+        memory_mode: ThreadMemoryMode,
+        session_id: SessionId,
+        session_source: SessionSource,
+    ) -> None:
         with self._connect() as connection:
             connection.execute(
-                "INSERT OR IGNORE INTO threads(id, cwd) VALUES (?, ?)",
-                (str(thread_id), str(cwd.resolve())),
+                "INSERT OR IGNORE INTO threads(id, cwd, memory_mode, session_id, source) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    str(thread_id),
+                    str(cwd.resolve()),
+                    memory_mode.value,
+                    str(session_id),
+                    session_source.storage_value,
+                ),
             )
+
+    async def load_fork_snapshot(self, thread_id):
+        from corki.storage.forks import read_fork_snapshot
+
+        def read():
+            with self._connect() as connection:
+                connection.execute("BEGIN")
+                return read_fork_snapshot(connection, thread_id)
+
+        # Join the reader even on cancellation before its borrowed owner can close.
+        return await _joined_write(read)
+
+    async def fork_thread(
+        self,
+        thread_id,
+        cwd,
+        *,
+        memory_mode,
+        session_id,
+        session_source,
+        source_thread_id,
+        before_user_message=None,
+        snapshot=None,
+    ) -> None:
+        from corki.storage.forks import publish_fork
+
+        await _joined_write(
+            publish_fork,
+            self,
+            thread_id,
+            cwd,
+            memory_mode,
+            session_id,
+            session_source,
+            source_thread_id,
+            before_user_message,
+            snapshot,
+        )
+
+    async def load_thread_source(self, thread_id: ThreadId) -> SessionSource:
+        """Return the original stored source, not a new Runtime's initiating source."""
+        return await asyncio.to_thread(self._load_thread_source, thread_id)
+
+    async def materialize_transcript(self, thread_id: ThreadId) -> Path | None:
+        """Create a local history projection and keep it current after future commits."""
+        return await _joined_write(self._materialize_transcript, thread_id)
+
+    async def ensure_base_instructions(self, thread_id, model, instructions, provenance="model"):
+        """Commit the initial session prefix once, or return its persisted origin."""
+        return await _joined_write(
+            self._ensure_base_instructions, thread_id, model, instructions, provenance
+        )
+
+    def _ensure_base_instructions(self, thread_id, model, instructions, provenance="model"):
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "INSERT OR IGNORE INTO thread_base_instructions "
+                "(thread_id,model,instructions,provenance) VALUES (?, ?, ?, ?)",
+                (str(thread_id), model, instructions, provenance),
+            )
+            row = connection.execute(
+                "SELECT model,instructions,provenance FROM thread_base_instructions "
+                "WHERE thread_id=?",
+                (str(thread_id),),
+            ).fetchone()
+            return row["model"], row["instructions"], row["provenance"]
+
+    async def transcript_publication_pending(self, thread_id: ThreadId) -> bool:
+        """Inspect this thread's durable copy backlog without initiating a retry."""
+        # Join the reader on cancellation too. The unbound closure deliberately
+        # skips _after_durable_write: observing backlog must not retry publication.
+        return await _joined_write(lambda: self._transcript_publication_pending(thread_id))
+
+    def _transcript_publication_pending(self, thread_id):
+        with self._connect() as connection:
+            return (
+                connection.execute(
+                    "SELECT 1 FROM transcript_pending WHERE thread_id=?", (str(thread_id),)
+                ).fetchone()
+                is not None
+            )
+
+    def _materialize_transcript(self, thread_id):
+        from corki.storage.transcripts import flush_transcript
+
+        with self._connect() as connection:
+            if (
+                connection.execute("SELECT 1 FROM threads WHERE id=?", (str(thread_id),)).fetchone()
+                is None
+            ):
+                return None
+            connection.execute(
+                "INSERT OR IGNORE INTO transcript_threads(thread_id) VALUES (?)", (str(thread_id),)
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO transcript_pending(thread_id) VALUES (?)", (str(thread_id),)
+            )
+        return flush_transcript(self, thread_id)
+
+    def _after_durable_write(self):
+        from corki.storage.transcripts import flush_transcript
+
+        with self._connect() as connection:
+            threads = connection.execute("SELECT thread_id FROM transcript_pending").fetchall()
+        for row in threads:
+            try:
+                flush_transcript(self, row[0])
+            except (OSError, ValueError, sqlite3.Error):
+                # A projection failure cannot undo a committed effect or make
+                # callers retry it. Registration survives for a later retry.
+                logging.getLogger(__name__).warning(
+                    "Local transcript publication failed", exc_info=True
+                )
+
+    def _load_thread_source(self, thread_id: ThreadId) -> SessionSource:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT source FROM threads WHERE id=?", (str(thread_id),)
+            ).fetchone()
+        if row is None:
+            raise StorageIntegrityError("source thread does not exist")
+        return SessionSource.from_storage(row[0])
+
+    async def load_thread_session_id(self, thread_id: ThreadId) -> SessionId:
+        """Read persisted identity; corruption must not silently reassign running work."""
+        return await asyncio.to_thread(self._load_thread_session_id, thread_id)
+
+    def _load_thread_session_id(self, thread_id: ThreadId) -> SessionId:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT session_id FROM threads WHERE id=?", (str(thread_id),)
+            ).fetchone()
+        if row is None:
+            raise StorageIntegrityError("execution identity thread does not exist")
+        try:
+            return ExecutionIdentity(thread_id, row[0]).session_id
+        except ValueError as error:
+            raise StorageIntegrityError("invalid stored execution identity") from error
+
+    async def save_thread_model_settings(
+        self, thread_id: ThreadId, settings: ThreadModelSettings
+    ) -> None:
+        """Atomically publish defaults; a cancelled caller must still join the write."""
+        await _joined_write(self._save_thread_model_settings, thread_id, settings)
+
+    def _save_thread_model_settings(
+        self, thread_id: ThreadId, settings: ThreadModelSettings
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO thread_model_settings(thread_id, model, provider, reasoning_effort, "
+                "collaboration_mode, collaboration_instructions, personality) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(thread_id) DO UPDATE SET "
+                "model=excluded.model, provider=excluded.provider, "
+                "reasoning_effort=excluded.reasoning_effort, "
+                "collaboration_mode=excluded.collaboration_mode, "
+                "collaboration_instructions=excluded.collaboration_instructions, "
+                "personality=excluded.personality",
+                (
+                    str(thread_id),
+                    settings.model,
+                    settings.provider,
+                    settings.reasoning_effort,
+                    settings.collaboration_mode,
+                    settings.collaboration_instructions,
+                    settings.personality,
+                ),
+            )
+
+    async def load_thread_model_settings(self, thread_id: ThreadId) -> ThreadModelSettings | None:
+        """Read defaults without blocking an active runtime loop."""
+        return await asyncio.to_thread(self.read_thread_model_settings, thread_id)
+
+    def read_thread_model_settings(self, thread_id: ThreadId) -> ThreadModelSettings | None:
+        """Synchronous composition-root read, before async clients are constructed."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT model, provider, reasoning_effort, collaboration_mode, "
+                "collaboration_instructions, personality FROM thread_model_settings "
+                "WHERE thread_id=?",
+                (str(thread_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return ThreadModelSettings(*row)
+        except ValueError as error:
+            raise StorageIntegrityError("invalid stored thread model settings") from error
 
     async def latest_thread(self, cwd: Path | None = None) -> ThreadId | None:
         return await asyncio.to_thread(self._latest_thread, cwd)
 
+    async def set_thread_memory_mode(self, thread_id: ThreadId, mode: ThreadMemoryMode) -> bool:
+        """Update metadata without modifying history, timestamps or memory job state."""
+        return await _joined_write(self._set_thread_memory_mode, thread_id, ThreadMemoryMode(mode))
+
+    def _set_thread_memory_mode(self, thread_id: ThreadId, mode: ThreadMemoryMode) -> bool:
+        with self._connect() as connection:
+            return (
+                connection.execute(
+                    "UPDATE threads SET memory_mode=? WHERE id=?", (mode.value, str(thread_id))
+                ).rowcount
+                > 0
+            )
+
     def _latest_thread(self, cwd: Path | None) -> ThreadId | None:
-        query = "SELECT id FROM threads"
+        query = "SELECT id FROM threads WHERE archived_at IS NULL"
         parameters: tuple[str, ...] = ()
         if cwd is not None:
-            query += " WHERE cwd=?"
+            query += " AND cwd=?"
             parameters = (str(cwd.resolve()),)
         query += " ORDER BY updated_at DESC, created_at DESC, rowid DESC LIMIT 1"
         with self._connect() as connection:
@@ -279,22 +662,102 @@ class SQLiteSessionRepository:
                 raise ValueError(f"no previous Corki thread for {cwd}")
             return thread_id
         with self._connect() as connection:
-            row = connection.execute("SELECT id FROM threads WHERE id=?", (reference,)).fetchone()
+            row = connection.execute(
+                "SELECT id, archived_at FROM threads WHERE id=?", (reference,)
+            ).fetchone()
         if row is None:
             raise ValueError(f"unknown Corki thread: {reference}")
+        if row["archived_at"] is not None:
+            raise ValueError(f"thread {reference} is archived; unarchive it before resuming")
         return ThreadId(row["id"])
 
     async def save_turn(self, turn: TurnRecord) -> None:
         await _joined_write(self._save_turn, turn)
 
+    async def confirm_turn_terminal(self, turn: TurnRecord) -> bool:
+        if turn.status is TurnStatus.RUNNING:
+            raise ValueError("cannot confirm a running Turn as terminal")
+        return await asyncio.to_thread(self._confirm_turn_terminal, turn)
+
+    async def retry_turn_terminal(self, turn: TurnRecord) -> None:
+        """Retry a known terminal without overwriting another admission or result."""
+        if turn.status is TurnStatus.RUNNING:
+            raise ValueError("cannot retry a running Turn as terminal")
+        await _joined_write(self._retry_turn_terminal, turn)
+
+    def _retry_turn_terminal(self, turn: TurnRecord) -> None:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT thread_id, user_input, operation, status, final_answer, error "
+                "FROM turns WHERE id=?",
+                (str(turn.id),),
+            ).fetchone()
+            if row is None or tuple(row[:3]) != (
+                str(turn.thread_id),
+                turn.user_input,
+                turn.operation,
+            ):
+                raise StorageIntegrityError("terminal retry does not match admitted Turn")
+            if row[3] != TurnStatus.RUNNING.value:
+                if tuple(row[3:]) == (turn.status.value, turn.final_answer, turn.error):
+                    return
+                raise StorageIntegrityError("terminal retry conflicts with stored result")
+            connection.execute(
+                "UPDATE turns SET status=?, final_answer=?, error=?, "
+                "updated_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id=?",
+                (turn.status.value, turn.final_answer, turn.error, str(turn.id)),
+            )
+            connection.execute(
+                "UPDATE threads SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id=?",
+                (str(turn.thread_id),),
+            )
+
+    def _confirm_turn_terminal(self, turn: TurnRecord) -> bool:
+        # A fresh connection observes the committed transaction, not a cache or
+        # the failed writer's state. Preserve admission-only model/base fields.
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT 1 FROM turns
+                   WHERE id=? AND thread_id=? AND status=? AND user_input=?
+                     AND operation=? AND final_answer IS ? AND error IS ?""",
+                (
+                    str(turn.id),
+                    str(turn.thread_id),
+                    turn.status.value,
+                    turn.user_input,
+                    turn.operation,
+                    turn.final_answer,
+                    turn.error,
+                ),
+            ).fetchone()
+        return row is not None
+
     async def latest_running_turn(self, thread_id: ThreadId) -> TurnRecord | None:
         return await asyncio.to_thread(self._latest_running_turn, thread_id)
+
+    async def load_turn_status(self, thread_id: ThreadId, turn_id: TurnId) -> TurnStatus | None:
+        return await asyncio.to_thread(self._load_turn_status, thread_id, turn_id)
+
+    def _load_turn_status(self, thread_id: ThreadId, turn_id: TurnId) -> TurnStatus | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT status FROM turns WHERE thread_id=? AND id=?",
+                (str(thread_id), str(turn_id)),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return TurnStatus(row["status"])
+        except ValueError as error:
+            raise StorageIntegrityError("invalid stored Turn status") from error
 
     def _latest_running_turn(self, thread_id: ThreadId) -> TurnRecord | None:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT id, thread_id, status, user_input, final_answer, error, operation
+                SELECT id, thread_id, status, user_input, final_answer, error, operation,
+                       model_settings_json, base_instructions
                 FROM turns WHERE thread_id=? AND status='running'
                 ORDER BY updated_at DESC, rowid DESC LIMIT 1
                 """,
@@ -304,6 +767,15 @@ class SQLiteSessionRepository:
             return None
         from corki.sessions.models import TurnStatus
 
+        try:
+            model_settings = (
+                ModelSettingsSnapshot.from_payload(json.loads(row["model_settings_json"]))
+                if row["model_settings_json"] is not None
+                else None
+            )
+        except (ValueError, TypeError) as error:
+            raise StorageIntegrityError("invalid stored Turn model settings") from error
+
         return TurnRecord(
             TurnId(row["id"]),
             ThreadId(row["thread_id"]),
@@ -312,14 +784,17 @@ class SQLiteSessionRepository:
             row["final_answer"],
             row["error"],
             row["operation"],
+            model_settings,
+            row["base_instructions"],
         )
 
     def _save_turn(self, turn: TurnRecord) -> None:
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO turns(id, thread_id, status, user_input, final_answer, error, operation)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO turns(id, thread_id, status, user_input, final_answer, error, operation,
+                                  model_settings_json, base_instructions)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     status=excluded.status,
                     final_answer=excluded.final_answer,
@@ -334,6 +809,8 @@ class SQLiteSessionRepository:
                     turn.final_answer,
                     turn.error,
                     turn.operation,
+                    json.dumps(turn.model_settings.to_payload()) if turn.model_settings else None,
+                    turn.base_instructions,
                 ),
             )
             connection.execute(
@@ -342,7 +819,7 @@ class SQLiteSessionRepository:
             )
 
     async def append_items(self, thread_id: ThreadId, items: tuple[ConversationItem, ...]) -> None:
-        await asyncio.to_thread(self._append_items, thread_id, items)
+        await _joined_write(self._append_items, thread_id, items)
 
     def _append_items(self, thread_id: ThreadId, items: tuple[ConversationItem, ...]) -> None:
         if not items:
@@ -405,9 +882,54 @@ class SQLiteSessionRepository:
                 ),
             )
             sequence += 1
+            if preview := user_preview(item):
+                connection.execute(
+                    "UPDATE threads SET preview=? WHERE id=? AND preview=''",
+                    (preview, str(thread_id)),
+                )
 
     async def load_items(self, thread_id: ThreadId) -> tuple[ConversationItem, ...]:
         return await asyncio.to_thread(self._load_items, thread_id)
+
+    async def load_display_snapshot(self, thread_id: ThreadId) -> DisplayHistory:
+        return await asyncio.to_thread(self._load_display_snapshot, thread_id)
+
+    async def load_display_items_page(
+        self, thread_id: ThreadId, *, cursor: DisplayItemsCursor | None = None, limit: int = 100
+    ) -> DisplayItemsPage:
+        return await asyncio.to_thread(
+            read_display_items_page, self._connect, thread_id, cursor, limit
+        )
+
+    async def load_display_turns_page(
+        self, thread_id: ThreadId, *, cursor: DisplayTurnsCursor | None = None, limit: int = 100
+    ) -> DisplayTurnsPage:
+        return await asyncio.to_thread(
+            read_display_turns_page, self._connect, thread_id, cursor, limit
+        )
+
+    async def contains_display_item(self, thread_id, *, kind, identity, through_sequence):
+        return await asyncio.to_thread(
+            contains_display_item, self._connect, thread_id, kind, identity, through_sequence
+        )
+
+    def _load_display_snapshot(self, thread_id: ThreadId) -> DisplayHistory:
+        with self._connect() as connection:
+            connection.execute("BEGIN")
+            rows = connection.execute(
+                "SELECT kind, payload_json FROM conversation_items "
+                "WHERE thread_id=? ORDER BY sequence",
+                (str(thread_id),),
+            ).fetchall()
+            turns = connection.execute(
+                "SELECT id,status,error,model_settings_json FROM turns "
+                "WHERE thread_id=? ORDER BY rowid",
+                (str(thread_id),),
+            ).fetchall()
+        return DisplayHistory(
+            tuple(item_from_payload(row["kind"], json.loads(row["payload_json"])) for row in rows),
+            tuple(display_turn_from_row(row) for row in turns),
+        )
 
     def _load_items(self, thread_id: ThreadId) -> tuple[ConversationItem, ...]:
         with self._connect() as connection:
@@ -428,10 +950,183 @@ class SQLiteSessionRepository:
     async def load_messages(self, thread_id: ThreadId) -> tuple[Message, ...]:
         return _messages_from_items(await self.load_items(thread_id))
 
+    async def load_hook_batch(self, thread_id, turn_id, batch_key):
+        return await _joined_write(self._load_hook_batch, thread_id, turn_id, batch_key)
+
+    async def load_hook_batch_keys(self, thread_id, prefix):
+        return await _joined_write(self._load_hook_batch_keys, thread_id, prefix)
+
+    def _load_hook_batch_keys(self, thread_id, prefix):
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT turn_id, batch_key FROM hook_batches WHERE thread_id=? "
+                "AND substr(batch_key,1,length(?))=? ORDER BY rowid",
+                (str(thread_id), prefix, prefix),
+            ).fetchall()
+        return tuple((row["turn_id"], row["batch_key"]) for row in rows)
+
+    def _load_hook_batch(self, thread_id, turn_id, batch_key):
+        with self._connect() as connection:
+            connection.execute("BEGIN")
+            batch = connection.execute(
+                "SELECT thread_id, turn_id, snapshot_json FROM hook_batches WHERE batch_key=?",
+                (batch_key,),
+            ).fetchone()
+            rows = connection.execute(
+                "SELECT execution_key, request_json, result_json FROM hook_executions "
+                "WHERE thread_id=? AND turn_id=? AND substr(execution_key,1,length(?))=?",
+                (str(thread_id), str(turn_id), batch_key, batch_key),
+            ).fetchall()
+        if batch is None:
+            if rows:
+                raise StorageIntegrityError(
+                    "Legacy hook execution has no batch snapshot; safe recovery cannot be proven."
+                )
+            return None
+        if (batch["thread_id"], batch["turn_id"]) != (str(thread_id), str(turn_id)):
+            raise StorageIntegrityError("hook batch identity collision")
+        return json.loads(batch["snapshot_json"]), {
+            row["execution_key"]: {
+                "request": json.loads(row["request_json"]),
+                "result": json.loads(row["result_json"])
+                if row["result_json"] is not None
+                else None,
+            }
+            for row in rows
+        }
+
+    async def save_hook_batch(self, thread_id, turn_id, batch_key, snapshot):
+        encoded = json.dumps(snapshot, sort_keys=True, ensure_ascii=False, allow_nan=False)
+        await _joined_write(self._save_hook_batch, thread_id, turn_id, batch_key, encoded)
+
+    def _save_hook_batch(self, thread_id, turn_id, batch_key, encoded):
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT thread_id, turn_id, snapshot_json FROM hook_batches WHERE batch_key=?",
+                (batch_key,),
+            ).fetchone()
+            identity = (str(thread_id), str(turn_id), encoded)
+            if row is not None:
+                if tuple(row) != identity:
+                    raise StorageIntegrityError("hook batch identity collision")
+                return
+            connection.execute(
+                "INSERT INTO hook_batches(batch_key, thread_id, turn_id, snapshot_json) "
+                "VALUES (?, ?, ?, ?)",
+                (batch_key, *identity),
+            )
+
+    async def load_hook_executions(self, thread_id, turn_id, prefix):
+        return await _joined_write(self._load_hook_executions, thread_id, turn_id, prefix)
+
+    def _load_hook_executions(self, thread_id, turn_id, prefix):
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT execution_key, request_json, result_json FROM hook_executions "
+                "WHERE thread_id=? AND turn_id=? AND substr(execution_key,1,length(?))=? "
+                "ORDER BY rowid",
+                (str(thread_id), str(turn_id), prefix, prefix),
+            ).fetchall()
+        return tuple(
+            (row[0], json.loads(row[1]), json.loads(row[2]) if row[2] is not None else None)
+            for row in rows
+        )
+
+    async def has_hook_executions(self, thread_id, turn_id, prefix) -> bool:
+        # Join the connection-owning worker even when its caller is cancelled.
+        return await _joined_write(self._has_hook_executions, thread_id, turn_id, prefix)
+
+    def _has_hook_executions(self, thread_id, turn_id, prefix):
+        with self._connect() as connection:
+            return (
+                connection.execute(
+                    "SELECT 1 FROM hook_executions WHERE thread_id=? AND turn_id=? "
+                    "AND substr(execution_key, 1, length(?))=? LIMIT 1",
+                    (str(thread_id), str(turn_id), prefix, prefix),
+                ).fetchone()
+                is not None
+            )
+
+    async def claim_hook_execution(self, thread_id, turn_id, execution_key, request) -> dict | None:
+        """Claim a non-tool side effect; an unfinished claim is never replayable."""
+        encoded = json.dumps(request, sort_keys=True, ensure_ascii=False, allow_nan=False)
+        return await _joined_write(
+            self._claim_hook_execution, thread_id, turn_id, execution_key, encoded
+        )
+
+    def _claim_hook_execution(self, thread_id, turn_id, execution_key, encoded):
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT thread_id, turn_id, request_json, result_json FROM hook_executions "
+                "WHERE execution_key=?",
+                (execution_key,),
+            ).fetchone()
+            if row is not None:
+                if (row["thread_id"], row["turn_id"], row["request_json"]) != (
+                    str(thread_id),
+                    str(turn_id),
+                    encoded,
+                ):
+                    raise StorageIntegrityError("hook execution identity collision")
+                if row["result_json"] is None:
+                    raise RuntimeError(
+                        "Previous hook outcome is unknown; execution was not repeated."
+                    )
+                return json.loads(row["result_json"])
+            connection.execute(
+                "INSERT INTO hook_executions(execution_key, thread_id, turn_id, request_json) "
+                "VALUES (?, ?, ?, ?)",
+                (execution_key, str(thread_id), str(turn_id), encoded),
+            )
+        return None
+
+    async def complete_hook_execution(
+        self, thread_id, turn_id, execution_key, request, result
+    ) -> None:
+        if not isinstance(result, dict):
+            raise ValueError("hook execution result must be an object")
+        request_json = json.dumps(request, sort_keys=True, ensure_ascii=False, allow_nan=False)
+        result_json = json.dumps(result, sort_keys=True, ensure_ascii=False, allow_nan=False)
+        await _joined_write(
+            self._complete_hook_execution,
+            thread_id,
+            turn_id,
+            execution_key,
+            request_json,
+            result_json,
+        )
+
+    def _complete_hook_execution(
+        self, thread_id, turn_id, execution_key, request_json, result_json
+    ):
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT thread_id, turn_id, request_json, result_json FROM hook_executions "
+                "WHERE execution_key=?",
+                (execution_key,),
+            ).fetchone()
+            if row is None or (row["thread_id"], row["turn_id"], row["request_json"]) != (
+                str(thread_id),
+                str(turn_id),
+                request_json,
+            ):
+                raise StorageIntegrityError("hook execution claim is missing or belongs elsewhere")
+            if row["result_json"] is not None and row["result_json"] != result_json:
+                raise StorageIntegrityError("completed hook result cannot be overwritten")
+            connection.execute(
+                "UPDATE hook_executions SET result_json=? WHERE execution_key=?",
+                (result_json, execution_key),
+            )
+
     async def claim_tool_call(
         self, thread_id: ThreadId, turn_id: TurnId, call: ToolCall
     ) -> ToolResult | None:
-        return await asyncio.to_thread(self._claim_tool_call, thread_id, turn_id, call)
+        # A claim can insert a ledger row. Own that write through cancellation
+        # before cleanup or storage shutdown is allowed to proceed.
+        return await _joined_write(self._claim_tool_call, thread_id, turn_id, call)
 
     def _claim_tool_call(
         self, thread_id: ThreadId, turn_id: TurnId, call: ToolCall
@@ -495,12 +1190,81 @@ class SQLiteSessionRepository:
             )
         return None
 
-    async def complete_tool_call(
-        self, thread_id: ThreadId, turn_id: TurnId, result: ToolResult
-    ) -> None:
-        await asyncio.to_thread(self._complete_tool_call, thread_id, turn_id, result)
+    async def load_turn_tool_outcomes(self, thread_id, turn_id) -> tuple[ToolResult, ...]:
+        def read():
+            with self._connect() as connection:
+                rows = connection.execute(
+                    "SELECT call_id, tool_name, status, result_json FROM tool_executions "
+                    "WHERE thread_id=? AND turn_id=? ORDER BY rowid",
+                    (str(thread_id), str(turn_id)),
+                ).fetchall()
+            return tuple(
+                _result_from_json(row["result_json"])
+                if row["status"] == "completed" and row["result_json"]
+                else ToolResult(
+                    ToolCallId(row["call_id"]),
+                    row["tool_name"],
+                    "Previous execution outcome is unknown; not repeated.",
+                    is_error=True,
+                    dispatch_error=True,
+                )
+                for row in rows
+            )
 
-    def _complete_tool_call(self, thread_id: ThreadId, turn_id: TurnId, result: ToolResult) -> None:
+        return await asyncio.to_thread(read)
+
+    async def code_mode_parent_finished(self, thread_id, call_id):
+        """A committed running exec observation is not a finished script."""
+
+        def read():
+            with self._connect() as connection:
+                connection.execute("BEGIN")
+                row = connection.execute(
+                    "SELECT status, result_json FROM tool_executions "
+                    "WHERE thread_id=? AND call_id=?",
+                    (str(thread_id), str(call_id)),
+                ).fetchone()
+                observations = connection.execute(
+                    "SELECT result_json FROM tool_executions "
+                    "WHERE thread_id=? AND status='completed' AND result_json IS NOT NULL",
+                    (str(thread_id),),
+                ).fetchall()
+            if row is None:
+                raise StorageIntegrityError("PostToolUse parent execution is missing")
+            if row["status"] != "completed" or row["result_json"] is None:
+                return False
+            parent = _result_from_json(row["result_json"])
+            if parent.code_mode_lifecycle_json is None:
+                return True  # Legacy results have no authoritative cell status.
+            identity = json.loads(parent.code_mode_lifecycle_json)
+            if identity["parent_call_id"] != str(call_id):
+                raise StorageIntegrityError("Code Mode parent identity collision")
+            if identity["status"] != "running":
+                return True
+            for observation in observations:
+                result = _result_from_json(observation["result_json"])
+                if result.code_mode_lifecycle_json is None:
+                    continue
+                value = json.loads(result.code_mode_lifecycle_json)
+                if (value["cell_id"], value["parent_call_id"]) == (
+                    identity["cell_id"],
+                    str(call_id),
+                ) and value["status"] != "running":
+                    return True
+            return False
+
+        return await asyncio.to_thread(read)
+
+    async def complete_tool_call(
+        self, thread_id: ThreadId, turn_id: TurnId, result: ToolResult, post_hook_batch=None
+    ) -> None:
+        # Cancellation cleanup consults this ledger to reconstruct observations.
+        # Do not let it see "running" while an abandoned thread commits success.
+        await _joined_write(self._complete_tool_call, thread_id, turn_id, result, post_hook_batch)
+
+    def _complete_tool_call(
+        self, thread_id: ThreadId, turn_id: TurnId, result: ToolResult, post_hook_batch=None
+    ) -> None:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -513,6 +1277,31 @@ class SQLiteSessionRepository:
                     "tool execution entry is missing or belongs to a different tool"
                 )
             encoded = _result_to_json(result)
+            if post_hook_batch is not None:
+                key, snapshot = post_hook_batch
+                expected = f"post_tool_use:{thread_id}:{turn_id}:{result.call_id}:"
+                if key != expected:
+                    raise StorageIntegrityError("PostToolUse batch does not belong to tool result")
+                snapshot_json = json.dumps(
+                    snapshot, sort_keys=True, ensure_ascii=False, allow_nan=False
+                )
+                saved = connection.execute(
+                    "SELECT thread_id, turn_id, snapshot_json FROM hook_batches WHERE batch_key=?",
+                    (key,),
+                ).fetchone()
+                identity = (str(thread_id), str(turn_id), snapshot_json)
+                if saved is not None and tuple(saved) != identity:
+                    raise StorageIntegrityError("hook batch identity collision")
+                if saved is None:
+                    if row["status"] == "completed":
+                        raise StorageIntegrityError(
+                            "completed tool cannot acquire a new Hook batch"
+                        )
+                    connection.execute(
+                        "INSERT INTO hook_batches(batch_key, thread_id, turn_id, snapshot_json) "
+                        "VALUES (?, ?, ?, ?)",
+                        (key, *identity),
+                    )
             if row["status"] == "completed":
                 if row["result_json"] is not None and json.loads(row["result_json"]) == json.loads(
                     encoded
@@ -591,29 +1380,22 @@ class SQLiteSessionRepository:
         return await asyncio.to_thread(self._load_context_usage, thread_id)
 
     def _load_context_usage(self, thread_id: ThreadId) -> ContextUsage | None:
+        from corki.storage.usage import context_usage, model_usage_fact
+
         with self._connect() as connection:
+            connection.execute("BEGIN")
             row = connection.execute(
                 "SELECT * FROM model_steps WHERE thread_id=? ORDER BY rowid DESC LIMIT 1",
                 (str(thread_id),),
             ).fetchone()
-        if row is None:
-            return None
-        completed = _completed_from_row(row)
-        total = completed.usage.context_tokens
-        anchor = row["usage_anchor_id"]
-        # Old rows with outputs retain an exact identity; empty legacy results
-        # cannot establish a boundary and must use local estimation instead.
-        if anchor is None and completed.items:
-            anchor = str(completed.items[-1].id)
-        if total is None or anchor is None:
-            return None
-        return ContextUsage(
-            total,
-            ItemId(anchor),
-            completed.provider_metadata.get("server_reasoning_included") is True,
-            input_tokens=completed.usage.input_tokens,
-            sample_id=row["step_id"],
-        )
+            if row is not None:
+                return context_usage(model_usage_fact(row))
+            inherited = connection.execute(
+                "SELECT total_tokens,anchor_id,input_tokens,sample_id "
+                "FROM inherited_context_usage WHERE thread_id=? ORDER BY ordinal DESC LIMIT 1",
+                (str(thread_id),),
+            ).fetchone()
+            return context_usage(inherited)
 
     def _load_model_step(
         self, thread_id: ThreadId, turn_id: TurnId, step_index: int
@@ -622,7 +1404,7 @@ class SQLiteSessionRepository:
             row = connection.execute(
                 """
                 SELECT input_tokens, output_tokens, cached_tokens, reasoning_tokens,
-                       metadata_json, items_json, end_turn, total_tokens
+                       metadata_json, items_json, end_turn, total_tokens, usage_details_json
                 FROM model_steps
                 WHERE thread_id=? AND turn_id=? AND step_index=?
                 """,
@@ -639,7 +1421,7 @@ class SQLiteSessionRepository:
         step_index: int,
         completed: ModelCompleted,
     ) -> None:
-        await asyncio.to_thread(
+        await _joined_write(
             self._commit_model_step,
             thread_id,
             turn_id,
@@ -674,7 +1456,7 @@ class SQLiteSessionRepository:
             existing = connection.execute(
                 """
                 SELECT input_tokens, output_tokens, cached_tokens, reasoning_tokens,
-                       metadata_json, items_json, end_turn, total_tokens
+                       metadata_json, items_json, end_turn, total_tokens, usage_details_json
                 FROM model_steps
                 WHERE thread_id=? AND turn_id=? AND step_index=?
                 """,
@@ -688,8 +1470,9 @@ class SQLiteSessionRepository:
                 """
                 INSERT INTO model_steps(
                     step_id, thread_id, turn_id, input_tokens, output_tokens,
-                    cached_tokens, reasoning_tokens, metadata_json, step_index, items_json, end_turn
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    cached_tokens, reasoning_tokens, metadata_json, step_index, items_json,
+                    end_turn, usage_details_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     step_id,
@@ -699,10 +1482,18 @@ class SQLiteSessionRepository:
                     completed.usage.output_tokens,
                     completed.usage.cached_tokens,
                     completed.usage.reasoning_tokens,
-                    json.dumps(dict(completed.provider_metadata), ensure_ascii=False),
+                    dumps_wire(dict(completed.provider_metadata)),
                     step_index,
                     json.dumps(serialized_items, ensure_ascii=False),
                     completed.end_turn,
+                    dumps_wire(
+                        {
+                            "cache_write_tokens": completed.usage.cache_write_tokens,
+                            "codex_rollout_budget_units": (
+                                completed.usage.codex_rollout_budget_units
+                            ),
+                        }
+                    ),
                 ),
             )
             self._append_items_in_connection(connection, thread_id, completed.items)
@@ -769,7 +1560,20 @@ class SQLiteSessionRepository:
 
 
 async def _joined_write(write, *args):
-    task = asyncio.create_task(asyncio.to_thread(write, *args))
+    def commit_and_publish():
+        result = write(*args)
+        owner = getattr(write, "__self__", None)
+        publish = getattr(owner, "_after_durable_write", None)
+        if publish is not None:
+            try:
+                publish()
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "Post-commit transcript refresh failed", exc_info=True
+                )
+        return result
+
+    task = asyncio.create_task(asyncio.to_thread(commit_and_publish))
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
@@ -788,9 +1592,8 @@ async def _joined_write(write, *args):
 
 
 def _call_arguments_fingerprint(call: ToolCall) -> str:
-    # Hash executable parsed arguments rather than JSON whitespace/key order.
-    # Invalid arguments cannot execute, but distinct malformed calls still
-    # must not accidentally reuse another call's recorded observation.
+    # Bind both the decoded cache and raw-authoritative handlers. Keep old hashes
+    # when these agree; rounded caches cannot prove an old exact remote payload.
     value = (
         {"parsed": dict(call.arguments)}
         if call.arguments is not None and call.parse_error is None
@@ -798,6 +1601,15 @@ def _call_arguments_fingerprint(call: ToolCall) -> str:
     )
     if call.input_kind == "freeform":
         value = {"freeform": call.raw_arguments, "parse_error": call.parse_error}
+    elif call.raw_arguments and call.arguments is not None and call.parse_error is None:
+        try:
+            raw_value = materialize(loads_wire(call.raw_arguments), preserve_pairs=False)
+            canonical = dumps_wire(raw_value, ensure_ascii=True, sort_keys=True)
+        except (ValueError, RecursionError):
+            value["raw_input"] = call.raw_arguments
+        else:
+            if canonical != dumps_wire(dict(call.arguments), ensure_ascii=True, sort_keys=True):
+                value["raw_value_json"] = canonical
     encoded = json.dumps(
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
     )
@@ -824,6 +1636,8 @@ def _result_to_json(result: ToolResult) -> str:
     }
     # Omit the absent override: old completed ledger rows are immutable and
     # must remain byte-compatible. A present wrapper may explicitly hold null.
+    if result.state_update.plan_explanation is not None:
+        value["plan_explanation"] = result.state_update.plan_explanation
     if result.code_mode_output is not None:
         value["code_mode_output"] = {"value": result.code_mode_output.value}
     if result.content_items:
@@ -836,17 +1650,24 @@ def _result_to_json(result: ToolResult) -> str:
         "fallback_token_limit_override",
         "legacy_output_char_budget",
         "is_tool_search_output",
+        "mcp_result_json",
+        "mcp_error",
+        "patch_delta_json",
+        "execution_input_json",
+        "post_tool_use_json",
+        "code_mode_lifecycle_json",
     ):
         if getattr(result, key) is not None:
             value[key] = getattr(result, key)
     if result.state_update.new_context_requested:
         value["new_context_requested"] = True
-    return json.dumps(value, ensure_ascii=False)
+    return dumps_wire(value, separators=(", ", ": "))
 
 
 def _completed_from_row(row: sqlite3.Row) -> ModelCompleted:
     serialized_items = json.loads(row["items_json"])
     items = tuple(item_from_payload(value["kind"], value["payload"]) for value in serialized_items)
+    details = materialize(loads_wire(row["usage_details_json"]), preserve_pairs=False)
     return ModelCompleted(
         items,
         usage=ModelUsage(
@@ -855,14 +1676,16 @@ def _completed_from_row(row: sqlite3.Row) -> ModelCompleted:
             cached_tokens=row["cached_tokens"],
             reasoning_tokens=row["reasoning_tokens"],
             total_tokens=row["total_tokens"],
+            cache_write_tokens=details.get("cache_write_tokens", 0),
+            codex_rollout_budget_units=details.get("codex_rollout_budget_units"),
         ),
-        provider_metadata=json.loads(row["metadata_json"]),
+        provider_metadata=materialize(loads_wire(row["metadata_json"]), preserve_pairs=False),
         end_turn=None if row["end_turn"] is None else bool(row["end_turn"]),
     )
 
 
 def _result_from_json(value: str) -> ToolResult:
-    raw = json.loads(value)
+    raw = loads_number_values(value)
     plan = raw.get("plan")
     return ToolResult(
         call_id=ToolCallId(raw["call_id"]),
@@ -877,6 +1700,12 @@ def _result_from_json(value: str) -> ToolResult:
         fallback_token_limit_override=raw.get("fallback_token_limit_override"),
         legacy_output_char_budget=raw.get("legacy_output_char_budget"),
         is_tool_search_output=raw.get("is_tool_search_output"),
+        mcp_result_json=raw.get("mcp_result_json"),
+        mcp_error=raw.get("mcp_error"),
+        patch_delta_json=raw.get("patch_delta_json"),
+        execution_input_json=raw.get("execution_input_json"),
+        post_tool_use_json=raw.get("post_tool_use_json"),
+        code_mode_lifecycle_json=raw.get("code_mode_lifecycle_json"),
         display_content=raw.get("display_content"),
         content_items=tuple(content_from_payload(part) for part in raw.get("content_items", ())),
         code_mode_output=CodeModeOutput(raw["code_mode_output"]["value"])
@@ -886,6 +1715,7 @@ def _result_from_json(value: str) -> ToolResult:
         state_update=ToolStateUpdate(
             plan=tuple(dict(item) for item in plan) if plan is not None else None,
             new_context_requested=raw.get("new_context_requested", False),
+            plan_explanation=raw.get("plan_explanation"),
         ),
     )
 
@@ -997,8 +1827,10 @@ def _messages_from_items(items: tuple[ConversationItem, ...]) -> tuple[Message, 
         elif isinstance(item, CompactionItem):
             messages.append(
                 Message(
-                    MessageRole.DEVELOPER,
-                    item.summary,
+                    MessageRole.DEVELOPER if item.remote_payload_json else MessageRole.USER,
+                    item.summary
+                    if item.remote_payload_json
+                    else render_compaction_summary(item.summary),
                     MessageId(str(item.id)),
                     item.turn_id,
                     created_at=item.created_at,

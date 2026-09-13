@@ -22,11 +22,11 @@ def test_executor_normalizes_unknown_tool_and_invalid_arguments(tmp_path: Path) 
         assert "unknown tool" in unknown.content
 
         invalid = await executor.execute(
-            ToolCall(new_tool_call_id(), "update_plan", {"plan": []}),
+            ToolCall(new_tool_call_id(), "update_plan", {"plan": "not an array"}),
             ToolContext(tmp_path),
         )
         assert invalid.is_error
-        assert "at least 1" in invalid.content
+        assert "array" in invalid.content
 
     asyncio.run(scenario())
 

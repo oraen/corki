@@ -8,3 +8,5 @@ __pycache__/
 *.py[cod]
 build/
 dist/
+# Host-platform development compiler; build/install it from the pinned bridge.
+src/corki/_native/sandbox/

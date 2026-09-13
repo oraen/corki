@@ -3,6 +3,7 @@
 from corki.context.hosted_output import truncate_output_text
 from corki.protocol.tools import CodeModeOutput, ToolCall, ToolResult
 from corki.protocol.truncation import TruncationPolicy
+from corki.protocol.wire_numbers import dumps_wire
 from corki.tools.base import ToolContext
 from corki.tools.builtin.process import ProcessObservation
 
@@ -82,4 +83,15 @@ def shell_result(
         display_content=f"{header}\n{log}",
         is_error=observation.timed_out,
         code_mode_output=CodeModeOutput(structured),
+        post_tool_use_json=dumps_wire(
+            {
+                "version": 1,
+                "tool_name": "Bash",
+                "tool_use_id": observation.terminal_info.item_id or str(call.id),
+                "tool_input": {"command": observation.terminal_info.command},
+                "tool_response": _body(observation, model_policy),
+            }
+        )
+        if observation.session_id is None and observation.terminal_info is not None
+        else None,
     )

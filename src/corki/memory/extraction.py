@@ -47,7 +47,8 @@ def claim_extraction_jobs(
     candidates = connection.execute(
         """
         SELECT id, cwd, updated_at FROM threads
-        WHERE id != ? AND memory_mode='enabled'
+        WHERE id != ? AND memory_mode='enabled' AND preview != '' AND archived_at IS NULL
+          AND source IN ('cli', 'vscode', 'atlas', 'chatgpt')
           AND julianday(updated_at) >= julianday(?)
           AND julianday(updated_at) <= julianday(?)
         ORDER BY julianday(updated_at) DESC, id

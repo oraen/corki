@@ -17,6 +17,7 @@ _CHECKPOINT_TYPES = tuple(
                 "ContextItem",
                 "ContextRole",
                 "CompactionItem",
+                "RemoteHistoryItem",
                 "TurnAbortedItem",
                 "BudgetNoticeItem",
             ),
@@ -26,6 +27,7 @@ _CHECKPOINT_TYPES = tuple(
             (
                 "ToolSpec",
                 "ToolCall",
+                "ToolArgumentMap",
                 "ToolResult",
                 "ToolStateUpdate",
                 "ToolExposure",
@@ -39,6 +41,13 @@ _CHECKPOINT_TYPES = tuple(
             ),
         ),
         ("corki.protocol.memory", ("MemoryCitation", "MemoryCitationEntry")),
+        ("corki.protocol.input_mentions", ("InputMention",)),
+        ("corki.protocol.settings", ("ModelSettingsSnapshot",)),
+        ("corki.protocol.context", ("ModelContextInfo",)),
+        ("corki.protocol.instruction_template", ("ModelInstructionTemplate",)),
+        ("corki.protocol.model_authority", ("ModelAuthority",)),
+        ("corki.protocol.permission_messages", ("ModelPermissionMessages",)),
+        ("corki.protocol.truncation", ("TruncationPolicy",)),
         ("corki.protocol.messages", ("Message", "MessageRole")),
     )
     for name in names

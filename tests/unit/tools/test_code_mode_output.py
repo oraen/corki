@@ -113,7 +113,8 @@ def test_invalid_mcp_envelope_is_an_observation(tmp_path, raw):
         result = await ToolExecutor(registry, output_char_budget=1000).execute(
             ToolCall(new_tool_call_id(), tool.spec.name, {}), ToolContext(tmp_path)
         )
-        assert result.is_error and "MCP result." in result.content
+        assert result.is_error and "MCPProtocolError" in result.content
+        assert result.mcp_error is not None
         assert not result.dispatch_error
         assert result.code_mode_output.value["isError"] is True
         assert "MCPProtocolError" in result.code_mode_output.value["content"][0]["text"]

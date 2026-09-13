@@ -185,3 +185,40 @@ def test_mcp_immutable_contract_isolates_nested_exported_schemas():
     exported = tool.spec
     exported.parameters["properties"]["value"]["type"] = "integer"
     assert tool.spec == before
+
+
+@pytest.mark.parametrize("immutable", [False, True])
+def test_source_listing_policy_invalidates_handler_and_preserves_search(immutable, tmp_path):
+    registry = ToolRegistry()
+    owner = registry.create_owner()
+    spec = ToolSpec("vault::read", "amber", {}, exposure=ToolExposure.DEFERRED, source="Directory")
+    tool = DynamicTool(spec)
+    tool.immutable_search_metadata = immutable
+    registry.replace_owned(owner, (tool,))
+    cache = ToolSearchHandlerCache()
+    first = cache.get_or_build(registry)
+    second = cache.get_or_build(registry, include_sources=False)
+    assert second is cache.get_or_build(registry, include_sources=False)
+    assert first is not second and first.index is not second.index
+    assert "Directory" in first.spec.description and "Directory" not in second.spec.description
+    for handler in (first, second):
+        assert (
+            "BM25" in handler.spec.description and "list_mcp_resources" in handler.spec.description
+        )
+        call = ToolCall(ToolCallId("s"), "tool_search", {"query": "amber"})
+        assert asyncio.run(handler.execute(call, ToolContext(tmp_path))).discovered_tools == (spec,)
+    third = cache.get_or_build(registry)
+    assert third is not second and third.spec == first.spec
+
+
+def test_omitted_policy_survives_execution_only_rebinding():
+    registry = ToolRegistry()
+    owner = registry.create_owner()
+    spec = ToolSpec("lookup", "amber", {}, exposure=ToolExposure.DEFERRED, source="Directory")
+    registry.replace_owned(owner, (DynamicTool(spec),))
+    cache = ToolSearchHandlerCache()
+    first = cache.get_or_build(registry, include_sources=False)
+    registry.replace_owned(owner, (DynamicTool(replace(spec, output_char_budget=42)),))
+    second = cache.get_or_build(registry, include_sources=False)
+    assert second.index is first.index and second is not first
+    assert "Directory" not in second.spec.description

@@ -11,7 +11,10 @@ requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Corki contributors" }]
 dependencies = [
-    "httpx>=0.28,<1",
+    "httpx>=0.28,<0.29",
+    "httpcore>=1.0,<1.1",
+    "keyring>=25,<26",
+    "anyio>=4.15,<5",
     "langgraph>=0.6",
     "langgraph-checkpoint-sqlite>=3,<4",
     "openpyxl>=3.1,<4",
@@ -23,6 +26,9 @@ dependencies = [
     "reportlab>=4,<5",
     "rich>=13,<15",
     "snowballstemmer==2.2.0",
+    "tomlkit>=0.13,<1",
+    "wasmtime==48.0.0",
+    "websockets>=16,<17",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +37,7 @@ dev = [
     "pexpect>=4.9,<5",
     "pytest>=8,<9",
     "pytest-cov>=5,<7",
+    "pytest-xdist>=3.6,<4",
     "ruff>=0.11",
 ]
 
@@ -39,6 +46,9 @@ corki = "corki.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/corki"]
+
+[tool.hatch.build.hooks.custom]
+path = "native/sandbox/hatch_build.py"
 
 # Prompt Markdown stays at the repository root for easy review, but is copied
 # into the installed ``corki`` package so ``importlib.resources`` can find it.
@@ -56,6 +66,9 @@ include = [
     "README.md",
     "development.md",
     "THIRD_PARTY_NOTICES.md",
+    "native/mcp_regex",
+    "native/mcp_url",
+    "native/sandbox",
     "pyproject.toml",
 ]
 

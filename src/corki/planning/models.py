@@ -23,24 +23,21 @@ class PlanItem:
 
 
 def validate_plan(raw_plan: object) -> tuple[PlanItem, ...]:
-    """Parse a model-provided plan and enforce Codex's single-active-step rule."""
+    """Parse plan data; single-active-step guidance belongs to the tool description."""
 
-    if not isinstance(raw_plan, list) or not raw_plan:
-        raise ValueError("plan must be a non-empty array")
+    if not isinstance(raw_plan, list):
+        raise ValueError("plan must be an array")
     items: list[PlanItem] = []
     for index, raw_item in enumerate(raw_plan):
         if not isinstance(raw_item, Mapping):
             raise ValueError(f"plan item {index} must be an object")
         step = raw_item.get("step")
         status = raw_item.get("status")
-        if not isinstance(step, str) or not step.strip():
-            raise ValueError(f"plan item {index} requires a non-empty step")
+        if not isinstance(step, str):
+            raise ValueError(f"plan item {index} requires a string step")
         try:
             parsed_status = PlanStatus(status)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"plan item {index} has invalid status: {status!r}") from exc
-        items.append(PlanItem(step=step.strip(), status=parsed_status))
-    active_count = sum(item.status is PlanStatus.IN_PROGRESS for item in items)
-    if active_count > 1:
-        raise ValueError("at most one plan item may be in_progress")
+        items.append(PlanItem(step=step, status=parsed_status))
     return tuple(items)

@@ -76,6 +76,7 @@ def test_body_prefix_runtime_windows(tmp_path, scenario_name, transport):
                                 "usage": {
                                     "input_tokens": input_tokens,
                                     "output_tokens": output_tokens,
+                                    "total_tokens": input_tokens + output_tokens,
                                 },
                                 "output": [
                                     {
@@ -239,10 +240,10 @@ def test_manual_and_missing_usage_prefix_boundaries(tmp_path, mode):
                 else:
                     content = "summary or final"
                     usage = {
-                        1: ModelUsage(60_000, 1500 if mode == "manual_failure" else 100),
+                        1: ModelUsage(60_000, 2500 if mode == "manual_failure" else 100),
                         2: ModelUsage(199_000, 100),  # Summary usage must not become a body prefix.
                         3: ModelUsage(100_000, 100),
-                        4: ModelUsage(101_500, 100),
+                        4: ModelUsage(102_500, 100),
                     }.get(index, ModelUsage(100, 10))
                 yield ModelCompleted(
                     (AssistantMessageItem(content, request.items[-1].turn_id, new_step_id()),),
@@ -257,7 +258,9 @@ def test_manual_and_missing_usage_prefix_boundaries(tmp_path, mode):
                 working_directory=tmp_path,
                 skills_enabled=False,
                 context_window_tokens=200_000,
-                auto_compact_tokens=1000,
+                # Reinjected native permission context after manual compaction
+                # is real body growth. Keep this usage-boundary fixture above it.
+                auto_compact_tokens=2000,
                 auto_compact_token_limit_scope="body_after_prefix",
                 model_max_retries=0,
             ),

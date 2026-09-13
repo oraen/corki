@@ -1,0 +1,1253 @@
+bringing up nodes...
+bringing up nodes...
+
+........................................................................ [  6%]
+........................................................................ [ 13%]
+........................................................................ [ 19%]
+........................................................................ [ 26%]
+........................................................................ [ 32%]
+........................................................................ [ 39%]
+........................................................................ [ 46%]
+........................................................................ [ 52%]
+...................................................F..F..F..F..F.F...F.F [ 59%]
+.F.F.F.F..F...F..F...F.F..F.F...F..F.F..F.F............................. [ 65%]
+........................................................................ [ 72%]
+........................................................................ [ 79%]
+...........F..F.F..F.................................................... [ 85%]
+..........................................F....F........................ [ 92%]
+........................................................................ [ 98%]
+......FFFF..                                                             [100%]
+=================================== FAILURES ===================================
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[False-False-None-False-False] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[False-False-None-False-True] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[False-False-None-True-False] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[False-False-None-True-True] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-None-False-False] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+ERROR    corki.core.runtime:runtime.py:2194 Interrupt hook cleanup failed
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2181, in _execute_run
+    await run_interrupt(
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 289, in run
+    raise error
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 237, in invoke
+    return result if result is not None else await execute(command, key, request)
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 205, in execute
+    await repository.complete_hook_execution(thread, turn, key, request, result)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 130, in fail_result
+    raise OSError("interrupt result boundary")
+OSError: interrupt result boundary
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-None-False-True] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+ERROR    corki.core.runtime:runtime.py:2194 Interrupt hook cleanup failed
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2181, in _execute_run
+    await run_interrupt(
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 289, in run
+    raise error
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 237, in invoke
+    return result if result is not None else await execute(command, key, request)
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 205, in execute
+    await repository.complete_hook_execution(thread, turn, key, request, result)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 130, in fail_result
+    raise OSError("interrupt result boundary")
+OSError: interrupt result boundary
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-None-True-False] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+ERROR    corki.core.runtime:runtime.py:2194 Interrupt hook cleanup failed
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2181, in _execute_run
+    await run_interrupt(
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 289, in run
+    raise error
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 237, in invoke
+    return result if result is not None else await execute(command, key, request)
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 205, in execute
+    await repository.complete_hook_execution(thread, turn, key, request, result)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 130, in fail_result
+    raise OSError("interrupt result boundary")
+OSError: interrupt result boundary
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-None-True-True] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+ERROR    corki.core.runtime:runtime.py:2194 Interrupt hook cleanup failed
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2181, in _execute_run
+    await run_interrupt(
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 289, in run
+    raise error
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 237, in invoke
+    return result if result is not None else await execute(command, key, request)
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 205, in execute
+    await repository.complete_hook_execution(thread, turn, key, request, result)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 130, in fail_result
+    raise OSError("interrupt result boundary")
+OSError: interrupt result boundary
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[True-True-None-False-False] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+ERROR    corki.core.runtime:runtime.py:2194 Interrupt hook cleanup failed
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2181, in _execute_run
+    await run_interrupt(
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 289, in run
+    raise error
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 237, in invoke
+    return result if result is not None else await execute(command, key, request)
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 205, in execute
+    await repository.complete_hook_execution(thread, turn, key, request, result)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 130, in fail_result
+    raise OSError("interrupt result boundary")
+OSError: interrupt result boundary
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[True-True-None-False-True] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+ERROR    corki.core.runtime:runtime.py:2194 Interrupt hook cleanup failed
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2181, in _execute_run
+    await run_interrupt(
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 289, in run
+    raise error
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 237, in invoke
+    return result if result is not None else await execute(command, key, request)
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 205, in execute
+    await repository.complete_hook_execution(thread, turn, key, request, result)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 130, in fail_result
+    raise OSError("interrupt result boundary")
+OSError: interrupt result boundary
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[True-True-None-True-False] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+ERROR    corki.core.runtime:runtime.py:2194 Interrupt hook cleanup failed
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2181, in _execute_run
+    await run_interrupt(
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 289, in run
+    raise error
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 237, in invoke
+    return result if result is not None else await execute(command, key, request)
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 205, in execute
+    await repository.complete_hook_execution(thread, turn, key, request, result)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 130, in fail_result
+    raise OSError("interrupt result boundary")
+OSError: interrupt result boundary
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[True-True-None-True-True] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+ERROR    corki.core.runtime:runtime.py:2194 Interrupt hook cleanup failed
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2181, in _execute_run
+    await run_interrupt(
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 289, in run
+    raise error
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 237, in invoke
+    return result if result is not None else await execute(command, key, request)
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 205, in execute
+    await repository.complete_hook_execution(thread, turn, key, request, result)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 130, in fail_result
+    raise OSError("interrupt result boundary")
+OSError: interrupt result boundary
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[False-False-after_commit-False-False] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2039 Could not persist Turn cancellation intent
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2031, in _execute_run
+    await self._repository.save_hook_batch(
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 120, in fail_intent
+    raise OSError(f"cancel intent {intent_fault}")
+OSError: cancel intent after_commit
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[False-False-after_commit-False-True] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2039 Could not persist Turn cancellation intent
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2031, in _execute_run
+    await self._repository.save_hook_batch(
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 120, in fail_intent
+    raise OSError(f"cancel intent {intent_fault}")
+OSError: cancel intent after_commit
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[False-False-after_commit-True-False] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2039 Could not persist Turn cancellation intent
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2031, in _execute_run
+    await self._repository.save_hook_batch(
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 120, in fail_intent
+    raise OSError(f"cancel intent {intent_fault}")
+OSError: cancel intent after_commit
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[False-False-after_commit-True-True] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2039 Could not persist Turn cancellation intent
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2031, in _execute_run
+    await self._repository.save_hook_batch(
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 120, in fail_intent
+    raise OSError(f"cancel intent {intent_fault}")
+OSError: cancel intent after_commit
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-before_commit-False-False] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2039 Could not persist Turn cancellation intent
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2031, in _execute_run
+    await self._repository.save_hook_batch(
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 120, in fail_intent
+    raise OSError(f"cancel intent {intent_fault}")
+OSError: cancel intent before_commit
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+ERROR    corki.core.runtime:runtime.py:2194 Interrupt hook cleanup failed
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2181, in _execute_run
+    await run_interrupt(
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 289, in run
+    raise error
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 237, in invoke
+    return result if result is not None else await execute(command, key, request)
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 205, in execute
+    await repository.complete_hook_execution(thread, turn, key, request, result)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 130, in fail_result
+    raise OSError("interrupt result boundary")
+OSError: interrupt result boundary
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-before_commit-False-True] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2039 Could not persist Turn cancellation intent
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2031, in _execute_run
+    await self._repository.save_hook_batch(
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 120, in fail_intent
+    raise OSError(f"cancel intent {intent_fault}")
+OSError: cancel intent before_commit
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+ERROR    corki.core.runtime:runtime.py:2194 Interrupt hook cleanup failed
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2181, in _execute_run
+    await run_interrupt(
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 289, in run
+    raise error
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 237, in invoke
+    return result if result is not None else await execute(command, key, request)
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 205, in execute
+    await repository.complete_hook_execution(thread, turn, key, request, result)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 130, in fail_result
+    raise OSError("interrupt result boundary")
+OSError: interrupt result boundary
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-before_commit-True-False] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2039 Could not persist Turn cancellation intent
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2031, in _execute_run
+    await self._repository.save_hook_batch(
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 120, in fail_intent
+    raise OSError(f"cancel intent {intent_fault}")
+OSError: cancel intent before_commit
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+ERROR    corki.core.runtime:runtime.py:2194 Interrupt hook cleanup failed
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2181, in _execute_run
+    await run_interrupt(
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 289, in run
+    raise error
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 237, in invoke
+    return result if result is not None else await execute(command, key, request)
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 205, in execute
+    await repository.complete_hook_execution(thread, turn, key, request, result)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 130, in fail_result
+    raise OSError("interrupt result boundary")
+OSError: interrupt result boundary
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-before_commit-True-True] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2039 Could not persist Turn cancellation intent
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2031, in _execute_run
+    await self._repository.save_hook_batch(
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 120, in fail_intent
+    raise OSError(f"cancel intent {intent_fault}")
+OSError: cancel intent before_commit
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+ERROR    corki.core.runtime:runtime.py:2194 Interrupt hook cleanup failed
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2181, in _execute_run
+    await run_interrupt(
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 289, in run
+    raise error
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 237, in invoke
+    return result if result is not None else await execute(command, key, request)
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 205, in execute
+    await repository.complete_hook_execution(thread, turn, key, request, result)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 130, in fail_result
+    raise OSError("interrupt result boundary")
+OSError: interrupt result boundary
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-after_commit-False-False] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2039 Could not persist Turn cancellation intent
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2031, in _execute_run
+    await self._repository.save_hook_batch(
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 120, in fail_intent
+    raise OSError(f"cancel intent {intent_fault}")
+OSError: cancel intent after_commit
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+ERROR    corki.core.runtime:runtime.py:2194 Interrupt hook cleanup failed
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2181, in _execute_run
+    await run_interrupt(
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 289, in run
+    raise error
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 237, in invoke
+    return result if result is not None else await execute(command, key, request)
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 205, in execute
+    await repository.complete_hook_execution(thread, turn, key, request, result)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 130, in fail_result
+    raise OSError("interrupt result boundary")
+OSError: interrupt result boundary
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-after_commit-False-True] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2039 Could not persist Turn cancellation intent
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2031, in _execute_run
+    await self._repository.save_hook_batch(
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 120, in fail_intent
+    raise OSError(f"cancel intent {intent_fault}")
+OSError: cancel intent after_commit
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+ERROR    corki.core.runtime:runtime.py:2194 Interrupt hook cleanup failed
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2181, in _execute_run
+    await run_interrupt(
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 289, in run
+    raise error
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 237, in invoke
+    return result if result is not None else await execute(command, key, request)
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 205, in execute
+    await repository.complete_hook_execution(thread, turn, key, request, result)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 130, in fail_result
+    raise OSError("interrupt result boundary")
+OSError: interrupt result boundary
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-after_commit-True-False] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2039 Could not persist Turn cancellation intent
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2031, in _execute_run
+    await self._repository.save_hook_batch(
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 120, in fail_intent
+    raise OSError(f"cancel intent {intent_fault}")
+OSError: cancel intent after_commit
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+ERROR    corki.core.runtime:runtime.py:2194 Interrupt hook cleanup failed
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2181, in _execute_run
+    await run_interrupt(
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 289, in run
+    raise error
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 237, in invoke
+    return result if result is not None else await execute(command, key, request)
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 205, in execute
+    await repository.complete_hook_execution(thread, turn, key, request, result)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 130, in fail_result
+    raise OSError("interrupt result boundary")
+OSError: interrupt result boundary
+_ test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-after_commit-True-True] _
+[gw2] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_interrupt_recovery.py:189: in test_interrupt_cold_recovery_does_not_resample_or_repeat
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_interrupt_recovery.py:147: in scenario
+    assert await warm._repository.load_turn_status(thread, turn) == TurnStatus.RUNNING
+E   AssertionError: assert <TurnStatus.C...: 'cancelled'> == <TurnStatus.R...NG: 'running'>
+E     
+E     - running
+E     + cancelled
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2039 Could not persist Turn cancellation intent
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2031, in _execute_run
+    await self._repository.save_hook_batch(
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 120, in fail_intent
+    raise OSError(f"cancel intent {intent_fault}")
+OSError: cancel intent after_commit
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 124, in fail_terminal
+    raise OSError("terminal unavailable")
+OSError: terminal unavailable
+ERROR    corki.core.runtime:runtime.py:2194 Interrupt hook cleanup failed
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2181, in _execute_run
+    await run_interrupt(
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 289, in run
+    raise error
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 237, in invoke
+    return result if result is not None else await execute(command, key, request)
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/interrupt_hooks.py", line 205, in execute
+    await repository.complete_hook_execution(thread, turn, key, request, result)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_interrupt_recovery.py", line 130, in fail_result
+    raise OSError("interrupt result boundary")
+OSError: interrupt result boundary
+_ test_ledger_only_turn_retains_base_before_first_checkpoint[ADMITTED BASE-normal] _
+[gw3] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_base_instruction_recovery.py:127: in test_ledger_only_turn_retains_base_before_first_checkpoint
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_base_instruction_recovery.py:103: in scenario
+    assert pending is not None and pending.operation == operation
+E   assert (None is not None)
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_base_instruction_recovery.py", line 91, in save_running_only
+    raise OSError("fixture terminal storage unavailable")
+OSError: fixture terminal storage unavailable
+_ test_ledger_only_turn_retains_base_before_first_checkpoint[ADMITTED BASE-compact] _
+[gw3] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_base_instruction_recovery.py:127: in test_ledger_only_turn_retains_base_before_first_checkpoint
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_base_instruction_recovery.py:103: in scenario
+    assert pending is not None and pending.operation == operation
+E   assert (None is not None)
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_base_instruction_recovery.py", line 91, in save_running_only
+    raise OSError("fixture terminal storage unavailable")
+OSError: fixture terminal storage unavailable
+_____ test_ledger_only_turn_retains_base_before_first_checkpoint[-normal] ______
+[gw3] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_base_instruction_recovery.py:127: in test_ledger_only_turn_retains_base_before_first_checkpoint
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_base_instruction_recovery.py:103: in scenario
+    assert pending is not None and pending.operation == operation
+E   assert (None is not None)
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_base_instruction_recovery.py", line 91, in save_running_only
+    raise OSError("fixture terminal storage unavailable")
+OSError: fixture terminal storage unavailable
+_____ test_ledger_only_turn_retains_base_before_first_checkpoint[-compact] _____
+[gw3] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_base_instruction_recovery.py:127: in test_ledger_only_turn_retains_base_before_first_checkpoint
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_base_instruction_recovery.py:103: in scenario
+    assert pending is not None and pending.operation == operation
+E   assert (None is not None)
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_base_instruction_recovery.py", line 91, in save_running_only
+    raise OSError("fixture terminal storage unavailable")
+OSError: fixture terminal storage unavailable
+_ test_pending_turn_uses_current_host_policy_before_first_resumed_sample[True-NEW POLICY-False] _
+[gw0] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_managed_policy_recovery.py:168: in test_pending_turn_uses_current_host_policy_before_first_resumed_sample
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_managed_policy_recovery.py:145: in scenario
+    assert await cold._repository.latest_running_turn(thread) is not None
+E   assert None is not None
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_managed_policy_recovery.py", line 136, in keep_running
+    raise OSError("fixture terminal write unavailable")
+OSError: fixture terminal write unavailable
+_ test_pending_turn_uses_current_host_policy_before_first_resumed_sample[True-NEW POLICY-True] _
+[gw0] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_managed_policy_recovery.py:168: in test_pending_turn_uses_current_host_policy_before_first_resumed_sample
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_managed_policy_recovery.py:145: in scenario
+    assert await cold._repository.latest_running_turn(thread) is not None
+E   assert None is not None
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_managed_policy_recovery.py", line 136, in keep_running
+    raise OSError("fixture terminal write unavailable")
+OSError: fixture terminal write unavailable
+_ test_pending_turn_uses_current_host_policy_before_first_resumed_sample[True-NEW POLICY-failed_sample] _
+[gw0] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_managed_policy_recovery.py:168: in test_pending_turn_uses_current_host_policy_before_first_resumed_sample
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_managed_policy_recovery.py:145: in scenario
+    assert await cold._repository.latest_running_turn(thread) is not None
+E   assert None is not None
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_managed_policy_recovery.py", line 136, in keep_running
+    raise OSError("fixture terminal write unavailable")
+OSError: fixture terminal write unavailable
+_ test_pending_turn_uses_current_host_policy_before_first_resumed_sample[True--False] _
+[gw0] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_managed_policy_recovery.py:168: in test_pending_turn_uses_current_host_policy_before_first_resumed_sample
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_managed_policy_recovery.py:145: in scenario
+    assert await cold._repository.latest_running_turn(thread) is not None
+E   assert None is not None
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_managed_policy_recovery.py", line 136, in keep_running
+    raise OSError("fixture terminal write unavailable")
+OSError: fixture terminal write unavailable
+_ test_pending_turn_uses_current_host_policy_before_first_resumed_sample[True--True] _
+[gw0] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_managed_policy_recovery.py:168: in test_pending_turn_uses_current_host_policy_before_first_resumed_sample
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_managed_policy_recovery.py:145: in scenario
+    assert await cold._repository.latest_running_turn(thread) is not None
+E   assert None is not None
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_managed_policy_recovery.py", line 136, in keep_running
+    raise OSError("fixture terminal write unavailable")
+OSError: fixture terminal write unavailable
+_ test_pending_turn_uses_current_host_policy_before_first_resumed_sample[True--failed_sample] _
+[gw0] darwin -- Python 3.12.3 /Users/corki/PycharmProjects/corki/.venv/bin/python
+tests/integration/test_managed_policy_recovery.py:168: in test_pending_turn_uses_current_host_policy_before_first_resumed_sample
+    asyncio.run(scenario())
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:194: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.12.3/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/integration/test_managed_policy_recovery.py:145: in scenario
+    assert await cold._repository.latest_running_turn(thread) is not None
+E   assert None is not None
+------------------------------ Captured log call -------------------------------
+ERROR    corki.core.runtime:runtime.py:2080 Could not persist turn terminal
+Traceback (most recent call last):
+  File "/Users/corki/PycharmProjects/corki/src/corki/core/runtime.py", line 2078, in _execute_run
+    await self._repository.save_turn(record)
+  File "/Users/corki/PycharmProjects/corki/tests/integration/test_managed_policy_recovery.py", line 136, in keep_running
+    raise OSError("fixture terminal write unavailable")
+OSError: fixture terminal write unavailable
+=========================== short test summary info ============================
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[False-False-None-False-False]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[False-False-None-False-True]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[False-False-None-True-False]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[False-False-None-True-True]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-None-False-False]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-None-False-True]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-None-True-False]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-None-True-True]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[True-True-None-False-False]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[True-True-None-False-True]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[True-True-None-True-False]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[True-True-None-True-True]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[False-False-after_commit-False-False]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[False-False-after_commit-False-True]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[False-False-after_commit-True-False]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[False-False-after_commit-True-True]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-before_commit-False-False]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-before_commit-False-True]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-before_commit-True-False]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-before_commit-True-True]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-after_commit-False-False]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-after_commit-False-True]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-after_commit-True-False]
+FAILED tests/integration/test_interrupt_recovery.py::test_interrupt_cold_recovery_does_not_resample_or_repeat[True-False-after_commit-True-True]
+FAILED tests/integration/test_base_instruction_recovery.py::test_ledger_only_turn_retains_base_before_first_checkpoint[ADMITTED BASE-normal]
+FAILED tests/integration/test_base_instruction_recovery.py::test_ledger_only_turn_retains_base_before_first_checkpoint[ADMITTED BASE-compact]
+FAILED tests/integration/test_base_instruction_recovery.py::test_ledger_only_turn_retains_base_before_first_checkpoint[-normal]
+FAILED tests/integration/test_base_instruction_recovery.py::test_ledger_only_turn_retains_base_before_first_checkpoint[-compact]
+FAILED tests/integration/test_managed_policy_recovery.py::test_pending_turn_uses_current_host_policy_before_first_resumed_sample[True-NEW POLICY-False]
+FAILED tests/integration/test_managed_policy_recovery.py::test_pending_turn_uses_current_host_policy_before_first_resumed_sample[True-NEW POLICY-True]
+FAILED tests/integration/test_managed_policy_recovery.py::test_pending_turn_uses_current_host_policy_before_first_resumed_sample[True-NEW POLICY-failed_sample]
+FAILED tests/integration/test_managed_policy_recovery.py::test_pending_turn_uses_current_host_policy_before_first_resumed_sample[True--False]
+FAILED tests/integration/test_managed_policy_recovery.py::test_pending_turn_uses_current_host_policy_before_first_resumed_sample[True--True]
+FAILED tests/integration/test_managed_policy_recovery.py::test_pending_turn_uses_current_host_policy_before_first_resumed_sample[True--failed_sample]
+34 failed, 1058 passed in 61.58s (0:01:01)
+

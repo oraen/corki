@@ -9,6 +9,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from corki.config import CorkiSettings
+from corki.config.instructions import ProjectInstructionsConfig
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted, ModelRequest
 from corki.models.types import ModelEvent
@@ -120,9 +121,12 @@ async def _run(workspace: Path) -> dict[str, object]:
     (workspace / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
     (workspace / "AGENTS.md").write_text("DEMO_PROJECT_INSTRUCTION", encoding="utf-8")
     model = DemoModel()
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=workspace,
+            # The host created this disposable workspace specifically for the
+            # write demo. Keep native workspace enforcement, not full access.
+            project_instructions=ProjectInstructionsConfig(trust_level="trusted"),
             command_yield_seconds=1,
             command_timeout_seconds=5,
         ),

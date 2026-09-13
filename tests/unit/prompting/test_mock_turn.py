@@ -70,8 +70,8 @@ def test_mock_default_coding_turn_uses_expected_prompt_layers() -> None:
 
     assert request["instructions"].startswith("You are Corki")
     assert [(item["role"], item["prompt"]) for item in request["input"]] == [
-        (PromptRole.DEVELOPER, "mode.default"),
         (PromptRole.USER, "project.agents"),
+        (PromptRole.DEVELOPER, "mode.default"),
         (PromptRole.USER, "environment.primary"),
         (PromptRole.USER, None),
     ]

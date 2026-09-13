@@ -89,7 +89,7 @@ class ExtensionModel:
             calls = (
                 ToolCall(ToolCallId("skill-1"), "skill_read", {"name": "demo-recall"}),
                 ToolCall(ToolCallId("plugin-1"), "plugin__demo__echo", {"text": "hello"}),
-                ToolCall(ToolCallId("mcp-1"), "mcp__fixture__echo", {"text": "hello"}),
+                ToolCall(ToolCallId("mcp-1"), "mcp__fixture::echo", {"text": "hello"}),
             )
             yield ModelCompleted(tuple(ToolCallItem(call, turn_id, step_id) for call in calls))
             return
@@ -153,8 +153,12 @@ async def _run(workspace: Path) -> dict[str, object]:
         cwd=workspace,
         timeout_seconds=5,
     )
-    runtime = LangGraphRuntime.create(
-        settings=CorkiSettings(working_directory=workspace, mcp_servers=(mcp,)),
+    runtime = await LangGraphRuntime.acreate(
+        settings=CorkiSettings(
+            working_directory=workspace,
+            mcp_servers=(mcp,),
+            plugin_dirs=(workspace / ".corki/plugins",),
+        ),
         database_path=workspace / ".runtime" / "sessions.db",
         home_path=workspace / ".runtime",
         model=model,
@@ -164,16 +168,16 @@ async def _run(workspace: Path) -> dict[str, object]:
 
     advertised = {tool.name for tool in model.requests[0].tools}
     assert {"skill_read", "plugin__demo__echo", "tool_search"} <= advertised
-    assert "mcp__fixture__echo" not in advertised
+    assert "mcp__fixture::echo" not in advertised
     loaded = {tool.name for tool in model.requests[1].tools}
-    assert "mcp__fixture__echo" in loaded
+    assert "mcp__fixture::echo" in loaded
     context = "\n".join(
         item.content for item in model.requests[0].items if isinstance(item, ContextItem)
     )
     assert "PROJECT_SKILL_BODY" in context
     assert "plugin__demo__echo" in context
     assert "Deferred sources: fixture" in context
-    assert "mcp__fixture__echo" not in context
+    assert "mcp__fixture::echo" not in context
     outputs = [item.content for item in model.requests[2].items if isinstance(item, ToolResultItem)]
     assert any("PROJECT_SKILL_BODY" in output for output in outputs)
     assert any('"plugin": "hello"' in output for output in outputs)

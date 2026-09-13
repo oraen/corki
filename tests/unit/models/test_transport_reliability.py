@@ -324,6 +324,7 @@ def test_responses_completed_fallback_obeys_hard_response_limit() -> None:
                 {
                     "type": "message",
                     "content": [{"type": "output_text", "text": "too long"}],
+                    "role": "assistant",
                 }
             ],
         },
@@ -443,6 +444,7 @@ def test_responses_adapter_normalizes_text_tool_and_usage() -> None:
                 "usage": {
                     "input_tokens": 7,
                     "output_tokens": 4,
+                    "total_tokens": 11,
                     "output_tokens_details": {"reasoning_tokens": 1},
                 },
             },

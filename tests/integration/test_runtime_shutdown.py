@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from corki.config import CorkiSettings
+from corki.config import CorkiSettings, TokenBudgetConfig
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted, ModelTextDelta
-from corki.protocol.events import TurnCancelled, TurnCompleted, TurnFailed
+from corki.protocol.events import TurnCancelled, TurnCompleted, TurnFailed, WarningEvent
 from corki.protocol.ids import ToolCallId
 from corki.protocol.items import AssistantMessageItem, ToolCallItem, new_step_id
 from corki.protocol.tools import ToolCall, ToolResult, ToolSpec
@@ -36,8 +36,9 @@ class BlockingTool:
 
 
 class ShutdownModel:
-    def __init__(self, site="model"):
+    def __init__(self, site="model", *, burst_blocked_at=2):
         self.site = site
+        self.burst_blocked_at = burst_blocked_at
         self.started = asyncio.Event()
         self.burst_blocked = asyncio.Event()
         self.running = False
@@ -55,8 +56,8 @@ class ShutdownModel:
             elif self.site == "answer":
                 yield ModelCompleted((AssistantMessageItem("done", turn, step),))
             elif self.site == "burst":
-                for index in range(10):
-                    if index == 2:
+                for index in range(max(10, self.burst_blocked_at + 2)):
+                    if index == self.burst_blocked_at:
                         self.burst_blocked.set()
                     yield ModelTextDelta("partial")
             else:
@@ -68,10 +69,10 @@ class ShutdownModel:
         self.closed = True
 
 
-def runtime_for(tmp_path, model, *, registry=None):
+def runtime_for(tmp_path, model, *, registry=None, queue_size=1):
     return LangGraphRuntime.create(
         settings=CorkiSettings(
-            working_directory=tmp_path, skills_enabled=False, event_queue_size=1
+            working_directory=tmp_path, skills_enabled=False, event_queue_size=queue_size
         ),
         database_path=tmp_path / "shutdown.db",
         model=model,
@@ -136,7 +137,7 @@ def test_runtime_owns_active_model_and_tool_until_durable_terminal(
 
 
 @pytest.mark.parametrize("action", ["cancel", "close"])
-def test_runtime_interrupt_terminates_real_exec_process_and_reader_tasks(tmp_path: Path, action):
+def test_runtime_interrupt_retains_but_close_terminates_real_exec_process(tmp_path: Path, action):
     async def scenario():
         class ExecModel(ShutdownModel):
             async def stream(self, request):
@@ -164,8 +165,12 @@ def test_runtime_interrupt_terminates_real_exec_process_and_reader_tasks(tmp_pat
         original_wait = runtime._process_manager._wait_at_most
 
         async def wait(process, seconds):
-            processes.append(process)
-            started.set()
+            if any(
+                session.process is process
+                for session in runtime._process_manager._sessions.values()
+            ):
+                processes.append(process)
+                started.set()
             await original_wait(process, seconds)
 
         runtime._process_manager._wait_at_most = wait
@@ -185,9 +190,15 @@ def test_runtime_interrupt_terminates_real_exec_process_and_reader_tasks(tmp_pat
                 await runtime.aclose()
             with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(asyncio.shield(consumer), timeout=3)
+            if action == "cancel":
+                assert processes and all(process.returncode is None for process in processes)
+                assert len(await runtime.list_background_terminals()) == 1
+                await runtime.aclose()
             assert processes and all(process.returncode is not None for process in processes)
             assert all(
-                session.reader_task.done() and session.timeout_task.done() for session in sessions
+                session.reader_task.done()
+                and (session.timeout_task is None or session.timeout_task.done())
+                for session in sessions
             )
             assert runtime._process_manager._sessions == {}
             assert isinstance(events[-1], TurnCancelled)
@@ -299,17 +310,61 @@ def test_concurrent_close_and_cancelled_waiter_share_uninterrupted_cleanup(tmp_p
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("fault", ["processes", "mcp", "model", "repository"])
-def test_close_failure_still_closes_other_resources_and_is_shared(tmp_path: Path, fault):
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "stop_hooks",
+        "post_hooks",
+        "pre_hooks",
+        "mcp_prewarm",
+        "thread_memory",
+        "memory_reset",
+        "processes",
+        "memory_service",
+        "mcp",
+        "plugins",
+        "history_notes",
+        "model",
+        "repository",
+        "writer",
+    ],
+)
+@pytest.mark.parametrize("error_type", [RuntimeError, asyncio.CancelledError])
+def test_close_failure_still_closes_other_resources_and_is_shared(
+    tmp_path: Path, fault, error_type
+):
     async def scenario():
-        runtime = runtime_for(tmp_path, ShutdownModel())
+        runtime = LangGraphRuntime.create(
+            settings=CorkiSettings(
+                working_directory=tmp_path,
+                skills_enabled=False,
+                memories_enabled=True,
+                token_budget_enabled=True,
+                token_budget=TokenBudgetConfig(use_history_notes_extension=True),
+            ),
+            database_path=tmp_path / "shutdown.db",
+            home_path=tmp_path / "home",
+            memory_root=tmp_path / "memories",
+            model=ShutdownModel(),
+            registry=ToolRegistry(),
+        )
         await runtime._ensure_ready()
         closed = []
         targets = [
+            ("stop_hooks", runtime._graph._stop_hooks._async, "aclose"),
+            ("post_hooks", runtime._graph._async_post_hooks.owner, "aclose"),
+            ("pre_hooks", runtime._graph._async_pre_hooks.owner, "aclose"),
+            ("mcp_prewarm", runtime._mcp_prewarm, "aclose"),
+            ("thread_memory", runtime._thread_memory, "aclose"),
+            ("memory_reset", runtime._memory_resetter, "aclose"),
             ("processes", runtime._process_manager, "terminate_all"),
+            ("memory_service", runtime._memory_service, "aclose"),
             ("mcp", runtime._mcp_manager, "aclose"),
+            ("plugins", runtime._plugin_manager, "aclose"),
+            ("history_notes", runtime._history_notes, "aclose"),
             ("model", runtime._model, "aclose"),
             ("repository", runtime._repository, "close"),
+            ("writer", runtime._writer, "aclose"),
         ]
         for name, service, method in targets:
             original = getattr(service, method)
@@ -318,16 +373,22 @@ def test_close_failure_still_closes_other_resources_and_is_shared(tmp_path: Path
                 closed.append(name)
                 await original()
                 if name == fault:
-                    raise RuntimeError(f"{name} close failed")
+                    raise error_type(f"{name} close failed")
 
             setattr(service, method, close)
-        with pytest.raises(RuntimeError, match=f"{fault} close failed"):
+        match = f"{fault} close failed" if error_type is RuntimeError else None
+        with pytest.raises(error_type, match=match):
             await runtime.aclose()
-        with pytest.raises(RuntimeError, match=f"{fault} close failed"):
+        with pytest.raises(error_type, match=match):
             await runtime.aclose()
         assert closed == [name for name, _, _ in targets]
         assert runtime._checkpointer is None
         assert runtime._checkpoint_context is None
+        assert not runtime._writer.held
+        assert runtime._closed
+        assert runtime._memory_resetter._closed
+        assert runtime._memory_service._close_task.done()
+        assert runtime._history_notes.backend._closed
 
     asyncio.run(scenario())
 
@@ -361,7 +422,7 @@ def test_cancellation_cleanup_error_preserves_cancel_terminal_but_fails_close(tm
             await asyncio.gather(consumer, return_exceptions=True)
             assert isinstance(events[-1], TurnCancelled)
             assert not any(isinstance(event, TurnFailed) for event in events)
-            assert model.closed and calls == 2
+            assert model.closed and calls == 1
             assert await runtime._repository.latest_running_turn(runtime.thread_id) is None
         finally:
             consumer.cancel()
@@ -373,16 +434,20 @@ def test_cancellation_cleanup_error_preserves_cancel_terminal_but_fails_close(tm
 
 
 @pytest.mark.parametrize("phase", ["started", "full_queue"])
-def test_close_does_not_need_paused_consumer_to_make_progress(tmp_path: Path, phase):
+@pytest.mark.parametrize("queue_size", [1, 4, 8])
+def test_close_does_not_need_paused_consumer_to_make_progress(tmp_path: Path, phase, queue_size):
     async def scenario():
-        model = ShutdownModel("burst")
-        runtime = runtime_for(tmp_path, model)
+        model = ShutdownModel("burst", burst_blocked_at=queue_size + 1)
+        runtime = runtime_for(tmp_path, model, queue_size=queue_size)
         stream = runtime.stream("wait", realtime=True)
         try:
             await anext(stream)
             if phase == "full_queue":
-                await anext(stream)
+                # Admission warnings do not consume a model data queue slot.
+                while isinstance(await anext(stream), WarningEvent):
+                    pass
                 await asyncio.wait_for(model.burst_blocked.wait(), timeout=3)
+                assert runtime._active_run.queue.full()
             await asyncio.wait_for(runtime.aclose(), timeout=3)
             assert not model.running
             assert await runtime._repository.latest_running_turn(runtime.thread_id) is None

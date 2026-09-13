@@ -8,7 +8,7 @@ from corki.code_mode.specs import parse_source
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted
-from corki.protocol.events import TurnCompleted
+from corki.protocol.events import TurnCompleted, TurnFailed
 from corki.protocol.tools import ToolSpec
 from corki.tools import ToolRegistry
 
@@ -32,7 +32,7 @@ def test_missing_engine_fallback_and_fail_closed_are_real_startup_paths(
         class Model:
             async def stream(self, request):
                 requests.append(request)
-                assert "exec" not in {spec.name for spec in request.tools}
+                assert ("exec" in {spec.name for spec in request.tools}) is fail
                 yield ModelCompleted(())
 
             async def aclose(self):
@@ -49,13 +49,8 @@ def test_missing_engine_fallback_and_fail_closed_are_real_startup_paths(
             model=Model(),
         )
         try:
-            if fail:
-                with pytest.raises(ValueError, match="engine unavailable"):
-                    [event async for event in runtime.stream("run")]
-                assert requests == []
-            else:
-                events = [event async for event in runtime.stream("run")]
-                assert isinstance(events[-1], TurnCompleted)
+            events = [event async for event in runtime.stream("run")]
+            assert isinstance(events[-1], TurnCompleted)
         finally:
             await runtime.aclose()
         assert closed == [True]
@@ -63,7 +58,9 @@ def test_missing_engine_fallback_and_fail_closed_are_real_startup_paths(
     asyncio.run(scenario())
 
 
-def test_control_name_collision_does_not_leave_partial_exec_registration(tmp_path, monkeypatch):
+def test_strict_control_collision_is_turn_failure_without_partial_publication(
+    tmp_path, monkeypatch
+):
     async def scenario():
         monkeypatch.setattr("corki.code_mode.service.CodeModeService.available", lambda: True)
 
@@ -79,15 +76,19 @@ def test_control_name_collision_does_not_leave_partial_exec_registration(tmp_pat
         registry.register(user_tool)
         runtime = LangGraphRuntime.create(
             settings=CorkiSettings(
-                working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode"
+                working_directory=tmp_path,
+                skills_enabled=False,
+                tool_mode="code_mode",
+                error_on_tool_collisions=True,
             ),
             database_path=tmp_path / "sessions.db",
             registry=registry,
             model=Model(),
         )
         try:
-            with pytest.raises(ValueError, match="reserved"):
-                [event async for event in runtime.stream("run")]
+            events = [event async for event in runtime.stream("run")]
+            assert isinstance(events[-1], TurnFailed)
+            assert "tool collision: functions.wait" in events[-1].error
             assert registry.get("exec") is None and registry.get("wait") is user_tool
         finally:
             await runtime.aclose()

@@ -16,6 +16,7 @@ from corki.mcp.tools import MCPTool
 from corki.models import OpenAICompatibleModel, OpenAIResponsesModel, resolve_capabilities
 from corki.protocol.events import ToolOutputDelta, TurnCompleted
 from corki.protocol.items import ToolResultItem
+from corki.protocol.tool_names import compatible_tool_name
 from corki.protocol.tools import AudioAttachment, EncryptedContent, ImageAttachment, TextContent
 from corki.tools import ToolRegistry
 
@@ -48,7 +49,7 @@ def test_mcp_ordered_media_and_cipher_reach_model_without_leaking_into_logs(
                 },
                 {
                     "type": "audio",
-                    "mime_type": "audio/wav",
+                    "mimeType": "audio/wav",
                     "data": base64.b64encode(wav.getvalue()).decode(),
                 },
                 {"type": "text", "text": cipher, "_meta": {"codex/encryptedContent": True}},
@@ -73,7 +74,7 @@ def test_mcp_ordered_media_and_cipher_reach_model_without_leaking_into_logs(
                         {
                             "type": "function_call",
                             "call_id": "read",
-                            "name": "mcp__docs__read",
+                            "name": compatible_tool_name("mcp__docs::read"),
                             "arguments": "{}",
                         }
                     ]
@@ -98,7 +99,10 @@ def test_mcp_ordered_media_and_cipher_reach_model_without_leaking_into_logs(
                                 "index": 0,
                                 "id": "read",
                                 "type": "function",
-                                "function": {"name": "mcp__docs__read", "arguments": "{}"},
+                                "function": {
+                                    "name": compatible_tool_name("mcp__docs::read"),
+                                    "arguments": "{}",
+                                },
                             }
                         ]
                     }
@@ -147,7 +151,7 @@ def test_mcp_ordered_media_and_cipher_reach_model_without_leaking_into_logs(
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert len(requests) == 2 and calls == ["read"]
             wire = json.dumps(requests[1])
-            assert (cipher in wire) is native
+            assert cipher not in wire
             assert "STRUCTURED_IGNORED" not in wire and "PRIVATE" not in wire
             display = "".join(e.delta for e in events if isinstance(e, ToolOutputDelta))
             assert "before" in display and "after" in display
@@ -177,7 +181,7 @@ def test_mcp_ordered_media_and_cipher_reach_model_without_leaking_into_logs(
                 )
             with sqlite3.connect(database) as db:
                 (value,) = db.execute(
-                    "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs__read'"
+                    "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs::read'"
                 ).fetchone()
             public = json.loads(value)["code_mode_output"]["value"]
             assert "_meta" not in public and public["structuredContent"] == raw["structuredContent"]

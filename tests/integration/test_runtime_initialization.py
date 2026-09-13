@@ -18,13 +18,19 @@ from corki.protocol.items import UserMessageItem
 from corki.tools import ToolRegistry
 
 
-@pytest.mark.parametrize("boundary", ["thread", "mcp", "checkpoint"])
+@pytest.mark.parametrize(
+    ("boundary", "required"),
+    # Optional MCP startup now belongs to the admitted session/Turn path;
+    # its cancellation contract is covered by test_mcp_pending_startup.
+    [("thread", False), ("mcp", True), ("checkpoint", False)],
+)
 @pytest.mark.parametrize("action", ["cancel", "repeat_cancel", "stop", "close"])
 def test_initialization_cancellation_joins_rollback_before_retry_or_close(
-    tmp_path, monkeypatch, boundary, action
+    tmp_path, monkeypatch, boundary, action, required
 ):
     async def scenario():
         reached, rolling_back, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        ready_server_entered = asyncio.Event()
         thread_reached, thread_release = threading.Event(), threading.Event()
         requests, events, clients, disposed = [], [], [], []
         block_once = True
@@ -51,10 +57,19 @@ def test_initialization_cancellation_joins_rollback_before_retry_or_close(
                 if method == "notifications/initialized":
                     return httpx.Response(202)
                 if method == "initialize":
-                    result = {"protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {}}}
+                    result = {
+                        "serverInfo": {"name": "fixture", "version": "1"},
+                        "protocolVersion": PROTOCOL_VERSION,
+                        "capabilities": {"tools": {}},
+                    }
                 elif method == "tools/list":
+                    if settings.name == "a_ready":
+                        ready_server_entered.set()
                     if settings.name == "held" and block_once:
                         block_once = False
+                        # Catalog order does not order independent credential reads/startups.
+                        # This scenario specifically needs an already initialized sibling.
+                        await ready_server_entered.wait()
                         reached.set()
                         await asyncio.Event().wait()
                     result = {"tools": [{"name": "lookup", "inputSchema": {"type": "object"}}]}
@@ -72,8 +87,9 @@ def test_initialization_cancellation_joins_rollback_before_retry_or_close(
 
         servers = (
             tuple(
-                MCPServerSettings(name, "http", url=f"https://{name}.test/mcp")
-                for name in ("ready", "held")
+                MCPServerSettings(name, "http", url=f"https://{name}.test/mcp", required=required)
+                # The handler barrier, not lexical ordering, pins the failure window.
+                for name in ("a_ready", "held")
             )
             if boundary == "mcp"
             else ()
@@ -171,7 +187,7 @@ def test_initialization_cancellation_joins_rollback_before_retry_or_close(
             assert await runtime._repository.latest_running_turn(runtime.thread_id) is None
             if boundary == "mcp":
                 assert all(client._client.is_closed for client in clients)
-                assert {"ready", "held"} <= set(disposed)
+                assert {"a_ready", "held"} <= set(disposed)
                 assert not runtime._mcp_manager.tool_names
                 assert not runtime._registry.specs()
             elif boundary == "checkpoint":
@@ -232,7 +248,7 @@ def test_cancellation_wins_if_startup_dependency_returns_after_cancellation(
                 await asyncio.Event().wait()
 
         if boundary == "mcp":
-            monkeypatch.setattr(runtime._mcp_manager, "start", returns_after_cancel)
+            monkeypatch.setattr(runtime._mcp_manager, "start_session", returns_after_cancel)
 
             def unexpected_search_publication():
                 pytest.fail("shutdown/cancellation must stop later startup stages")

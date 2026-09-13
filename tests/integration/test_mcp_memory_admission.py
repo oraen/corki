@@ -23,7 +23,8 @@ from corki.tools import ToolRegistry
     [
         "fake",
         "invalid_json",
-        "invalid_schema",
+        "schema_mismatch",
+        "invalid_object",
         "unadvertised",
         "removed_server",
         "removed_tool",
@@ -37,7 +38,7 @@ def test_mcp_pollution_requires_actual_admitted_call(tmp_path, monkeypatch, case
         database = tmp_path / "sessions.db"
         sent = []
         empty = False
-        should_mark = case in {"valid", "remote_error", "timeout"}
+        should_mark = case in {"valid", "schema_mismatch", "remote_error", "timeout"}
 
         def memory_mode():
             with sqlite3.connect(database) as db:
@@ -52,7 +53,11 @@ def test_mcp_pollution_requires_actual_admitted_call(tmp_path, monkeypatch, case
                 if method == "notifications/initialized":
                     return httpx.Response(202)
                 if method == "initialize":
-                    result = {"protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {}}}
+                    result = {
+                        "serverInfo": {"name": "fixture", "version": "1"},
+                        "protocolVersion": PROTOCOL_VERSION,
+                        "capabilities": {"tools": {}},
+                    }
                 elif method == "tools/list":
                     result = {
                         "tools": []
@@ -74,6 +79,8 @@ def test_mcp_pollution_requires_actual_admitted_call(tmp_path, monkeypatch, case
                 elif method == "tools/call":
                     sent.append(message)
                     assert memory_mode() == "polluted", "mark must precede remote execution"
+                    if case == "schema_mismatch":
+                        assert message["params"]["arguments"] == {"value": 3}
                     if case == "timeout":
                         raise httpx.ReadTimeout("fixture timeout", request=request)
                     result = {
@@ -92,7 +99,7 @@ def test_mcp_pollution_requires_actual_admitted_call(tmp_path, monkeypatch, case
         registry = ToolRegistry()
 
         class Fake:
-            spec = ToolSpec("mcp__fake__read", "Local tool with MCP-like name", {"type": "object"})
+            spec = ToolSpec("mcp__fake::read", "Local tool with MCP-like name", {"type": "object"})
 
             async def execute(self, call, context):
                 return ToolResult(call.id, call.name, "local")
@@ -112,18 +119,22 @@ def test_mcp_pollution_requires_actual_admitted_call(tmp_path, monkeypatch, case
                     elif case == "removed_tool":
                         empty = True
                         runtime.request_mcp_refresh()
-                    name = "mcp__fake__read" if case == "fake" else "mcp__docs__read"
+                    name = "mcp__fake::read" if case == "fake" else "mcp__docs::read"
                     call = ToolCall(
-                        new_tool_call_id(), name, {"value": 3 if case == "invalid_schema" else "ok"}
+                        new_tool_call_id(),
+                        name,
+                        {"value": 3 if case == "schema_mismatch" else "ok"},
                     )
                     if case == "invalid_json":
                         call = ToolCall(call.id, name, None, "{", parse_error="invalid JSON")
+                    elif case == "invalid_object":
+                        call = ToolCall(call.id, name, None, "[]", parse_error="expected object")
                     yield ModelCompleted((ToolCallItem(call, turn, step),))
                 else:
                     result = next(
                         i for i in reversed(request.items) if isinstance(i, ToolResultItem)
                     )
-                    assert result.is_error == (case not in {"fake", "valid"})
+                    assert result.is_error == (case not in {"fake", "valid", "schema_mismatch"})
                     yield ModelCompleted((AssistantMessageItem("done", turn, step),))
 
             async def aclose(self):
@@ -135,6 +146,7 @@ def test_mcp_pollution_requires_actual_admitted_call(tmp_path, monkeypatch, case
                 skills_enabled=False,
                 memories_enabled=True,
                 memories_generate=False,
+                memories_background_enabled=False,
                 memories_disable_on_external_context=True,
                 tool_search_mode="compatible" if case == "unadvertised" else "disabled",
                 mcp_servers=(MCPServerSettings("docs", "http", url="https://fixture.test/mcp"),),
@@ -145,6 +157,8 @@ def test_mcp_pollution_requires_actual_admitted_call(tmp_path, monkeypatch, case
             memory_root=tmp_path / "memories",
         )
         try:
+            # The pollution scenario starts eligible, independent of worker generation.
+            await runtime.set_thread_memory_mode("enabled")
             events = [e async for e in runtime.stream("read")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert len(sent) == int(should_mark)
@@ -159,8 +173,9 @@ def test_mcp_pollution_requires_actual_admitted_call(tmp_path, monkeypatch, case
     "initial,latest", [(True, True), (True, False), (False, True), (False, False)]
 )
 @pytest.mark.parametrize("code_mode", [False, True])
+@pytest.mark.parametrize("update", ["refresh", "reconcile"])
 def test_latest_host_metadata_controls_direct_and_nested_mcp(
-    tmp_path, monkeypatch, initial, latest, code_mode
+    tmp_path, monkeypatch, initial, latest, code_mode, update
 ):
     from corki.mcp import MCPServerMetadata
 
@@ -208,7 +223,9 @@ def test_latest_host_metadata_controls_direct_and_nested_mcp(
                 self.count += 1
                 turn, step = request.items[-1].turn_id, new_step_id()
                 if self.count == 1:
-                    runtime.request_mcp_refresh(server_metadata={"docs": MCPServerMetadata(latest)})
+                    getattr(runtime, f"request_mcp_{update}")(
+                        server_metadata={"docs": MCPServerMetadata(latest)}
+                    )
                     call = (
                         ToolCall(
                             new_tool_call_id(),
@@ -218,7 +235,7 @@ def test_latest_host_metadata_controls_direct_and_nested_mcp(
                             input_kind="freeform",
                         )
                         if code_mode
-                        else ToolCall(new_tool_call_id(), "mcp__docs__read", {})
+                        else ToolCall(new_tool_call_id(), "mcp__docs::read", {})
                     )
                     yield ModelCompleted((ToolCallItem(call, turn, step),))
                 else:
@@ -238,6 +255,7 @@ def test_latest_host_metadata_controls_direct_and_nested_mcp(
                 skills_enabled=False,
                 memories_enabled=True,
                 memories_generate=False,
+                memories_background_enabled=False,
                 memories_disable_on_external_context=True,
                 tool_mode="code_mode" if code_mode else "direct",
                 tool_search_mode="disabled",
@@ -251,8 +269,10 @@ def test_latest_host_metadata_controls_direct_and_nested_mcp(
         )
         metadata.clear()  # Mutating the caller's mapping must not mutate host state.
         try:
+            await runtime.set_thread_memory_mode("enabled")
             assert isinstance([e async for e in runtime.stream("read")][-1], TurnCompleted)
-            assert calls == [1] and len(clients) == 2
+            generation = 1 if update == "refresh" else 0
+            assert calls == [generation] and len(clients) == generation + 1
         finally:
             await runtime.aclose()
 
@@ -273,7 +293,7 @@ def test_cancellation_before_mcp_dispatch_does_not_mark_thread(tmp_path):
                 yield ModelCompleted(
                     (
                         ToolCallItem(
-                            ToolCall(new_tool_call_id(), "mcp__docs__read", {}),
+                            ToolCall(new_tool_call_id(), "mcp__docs::read", {}),
                             request.items[-1].turn_id,
                             new_step_id(),
                         ),
@@ -292,6 +312,7 @@ def test_cancellation_before_mcp_dispatch_does_not_mark_thread(tmp_path):
                 skills_enabled=False,
                 memories_enabled=True,
                 memories_generate=False,
+                memories_background_enabled=False,
                 memories_disable_on_external_context=True,
             ),
             database_path=database,
@@ -306,6 +327,7 @@ def test_cancellation_before_mcp_dispatch_does_not_mark_thread(tmp_path):
         runtime._repository.claim_tool_call = cancel
         events = []
         try:
+            await runtime.set_thread_memory_mode("enabled")
             with pytest.raises(asyncio.CancelledError):
                 async for event in runtime.stream("read"):
                     events.append(event)

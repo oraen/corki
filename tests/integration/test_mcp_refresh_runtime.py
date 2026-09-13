@@ -10,6 +10,7 @@ from corki.config import CorkiSettings, MCPServerSettings
 from corki.core import LangGraphRuntime
 from corki.mcp.client import PROTOCOL_VERSION, HttpMCPClient
 from corki.models import ModelCompleted
+from corki.protocol.context import ModelContextInfo
 from corki.protocol.events import TurnCompleted
 from corki.protocol.ids import new_tool_call_id
 from corki.protocol.items import AssistantMessageItem, ToolCallItem, ToolResultItem, new_step_id
@@ -39,7 +40,11 @@ def test_mcp_refresh_preserves_current_step_then_updates_search_and_history(
                 if method == "notifications/initialized":
                     return httpx.Response(202)
                 if method == "initialize":
-                    result = {"protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {}}}
+                    result = {
+                        "serverInfo": {"name": "fixture", "version": "1"},
+                        "protocolVersion": PROTOCOL_VERSION,
+                        "capabilities": {"tools": {}},
+                    }
                 elif method == "tools/list":
                     result = {
                         "tools": [
@@ -98,19 +103,16 @@ def test_mcp_refresh_preserves_current_step_then_updates_search_and_history(
                             for i in request.items
                             if isinstance(i, ToolResultItem) and i.tool_name == "tool_search"
                         )
-                        if mode == "native":
-                            assert old_search.discovered_tools[0].name == "mcp__docs__lookup"
-                        else:
-                            assert not old_search.discovered_tools
-                            assert "search again" in old_search.content
+                        assert not old_search.discovered_tools
+                        assert "search again" in old_search.content
                         old_call = next(
                             i
                             for i in request.items
-                            if isinstance(i, ToolResultItem) and i.tool_name == "mcp__docs__lookup"
+                            if isinstance(i, ToolResultItem) and i.tool_name == "mcp__docs::lookup"
                         )
                         assert old_call.is_error and "unknown MCP server" in old_call.content
                         assert executed == []
-                        assert not any(t.name == "mcp__docs__lookup" for t in request.tools)
+                        assert not any(t.name == "mcp__docs::lookup" for t in request.tools)
                     call = ToolCall(
                         new_tool_call_id(),
                         "tool_search",
@@ -122,7 +124,7 @@ def test_mcp_refresh_preserves_current_step_then_updates_search_and_history(
                         for i in request.items
                         if isinstance(i, ToolResultItem) and i.tool_name == "tool_search"
                     ][-1]
-                    name = "mcp__docs__lookup" if step == 2 else "mcp__notes__lookup"
+                    name = "mcp__docs::lookup" if step == 2 else "mcp__notes::lookup"
                     assert [s.name for s in found.discovered_tools] == [name]
                     if step == 2:
                         runtime.request_mcp_refresh((notes,))
@@ -142,11 +144,11 @@ def test_mcp_refresh_preserves_current_step_then_updates_search_and_history(
                     assert not any(
                         t.name == "tool_search" or t.name.startswith("mcp__") for t in request.tools
                     )
-                    assert any(
+                    assert not any(
                         i.discovered_tools
                         for i in request.items
                         if isinstance(i, ToolResultItem) and i.tool_name == "tool_search"
-                    ) == (mode == "native")
+                    )
                     yield ModelCompleted((AssistantMessageItem("done", turn, new_step_id()),))
                     return
                 yield ModelCompleted((ToolCallItem(call, turn, new_step_id()),))
@@ -159,6 +161,7 @@ def test_mcp_refresh_preserves_current_step_then_updates_search_and_history(
                 working_directory=tmp_path,
                 skills_enabled=False,
                 mcp_servers=() if initial_empty else (docs,),
+                model_contexts=(ModelContextInfo("gpt-5", supports_search_tool=True),),
                 tool_search_mode=mode,
                 api_mode="responses",
             ),
@@ -178,8 +181,8 @@ def test_mcp_refresh_preserves_current_step_then_updates_search_and_history(
                 i for i in raw if isinstance(i, ToolResultItem) and i.tool_name == "tool_search"
             ]
             assert [i.discovered_tools[0].name for i in searches] == [
-                "mcp__docs__lookup",
-                "mcp__notes__lookup",
+                "mcp__docs::lookup",
+                "mcp__notes::lookup",
             ]
         finally:
             await runtime.aclose()

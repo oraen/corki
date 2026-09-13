@@ -74,6 +74,7 @@ def test_valid_completion_wins_over_pending_error_without_dropping_later_items(p
             item={
                 "type": "message",
                 "id": "m",
+                "role": "assistant",
                 "content": [{"type": "output_text", "text": "late"}],
             },
         )
@@ -91,7 +92,12 @@ def test_eof_reports_latest_error_after_publishing_later_complete_items():
     body = packet("response.failed", response={"error": {"code": "insufficient_quota"}})
     body += packet(
         "response.output_item.done",
-        item={"type": "message", "id": "m", "content": [{"type": "output_text", "text": "late"}]},
+        item={
+            "type": "message",
+            "id": "m",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "late"}],
+        },
     )
     body += packet(
         "response.failed",

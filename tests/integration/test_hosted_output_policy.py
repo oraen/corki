@@ -45,34 +45,32 @@ def test_hosted_raw_archive_and_model_projection_have_distinct_budgets(tmp_path,
         requests = []
 
         def respond(request):
+            assert str(request.url) == "https://fixture.invalid/v1/responses"
             body = json.loads(request.content)
             requests.append(body)
-            if len(requests) == 1:
-                output = [source]
+            assert not any(i.get("type") == source["type"] for i in body["input"])
+            candidates = [
+                json.loads(i["content"].split("\n", 1)[1])
+                for i in body["input"]
+                if isinstance(i.get("content"), str)
+                and i["content"].startswith("External hosted-tool event")
+            ]
+            assert len(candidates) == 1
+            event = candidates[0]
+            if kind == "notification":
+                assert "truncated" in event["output"] and len(event["output"]) < 100
+                assert event["output"].startswith("HEAD") and event["output"].endswith("TAIL")
+                assert ("tokens truncated" in event["output"]) == (mode == "tokens")
             else:
-                candidates = [i for i in body["input"] if i.get("type") == source["type"]]
-                if not candidates:
-                    candidates = [
-                        json.loads(i["content"].split("\n", 1)[1])
-                        for i in body["input"]
-                        if isinstance(i.get("content"), str)
-                        and i["content"].startswith("External hosted-tool event")
-                    ]
-                event = candidates[0]
-                if kind == "notification":
-                    assert "truncated" in event["output"] and len(event["output"]) < 100
-                    assert event["output"].startswith("HEAD") and event["output"].endswith("TAIL")
-                    assert ("tokens truncated" in event["output"]) == (mode == "tokens")
-                else:
-                    assert event == source
-                output = [
-                    {
-                        "type": "message",
-                        "id": f"m-{len(requests)}",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": "summary"}],
-                    }
-                ]
+                assert event == source  # The archive's id is data inside the quoted JSON.
+            output = [
+                {
+                    "type": "message",
+                    "id": f"m-{len(requests)}",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "summary"}],
+                }
+            ]
             return httpx.Response(
                 200,
                 text="data: "
@@ -88,10 +86,10 @@ def test_hosted_raw_archive_and_model_projection_have_distinct_budgets(tmp_path,
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
         model = OpenAIResponsesModel(
             api_key="test",
-            base_url="https://api.openai.com/v1",
+            base_url="https://fixture.invalid/v1",
             client=client,
             capabilities=replace(
-                resolve_capabilities(base_url="https://api.openai.com/v1", api_mode="responses"),
+                resolve_capabilities(base_url="https://fixture.invalid/v1", api_mode="responses"),
                 supports_native_tool_search=True,
             ),
         )
@@ -103,6 +101,7 @@ def test_hosted_raw_archive_and_model_projection_have_distinct_budgets(tmp_path,
             tool_search_mode="native",
             memories_enabled=True,
             memories_generate=False,
+            memories_background_enabled=False,
             memories_disable_on_external_context=True,
             model_contexts=parse_model_contexts(
                 {
@@ -121,10 +120,15 @@ def test_hosted_raw_archive_and_model_projection_have_distinct_budgets(tmp_path,
             memory_root=tmp_path / "memories",
         )
         try:
+            # Legacy facts are imported from storage, never from a live native event.
+            await runtime._ensure_ready()
+            archived = HostedToolItem(json.dumps(source), "old-turn", "old-step")
+            await runtime._repository.append_items(runtime.thread_id, (archived,))
             assert isinstance([e async for e in runtime.stream("receive")][-1], TurnCompleted)
             assert isinstance([e async for e in runtime.stream("use event")][-1], TurnCompleted)
             assert isinstance([e async for e in runtime.compact()][-1], TurnCompleted)
             assert len(requests) == 3
+            assert not requests[-1].get("tools")
             original = [
                 i
                 for i in await runtime._repository.load_items(runtime.thread_id)
@@ -132,6 +136,7 @@ def test_hosted_raw_archive_and_model_projection_have_distinct_budgets(tmp_path,
             ]
             assert len(original) == 1 and json.loads(original[0].payload_json) == source
             assert original[0].model_payload_json is None
+            assert original == [archived]
         finally:
             await runtime.aclose()
             await client.aclose()

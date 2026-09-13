@@ -7,7 +7,7 @@ import pytest
 
 from corki.core.step_tools import StepToolState
 from corki.protocol.ids import ToolCallId
-from corki.protocol.tools import ToolCall, ToolResult, ToolSpec
+from corki.protocol.tools import ToolCall, ToolResult, ToolSpec, same_tool_spec
 from corki.tools import ToolContext, ToolExecutor, ToolRegistry
 
 
@@ -65,10 +65,20 @@ def test_executor_can_use_exact_old_handler_without_rebinding_by_name(tmp_path):
 
 
 @pytest.mark.parametrize("saved_key", [None, "persisted-binding-id"])
-def test_cold_or_legacy_binding_still_rejects_changed_checkpoint_definition(tmp_path, saved_key):
+@pytest.mark.parametrize("change", ["description", "parameters", "output_schema"])
+def test_cold_or_legacy_binding_still_rejects_changed_checkpoint_definition(
+    tmp_path, saved_key, change
+):
     async def scenario():
-        original = ToolSpec("lookup", "old definition", {})
-        tool = Tool(replace(original, description="new definition"))
+        original = ToolSpec(
+            "lookup", "old definition", {"enum": [True]}, output_schema={"enum": [False]}
+        )
+        value = {
+            "description": "new definition",
+            "parameters": {"enum": [1]},
+            "output_schema": {"enum": [0]},
+        }[change]
+        tool = Tool(replace(original, **{change: value}))
         registry = ToolRegistry()
         registry.register(tool)
         snapshot = StepToolState().resolve(saved_key, registry)
@@ -81,6 +91,18 @@ def test_cold_or_legacy_binding_still_rejects_changed_checkpoint_definition(tmp_
         assert result.is_error and "definition changed" in result.content and tool.calls == 0
 
     asyncio.run(scenario())
+
+
+def test_definition_identity_preserves_key_order_independence_and_json_types():
+    left = ToolSpec(
+        "lookup", "fixture", {"type": "object", "properties": {"x": {"enum": [True, 1]}}}
+    )
+    reordered = replace(
+        left, parameters={"properties": {"x": {"enum": [True, 1]}}, "type": "object"}
+    )
+    changed = replace(left, parameters={"type": "object", "properties": {"x": {"enum": [1, True]}}})
+    assert same_tool_spec(left, reordered)
+    assert not same_tool_spec(left, changed)
 
 
 def test_empty_snapshot_does_not_fall_back_to_newly_registered_tool(tmp_path):
