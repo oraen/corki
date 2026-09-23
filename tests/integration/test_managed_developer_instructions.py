@@ -53,10 +53,10 @@ def test_tool_step_compaction_and_cold_history_keep_policy_without_reexecution(t
             (MCPRequirementsLayer("host", 'additional_developer_instructions = "HOST POLICY"'),)
         )
 
-        def create(model, thread=None):
+        async def create(model, thread=None):
             registry = ToolRegistry()
             registry.register(Tool())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=replace(settings(tmp_path), auto_compact_tokens=100_000),
                 model=model,
                 registry=registry,
@@ -79,7 +79,7 @@ def test_tool_step_compaction_and_cold_history_keep_policy_without_reexecution(t
             assert policies[0].role is ContextRole.DEVELOPER and policies[0].separate_message
 
         model = UsageModel()
-        runtime = create(model)
+        runtime = await create(model)
         try:
             events = [e async for e in runtime.stream("KEEP CURRENT INPUT")]
             assert isinstance(events[-1], TurnCompleted)
@@ -104,7 +104,7 @@ def test_tool_step_compaction_and_cold_history_keep_policy_without_reexecution(t
         finally:
             await runtime.aclose()
         cold_model = Model()
-        cold = create(cold_model, thread)
+        cold = await create(cold_model, thread)
         try:
             assert isinstance([e async for e in cold.stream("cold")][-1], TurnCompleted)
             assert_policy(cold_model.requests[-1])
@@ -122,8 +122,8 @@ def test_tool_step_compaction_and_cold_history_keep_policy_without_reexecution(t
 @pytest.mark.parametrize("guardian", [False, True])
 def test_omitted_guardian_section_does_not_revoke_existing_policy(tmp_path, guardian):
     async def scenario():
-        def create(thread=None, *, initial=False):
-            return LangGraphRuntime.create(
+        async def create(thread=None, *, initial=False):
+            return await LangGraphRuntime.acreate(
                 settings=settings(tmp_path),
                 model=Model(),
                 registry=ToolRegistry(),
@@ -146,14 +146,14 @@ def test_omitted_guardian_section_does_not_revoke_existing_policy(tmp_path, guar
                 ),
             )
 
-        first = create(initial=True)
+        first = await create(initial=True)
         try:
             assert isinstance([e async for e in first.stream("first")][-1], TurnCompleted)
             prefix = await first._repository.load_items(first.thread_id)
             thread = first.thread_id
         finally:
             await first.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             assert isinstance([e async for e in cold.stream("next")][-1], TurnCompleted)
             stored = await cold._repository.load_items(thread)
@@ -175,7 +175,7 @@ def test_omitted_guardian_section_does_not_revoke_existing_policy(tmp_path, guar
 @pytest.mark.parametrize("text", ["OLD POLICY", "NEW POLICY", "", None])
 def test_legacy_policy_cold_reconcile_once(tmp_path, text):
     async def scenario():
-        source = LangGraphRuntime.create(
+        source = await LangGraphRuntime.acreate(
             settings=settings(tmp_path),
             model=Model(),
             registry=ToolRegistry(),
@@ -213,7 +213,7 @@ def test_legacy_policy_cold_reconcile_once(tmp_path, text):
         )
         for _ in range(2):
             model = Model()
-            cold = LangGraphRuntime.create(
+            cold = await LangGraphRuntime.acreate(
                 settings=settings(tmp_path),
                 model=model,
                 registry=ToolRegistry(),
@@ -262,7 +262,7 @@ def test_compaction_rebuilds_host_policy_with_typed_markers(tmp_path, manual):
             (MCPRequirementsLayer("host", 'additional_developer_instructions = "HOST POLICY"'),)
         )
         model = UsageModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=replace(settings(tmp_path), auto_compact_tokens=100_000),
             model=model,
             registry=ToolRegistry(),
@@ -311,7 +311,7 @@ def test_only_basic_guardian_sources_omit_host_policy(tmp_path, source, expected
             (MCPRequirementsLayer("host", 'additional_developer_instructions = "HOST POLICY"'),)
         )
         model = Model()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path),
             model=model,
             registry=ToolRegistry(),
@@ -349,7 +349,7 @@ def test_host_policy_cold_replace_remove_and_deduplicate(tmp_path):
                 )
             )
             model = Model()
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=settings(tmp_path),
                 model=model,
                 registry=ToolRegistry(),

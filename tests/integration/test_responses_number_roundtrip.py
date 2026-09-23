@@ -90,8 +90,8 @@ def test_exact_archived_numbers_are_preserved_without_reenabling_remote_compacti
             lambda *a, **kw: client(*a, **kw, transport=httpx.MockTransport(respond)),
         )
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     tmp_path,
                     api_mode="responses",
@@ -109,7 +109,7 @@ def test_exact_archived_numbers_are_preserved_without_reenabling_remote_compacti
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             await runtime._ensure_ready()
             payload = dumps_wire(loads_wire(item))
@@ -142,7 +142,7 @@ def test_exact_archived_numbers_are_preserved_without_reenabling_remote_compacti
         finally:
             await runtime.aclose()
 
-        cold = create(thread)
+        cold = await create(thread)
         try:
             for phase in ("next", "recompact"):
                 events = [
@@ -201,8 +201,8 @@ def test_archived_hosted_numbers_remain_private_during_ordinary_cold_replay(
             lambda *a, **kw: client(*a, **kw, transport=httpx.MockTransport(respond)),
         )
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     tmp_path,
                     model="fixture",
@@ -225,7 +225,7 @@ def test_archived_hosted_numbers_remain_private_during_ordinary_cold_replay(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             await runtime._ensure_ready()
             archived = HostedToolItem(raw, "old", "old-step")
@@ -234,7 +234,7 @@ def test_archived_hosted_numbers_remain_private_during_ordinary_cold_replay(
             thread = runtime.thread_id
         finally:
             await runtime.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             assert isinstance([e async for e in cold.stream("recall")][-1], TurnCompleted)
             assert len(requests) == 2
@@ -300,10 +300,10 @@ def test_ordinary_search_error_observation_keeps_original_numeric_arguments(
             lambda *a, **kw: client(*a, **kw, transport=httpx.MockTransport(respond)),
         )
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             registry.register(Deferred())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     tmp_path,
                     api_mode="responses",
@@ -318,7 +318,7 @@ def test_ordinary_search_error_observation_keeps_original_numeric_arguments(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             assert isinstance([e async for e in runtime.stream("search")][-1], TurnCompleted)
             assert len(requests) == 2
@@ -328,7 +328,7 @@ def test_ordinary_search_error_observation_keeps_original_numeric_arguments(
             thread = runtime.thread_id
         finally:
             await runtime.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             assert isinstance([e async for e in cold.stream("continue")][-1], TurnCompleted)
             assert len(requests) == 3 and not executions

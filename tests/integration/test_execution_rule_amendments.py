@@ -58,10 +58,10 @@ class Model:
         pass
 
 
-def runtime_for(tmp_path, compiler, model, *, cyber=False):
+async def runtime_for(tmp_path, compiler, model, *, cyber=False):
     if model.mode != "direct" and not CodeModeService.available():
         pytest.skip("install corki[code-mode]")
-    return LangGraphRuntime.create(
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -101,7 +101,7 @@ def test_rule_approval_affects_future_commands_and_cold_runtime_only_when_saved(
                 {"cmd": "touch " + shlex.quote(str(second))},
             ],
         )
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
         prompts = []
 
         async def respond(request):
@@ -150,7 +150,7 @@ def test_rule_approval_affects_future_commands_and_cold_runtime_only_when_saved(
             await runtime.aclose()
 
         restored_model = Model(mode, [{"cmd": "touch " + shlex.quote(str(cold))}])
-        restored = runtime_for(tmp_path, compiler, restored_model)
+        restored = await runtime_for(tmp_path, compiler, restored_model)
         try:
             events = [event async for event in restored.stream("cold policy load")]
             assert isinstance(events[-1], TurnCompleted)
@@ -170,7 +170,7 @@ def test_cyber_model_ignores_user_allow_prefixes(tmp_path, compiler, mode):
         (rules / "default.rules").write_text('prefix_rule(pattern=["touch"], decision="allow")\n')
         target = tmp_path / "cyber-fixture"
         model = Model(mode, [{"cmd": "touch " + shlex.quote(str(target))}])
-        runtime = runtime_for(tmp_path, compiler, model, cyber=True)
+        runtime = await runtime_for(tmp_path, compiler, model, cyber=True)
         try:
             events = [event async for event in runtime.stream("honor model-owned rule policy")]
             assert isinstance(events[-1], TurnCompleted)
@@ -208,7 +208,7 @@ def test_failed_rule_save_warns_but_preserves_only_current_approval(
                 {"cmd": "touch " + shlex.quote(str(second))},
             ],
         )
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
 
         async def respond(request):
             runtime.respond_execution_approval(
@@ -245,7 +245,7 @@ def test_native_canonical_cache_reuses_simple_tokens_but_preserves_complex_scrip
         if complex_script:
             commands = ["printf A && printf B", "printf A  && printf B"]
         model = Model(mode, [{"cmd": command} for command in commands])
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
         prompts = []
 
         async def respond(request):
@@ -286,7 +286,7 @@ def test_cancel_joins_authorized_rule_update_before_reporting_turn_terminal(
                 }
             ],
         )
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
         entered, release = asyncio.Event(), asyncio.Event()
         original = rules.run_owned
 
@@ -396,7 +396,7 @@ def test_live_approved_rule_survives_old_user_parse_fallback(tmp_path, compiler,
                 {"cmd": "touch " + shlex.quote(str(second))},
             ],
         )
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
 
         async def respond(request):
             runtime.respond_execution_approval(
@@ -420,7 +420,7 @@ def test_parallel_runtimes_persist_the_same_rule_without_duplicate_lines(tmp_pat
         (tmp_path / "home").mkdir()
         targets = [tmp_path / "one", tmp_path / "two"]
         runtimes = [
-            runtime_for(
+            await runtime_for(
                 tmp_path,
                 compiler,
                 Model(

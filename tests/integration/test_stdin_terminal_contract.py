@@ -337,8 +337,8 @@ def test_runtime_stdin_contract_and_cold_no_replay(tmp_path, nested, case):
             tool_mode="code_mode" if nested else "direct",
         )
 
-        def create(thread=None):
-            runtime = LangGraphRuntime.create(
+        async def create(thread=None):
+            runtime = await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "stdin.db",
                 model=Model(),
@@ -358,7 +358,7 @@ def test_runtime_stdin_contract_and_cold_no_replay(tmp_path, nested, case):
             manager._start_session, manager._write_stdin = counted_start, counted_write
             return runtime
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [e async for e in runtime.stream("run")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -369,7 +369,7 @@ def test_runtime_stdin_contract_and_cold_no_replay(tmp_path, nested, case):
                 assert not runtime._process_manager._sessions
         finally:
             await runtime.aclose()
-        cold = create(runtime.thread_id)
+        cold = await create(runtime.thread_id)
         try:
             events = [e async for e in cold.stream("continue")]
             assert isinstance(events[-1], TurnCompleted), events[-1]

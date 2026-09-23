@@ -7,6 +7,7 @@ import pytest
 from rich.console import Console
 
 from corki.cli.application import CorkiApplication
+from corki.cli.history import replay_history
 from corki.cli.terminal import TerminalUI
 from corki.config import CorkiPaths, CorkiSettings
 from corki.protocol.events import (
@@ -30,6 +31,26 @@ from corki.protocol.items import (
 )
 from corki.protocol.tools import ToolCall, ToolStateUpdate
 from corki.sessions.models import DisplayHistory, DisplayTurn, TurnStatus
+
+
+def test_cold_failed_turn_replay_redacts_model_credentials(tmp_path):
+    output = StringIO()
+    settings = CorkiSettings(tmp_path, api_key="FAKE_MODEL_SECRET_123")
+    ui = TerminalUI(settings, tmp_path / "history", console=Console(file=output, width=100))
+    history = DisplayHistory(
+        (),
+        (
+            DisplayTurn(
+                new_turn_id(),
+                TurnStatus.FAILED,
+                "Authorization: Bearer FAKE_MODEL_SECRET_123; check provider configuration",
+            ),
+        ),
+    )
+    replay_history(ui, history)
+    assert "FAKE_MODEL_SECRET_123" not in output.getvalue()
+    assert "FAKE_MODEL_SECRET_123" not in ui._transcript.render(100)
+    assert "check provider configuration" in output.getvalue()
 
 
 def test_replayed_reasoning_uses_identity_not_equal_text(tmp_path):

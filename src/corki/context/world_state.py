@@ -269,6 +269,13 @@ def _removal(item: ContextItem, turn_id: TurnId) -> ContextItem:
     )
     if item.key == plugin_guidance.KEY:
         return empty
+    if item.key == "realtime.active":
+        return replace(
+            empty,
+            content=_PROMPTS.render("realtime/end").rstrip("\n"),
+            content_kind="corki.realtime.end_instructions",
+            snapshot_content="",
+        )
     return _render_update(empty, item)
 
 

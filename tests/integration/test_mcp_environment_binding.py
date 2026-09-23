@@ -52,7 +52,7 @@ def test_unknown_environment_isolated_before_factory_and_healthy_server_remains(
     tmp_path, monkeypatch, transport, environment
 ):
     async def scenario():
-        runtime, clients, model = make_runtime(
+        runtime, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             requirements={},
@@ -91,7 +91,7 @@ def test_environment_replacement_never_reuses_old_local_connection_or_replays_ca
                         update((server("missing-remote"),))
                     yield event
 
-        runtime, clients, model = make_runtime(
+        runtime, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             requirements={},
@@ -133,7 +133,7 @@ def test_unknown_environment_config_winner_does_not_fall_back_to_local_plugin(
     )
 
     async def scenario():
-        runtime, clients, model = make_runtime(
+        runtime, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             requirements={},
@@ -162,7 +162,7 @@ def test_cold_history_discovery_cannot_restore_old_authority(
     monkeypatch.setattr(managed_mcp, "system_requirements_path", lambda: path)
 
     async def scenario():
-        first, clients, model = make_runtime(
+        first, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             requirements=None,
@@ -180,7 +180,7 @@ def test_cold_history_discovery_cannot_restore_old_authority(
         if restriction == "managed_file":
             path.write_text("[mcp_servers]", encoding="utf-8")
         resumed_model = Model(mode)
-        resumed = LangGraphRuntime.create(
+        resumed = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -230,7 +230,7 @@ def test_cold_history_discovery_cannot_restore_old_authority(
 
 def test_admitted_call_retains_local_lease_after_environment_becomes_unknown(tmp_path, monkeypatch):
     async def scenario():
-        runtime, clients, model = make_runtime(
+        runtime, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             requirements={},
@@ -294,7 +294,7 @@ def test_plugin_declared_environment_is_preserved_and_cannot_start_locally(
     )
 
     async def scenario():
-        runtime, clients, _ = make_runtime(
+        runtime, clients, _ = await make_runtime(
             tmp_path, monkeypatch, requirements={}, plugins=(plugin,)
         )
         try:

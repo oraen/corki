@@ -47,7 +47,7 @@ def test_cold_cli_marks_unfinished_tool_without_synthesizing_result(tmp_path, le
             working_directory=tmp_path, skills_enabled=False, plugins_enabled=False
         )
         database = tmp_path / "unresolved.db"
-        warm = LangGraphRuntime.create(
+        warm = await LangGraphRuntime.acreate(
             settings=settings, database_path=database, model=Model(), home_path=tmp_path
         )
         await warm._ensure_ready()
@@ -66,7 +66,7 @@ def test_cold_cli_marks_unfinished_tool_without_synthesizing_result(tmp_path, le
             )
         await warm._repository.append_items(thread, items)
         await warm.aclose()
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             model=Model(),
@@ -127,7 +127,7 @@ def test_cold_cli_restores_unsuccessful_turn_terminal(tmp_path, partial, cancell
         )
         database = tmp_path / "terminal-history.db"
         model = Model()
-        warm = LangGraphRuntime.create(
+        warm = await LangGraphRuntime.acreate(
             settings=settings, database_path=database, model=model, home_path=tmp_path
         )
         try:
@@ -141,7 +141,7 @@ def test_cold_cli_restores_unsuccessful_turn_terminal(tmp_path, partial, cancell
             thread = warm.thread_id
         finally:
             await warm.aclose()
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             model=model,
@@ -216,7 +216,7 @@ def test_cold_cli_replays_two_turns_and_plan_without_sampling_or_rewriting(tmp_p
         )
         model = Model()
         database = tmp_path / "sessions.db"
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings, database_path=database, model=model, home_path=tmp_path
         )
         for text in ("First saved request", "Second saved request"):
@@ -239,7 +239,7 @@ def test_cold_cli_replays_two_turns_and_plan_without_sampling_or_rewriting(tmp_p
         before = await repository.load_items(thread)
         await runtime.aclose()
         cold_model = Model()
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             thread_id=thread,
@@ -321,7 +321,7 @@ def test_cold_cli_shows_plain_archive_and_text_parts_without_exposing_private_pa
         settings = CorkiSettings(
             working_directory=tmp_path, skills_enabled=False, plugins_enabled=False
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             repository=repository,

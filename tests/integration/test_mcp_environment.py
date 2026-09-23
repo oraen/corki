@@ -107,7 +107,7 @@ def test_runtime_exports_selected_env_and_reconciles_only_referenced_values(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=runtime_settings,
             model=Model(),
             registry=ToolRegistry(),
@@ -159,7 +159,7 @@ def test_runtime_exports_selected_env_and_reconciles_only_referenced_values(
             async def aclose(self):
                 pass
 
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=runtime_settings,
             model=ColdModel(),
             registry=ToolRegistry(),
@@ -240,7 +240,7 @@ def test_remote_env_reference_isolated_before_local_process_creation(tmp_path, m
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 plugin_dirs=(tmp_path / ".corki/plugins",),

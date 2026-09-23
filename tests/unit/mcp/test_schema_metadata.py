@@ -41,11 +41,9 @@ def test_result_envelope_preserves_raw_schema_without_type_inference(output, age
     assert tool_spec_from_payload(tool_spec_to_payload(spec)) == spec
     serializer = checkpoint_serializer()
     assert serializer.loads_typed(serializer.dumps_typed(spec)) == spec
-    for native in (False, True):
-        for discovered in (False, True):
-            wire = group_tool_definitions((spec,), native_namespaces=native, discovered=discovered)
-            assert "output_schema" not in json.dumps(wire)
-            assert "structuredContent" not in json.dumps(wire)
+    wire = group_tool_definitions((spec,))
+    assert "output_schema" not in json.dumps(wire)
+    assert "structuredContent" not in json.dumps(wire)
     assert "output_schema" not in spec.as_chat_completion_tool()["function"]
 
 

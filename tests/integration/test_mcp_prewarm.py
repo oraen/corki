@@ -42,7 +42,7 @@ def test_runtime_prewarm_starts_without_step_and_replaces_pending_required(tmp_p
             return client
 
         monkeypatch.setattr("corki.mcp.manager.create_client", factory)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -94,7 +94,7 @@ def test_host_entrypoints_schedule_background_publication(tmp_path, monkeypatch,
 
         monkeypatch.setattr("corki.mcp.manager.create_client", factory)
         server = MCPServerSettings("warm", "http", url="https://warm.test")
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -136,7 +136,7 @@ def test_host_entrypoints_schedule_background_publication(tmp_path, monkeypatch,
 
 def test_failed_runtime_setup_does_not_publish_prewarm_worker(tmp_path, monkeypatch):
     async def scenario():
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, execution_permissions=None
             ),
@@ -193,7 +193,7 @@ def test_invalidation_during_prewarm_publishes_only_latest_desired_state(tmp_pat
             return client
 
         monkeypatch.setattr("corki.mcp.manager.create_client", factory)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, execution_permissions=None
             ),
@@ -280,7 +280,7 @@ def test_background_policy_update_preserves_sampling_snapshot_and_latest_call_ad
                     return
                 yield ModelCompleted((ToolCallItem(call, turn, step),))
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -364,7 +364,7 @@ def test_prewarm_coalesces_notifications_and_does_not_initialize_runtime(
             return client
 
         monkeypatch.setattr("corki.mcp.manager.create_client", factory)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, execution_permissions=None
             ),
@@ -404,7 +404,7 @@ def test_prewarm_failure_isolated_and_exact_step_retries(tmp_path, monkeypatch, 
             return client
 
         monkeypatch.setattr("corki.mcp.manager.create_client", factory)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, execution_permissions=None
             ),
@@ -462,7 +462,7 @@ def test_close_cancels_unpublished_prewarm_before_model_shutdown(tmp_path, monke
                 assert clients[0].closes == 1
 
         monkeypatch.setattr("corki.mcp.manager.create_client", factory)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, execution_permissions=None
             ),

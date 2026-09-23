@@ -104,7 +104,7 @@ def test_only_selected_installation_blocks_sampling(tmp_path, monkeypatch, agent
             tool_search_mode="disabled",
             tool_mode="direct",
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             model=Model(),
             registry=ToolRegistry(),

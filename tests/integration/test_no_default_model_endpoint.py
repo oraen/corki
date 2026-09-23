@@ -25,7 +25,7 @@ def test_key_without_endpoint_does_not_connect_anywhere(tmp_path, monkeypatch, m
             "OwnedHTTPClient",
             lambda *a, **kw: client_type(*a, **kw, transport=httpx.MockTransport(respond)),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 api_key="fixture",

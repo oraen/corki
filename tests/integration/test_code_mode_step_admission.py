@@ -173,7 +173,7 @@ def test_old_cell_new_calls_use_current_step(tmp_path, next_turn, kind, change):
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),

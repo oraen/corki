@@ -151,7 +151,7 @@ def test_cli_host_form_reaches_real_runtime_and_stdio_without_steering(
                 ),
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             model=Model(),
             registry=ToolRegistry(),

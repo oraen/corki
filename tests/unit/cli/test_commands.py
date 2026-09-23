@@ -15,6 +15,13 @@ def test_plain_message_is_not_consumed(tmp_path: Path) -> None:
     assert result.handled is False
 
 
+def test_model_selection_preserves_provider_identifier(tmp_path):
+    result = dispatcher(tmp_path).dispatch("/model Vendor/Model-X")
+    assert result.action.name == "MODEL"
+    assert result.input_text == "Vendor/Model-X"
+    assert dispatcher(tmp_path).dispatch("/model two names").action is CommandAction.NONE
+
+
 def test_status_reports_session_paths(tmp_path: Path) -> None:
     result = dispatcher(tmp_path).dispatch("/status")
 

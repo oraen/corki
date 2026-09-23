@@ -158,7 +158,7 @@ def test_namespace_hint_search_load_call_observation_on_provider_wire(
         )
         registry = ToolRegistry()
         registry.register(tool)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

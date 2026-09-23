@@ -58,10 +58,14 @@ async def main():
             'requestedSchema': {'type': 'object', 'properties': {}},
         }, 'shell_approval')
 
+    ui.set_turn_active(True)
     first = asyncio.create_task(owner.elicit(request('FIRST_REQUEST')))
     second = asyncio.create_task(owner.elicit(request('SECOND_REQUEST')))
-    while owner._modals != 2:
+    # InputOwner serializes approval modals; the second request waits for the
+    # first modal's ownership, so two active modals can never coexist.
+    while owner._modals != 1:
         await asyncio.sleep(0.01)
+    assert not second.done()
     if sys.argv[1] == 'queued_cancel':
         second.cancel()
         try:
@@ -77,6 +81,8 @@ async def main():
     if sys.argv[1] != 'queued_cancel':
         assert (await second)[0] == sys.argv[1]
     assert owner._modals == 0
+    ui.set_turn_active(False)
+    assert not ui._turn_active
     assert ui._form_session.default_buffer.text == ''
     assert list(ui._form_session.history.get_strings()) == []
     print('ALL_DECISIONS_SETTLED', flush=True)

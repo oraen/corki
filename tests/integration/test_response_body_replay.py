@@ -135,7 +135,7 @@ def test_body_survives_tool_step_compaction_and_cold_replay(tmp_path, mode, encr
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
 
-        def create(thread=None, chat=False):
+        async def create(thread=None, chat=False):
             caps = replace(
                 resolve_capabilities(
                     base_url="https://fixture.invalid/v1",
@@ -153,7 +153,7 @@ def test_body_survives_tool_step_compaction_and_cold_replay(tmp_path, mode, encr
             )
             registry = ToolRegistry()
             registry.register(Probe())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,
@@ -170,7 +170,7 @@ def test_body_survives_tool_step_compaction_and_cold_replay(tmp_path, mode, encr
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [event async for event in runtime.stream("original")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -182,7 +182,7 @@ def test_body_survives_tool_step_compaction_and_cold_replay(tmp_path, mode, encr
             thread = runtime.thread_id
             before_reopen = await runtime._repository.load_items(thread)
             await runtime.aclose()
-            runtime = create(thread, chat=mode == "chat")
+            runtime = await create(thread, chat=mode == "chat")
             assert isinstance(
                 [event async for event in runtime.stream("following")][-1], TurnCompleted
             )
@@ -285,7 +285,7 @@ def test_body_structure_and_hidden_size_cannot_bypass_completion_guards(tmp_path
                 base_url="https://fixture.invalid/v1", api_mode="responses", provider_name="openai"
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 model="fixture",

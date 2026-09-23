@@ -91,8 +91,8 @@ def test_runtime_shell_wait_contract_and_cold_no_replay(
             tool_mode="code_mode" if nested else "direct",
         )
 
-        def create(thread=None):
-            runtime = LangGraphRuntime.create(
+        async def create(thread=None):
+            runtime = await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "yield.db",
                 model=Model(),
@@ -118,7 +118,7 @@ def test_runtime_shell_wait_contract_and_cold_no_replay(
             manager._wait_session = capture_wait
             return runtime
 
-        runtime = create()
+        runtime = await create()
         try:
             async with asyncio.timeout(4):
                 events = [e async for e in runtime.stream("execute")]
@@ -126,7 +126,7 @@ def test_runtime_shell_wait_contract_and_cold_no_replay(
             assert waits == ([expected] if kind == "exec" else [0.25, expected])
         finally:
             await runtime.aclose()
-        cold = create(runtime.thread_id)
+        cold = await create(runtime.thread_id)
         try:
             events = [e async for e in cold.stream("continue")]
             assert isinstance(events[-1], TurnCompleted)

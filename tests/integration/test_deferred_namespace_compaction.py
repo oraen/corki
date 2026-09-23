@@ -126,7 +126,7 @@ def test_automatic_compaction_reinjects_full_current_map_and_releases_loaded_too
             async def aclose(self):
                 pass
 
-        runtime = make_runtime(
+        runtime = await make_runtime(
             # Both thresholds compact the first large read. The lower one also
             # compacts the subsequent fresh search/read cycle.
             tmp_path,
@@ -177,7 +177,7 @@ def test_token_budget_summary_rebuilds_namespace_snapshot_on_next_turn(tmp_path)
             async def aclose(self):
                 pass
 
-        runtime = make_runtime(tmp_path, registry, Model(), token_budget_enabled=True)
+        runtime = await make_runtime(tmp_path, registry, Model(), token_budget_enabled=True)
         try:
             events = [e async for e in runtime.stream("initial")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -205,8 +205,8 @@ def test_token_budget_summary_rebuilds_namespace_snapshot_on_next_turn(tmp_path)
     asyncio.run(scenario())
 
 
-def make_runtime(tmp_path, registry, model, **settings):
-    return LangGraphRuntime.create(
+async def make_runtime(tmp_path, registry, model, **settings):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,

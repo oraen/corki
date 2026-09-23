@@ -16,13 +16,13 @@ import json
 from pathlib import Path
 from corki.cli.application import CorkiApplication
 from corki.cli.terminal import TerminalUI
+from corki.cli.terminal_console import TerminalConsole
 from corki.config import CorkiPaths, CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted
 from corki.protocol.ids import new_tool_call_id
 from corki.protocol.items import ToolCallItem, new_step_id
 from corki.protocol.tools import ToolCall
-from rich.console import Console
 
 class Model:
     count = 0
@@ -49,10 +49,10 @@ async def main():
     cwd = Path.cwd()
     settings = CorkiSettings(working_directory=cwd, skills_enabled=False, plugins_enabled=False)
     model = Model()
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=settings, database_path=cwd / "session.db", model=model
     )
-    ui = TerminalUI(settings, cwd / "history", console=Console(color_system=None))
+    ui = TerminalUI(settings, cwd / "history", console=TerminalConsole(color_system=None))
     app = CorkiApplication(settings, CorkiPaths.from_home(cwd / "home"), runtime, ui)
     try:
         await app._render_events(runtime.stream("First plan"))

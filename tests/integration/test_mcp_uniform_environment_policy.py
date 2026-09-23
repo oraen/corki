@@ -34,7 +34,7 @@ def test_environment_authority_precedes_transport(tmp_path, monkeypatch, kind, n
 
         monkeypatch.setattr("corki.mcp.manager.create_client", factory)
         model = FinalModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(tmp_path, skills_enabled=False, tool_search_mode="disabled"),
             model=model,
             registry=ToolRegistry(),

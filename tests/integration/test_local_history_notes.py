@@ -58,7 +58,7 @@ def test_all_nine_local_actions_execute_through_the_runtime(tmp_path, tool_mode)
                 ("notes::read_file", {"path": "p", "start_line": -1}),
             ]
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path, tool_mode=tool_mode),
             database_path=tmp_path / "sessions.db",
             registry=ToolRegistry(),
@@ -180,8 +180,8 @@ def test_local_recovery_real_provider_payload_and_no_native_http(
 
         monkeypatch.setattr(http_client, "OwnedHTTPClient", create_client)
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings(
                     tmp_path,
                     api_mode=mode,
@@ -195,7 +195,7 @@ def test_local_recovery_real_provider_payload_and_no_native_http(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             assert isinstance([e async for e in runtime.stream("ORIGINAL_TASK")][-1], TurnCompleted)
@@ -204,7 +204,7 @@ def test_local_recovery_real_provider_payload_and_no_native_http(
             assert "LOCAL_SAVED_NOTE" in json.dumps(payloads[4])
         finally:
             await runtime.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             assert isinstance([e async for e in cold.stream("continue")][-1], TurnCompleted)
             assert "LOCAL_SAVED_NOTE" in json.dumps(payloads[6])
@@ -388,10 +388,10 @@ def test_malformed_provider_call_is_recalled_after_summary_and_cold_start(
 
         monkeypatch.setattr(http_client, "OwnedHTTPClient", client_factory)
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             registry.register(guarded)
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=settings(
                     tmp_path, api_mode=mode, api_key="fixture", tool_namespace_mode="compatible"
                 ),
@@ -400,7 +400,7 @@ def test_malformed_provider_call_is_recalled_after_summary_and_cold_start(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             assert isinstance(
@@ -408,7 +408,7 @@ def test_malformed_provider_call_is_recalled_after_summary_and_cold_start(
             )
         finally:
             await runtime.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             assert isinstance([e async for e in cold.stream("continue")][-1], TurnCompleted)
             history = await cold._repository.load_items(thread)
@@ -491,7 +491,7 @@ def test_automatic_small_window_summary_recovers_a_target_near_end_of_large_outp
 
         registry = ToolRegistry()
         registry.register(Large())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(
                 tmp_path,
                 context_window_tokens=16000,
@@ -527,7 +527,7 @@ def test_another_thread_cannot_read_notes_or_archive_even_with_spoofed_context(
                 )
             ]
         )
-        first = LangGraphRuntime.create(
+        first = await LangGraphRuntime.acreate(
             settings=settings(tmp_path),
             database_path=tmp_path / "sessions.db",
             registry=ToolRegistry(),
@@ -571,7 +571,7 @@ def test_another_thread_cannot_read_notes_or_archive_even_with_spoofed_context(
                 ),
             ]
         )
-        other = LangGraphRuntime.create(
+        other = await LangGraphRuntime.acreate(
             settings=settings(tmp_path),
             database_path=tmp_path / "sessions.db",
             registry=ToolRegistry(),
@@ -619,8 +619,8 @@ def test_local_write_survives_history_fault_without_repeating_side_effect(
         monkeypatch.setattr(NotesStore, "call", observe)
         model = SequenceModel([("notes::append_to_file", {"path": "p", "text": "once\n"})])
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings(tmp_path),
                 database_path=tmp_path / "sessions.db",
                 registry=ToolRegistry(),
@@ -628,7 +628,7 @@ def test_local_write_survives_history_fault_without_repeating_side_effect(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         append_items, save_turn = runtime._repository.append_items, runtime._repository.save_turn
         injected = False
@@ -656,7 +656,7 @@ def test_local_write_survives_history_fault_without_repeating_side_effect(
             # Preserve the simulated crash instead of gracefully committing its terminal.
             runtime._pending_terminals.clear()
             await runtime.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             assert isinstance([e async for e in cold.resume_pending()][-1], TurnCompleted)
             assert len(writes) == 1 and len(model.requests) == 2
@@ -696,7 +696,7 @@ def test_cancelling_sqlite_write_joins_worker_before_turn_ends(tmp_path, monkeyp
 
         monkeypatch.setattr(NotesStore, "call", delayed)
         model = SequenceModel([("notes::append_to_file", {"path": "p", "text": "once\n"})])
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path),
             database_path=tmp_path / "sessions.db",
             registry=ToolRegistry(),
@@ -733,7 +733,7 @@ def test_optional_local_store_failure_remains_an_observation(tmp_path):
     async def scenario():
         (tmp_path / "sessions.history-notes.db").mkdir()
         model = SequenceModel([("notes::write_file", {"path": "p", "text": "value"})])
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path),
             database_path=tmp_path / "sessions.db",
             registry=ToolRegistry(),
@@ -810,8 +810,8 @@ def test_plaintext_recovery_survives_summary_and_cold_runtime(tmp_path):
 
         model = Model()
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings(tmp_path),
                 database_path=tmp_path / "sessions.db",
                 model=model,
@@ -819,7 +819,7 @@ def test_plaintext_recovery_survives_summary_and_cold_runtime(tmp_path):
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             assert isinstance(
@@ -827,7 +827,7 @@ def test_plaintext_recovery_survives_summary_and_cold_runtime(tmp_path):
             )
         finally:
             await runtime.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             assert isinstance([e async for e in cold.stream("continue")][-1], TurnCompleted)
             assert len(requests) == 8

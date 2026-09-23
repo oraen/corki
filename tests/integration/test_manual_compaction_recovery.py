@@ -68,8 +68,8 @@ def test_manual_compaction_cold_recovery_does_not_resample_an_installed_summary(
             async def emit(self, event):
                 pass
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "sessions.db",
                 model=Model(),
@@ -77,7 +77,7 @@ def test_manual_compaction_cold_recovery_does_not_resample_an_installed_summary(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             await runtime._ensure_ready()
             thread, turn = runtime.thread_id, new_turn_id()
@@ -131,7 +131,7 @@ def test_manual_compaction_cold_recovery_does_not_resample_an_installed_summary(
                 installed_count if boundary in {"after-commit", "after-node"} else 0
             )
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [e async for e in runtime.resume_pending()]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert len(requests) == (

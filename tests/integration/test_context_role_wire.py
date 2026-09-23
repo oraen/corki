@@ -101,10 +101,10 @@ def test_step_role_change_removal_and_cold_request_preserve_authority(
         )
         tool = Advance()
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             registry.register(tool)
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     tmp_path,
                     skills_enabled=False,
@@ -120,7 +120,7 @@ def test_step_role_change_removal_and_cold_request_preserve_authority(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             assert isinstance([e async for e in runtime.stream("go")][-1], TurnCompleted)
             assert len(requests) == 4 and tool.calls == 3
@@ -136,7 +136,7 @@ def test_step_role_change_removal_and_cold_request_preserve_authority(
             )
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             assert isinstance([e async for e in runtime.stream("cold")][-1], TurnCompleted)
             after = await runtime._repository.load_items(thread)
             assert after[: len(stored)] == stored

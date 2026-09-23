@@ -69,7 +69,7 @@ def test_old_compiler_cannot_enable_review_silently(tmp_path, compiler, mode, mo
 
     async def scenario():
         model = Model(mode)
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path, compiler, model, settings=settings_for(tmp_path, compiler, mode, monkeypatch)
         )
         try:
@@ -135,7 +135,7 @@ def test_review_fixture_has_consistent_configuration(tmp_path, monkeypatch, enab
 def test_escalated_terminal_input_has_fresh_review(tmp_path, compiler, mode, decision, monkeypatch):
     async def scenario():
         model = Model(mode)
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path, compiler, model, settings=settings_for(tmp_path, compiler, mode, monkeypatch)
         )
         target = tmp_path / "received"
@@ -188,7 +188,7 @@ def test_escalated_terminal_input_has_fresh_review(tmp_path, compiler, mode, dec
 def test_current_policy_controls_retained_authority(tmp_path, compiler, monkeypatch, policy):
     async def scenario():
         model = Model("direct")
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path,
             compiler,
             model,
@@ -284,7 +284,7 @@ def test_current_policy_controls_retained_authority(tmp_path, compiler, monkeypa
 def test_review_never_delivers_unapproved_input(tmp_path, compiler, mode, action, monkeypatch):
     async def scenario():
         model = Model(mode)
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path, compiler, model, settings=settings_for(tmp_path, compiler, mode, monkeypatch)
         )
         manager = runtime._process_manager
@@ -385,7 +385,7 @@ def test_feature_gate_and_successful_attempt_authority(tmp_path, compiler, mode,
                     settings.execution_permissions, approval_policy_json='"untrusted"'
                 ),
             )
-        runtime = runtime_for(tmp_path, compiler, model, settings=settings)
+        runtime = await runtime_for(tmp_path, compiler, model, settings=settings)
         manager = runtime._process_manager
         prompts = []
 

@@ -35,6 +35,7 @@ class StreamMarkdown:
         self.source = ""
         self.width: int | None = None
         self.emitted = 0
+        self._committed_rows = []
         self._queue = deque()
         self.policy = ChunkingPolicy()
         self.parse_cache = MarkdownParseCache()
@@ -99,4 +100,18 @@ class StreamMarkdown:
             end="",
             soft_wrap=True,
         )
+        self._committed_rows.extend(remaining)
+        return True
+
+    def finish_matching_prefix(self, console, source: str) -> bool:
+        """Append only when the final styled rows agree with every committed row."""
+        if self.width not in (None, console.width) or self.emitted != len(self._committed_rows):
+            return False
+        rows = [tuple(row) for row in self.render_lines(console, source)]
+        if rows[: self.emitted] != self._committed_rows:
+            return False
+        self._queue.clear()
+        now = monotonic()
+        self._queue.extend((now, row) for row in rows[self.emitted :])
+        self.drain(console, self.queued_lines)
         return True

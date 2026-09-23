@@ -50,8 +50,8 @@ def test_cold_legacy_usage_cannot_disable_ordinary_summary(tmp_path, legacy_flag
             async def aclose(self):
                 pass
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,
@@ -64,14 +64,14 @@ def test_cold_legacy_usage_cannot_disable_ordinary_summary(tmp_path, legacy_flag
                 model=Model(),
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [event async for event in runtime.stream("earlier instruction")]
             assert isinstance(events[-1], TurnCompleted)
             thread = runtime.thread_id
             original = await runtime._repository.load_items(thread)
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [event async for event in runtime.stream("continue")]
             assert isinstance(events[-1], TurnCompleted)
             assert sum(isinstance(event, ContextCompacted) for event in events) == 1
@@ -131,10 +131,10 @@ def test_provider_usage_drives_runtime_compaction(tmp_path, path, empty):
             async def aclose(self):
                 pass
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             registry.register(Echo())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,
@@ -147,7 +147,7 @@ def test_provider_usage_drives_runtime_compaction(tmp_path, path, empty):
                 model=Model(),
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             [event async for event in runtime.stream("earlier history")]
             events = [event async for event in runtime.stream("first request")]
@@ -155,7 +155,7 @@ def test_provider_usage_drives_runtime_compaction(tmp_path, path, empty):
                 if path == "cold":
                     thread = runtime.thread_id
                     await runtime.aclose()
-                    runtime = create(thread)
+                    runtime = await create(thread)
                 events += [event async for event in runtime.stream("next request")]
             assert isinstance(events[-1], TurnCompleted)
             assert sum(isinstance(event, ContextCompacted) for event in events) == 1
@@ -194,7 +194,7 @@ def test_low_usage_overrides_local_overestimate_but_absence_keeps_fallback(tmp_p
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -230,7 +230,7 @@ def test_empty_completion_cannot_bypass_reported_hard_context_limit(tmp_path):
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, context_window_tokens=40_000
             ),
@@ -312,7 +312,7 @@ def test_http_usage_reaches_real_runtime_window(tmp_path, mode, kind):
             client=client,
             capabilities=resolve_capabilities(base_url="https://fixture.invalid/v1", api_mode=mode),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

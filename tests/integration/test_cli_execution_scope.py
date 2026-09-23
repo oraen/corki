@@ -45,7 +45,7 @@ def test_details_pager_keeps_runtime_approvals_pending_and_cleans_up(
                 else None
             ),
         )
-        runtime = create_runtime(tmp_path, compiler, model)
+        runtime = await create_runtime(tmp_path, compiler, model)
         settings = CorkiSettings(tmp_path)
         requests = []
 
@@ -178,7 +178,7 @@ def test_keyboard_scope_reprompts_for_changed_command_and_cold_session(
         second = tmp_path / "changed-operation"
         command = "mkdir -p " + shlex.quote(str(first))
         model = ApprovalModel(mode, command)
-        runtime = create_runtime(tmp_path, compiler, model)
+        runtime = await create_runtime(tmp_path, compiler, model)
         prompts = []
 
         class UI(TerminalUI):
@@ -221,7 +221,7 @@ def test_keyboard_scope_reprompts_for_changed_command_and_cold_session(
                 assert len(model.requests) == 6
                 thread = runtime.thread_id
                 await runtime.aclose()
-                runtime = create_runtime(
+                runtime = await create_runtime(
                     tmp_path, compiler, ApprovalModel(mode, command), thread_id=thread
                 )
                 bind()
@@ -244,7 +244,7 @@ def test_shortcut_decline_and_cancel_keep_execution_blocked(tmp_path, compiler, 
     async def scenario(pipe):
         target = tmp_path / "must-not-exist"
         model = ApprovalModel(mode, "mkdir " + shlex.quote(str(target)))
-        runtime = create_runtime(tmp_path, compiler, model)
+        runtime = await create_runtime(tmp_path, compiler, model)
         settings = CorkiSettings(tmp_path)
         ui = TerminalUI(settings, tmp_path / "input-history", console=Console(file=StringIO()))
         ui._form_session = PromptSession(input=pipe, output=DummyOutput(), history=DummyHistory())
@@ -307,7 +307,7 @@ def test_keyboard_rule_scope_publishes_only_after_successful_save(
                 {"cmd": "touch " + shlex.quote(str(second))},
             ],
         )
-        runtime = rule_runtime(tmp_path, compiler, model)
+        runtime = await rule_runtime(tmp_path, compiler, model)
         prompts = []
 
         class UI(TerminalUI):
@@ -360,7 +360,7 @@ def test_keyboard_rule_scope_publishes_only_after_successful_save(
                 assert not list(ui._session.history.get_strings())
         finally:
             await runtime.aclose()
-        restored = rule_runtime(
+        restored = await rule_runtime(
             tmp_path,
             compiler,
             RuleModel(

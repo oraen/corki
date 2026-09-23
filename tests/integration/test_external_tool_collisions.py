@@ -77,7 +77,7 @@ def test_mcp_collision_keeps_same_server_healthy_tool_and_core_handler(
         registry = ToolRegistry()
         core = Core()
         registry.register(core)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,
@@ -184,12 +184,12 @@ def test_real_plugin_mcp_and_dynamic_priority_refresh_and_cold_history(
         server = MCPServerSettings("functions", "http", url="https://fixture.invalid")
         monkeypatch.setattr("corki.mcp.manager.create_client", Client)
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             owner = registry.create_owner(source=ToolSource.DYNAMIC)
             registry.replace_owned(owner, (Dynamic(),))
             publication.update(registry=registry, owner=owner)
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     tmp_path,
                     skills_enabled=False,
@@ -207,7 +207,7 @@ def test_real_plugin_mcp_and_dynamic_priority_refresh_and_cold_history(
                 load_plugins=thread is None,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             first = [e async for e in runtime.stream("call MCP winner")]
             assert isinstance(first[-1], TurnCompleted), first[-1]
@@ -220,7 +220,7 @@ def test_real_plugin_mcp_and_dynamic_priority_refresh_and_cold_history(
             assert executed == ["MCP"] and closed
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             expected[0] = "DYNAMIC_RESULT"
             third = [e async for e in runtime.stream("call dynamic fallback")]
             assert isinstance(third[-1], TurnCompleted), third[-1]

@@ -118,10 +118,10 @@ def test_lite_discovery_observation_and_cold_thread_prefix(
             tool_namespace_mode="native" if native_namespace else "compatible",
         )
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             registry.register(Read())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 registry=registry,
                 model=model,
@@ -129,7 +129,7 @@ def test_lite_discovery_observation_and_cold_thread_prefix(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             assert isinstance([e async for e in runtime.stream("read")][-1], TurnCompleted)
             assert calls == ["vault::read"] and len(bodies) == 3
@@ -153,7 +153,7 @@ def test_lite_discovery_observation_and_cold_thread_prefix(
                 isinstance(p, ImageAttachment) and p.detail == "high" for p in result.content_items
             )
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             assert isinstance([e async for e in runtime.stream("continue")][-1], TurnCompleted)
             check_projection(bodies[-1], headers[-1], lite)
             assert calls == ["vault::read"]
@@ -185,7 +185,7 @@ def test_lite_http_retry_keeps_prefix_and_header(tmp_path, monkeypatch, lite):
             "OwnedHTTPClient",
             lambda *a, **kw: client(*a, **kw, transport=httpx.MockTransport(respond)),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=replace(settings_for(tmp_path, lite), model_retry_base_seconds=0.001),
             database_path=tmp_path / "s.db",
             registry=ToolRegistry(),
@@ -220,7 +220,7 @@ def test_lite_normal_manual_and_following_request_contract(tmp_path, monkeypatch
             "OwnedHTTPClient",
             lambda *a, **kw: client(*a, **kw, transport=httpx.MockTransport(respond)),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings_for(tmp_path, lite, mode=mode),
             database_path=tmp_path / "s.db",
             registry=ToolRegistry(),

@@ -81,10 +81,10 @@ def test_runtime_environment_delta_steps_compaction_and_cold_reopen(tmp_path, mo
             async def aclose(self):
                 pass
 
-        def create(thread_id=None):
+        async def create(thread_id=None):
             registry = ToolRegistry()
             registry.register(Tool())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,
@@ -99,7 +99,7 @@ def test_runtime_environment_delta_steps_compaction_and_cold_reopen(tmp_path, mo
                 thread_id=thread_id,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [e async for e in runtime.stream("CURRENT INPUT MUST SURVIVE")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -129,7 +129,7 @@ def test_runtime_environment_delta_steps_compaction_and_cold_reopen(tmp_path, mo
             before = environments(requests[-1].items)
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [e async for e in runtime.stream("unchanged after reopen")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert environments(requests[-1].items) == before
@@ -174,7 +174,7 @@ def test_environment_deltas_reach_provider_wire(tmp_path, monkeypatch, api_mode)
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
         monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -224,7 +224,7 @@ def test_runtime_environment_gate_survives_cold_reopen_and_reenable(tmp_path, mo
         thread = None
         histories = []
         for enabled in (False, True, False, False, True):
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,
@@ -277,8 +277,8 @@ def test_environment_delta_checkpoint_replays_frozen_request_then_refreshes(
             async def emit(self, event):
                 pass
 
-        def create(thread_id=None):
-            return LangGraphRuntime.create(
+        async def create(thread_id=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "sessions.db",
                 registry=ToolRegistry(),
@@ -295,7 +295,7 @@ def test_environment_delta_checkpoint_replays_frozen_request_then_refreshes(
                 else None,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [e async for e in runtime.stream("first turn")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -320,7 +320,7 @@ def test_environment_delta_checkpoint_replays_frozen_request_then_refreshes(
             assert "2026-09-09" in delta.content
             await runtime.aclose()
             day[0] = 10
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [e async for e in runtime.resume_pending()]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             visible = tuple(

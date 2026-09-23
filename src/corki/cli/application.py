@@ -7,6 +7,7 @@ import logging
 import sys
 from collections import deque
 from collections.abc import AsyncIterator
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -20,11 +21,13 @@ from corki.cli.input_owner import (
     QueuedInput,
     submission_text,
 )
+from corki.cli.mcp_inventory import MCPInventory
 from corki.cli.stream_animation import animated_events
 from corki.config import CorkiPaths, CorkiSettings
 from corki.core import AgentRuntime
 from corki.core.model_settings import capture_model_settings
 from corki.mcp.elicitation import ElicitationRequest
+from corki.models.error_safety import display_model_error
 from corki.protocol.collaboration import CollaborationMode
 from corki.protocol.events import (
     AssistantMessageCompleted,
@@ -61,6 +64,7 @@ from corki.protocol.items import (
     ToolResultItem,
 )
 from corki.protocol.memory import ThreadMemoryMode
+from corki.protocol.settings import UNSET
 from corki.realtime import RealtimeTurnClosedError
 from corki.sessions.models import DisplayHistory
 
@@ -136,11 +140,13 @@ class CorkiApplication:
         self._settings = settings
         self._default_collaboration_settings = capture_model_settings(settings)
         self._ui = ui
+        self._mcp_inventory = MCPInventory(runtime, ui)
         self._commands = CommandDispatcher(settings, paths)
         self._realtime_enabled = settings.realtime_enabled
         self._pending_messages: deque[str] = deque()
         self._queue_autosend = True
         self._turn_cancelled = False
+        self._interruption_reported = False
         self._returned_input_ids: set[str] = set()
         self._returned_inputs: list[str] = []
         bind_editor = getattr(ui, "set_queue_editor", None)
@@ -209,6 +215,12 @@ class CorkiApplication:
     async def run(self) -> int:
         """Run until Ctrl+C/EOF and close runtime resources deterministically."""
 
+        input_mode = getattr(self._ui, "input_mode", None)
+        with input_mode() if input_mode is not None else nullcontext():
+            return await self._run()
+
+    async def _run(self) -> int:
+
         self._ui.show_welcome()
         watch_resize = getattr(self._ui, "watch_resize", None)
         resize = asyncio.create_task(watch_resize()) if watch_resize is not None else None
@@ -217,20 +229,28 @@ class CorkiApplication:
             load_history = getattr(self._runtime, "load_display_snapshot", None) or load_history
             replay = getattr(self._ui, "replay_history", None)
             if load_history is not None and replay is not None:
-                paged = all(
-                    callable(getattr(self._runtime, name, None))
-                    for name in (
-                        "load_display_items_page",
-                        "load_display_turns_page",
-                        "contains_display_item",
+                try:
+                    paged = all(
+                        callable(getattr(self._runtime, name, None))
+                        for name in (
+                            "load_display_items_page",
+                            "load_display_turns_page",
+                            "contains_display_item",
+                        )
+                    ) and callable(getattr(self._ui, "set_history_loader", None))
+                    if paged:
+                        self._history_pager = HistoryPager(self._runtime, self._ui)
+                        history = await self._history_pager.initialize()
+                    else:
+                        history = await load_history()
+                        replay(history)
+                except Exception as error:  # noqa: BLE001 - no new Turn with uncertain history
+                    _LOG.warning("Conversation history load failed: %s", type(error).__name__)
+                    self._ui.show_notice(
+                        "Could not load conversation history. No new turn was started. "
+                        "Check local session storage and retry."
                     )
-                ) and callable(getattr(self._ui, "set_history_loader", None))
-                if paged:
-                    self._history_pager = HistoryPager(self._runtime, self._ui)
-                    history = await self._history_pager.initialize()
-                else:
-                    history = await load_history()
-                    replay(history)
+                    return 1
                 items = history.items if isinstance(history, DisplayHistory) else history
                 self._replayed_messages = {
                     i.id for i in items if isinstance(i, AssistantMessageItem)
@@ -253,7 +273,7 @@ class CorkiApplication:
                     task = asyncio.current_task()
                     if task is not None:
                         task.uncancel()
-                    self._ui.show_notice("Turn interrupted.")
+                    self._show_interruption()
             else:
                 await self._consume_events(self._runtime.resume_pending())
             while True:
@@ -290,6 +310,11 @@ class CorkiApplication:
                 ):
                     if command.action is CommandAction.CLEAR:
                         self._ui.clear()
+                    elif command.action is CommandAction.MODEL:
+                        await self._set_model(command.input_text)
+                    elif command.action is CommandAction.MODEL_PICK:
+                        await self._pick_model()
+                        continue
                     elif command.action is CommandAction.REALTIME_ON:
                         self._realtime_enabled = True
                         self._commands.set_realtime_enabled(True)
@@ -302,6 +327,8 @@ class CorkiApplication:
                             update(False)
                     elif command.action is CommandAction.MCP_REFRESH:
                         self._runtime.request_mcp_refresh()
+                    elif command.action is CommandAction.MCP_LIST:
+                        self._mcp_inventory.start()
                     elif command.action is CommandAction.MEMORY_RESET:
                         await self._reset_memory()
                     elif command.action is CommandAction.MEMORY_RESET_PREVIEW:
@@ -315,6 +342,7 @@ class CorkiApplication:
                         self._ui.show_notice(command.output)
                     continue
 
+                self._interruption_reported = False
                 try:
                     if command.action is CommandAction.CYCLE_MODE:
                         if self._runtime.thread_settings.collaboration_mode == "default":
@@ -349,7 +377,7 @@ class CorkiApplication:
                     else:
                         await self._consume_turn(message)
                 except KeyboardInterrupt:
-                    self._ui.show_notice("Turn interrupted.")
+                    self._show_interruption()
                 except asyncio.CancelledError:
                     # Python translates SIGINT during asyncio.run into task
                     # cancellation. Clear this cancellation so the composer can
@@ -357,16 +385,22 @@ class CorkiApplication:
                     task = asyncio.current_task()
                     if task is not None:
                         task.uncancel()
-                    self._ui.show_notice("Turn interrupted.")
+                    self._show_interruption()
                 except Exception as exc:  # noqa: BLE001 - outer process boundary
-                    self._ui.show_assistant_message(f"Runtime error: {exc}", is_error=True)
+                    self._ui.show_assistant_message(
+                        f"Runtime error: {display_model_error(str(exc), self._settings.api_key)}",
+                        is_error=True,
+                    )
         finally:
             try:
                 try:
                     if self._history_pager is not None:
                         await self._history_pager.aclose()
                 finally:
-                    await _join_realtime_tasks(resize)
+                    try:
+                        await self._mcp_inventory.aclose()
+                    finally:
+                        await _join_realtime_tasks(resize)
             finally:
                 await self._runtime.aclose()
                 self._ui.show_goodbye()
@@ -431,6 +465,32 @@ class CorkiApplication:
         self._ui.show_notice(f"{selected.collaboration_mode.title()} mode enabled.")
         return True
 
+    async def _pick_model(self) -> None:
+        selected = await self._input.select_model(self._runtime.thread_settings)
+        if selected is not None:
+            await self._set_model(selected.model, reasoning_effort=selected.reasoning_effort)
+
+    async def _set_model(self, model: str, *, reasoning_effort=UNSET) -> None:
+        cancelled = None
+        try:
+            changes = {} if reasoning_effort is UNSET else {"reasoning_effort": reasoning_effort}
+            selected = await self._runtime.update_thread_settings(model=model, **changes)
+        except asyncio.CancelledError as error:
+            # Publication may have completed before cancellation was delivered.
+            selected = self._runtime.thread_settings
+            cancelled = error
+        except Exception as error:  # noqa: BLE001 - keep the previous selection usable
+            self._ui.show_notice(f"Model update failed ({type(error).__name__}).")
+            return
+        self._commands.set_model_settings(selected)
+        if selected.collaboration_mode == "default":
+            self._default_collaboration_settings = selected
+        if update := getattr(self._ui, "set_model_settings", None):
+            update(selected)
+        if cancelled is not None:
+            raise cancelled
+        self._ui.show_notice(f"Model: {selected.model}. Applies to subsequent turns.")
+
     async def _reset_memory(self) -> None:
         try:
             roots = await self._runtime.reset_memory()
@@ -479,6 +539,12 @@ class CorkiApplication:
         await self._consume_interactive_events(
             events, steering_enabled=message is not None and self._realtime_enabled
         )
+
+    def _show_interruption(self) -> None:
+        """The terminal event and Python cancellation describe one interruption."""
+        if not self._interruption_reported:
+            self._ui.show_notice("Turn interrupted.")
+            self._interruption_reported = True
 
     async def _consume_interactive_events(
         self,
@@ -558,6 +624,25 @@ class CorkiApplication:
                     self._ui.show_assistant_message(
                         "'/compact' is disabled while a task is in progress.", is_error=True
                     )
+                    continue
+                command = self._commands.dispatch(steering)
+                if command.handled:
+                    if command.action is CommandAction.MODEL_PICK:
+                        await self._pick_model()
+                        continue
+                    elif command.action is CommandAction.MODEL:
+                        await self._set_model(command.input_text)
+                    elif command.action is CommandAction.MCP_LIST:
+                        self._mcp_inventory.start()
+                    elif command.action is CommandAction.MCP_REFRESH:
+                        self._runtime.request_mcp_refresh()
+                    elif command.action is not CommandAction.NONE:
+                        self._ui.show_notice(
+                            f"{steering.split()[0]} is unavailable while a task is running."
+                        )
+                        continue
+                    if command.output:
+                        self._ui.show_notice(command.output)
                     continue
                 if steering:
                     if not steering_enabled:
@@ -643,9 +728,14 @@ class CorkiApplication:
         enable_animation = getattr(self._ui, "enable_stream_animation", None)
         animated = bool(enable_animation and enable_animation())
         displayed = animated_events(events, self._ui) if animated else events
+        set_turn_active = getattr(self._ui, "set_turn_active", None)
+        if set_turn_active is not None:
+            set_turn_active(True)
         try:
             await self._render_events_owned(displayed, state)
         finally:
+            if set_turn_active is not None:
+                set_turn_active(False)
             primary = sys.exception()
             failure = None
             clear_hooks = getattr(self._ui, "clear_hooks", None)
@@ -678,18 +768,35 @@ class CorkiApplication:
             ):
                 if active:
                     try:
-                        getattr(self._ui, method)()
-                    except Exception as exc:  # noqa: BLE001 - preserve the original stream failure
+                        if method == "end_assistant_message":
+                            await self._end_assistant_stream()
+                        else:
+                            getattr(self._ui, method)()
+                    except BaseException as exc:  # noqa: BLE001 - preserve the original stream failure
+                        if method == "end_assistant_message":
+                            abandon = getattr(self._ui, "abandon_assistant_stream", None)
+                            if abandon is not None:
+                                try:
+                                    abandon()
+                                except Exception as cleanup_error:
+                                    _LOG.warning(
+                                        "Display source cleanup failed: %s",
+                                        type(cleanup_error).__name__,
+                                    )
                         failure = failure or exc
                         _LOG.warning("Display stream cleanup failed: %s", type(exc).__name__)
             try:
-                self._close_tool_displays(state)
+                await self._close_tool_displays_live(state)
             except Exception as exc:  # noqa: BLE001 - cleanup cannot replace an active exception
                 failure = failure or exc
             if primary is None and failure is not None:
                 raise failure
 
     async def _end_assistant_stream(self):
+        interrupt = getattr(self._ui, "interrupt_assistant_message", None)
+        if interrupt is not None:
+            await interrupt()
+            return
         if getattr(self._ui, "_animation_enabled", False):
             await self._ui.commit_stream_tick(finish=True)
         self._ui.end_assistant_message()
@@ -700,6 +807,11 @@ class CorkiApplication:
             self._flush_tool_displays(state)
         except Exception as exc:  # noqa: BLE001 - still close every displayed tool
             failure = exc
+        for call_id in tuple(state.tool_output):
+            try:
+                self._flush_tool_output(state, call_id)
+            except Exception as exc:  # noqa: BLE001 - drain every call before closing displays
+                failure = failure or exc
         pending, state.tools = state.tools, {}
         for name in pending.values():
             try:
@@ -709,6 +821,25 @@ class CorkiApplication:
                 _LOG.warning("Tool display cleanup failed: %s", type(exc).__name__)
         if failure is not None:
             raise failure
+
+    async def _close_tool_displays_live(self, state: _DisplayStreams) -> None:
+        commit = getattr(self._ui, "commit_tool_display", None)
+        if commit is None:
+            self._close_tool_displays(state)
+        else:
+            await commit(lambda: self._close_tool_displays(state))
+
+    async def _flush_tool_displays_live(self, state: _DisplayStreams) -> None:
+        commit = getattr(self._ui, "commit_tool_display", None)
+        if commit is None:
+            self._flush_tool_displays(state)
+        else:
+            await commit(lambda: self._flush_tool_displays(state))
+
+    def _flush_tool_output(self, state: _DisplayStreams, call_id: str) -> None:
+        pending = state.tool_output.pop(call_id, "")
+        if pending:
+            self._ui.show_tool_output(pending)
 
     def _flush_tool_displays(self, state: _DisplayStreams) -> None:
         """Drain lifecycle events in FIFO order, including during stream cleanup."""
@@ -720,11 +851,18 @@ class CorkiApplication:
                     state.tools[event.tool_call_id] = event.tool_name
                     self._ui.show_tool_started(event.tool_name, event.arguments_preview)
                 elif isinstance(event, ToolOutputDelta):
-                    self._ui.show_tool_output(event.delta)
+                    text = state.tool_output.get(event.tool_call_id, "") + event.delta
+                    boundary = text.rfind("\n") + 1
+                    state.tool_output[event.tool_call_id] = text[boundary:]
+                    if boundary:
+                        self._ui.show_tool_output(text[:boundary])
                 elif isinstance(event, ToolCallCompleted):
                     state.tools.pop(event.tool_call_id, None)
+                    self._flush_tool_output(state, event.tool_call_id)
                     self._ui.show_tool_completed(event.tool_name, is_error=event.is_error)
                 elif isinstance(event, PlanUpdated):
+                    if event.tool_call_id is not None:
+                        self._flush_tool_output(state, event.tool_call_id)
                     self._ui.show_plan(event.plan, explanation=event.explanation)
                 elif isinstance(event, ProposedPlanCompleted):
                     self._ui.show_proposed_plan(event.text)
@@ -737,6 +875,7 @@ class CorkiApplication:
         self, events: AsyncIterator[RuntimeEvent], state: _DisplayStreams
     ) -> None:
         saw_text = False
+        visible_since_interruption = False
         recovering = False
         async for event in events:
             if isinstance(event, (TurnFailed, TurnCancelled, TurnCompleted)):
@@ -822,6 +961,7 @@ class CorkiApplication:
             ):
                 continue
             if isinstance(event, TurnStarted):
+                self._interruption_reported = False
                 if event.resumed:
                     self._ui.show_notice("Resuming interrupted turn...")
             elif isinstance(event, UserInputRequested):
@@ -831,7 +971,7 @@ class CorkiApplication:
                 if state.streaming:
                     await self._end_assistant_stream()
                     state.streaming = False
-                self._flush_tool_displays(state)
+                await self._flush_tool_displays_live(state)
                 task = asyncio.create_task(
                     self._handle_user_input(event), name="corki-question-panel"
                 )
@@ -854,6 +994,7 @@ class CorkiApplication:
                     state.reasoning = True
                 state.reasoning_key = key
                 self._ui.append_reasoning_delta(event.delta)
+                visible_since_interruption |= bool(event.delta)
             elif isinstance(event, AssistantReasoningCompleted):
                 if state.reasoning and state.reasoning_key[0] in (None, event.item_id):
                     self._ui.end_reasoning()
@@ -871,6 +1012,7 @@ class CorkiApplication:
                 else:
                     await append(event.delta)
                 saw_text = True
+                visible_since_interruption |= bool(event.delta)
             elif isinstance(event, ProposedPlanDelta):
                 if state.reasoning:
                     self._ui.end_reasoning()
@@ -879,8 +1021,10 @@ class CorkiApplication:
                     self._ui.begin_proposed_plan(event.item_id)
                     state.plan_streaming = True
                 await self._ui.append_proposed_plan_delta_live(event.delta)
+                visible_since_interruption |= bool(event.delta)
             elif isinstance(event, ProposedPlanCompleted):
                 saw_text = True
+                visible_since_interruption |= bool(event.text)
                 if state.reasoning:
                     self._ui.end_reasoning()
                     state.reasoning = False
@@ -897,7 +1041,8 @@ class CorkiApplication:
                 elif event.text:
                     self._ui.show_assistant_message(event.text)
                 saw_text |= bool(event.text)
-                self._flush_tool_displays(state)
+                visible_since_interruption |= bool(event.text)
+                await self._flush_tool_displays_live(state)
             elif isinstance(event, AssistantMessageInterrupted):
                 if state.reasoning:
                     self._ui.end_reasoning()
@@ -905,12 +1050,14 @@ class CorkiApplication:
                 if state.streaming:
                     await self._end_assistant_stream()
                     state.streaming = False
-                self._flush_tool_displays(state)
-                self._ui.show_notice(
-                    "Response interrupted; retrying with updated history..."
-                    if event.reason == "retry"
-                    else "Response interrupted; applying your latest input..."
-                )
+                await self._flush_tool_displays_live(state)
+                if visible_since_interruption:
+                    self._ui.show_notice(
+                        "Response interrupted; retrying with updated history..."
+                        if event.reason == "retry"
+                        else "Response interrupted; applying your latest input..."
+                    )
+                visible_since_interruption = False
             elif isinstance(event, RealtimeInputAccepted):
                 # The active prompt already leaves submitted text in scrollback,
                 # so only acknowledge it instead of echoing it a second time.
@@ -921,9 +1068,15 @@ class CorkiApplication:
                 if isinstance(event, ToolCallStarted) and state.reasoning:
                     self._ui.end_reasoning()
                     state.reasoning = False
+                update_tool_activity = getattr(self._ui, "set_tool_activity", None)
+                if update_tool_activity is not None:
+                    if isinstance(event, ToolCallStarted):
+                        update_tool_activity(event.tool_call_id, event.tool_name)
+                    elif isinstance(event, ToolCallCompleted):
+                        update_tool_activity(event.tool_call_id, None)
                 state.deferred_tools.append(event)
                 if not state.streaming:
-                    self._flush_tool_displays(state)
+                    await self._flush_tool_displays_live(state)
             elif isinstance(event, WarningEvent):
                 self._ui.show_notice(f"Warning: {event.message}")
             elif isinstance(event, HookStarted):
@@ -933,7 +1086,7 @@ class CorkiApplication:
                 if state.streaming:
                     await self._end_assistant_stream()
                     state.streaming = False
-                self._flush_tool_displays(state)
+                await self._flush_tool_displays_live(state)
                 started = getattr(self._ui, "hook_started", None)
                 if started is not None:
                     started(event.run)
@@ -951,10 +1104,7 @@ class CorkiApplication:
             elif isinstance(event, ModelRetryScheduled):
                 limit = event.max_attempts if event.max_attempts is not None else "∞"
                 label = "Retrying compaction" if event.purpose == "compaction" else "Reconnecting"
-                reason = "".join(
-                    char if char.isprintable() or char == "\n" else " "
-                    for char in event.error[:4000]
-                ).strip()
+                reason = display_model_error(event.error, self._settings.api_key)
                 self._ui.show_notice(
                     f"{label}... {event.attempt}/{limit} in {event.delay_seconds:g}s"
                     + (f"\nReason: {reason}" if reason else "")
@@ -974,7 +1124,7 @@ class CorkiApplication:
                 if state.streaming:
                     await self._end_assistant_stream()
                     state.streaming = False
-                self._close_tool_displays(state)
+                await self._close_tool_displays_live(state)
                 if (
                     not saw_text
                     and event.final_answer
@@ -988,8 +1138,10 @@ class CorkiApplication:
                 if state.streaming:
                     await self._end_assistant_stream()
                     state.streaming = False
-                self._close_tool_displays(state)
-                self._ui.show_assistant_message(event.error, is_error=True)
+                await self._close_tool_displays_live(state)
+                self._ui.show_assistant_message(
+                    display_model_error(event.error, self._settings.api_key), is_error=True
+                )
             elif isinstance(event, TurnCancelled):
                 self._turn_cancelled = True
                 self._receive_unsubmitted_inputs(event.unsubmitted_inputs)
@@ -999,8 +1151,8 @@ class CorkiApplication:
                 if state.streaming:
                     await self._end_assistant_stream()
                     state.streaming = False
-                self._close_tool_displays(state)
-                self._ui.show_notice("Turn interrupted.")
+                await self._close_tool_displays_live(state)
+                self._show_interruption()
 
 
 @dataclass
@@ -1011,6 +1163,7 @@ class _DisplayStreams:
     reasoning: bool = False
     reasoning_key: tuple[str | None, int | None] = (None, None)
     tools: dict[str, str] = field(default_factory=dict)
+    tool_output: dict[str, str] = field(default_factory=dict)
     deferred_tools: deque[
         ToolCallStarted | ToolOutputDelta | ToolCallCompleted | PlanUpdated | ProposedPlanCompleted
     ] = field(default_factory=deque)

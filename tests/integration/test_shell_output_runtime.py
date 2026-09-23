@@ -110,12 +110,12 @@ def test_shell_actual_process_runtime_budget_and_cold_history(tmp_path, nested, 
             tool_mode="code_mode" if nested else "direct",
         )
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings, database_path=database, model=Model(), thread_id=thread
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             events = [e async for e in runtime.stream("execute")]
@@ -136,7 +136,7 @@ def test_shell_actual_process_runtime_budget_and_cold_history(tmp_path, nested, 
                 assert not result["is_error"] and not result.get("dispatch_error", False)
         finally:
             await runtime.aclose()
-        runtime = create(thread)
+        runtime = await create(thread)
         try:
             events = [e async for e in runtime.stream("continue")]
             assert isinstance(events[-1], TurnCompleted), events[-1]

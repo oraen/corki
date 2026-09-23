@@ -230,8 +230,8 @@ def test_memory_generation_rules_through_startup_and_cold_recall(
             ),
         )
 
-        def create(generate=True):
-            return LangGraphRuntime.create(
+        async def create(generate=True):
+            return await LangGraphRuntime.acreate(
                 settings=replace(
                     settings, memories_generate=generate, memories_background_enabled=generate
                 ),
@@ -243,7 +243,7 @@ def test_memory_generation_rules_through_startup_and_cold_recall(
                 home_path=tmp_path / "home",
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             assert isinstance([e async for e in runtime.stream("start")][-1], TurnCompleted)
             await asyncio.wait_for(entered.wait(), 5)
@@ -325,7 +325,7 @@ def test_memory_generation_rules_through_startup_and_cold_recall(
                     "Outcome: fail" in next((root / "rollout_summaries").glob("*.md")).read_text()
                 )
                 await runtime.aclose()
-                runtime = create(generate=False)
+                runtime = await create(generate=False)
                 phase = "recall"
                 assert isinstance(
                     [e async for e in runtime.stream("recall failure workflow")][-1], TurnCompleted

@@ -189,8 +189,8 @@ def test_remote_malformed_response_is_error_value_without_replay(
             mcp_servers=(MCPServerSettings("docs", "http", url="https://fixture.invalid/mcp"),),
         )
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=database,
                 registry=ToolRegistry(),
@@ -198,7 +198,7 @@ def test_remote_malformed_response_is_error_value_without_replay(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             events = [e async for e in runtime.stream("read")]
@@ -212,7 +212,7 @@ def test_remote_malformed_response_is_error_value_without_replay(
                 assert result["code_mode_output"]["value"]["isError"] is True
         finally:
             await runtime.aclose()
-        runtime = create(thread)
+        runtime = await create(thread)
         try:
             events = [e async for e in runtime.stream("continue")]
             assert isinstance(events[-1], TurnCompleted), events[-1]

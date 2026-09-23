@@ -58,7 +58,7 @@ def test_ordered_completed_prefix_is_published_before_pending_tail(tmp_path, str
 
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "sessions.db",
             registry=registry,

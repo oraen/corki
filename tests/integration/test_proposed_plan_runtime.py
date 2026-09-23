@@ -39,7 +39,7 @@ def test_plan_output_separates_events_without_rewriting_history(tmp_path, mode, 
             async def aclose(self):
                 pass
 
-        runtime = make_runtime(
+        runtime = await make_runtime(
             tmp_path, Model(), configured=settings(tmp_path, collaboration_mode=mode)
         )
         try:

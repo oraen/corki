@@ -140,7 +140,7 @@ def test_mcp_pollution_requires_actual_admitted_call(tmp_path, monkeypatch, case
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -249,7 +249,7 @@ def test_latest_host_metadata_controls_direct_and_nested_mcp(
                 pass
 
         metadata = {"docs": MCPServerMetadata(initial)}
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -306,7 +306,7 @@ def test_cancellation_before_mcp_dispatch_does_not_mark_thread(tmp_path):
         registry = ToolRegistry()
         registry.register(MCPTool("docs", {"name": "read"}, Client()))
         database = tmp_path / "sessions.db"
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

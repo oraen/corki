@@ -75,7 +75,7 @@ def test_turn_keeps_system_timezone_but_refreshes_date(tmp_path, monkeypatch, ne
 
         registry = ToolRegistry()
         registry.register(Advance())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "sessions.db",
             registry=registry,
@@ -141,10 +141,10 @@ def test_timezone_checkpoint_freeze_and_legacy_first_prepare(tmp_path, monkeypat
             async def emit(self, event):
                 pass
 
-        def create(thread_id=None):
+        async def create(thread_id=None):
             registry = ToolRegistry()
             registry.register(Advance())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "sessions.db",
                 registry=registry,
@@ -152,7 +152,7 @@ def test_timezone_checkpoint_freeze_and_legacy_first_prepare(tmp_path, monkeypat
                 thread_id=thread_id,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [e async for e in runtime.stream("first turn")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -179,7 +179,7 @@ def test_timezone_checkpoint_freeze_and_legacy_first_prepare(tmp_path, monkeypat
             await runtime.aclose()
             zone[0] = "Asia/Shanghai"
             captures.clear()
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [e async for e in runtime.resume_pending()]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             expected = "Asia/Shanghai" if legacy else "Europe/Paris"
@@ -248,7 +248,7 @@ def test_steering_and_token_budget_compaction_use_admitted_timezone(tmp_path, mo
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

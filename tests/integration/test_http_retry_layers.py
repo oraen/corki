@@ -16,6 +16,53 @@ from corki.storage import SQLiteSessionRepository
 
 
 @pytest.mark.parametrize("api_mode", ["responses", "chat_completions"])
+@pytest.mark.parametrize("status", [400, 500])
+def test_provider_error_does_not_persist_configured_api_key(
+    tmp_path, monkeypatch, api_mode, status
+):
+    async def scenario():
+        secret = "FAKE_OLD_MODEL_KEY_123"
+
+        def handle(request):
+            return httpx.Response(status, json={"error": {"message": f"rejected {secret}"}})
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+        monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
+        repository = SQLiteSessionRepository(tmp_path / "sessions.db")
+        runtime = await LangGraphRuntime.acreate(
+            settings=CorkiSettings(
+                working_directory=tmp_path,
+                skills_enabled=False,
+                api_mode=api_mode,
+                api_key=secret,
+                api_base="https://fixture.invalid/v1",
+                model_max_retries=int(status == 500),
+                model_request_max_retries=0,
+                model_retry_base_seconds=0.001,
+            ),
+            database_path=repository.path,
+            repository=repository,
+        )
+        try:
+            events = [event async for event in runtime.stream("run")]
+            terminal = events[-1]
+            assert isinstance(terminal, TurnFailed)
+            retries = [event for event in events if isinstance(event, ModelRetryScheduled)]
+            assert len(retries) == int(status == 500)
+            assert all(secret not in event.error for event in retries)
+            failure = await repository.load_model_failure(terminal.thread_id, terminal.turn_id, 0)
+            assert failure is not None
+            assert secret not in terminal.error + failure.message
+            assert "rejected [redacted]" in terminal.error
+            assert "rejected [redacted]" in failure.message
+        finally:
+            await runtime.aclose()
+            await client.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("api_mode", ["responses", "chat_completions"])
 @pytest.mark.parametrize(
     "status,error,kind,count,stream_retries",
     [
@@ -29,9 +76,9 @@ from corki.storage import SQLiteSessionRepository
         (400, {"code": "context_length_exceeded"}, "invalid_request", 1, 0),
         (400, {"code": "cyber_policy"}, "cyber_policy", 1, 0),
         (403, {"code": "misalignment_policy_violation"}, "misalignment_policy", 1, 0),
-        (401, {}, "authentication", 2, 1),
-        (403, {}, "authentication", 2, 1),
-        (404, {}, "protocol", 2, 1),
+        (401, {}, "authentication", 1, 0),
+        (403, {}, "authentication", 1, 0),
+        (404, {}, "protocol", 1, 0),
         (402, {"message": "Insufficient Balance"}, "protocol", 1, 0),
     ],
 )
@@ -49,7 +96,7 @@ def test_default_request_tier_precedes_stream_classification(
         # Exercise Runtime's composition, not a separately configured injected model.
         monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
         repository = SQLiteSessionRepository(tmp_path / "sessions.db")
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -151,7 +198,7 @@ def test_composed_budgets_and_successful_http_retry_not_a_failed_sample(
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
         monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
         repository = SQLiteSessionRepository(tmp_path / "sessions.db")
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -236,7 +283,7 @@ def test_http_backoff_closes_failed_response_and_queues_steer(tmp_path, monkeypa
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
         monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

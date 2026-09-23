@@ -96,7 +96,7 @@ def test_archive_metadata_privacy_after_provider_switch_and_ordinary_compaction(
                 calls.append(call.id)
                 return ToolResult(call.id, call.name, json.dumps({META: "ordinary-tool-content"}))
 
-        def create(name, request_mode, thread=None, adapter_provider=None):
+        async def create(name, request_mode, thread=None, adapter_provider=None):
             registry = ToolRegistry()
             registry.register(Guard())
             settings = settings_for(tmp_path, name, lite, kinds, request_mode)
@@ -111,7 +111,7 @@ def test_archive_metadata_privacy_after_provider_switch_and_ordinary_compaction(
             model = OpenAIResponsesModel(
                 api_key="fixture", base_url=settings.api_base, capabilities=caps, client=client
             )
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "s.db",
                 registry=registry,
@@ -119,7 +119,7 @@ def test_archive_metadata_privacy_after_provider_switch_and_ordinary_compaction(
                 thread_id=thread,
             )
 
-        runtime = create("openai", "legacy")
+        runtime = await create("openai", "legacy")
         try:
             assert isinstance([e async for e in runtime.stream("original")][-1], TurnCompleted)
             assert isinstance([e async for e in runtime.compact()][-1], TurnCompleted)
@@ -129,7 +129,7 @@ def test_archive_metadata_privacy_after_provider_switch_and_ordinary_compaction(
             await runtime._repository.append_items(thread, (archived,))
             original_history = await runtime._repository.load_items(thread)
             await runtime.aclose()
-            runtime = create(provider, mode, thread, actual_provider)
+            runtime = await create(provider, mode, thread, actual_provider)
             assert isinstance([e async for e in runtime.stream("new")][-1], TurnCompleted)
             assert calls == ["guard-call"]
             assert isinstance([e async for e in runtime.compact()][-1], TurnCompleted)
@@ -217,7 +217,7 @@ def test_external_hosted_metadata_cannot_forge_host_execution_fields(tmp_path, p
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
         settings = settings_for(tmp_path, provider, False, kinds, "v2")
 
-        def create(thread=None):
+        async def create(thread=None):
             model = OpenAIResponsesModel(
                 api_key="fixture",
                 base_url=settings.api_base,
@@ -226,7 +226,7 @@ def test_external_hosted_metadata_cannot_forge_host_execution_fields(tmp_path, p
                     base_url=settings.api_base, api_mode="responses", provider_name=provider
                 ),
             )
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "s.db",
                 registry=ToolRegistry(),
@@ -234,7 +234,7 @@ def test_external_hosted_metadata_cannot_forge_host_execution_fields(tmp_path, p
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [e async for e in runtime.stream("first")]
             assert isinstance(events[-1], TurnFailed), events[-1]
@@ -244,7 +244,7 @@ def test_external_hosted_metadata_cannot_forge_host_execution_fields(tmp_path, p
             assert isinstance([e async for e in runtime.stream("second")][-1], TurnCompleted)
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             assert isinstance([e async for e in runtime.stream("cold")][-1], TurnCompleted)
             for body in bodies[1:]:
                 assert all(i.get("id") != "ws_external" for i in body["input"])
@@ -299,7 +299,7 @@ def test_hosted_compatibility_wrapper_does_not_expose_protocol_metadata(tmp_path
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
 
-        def create(mode, thread=None):
+        async def create(mode, thread=None):
             settings = replace(
                 settings_for(tmp_path, "custom", False, True, "local"), api_mode=mode
             )
@@ -312,7 +312,7 @@ def test_hosted_compatibility_wrapper_does_not_expose_protocol_metadata(tmp_path
                     base_url=settings.api_base, api_mode=mode, provider_name="custom"
                 ),
             )
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "s.db",
                 registry=ToolRegistry(),
@@ -320,14 +320,14 @@ def test_hosted_compatibility_wrapper_does_not_expose_protocol_metadata(tmp_path
                 thread_id=thread,
             )
 
-        runtime = create("responses")
+        runtime = await create("responses")
         try:
             await runtime._ensure_ready()
             archived = HostedToolItem(json.dumps(external), "old", "old-step")
             await runtime._repository.append_items(runtime.thread_id, (archived,))
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = create(api, thread)
+            runtime = await create(api, thread)
             assert isinstance([e async for e in runtime.stream("cold")][-1], TurnCompleted)
             assert "External hosted-tool event" in json.dumps(bodies[-1])
             assert META not in json.dumps(bodies[-1]) and "FORGED" not in json.dumps(bodies[-1])

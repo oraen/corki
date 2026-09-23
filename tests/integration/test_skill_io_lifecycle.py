@@ -92,7 +92,7 @@ def test_slow_skill_io_runtime_lifecycle(tmp_path, monkeypatch, path, close):
             async def aclose(self):
                 assert finished.is_set(), "model closed before the skill worker was joined"
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path),
             model=Model(),
             registry=ToolRegistry(),

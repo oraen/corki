@@ -9,9 +9,9 @@ import pytest
 BOOTSTRAP = r"""
 import asyncio
 from pathlib import Path
-from rich.console import Console
 from corki.cli.application import CorkiApplication
 from corki.cli.terminal import TerminalUI
+from corki.cli.terminal_console import TerminalConsole
 from corki.config import CorkiPaths, CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted, ModelTextDelta
@@ -40,7 +40,7 @@ async def main():
     model = Model()
     runtime = await LangGraphRuntime.acreate(settings=settings, model=model,
                     database_path=cwd / "session.db", home_path=cwd / "home")
-    ui = TerminalUI(settings, cwd / "history", console=Console(color_system=None))
+    ui = TerminalUI(settings, cwd / "history", console=TerminalConsole(color_system=None))
     app = CorkiApplication(settings, CorkiPaths.from_home(cwd / "home"), runtime, ui)
     watch = asyncio.create_task(ui.watch_resize())
     try:

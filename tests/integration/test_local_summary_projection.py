@@ -146,7 +146,7 @@ def test_local_summary_runtime_wire_cold_reopen_and_second_compaction(tmp_path, 
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
 
-        def create(thread=None):
+        async def create(thread=None):
             capabilities = replace(
                 resolve_capabilities(base_url="https://fixture.invalid/v1", api_mode=api_mode),
                 supports_internal_metadata=wire in ("metadata", "kinds_off"),
@@ -154,7 +154,7 @@ def test_local_summary_runtime_wire_cold_reopen_and_second_compaction(tmp_path, 
             registry = ToolRegistry()
             registry.register(Effect())
             adapter = OpenAICompatibleModel if wire == "chat" else OpenAIResponsesModel
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     model="fixture",
@@ -180,7 +180,7 @@ def test_local_summary_runtime_wire_cold_reopen_and_second_compaction(tmp_path, 
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [e async for e in runtime.stream("FIRST_REAL_INPUT")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -210,7 +210,7 @@ def test_local_summary_runtime_wire_cold_reopen_and_second_compaction(tmp_path, 
 
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             assert isinstance(
                 [e async for e in runtime.stream("THIRD_REAL_INPUT")][-1], TurnCompleted
             )
@@ -293,7 +293,7 @@ def test_prefix_cost_prevents_installing_an_oversized_replacement(tmp_path, wire
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
         adapter = OpenAICompatibleModel if wire == "chat" else OpenAIResponsesModel
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 model="fixture",

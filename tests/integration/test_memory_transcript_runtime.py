@@ -89,7 +89,7 @@ def test_original_archive_survives_compaction_without_reextracting_retained_copi
 
         registry = ToolRegistry()
         registry.register(Fact())
-        source = LangGraphRuntime.create(
+        source = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -201,7 +201,7 @@ def test_original_archive_survives_compaction_without_reextracting_retained_copi
                 pass
 
         memory_model = MemoryModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

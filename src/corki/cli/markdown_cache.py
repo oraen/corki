@@ -5,6 +5,7 @@ from copy import copy
 
 from markdown_it import MarkdownIt
 
+from corki.cli.display_text import visible_terminal_text
 from corki.cli.markdown import AssistantMarkdown
 from corki.cli.markdown_fences import unwrap_markdown_fences
 
@@ -21,7 +22,7 @@ class MarkdownParseCache:
         self.open_fence: tuple[str, int] | None = None
 
     def document(self, source: str) -> AssistantMarkdown:
-        source = unwrap_markdown_fences(source)
+        source = unwrap_markdown_fences(visible_terminal_text(source))
         if source == self.source:
             return self.markdown
         if self._append_code(source):

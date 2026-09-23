@@ -37,8 +37,8 @@ def response(events):
     return httpx.Response(200, text="".join("data: " + json.dumps(e) + "\n\n" for e in events))
 
 
-def create(tmp_path, registry, *, thread=None, custom=False):
-    return LangGraphRuntime.create(
+async def create(tmp_path, registry, *, thread=None, custom=False):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             tmp_path,
             api_mode="responses",
@@ -125,7 +125,7 @@ def test_bad_tool_shape_cannot_use_a_preview_or_terminal_echo(
             result.register(Guard())
             return result
 
-        runtime = create(tmp_path, registry(), custom=custom)
+        runtime = await create(tmp_path, registry(), custom=custom)
         rejected = custom or field == "namespace"
         accepted = field in {META, "encrypted_function_args"} and boundary != "added"
         expected = ["call"] if accepted else []
@@ -138,7 +138,7 @@ def test_bad_tool_shape_cannot_use_a_preview_or_terminal_echo(
             thread = runtime.thread_id
         finally:
             await runtime.aclose()
-        cold = create(tmp_path, registry(), custom=custom, thread=thread)
+        cold = await create(tmp_path, registry(), custom=custom, thread=thread)
         try:
             assert isinstance([e async for e in cold.stream("next")][-1], TurnCompleted)
             assert executions == expected and len(requests) == (3 if accepted else 2)
@@ -221,14 +221,14 @@ def test_complete_required_strings_replace_preview_without_poisoning_or_replay(
                 )
             ]
         )
-        runtime = create(tmp_path, registry(), custom=custom)
+        runtime = await create(tmp_path, registry(), custom=custom)
         try:
             assert isinstance([e async for e in runtime.stream("test")][-1], TurnCompleted)
             assert executions == expected and len(requests) == 2
             thread = runtime.thread_id
         finally:
             await runtime.aclose()
-        cold = create(tmp_path, registry(), thread=thread, custom=custom)
+        cold = await create(tmp_path, registry(), thread=thread, custom=custom)
         try:
             assert isinstance([e async for e in cold.stream("next")][-1], TurnCompleted)
             assert executions == expected and len(requests) == 3
@@ -305,7 +305,7 @@ def test_bad_nested_or_hosted_item_is_skipped_and_valid_later_item_survives(
             )
 
         install(monkeypatch, respond)
-        runtime = create(tmp_path, ToolRegistry())
+        runtime = await create(tmp_path, ToolRegistry())
         try:
             rejected = bad["type"] not in {"message", "reasoning"}
             events = [e async for e in runtime.stream("test")]
@@ -351,7 +351,7 @@ def test_invalid_json_string_is_an_observation_not_an_empty_argument_call(
 
         registry = ToolRegistry()
         registry.register(Guard())
-        runtime = create(tmp_path, registry)
+        runtime = await create(tmp_path, registry)
         try:
             assert isinstance([e async for e in runtime.stream("test")][-1], TurnCompleted)
             assert len(requests) == 2 and not executions
@@ -418,7 +418,7 @@ def test_ordinary_freeform_call_identity_without_optional_item_id(
             result.register(Guard())
             return result
 
-        runtime = create(tmp_path, registry(), custom=True)
+        runtime = await create(tmp_path, registry(), custom=True)
         try:
             events = [e async for e in runtime.stream("test")]
             assert isinstance(events[-1], TurnFailed if changed else TurnCompleted), events[-1]
@@ -428,7 +428,7 @@ def test_ordinary_freeform_call_identity_without_optional_item_id(
             thread = runtime.thread_id
         finally:
             await runtime.aclose()
-        cold = create(tmp_path, registry(), custom=True, thread=thread)
+        cold = await create(tmp_path, registry(), custom=True, thread=thread)
         try:
             assert isinstance([e async for e in cold.stream("next")][-1], TurnCompleted)
             assert executions == [(call_id, "")] and len(requests) == (2 if changed else 3)

@@ -64,7 +64,7 @@ def test_interrupt_keeps_initial_terminal_and_next_turn_reuses_it(tmp_path, rout
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -130,7 +130,7 @@ def test_interrupt_keeps_initial_terminal_and_next_turn_reuses_it(tmp_path, rout
             await runtime.aclose()
             assert not manager._sessions
 
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=runtime._settings,
             database_path=tmp_path / "retained.db",
             model=Model(),
@@ -198,7 +198,7 @@ def test_interrupt_keeps_previous_turn_terminal(tmp_path, route, phase):
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

@@ -94,7 +94,7 @@ def test_non_summary_response_preserves_history(
             return packet([OPAQUE, bad])
 
         install_http(monkeypatch, respond)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=replace(
                 config(tmp_path, v2, token_budget), provider_name=provider, api_base=base_url
             ),
@@ -109,6 +109,81 @@ def test_non_summary_response_preserves_history(
             assert isinstance(events[-1], TurnFailed)
             assert await runtime._repository.load_items(runtime.thread_id) == (old,)
             assert len(requests) == 1
+        finally:
+            await runtime.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "event_type", ["response.compaction.done", "response.context_compaction.done"]
+)
+def test_native_compaction_event_is_not_ignored_before_summary(tmp_path, monkeypatch, event_type):
+    def respond(request):
+        events = [
+            {"type": event_type},
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "apparently valid summary"}],
+                },
+            },
+            {"type": "response.completed", "response": {"id": "response"}},
+        ]
+        return httpx.Response(200, text="".join(f"data: {json.dumps(e)}\n\n" for e in events))
+
+    install_http(monkeypatch, respond)
+
+    async def scenario():
+        runtime = await LangGraphRuntime.acreate(
+            settings=config(tmp_path), database_path=tmp_path / "s.db", registry=ToolRegistry()
+        )
+        try:
+            await runtime._ensure_ready()
+            old = UserMessageItem("keep original", "old")
+            await runtime._repository.append_items(runtime.thread_id, (old,))
+            events = [event async for event in runtime.compact()]
+            assert isinstance(events[-1], TurnFailed), events[-1]
+            assert "compaction" in events[-1].error.lower()
+            assert await runtime._repository.load_items(runtime.thread_id) == (old,)
+        finally:
+            await runtime.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("item_type", ["compaction", "compaction_trigger", "context_compaction"])
+def test_native_compaction_item_cannot_be_hidden_by_later_assistant_summary(
+    tmp_path, monkeypatch, item_type
+):
+    def respond(request):
+        return packet(
+            [
+                {**OPAQUE, "type": item_type},
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "apparently valid summary"}],
+                },
+            ]
+        )
+
+    install_http(monkeypatch, respond)
+
+    async def scenario():
+        runtime = await LangGraphRuntime.acreate(
+            settings=config(tmp_path), database_path=tmp_path / "s.db", registry=ToolRegistry()
+        )
+        try:
+            await runtime._ensure_ready()
+            old = UserMessageItem("keep original", "old")
+            await runtime._repository.append_items(runtime.thread_id, (old,))
+            events = [event async for event in runtime.compact()]
+            assert isinstance(events[-1], TurnFailed), events[-1]
+            assert "compaction" in events[-1].error.lower()
+            assert await runtime._repository.load_items(runtime.thread_id) == (old,)
         finally:
             await runtime.aclose()
 

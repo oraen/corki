@@ -58,10 +58,10 @@ class Model:
         pass
 
 
-def runtime_for(tmp_path, compiler, model, policy='"on-request"', rule=None, requirements=()):
+async def runtime_for(tmp_path, compiler, model, policy='"on-request"', rule=None, requirements=()):
     if model.mode == "code_mode_only" and not CodeModeService.available():
         pytest.skip("install corki[code-mode]")
-    return LangGraphRuntime.create(
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -125,7 +125,7 @@ def test_model_escalation_reaches_native_admission_and_real_execution(
             )
         rule = 'prefix_rule(pattern=["mkdir"], decision="allow")' if case.endswith("allow") else ""
         model = Model(mode, "mkdir " + shlex.quote(str(target)), arguments)
-        runtime = runtime_for(tmp_path, compiler, model, policy, rule)
+        runtime = await runtime_for(tmp_path, compiler, model, policy, rule)
         prompts = []
 
         async def approve(request):
@@ -189,7 +189,7 @@ def test_approved_model_escalation_preserves_managed_read_denials(tmp_path, comp
         model = Model(
             mode, "cat " + shlex.quote(str(secret)), {"sandbox_permissions": "require_escalated"}
         )
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path, compiler, model, rule="", requirements=requirements.execution
         )
         prompts = []
@@ -220,7 +220,7 @@ def test_approved_model_escalation_preserves_managed_read_denials(tmp_path, comp
 def test_rule_approval_executes_only_with_host_consent(tmp_path, compiler, mode, decision):
     async def scenario():
         model, prompts = Model(mode), []
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
 
         async def approve(request):
             prompts.append(request)
@@ -288,7 +288,7 @@ def test_session_consent_keeps_original_permission_intent_and_no_sticky_escalati
                 )
             ).execution
         model = Model(mode, command_name + " " + shlex.quote(str(target)))
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path,
             compiler,
             model,
@@ -355,7 +355,7 @@ def test_memory_worker_derivation_does_not_inherit_interactive_review(tmp_path, 
         worker_permissions = await MemoryPermissionSnapshot(parent).for_worker(root)
         assert worker_permissions.approval_policy_json == '"never"'
         model = Model(mode)
-        worker = LangGraphRuntime.create(
+        worker = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=root,
                 skills_enabled=False,
@@ -443,7 +443,7 @@ def test_pending_approval_is_cancelled_and_late_response_rejected(
 ):
     async def scenario():
         model = Model(mode, arguments={"sandbox_permissions": intent})
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
         entered, dismissed = asyncio.Event(), asyncio.Event()
         prompts, events = [], []
 
@@ -497,7 +497,7 @@ def test_cli_approval_respects_requested_sandbox_intent(tmp_path, compiler, mode
     async def scenario():
         target = tmp_path / "cli-fixture"
         model = Model(mode, f"mkdir {target}", {"sandbox_permissions": intent})
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path,
             compiler,
             model,
@@ -535,7 +535,7 @@ def test_cli_approval_respects_requested_sandbox_intent(tmp_path, compiler, mode
 def test_granular_rule_prompt_is_independent_of_sandbox_prompt_switch(tmp_path, compiler, allowed):
     async def scenario():
         model = Model("direct")
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path,
             compiler,
             model,

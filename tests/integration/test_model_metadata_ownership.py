@@ -144,8 +144,8 @@ class Model:
         pass
 
 
-def runtime(tmp_path, settings, model, thread=None):
-    return LangGraphRuntime.create(
+async def runtime(tmp_path, settings, model, thread=None):
+    return await LangGraphRuntime.acreate(
         settings=settings,
         model=model,
         database_path=tmp_path / "sessions.db",
@@ -162,7 +162,7 @@ def fallback_warnings(events):
 def test_unknown_warning_is_admitted_turn_owned_and_repeated_for_later_turns(tmp_path):
     async def scenario():
         model = Model()
-        host = runtime(tmp_path, configured(tmp_path, "unlisted"), model)
+        host = await runtime(tmp_path, configured(tmp_path, "unlisted"), model)
         try:
             stream = host.stream("first")
             first = await anext(stream)
@@ -193,7 +193,7 @@ def test_unknown_warning_is_admitted_turn_owned_and_repeated_for_later_turns(tmp
 def test_cold_pending_keeps_provenance_despite_catalog_replacement(tmp_path, saved_unknown):
     async def scenario():
         name = "unlisted" if saved_unknown else "large"
-        old = runtime(tmp_path, configured(tmp_path, name), Model())
+        old = await runtime(tmp_path, configured(tmp_path, name), Model())
         await old._ensure_ready()
         turn = new_turn_id()
         user = UserMessageItem("durable admission", turn)
@@ -212,7 +212,7 @@ def test_cold_pending_keeps_provenance_despite_catalog_replacement(tmp_path, sav
             configured(tmp_path, "small"), model_contexts=(ModelContextInfo(name, 3000),)
         )
         model = Model()
-        cold = runtime(tmp_path, current, model, old.thread_id)
+        cold = await runtime(tmp_path, current, model, old.thread_id)
         try:
             events = [event async for event in cold.resume_pending()]
             assert isinstance(events[-1], TurnCompleted)
@@ -234,7 +234,7 @@ def test_cold_pending_previous_model_compaction_uses_current_catalog_not_admissi
             configured(tmp_path, "large-preview"),
             model_contexts=(ModelContextInfo("large", 200000, comp_hash="old"),),
         )
-        old = runtime(tmp_path, old_settings, Model())
+        old = await runtime(tmp_path, old_settings, Model())
         assert isinstance([event async for event in old.stream("old history")][-1], TurnCompleted)
         turn = new_turn_id()
         pending = replace(
@@ -252,7 +252,7 @@ def test_cold_pending_previous_model_compaction_uses_current_catalog_not_admissi
             configured(tmp_path, "small"),
             model_contexts=(ModelContextInfo("large", 30000, comp_hash="old"),),
         )
-        cold = runtime(tmp_path, current, model, old.thread_id)
+        cold = await runtime(tmp_path, current, model, old.thread_id)
         try:
             events = [event async for event in cold.resume_pending()]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -273,7 +273,7 @@ def test_checkpoint_only_snapshot_is_restored_without_business_ledger_backup(tmp
             async def emit(self, event):
                 pass
 
-        old = runtime(tmp_path, configured(tmp_path, name), Model())
+        old = await runtime(tmp_path, configured(tmp_path, name), Model())
         await old._ensure_ready()
         turn = new_turn_id()
         user = UserMessageItem("checkpoint input", turn)
@@ -299,7 +299,7 @@ def test_checkpoint_only_snapshot_is_restored_without_business_ledger_backup(tmp
         current = replace(
             configured(tmp_path, "small"), model_contexts=(ModelContextInfo(name, 3000),)
         )
-        cold = runtime(tmp_path, current, model, old.thread_id)
+        cold = await runtime(tmp_path, current, model, old.thread_id)
         try:
             events = [event async for event in cold.resume_pending()]
             assert isinstance(events[-1], TurnCompleted)
@@ -322,7 +322,7 @@ def test_present_but_null_checkpoint_snapshot_is_not_treated_as_legacy_absence(t
     async def scenario():
         from types import SimpleNamespace
 
-        host = runtime(tmp_path, configured(tmp_path), Model())
+        host = await runtime(tmp_path, configured(tmp_path), Model())
         await host._ensure_ready()
         turn = new_turn_id()
         await host._repository.save_turn(

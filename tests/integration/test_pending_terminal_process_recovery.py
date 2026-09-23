@@ -36,7 +36,7 @@ def _crash_with_pending_terminals(directory):
             async def aclose(self):
                 raise AssertionError("crash fixture must not gracefully close")
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=root, skills_enabled=False),
             database_path=root / "process.db",
             home_path=root / "home",
@@ -93,7 +93,7 @@ def test_multiple_pending_results_survive_owner_process_exit(tmp_path):
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "process.db",
             home_path=tmp_path / "home",

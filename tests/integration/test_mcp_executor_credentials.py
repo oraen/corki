@@ -108,7 +108,7 @@ def test_executor_bearer_capability_and_controller_fallback(
                 bearer_token_env_var=name,
                 headers=(("Authorization", "literal-authorization"),),
             )
-            runtime = runtime_for(
+            runtime = await runtime_for(
                 tmp_path,
                 MCPRuntimeContext((MCPHTTPEnvironment("remote", transport),)),
                 mode="compatible",
@@ -156,7 +156,7 @@ def test_invalid_executor_capability_never_falls_back_to_controller_token(
         }
         async with executor(forbidden, environment_info=info) as (transport, packets):
             settings = replace(server(), bearer_token_env_var="CORKI_FIXTURE_EXECUTOR_TOKEN")
-            runtime = runtime_for(
+            runtime = await runtime_for(
                 tmp_path,
                 MCPRuntimeContext((MCPHTTPEnvironment("remote", transport),)),
                 catalog=MCPCatalog((MCPRegistration(settings),)),

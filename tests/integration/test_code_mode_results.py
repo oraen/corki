@@ -38,7 +38,7 @@ async def run_script(tmp_path, script, *, registry=None, mode="code_mode_only"):
         async def aclose(self):
             pass
 
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False, tool_mode=mode),
         database_path=tmp_path / "sessions.db",
         model=Model(),

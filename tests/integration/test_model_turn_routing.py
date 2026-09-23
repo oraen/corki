@@ -75,7 +75,7 @@ def test_response_routing_state_survives_steps_retry_but_not_next_turn(
                 return ToolResult(call.id, call.name, "observation")
 
         registry.register(Guard())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 api_mode="responses",

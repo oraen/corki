@@ -87,7 +87,7 @@ def test_cold_cli_replays_then_resumes_pre_checkpoint_commit(tmp_path, monkeypat
         database = tmp_path / "sessions.db"
         tool, registry, warm_model = Tool(), ToolRegistry(), Model()
         registry.register(tool)
-        warm = LangGraphRuntime.create(
+        warm = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             model=warm_model,
@@ -138,7 +138,7 @@ def test_cold_cli_replays_then_resumes_pre_checkpoint_commit(tmp_path, monkeypat
         cold_model = Model()
         registry = ToolRegistry()
         registry.register(tool)
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             model=cold_model,

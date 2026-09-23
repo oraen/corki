@@ -71,8 +71,8 @@ def test_cold_downshift_preserves_old_search_and_new_plan_separately(
             mcp_servers=(MCPServerSettings("fixture", "http", url="https://fixture.invalid/mcp"),),
         )
 
-        def create(selected, thread=None):
-            return LangGraphRuntime.create(
+        async def create(selected, thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=selected,
                 registry=ToolRegistry(),
                 model=model,
@@ -80,14 +80,14 @@ def test_cold_downshift_preserves_old_search_and_new_plan_separately(
                 thread_id=thread,
             )
 
-        runtime = create(settings)
+        runtime = await create(settings)
         try:
             events = [e async for e in runtime.stream("OLD_INPUT")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             thread = runtime.thread_id
             original = await runtime._repository.load_items(thread)
             await runtime.aclose()
-            runtime = create(replace(settings, model="small"), thread)
+            runtime = await create(replace(settings, model="small"), thread)
             events = [e async for e in runtime.stream("NEW_INPUT")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert [b["model"] for b in bodies] == ["large", "large", "small"]

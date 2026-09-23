@@ -93,7 +93,7 @@ def test_timeout_retains_worker_and_terminal_without_late_publication(
             async def aclose(self):
                 raise AssertionError("borrowed transport must not be closed")
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -226,7 +226,7 @@ def test_parent_shutdown_is_bounded_and_late_close_does_not_reclose_owned_model(
         main, memory = Model(), Model()
         created = iter((main, memory))
         monkeypatch.setattr("corki.core.runtime._create_model", lambda *args: next(created))
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

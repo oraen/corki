@@ -96,7 +96,7 @@ def test_parallel_mcp_startup_is_owned_through_runtime(
             return client
 
         monkeypatch.setattr("corki.mcp.manager.create_client", factory)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

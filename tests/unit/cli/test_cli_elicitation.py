@@ -414,6 +414,7 @@ def test_standard_field_constraints(schema, value, valid):
 def test_terminal_ordinary_draft_survives_preemption():
     from types import SimpleNamespace
 
+    from corki.cli.command_completion import CommandCompleter
     from corki.cli.terminal import TerminalUI
     from corki.cli.transcript import Transcript
 
@@ -422,7 +423,9 @@ def test_terminal_ordinary_draft_survives_preemption():
         defaults = []
 
         class Session:
+            app = SimpleNamespace(output=None)
             default_buffer = SimpleNamespace(text="unfinished ordinary draft")
+            completer = CommandCompleter()
 
             async def prompt_async(self, *args, **kwargs):
                 defaults.append(kwargs["default"])
@@ -437,7 +440,7 @@ def test_terminal_ordinary_draft_survives_preemption():
         closed_views = []
         ui._history_view = SimpleNamespace(close=lambda: closed_views.append(True))
         task = asyncio.create_task(ui.read_message())
-        await entered.wait()
+        await asyncio.wait_for(entered.wait(), timeout=3)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task

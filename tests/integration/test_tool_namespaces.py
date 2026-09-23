@@ -111,7 +111,7 @@ def test_same_leaf_names_route_independently_and_replay_after_restart(
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
 
-        def create(thread=None):
+        async def create(thread=None):
             active_native = not native if thread is not None and switch_mode else native
             registry = ToolRegistry()
             for name in ("history::read", "notes::read", "read"):
@@ -126,7 +126,7 @@ def test_same_leaf_names_route_independently_and_replay_after_restart(
                     supports_native_namespaces=active_native,
                 ),
             )
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,
@@ -139,7 +139,7 @@ def test_same_leaf_names_route_independently_and_replay_after_restart(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             events = [event async for event in runtime.stream("read all three")]
@@ -147,7 +147,7 @@ def test_same_leaf_names_route_independently_and_replay_after_restart(
             assert calls == ["history::read", "notes::read", "read"]
         finally:
             await runtime.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             events = [event async for event in cold.stream("continue")]
             assert isinstance(events[-1], TurnCompleted)
@@ -233,7 +233,7 @@ def test_unknown_namespace_never_dispatches_to_default_leaf(tmp_path, namespace)
                 supports_native_namespaces=True,
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -298,7 +298,7 @@ def test_namespace_fault_fails_before_any_provider_request(tmp_path, failure, ap
                 supports_native_namespaces=failure != "capability",
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -386,7 +386,7 @@ def test_namespaced_handlers_keep_canonical_identity_inside_real_code_mode(tmp_p
         registry = ToolRegistry()
         for name in ("history::read", "notes::read", "read"):
             registry.register(Read(name))
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),
@@ -478,7 +478,7 @@ def test_namespaced_discovery_loads_freeform_and_survives_reopening(
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             registry.register(Read())
             capabilities = replace(
@@ -493,7 +493,7 @@ def test_namespaced_discovery_loads_freeform_and_survives_reopening(
                 client=client,
                 capabilities=capabilities,
             )
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,
@@ -509,7 +509,7 @@ def test_namespaced_discovery_loads_freeform_and_survives_reopening(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             events = [event async for event in runtime.stream("recover text")]
@@ -519,7 +519,7 @@ def test_namespaced_discovery_loads_freeform_and_survives_reopening(
             ]
         finally:
             await runtime.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             events = [event async for event in cold.stream("continue")]
             assert isinstance(events[-1], TurnCompleted)

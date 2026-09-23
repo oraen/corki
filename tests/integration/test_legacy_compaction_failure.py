@@ -151,7 +151,7 @@ def test_ordinary_summary_failure_has_bounded_retries_and_atomic_history(
             "OwnedHTTPClient",
             lambda *a, **kw: real(*a, **kw, transport=httpx.MockTransport(respond)),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path), database_path=tmp_path / "s.db", registry=ToolRegistry()
         )
         try:
@@ -204,7 +204,7 @@ def test_ordinary_summary_cancel_closes_body_and_preserves_window(tmp_path, monk
                 transport=httpx.MockTransport(lambda request: httpx.Response(200, stream=Slow())),
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path), database_path=tmp_path / "s.db", registry=ToolRegistry()
         )
         await runtime._ensure_ready()

@@ -222,7 +222,7 @@ def test_runtime_plain_archived_messages_use_ordinary_transport(tmp_path, mode, 
                     base_url="https://fixture.invalid/v1", api_mode=mode, provider_name=provider
                 ),
             )
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,
@@ -277,7 +277,7 @@ def test_runtime_budget_cannot_reenable_opaque_compaction(tmp_path, mode, provid
                     base_url="https://fixture.invalid/v1", api_mode=mode, provider_name=provider
                 ),
             )
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,

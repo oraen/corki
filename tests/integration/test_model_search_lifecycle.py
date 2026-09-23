@@ -79,7 +79,7 @@ def test_active_model_update_and_retry_keep_search_until_next_turn(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings_for(tmp_path, supported),
             registry=ToolRegistry(),
             model=Model(),
@@ -134,8 +134,8 @@ def test_cold_checkpoint_keeps_search_selection_when_catalog_changes(
 
         settings = settings_for(tmp_path, supported)
 
-        def create(selected, thread=None):
-            return LangGraphRuntime.create(
+        async def create(selected, thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=selected,
                 registry=ToolRegistry(),
                 model=Model(),
@@ -143,7 +143,7 @@ def test_cold_checkpoint_keeps_search_selection_when_catalog_changes(
                 thread_id=thread,
             )
 
-        old = create(settings)
+        old = await create(settings)
         try:
             await old._ensure_ready()
             thread, turn = old.thread_id, new_turn_id()
@@ -183,7 +183,7 @@ def test_cold_checkpoint_keeps_search_selection_when_catalog_changes(
                 replace(i, supports_search_tool=not supported) for i in settings.model_contexts
             ),
         )
-        cold = create(changed, thread)
+        cold = await create(changed, thread)
         try:
             events = [e async for e in cold.resume_pending()]
             assert isinstance(events[-1], TurnCompleted), events[-1]

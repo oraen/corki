@@ -38,7 +38,7 @@ def test_missing_engine_fallback_and_fail_closed_are_real_startup_paths(
             async def aclose(self):
                 closed.append(True)
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -74,7 +74,7 @@ def test_strict_control_collision_is_turn_failure_without_partial_publication(
         registry = ToolRegistry()
         user_tool = UserTool()
         registry.register(user_tool)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

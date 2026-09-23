@@ -13,11 +13,14 @@ class CommandAction(Enum):
 
     NONE = auto()
     PLAN = auto()
+    MODEL = auto()
+    MODEL_PICK = auto()
     CYCLE_MODE = auto()
     CLEAR = auto()
     REALTIME_ON = auto()
     REALTIME_OFF = auto()
     MCP_REFRESH = auto()
+    MCP_LIST = auto()
     COMPACT = auto()
     MEMORY_RESET = auto()
     MEMORY_RESET_PREVIEW = auto()
@@ -59,6 +62,11 @@ class CommandDispatcher:
 
         command = message.strip().lower()
         parts = message.strip().split(maxsplit=1)
+        if len(parts) == 2 and parts[0].lower() == "/model":
+            model = parts[1].strip()
+            if any(c.isspace() or not c.isprintable() for c in model):
+                return CommandResult(handled=True, output="Usage: /model <model-name>")
+            return CommandResult(handled=True, action=CommandAction.MODEL, input_text=model)
         if parts and parts[0].lower() == "/plan":
             return CommandResult(
                 handled=True,
@@ -78,11 +86,12 @@ class CommandDispatcher:
                     "  /help    show this help\n"
                     "  /status  show the current session configuration\n"
                     "  /clear   clear the terminal and redraw the header\n"
-                    "  /model   show how to configure the current model\n"
+                    "  /model [name]  show or change the session model\n"
                     "  /plan [prompt]  enter Plan mode, optionally planning a request\n"
                     "  /compact summarize history in a standalone turn\n"
                     "  /memory reset  review explicit memory reset confirmation\n"
                     "  /memory mode enabled|disabled  set this thread's memory source eligibility\n"
+                    "  /mcp     list discovered MCP tools\n"
                     "  /mcp refresh  reconnect before preparation or the next MCP call\n"
                     "  /realtime [on|off]  configure live turn steering\n"
                     "  /stop    stop an active realtime turn"
@@ -94,6 +103,7 @@ class CommandDispatcher:
                 handled=True,
                 output=(
                     f"Model:       {self._settings.model}\n"
+                    f"Reasoning:   {self._settings.reasoning_effort or 'model default'}\n"
                     f"Mode:        {self._settings.collaboration_mode.title()}\n"
                     f"Directory:   {self._settings.working_directory}\n"
                     f"Corki home:  {self._paths.home}"
@@ -132,6 +142,9 @@ class CommandDispatcher:
                 ),
             )
 
+        if command == "/mcp":
+            return CommandResult(handled=True, action=CommandAction.MCP_LIST)
+
         if command == "/mcp refresh":
             return CommandResult(
                 handled=True,
@@ -145,9 +158,11 @@ class CommandDispatcher:
         if command == "/model":
             return CommandResult(
                 handled=True,
+                action=CommandAction.MODEL_PICK,
                 output=(
                     f"Current model: {self._settings.model}\n"
-                    "Set [agent].model in ~/.corki/config.toml or CORKI_MODEL before startup."
+                    "Use /model <model-name> to change subsequent turns in this session. "
+                    "The configured provider and global configuration are unchanged."
                 ),
             )
 

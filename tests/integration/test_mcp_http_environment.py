@@ -135,7 +135,7 @@ def test_runtime_header_snapshots_reconciliation_plugin_failure_isolation_and_co
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             model=Model(),
             registry=ToolRegistry(),
@@ -169,7 +169,7 @@ def test_runtime_header_snapshots_reconciliation_plugin_failure_isolation_and_co
             async def aclose(self):
                 pass
 
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=settings,
             model=ColdModel(),
             registry=ToolRegistry(),

@@ -136,7 +136,7 @@ def test_pending_operation_selects_generation_at_call_preparation(
             else ()
         )
         entry.publish_if_newest(entry.begin_fetch(), CatalogSnapshot(cached, None))
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,

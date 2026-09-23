@@ -106,7 +106,7 @@ async def run_replacement(tmp_path, change, streamed, tool_mode, phase="model", 
         async def aclose(self):
             pass
 
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path, skills_enabled=False, tool_mode=tool_mode
         ),
@@ -181,7 +181,7 @@ def test_retry_retains_the_sampling_step_router_until_next_step(tmp_path):
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, model_retry_base_seconds=0.001
             ),

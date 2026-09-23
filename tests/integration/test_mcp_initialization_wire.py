@@ -168,8 +168,8 @@ def test_handshake_controls_search_catalog_and_cold_history(
 
         database = tmp_path / "startup.db"
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 model=Model(),
                 registry=ToolRegistry(),
@@ -179,7 +179,7 @@ def test_handshake_controls_search_catalog_and_cold_history(
                 mcp_tool_catalog_cache=cache,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             events = [event async for event in runtime.stream("read")]
@@ -193,7 +193,7 @@ def test_handshake_controls_search_catalog_and_cold_history(
             assert not json.loads(ledger[0][0])["is_error"]
         finally:
             await runtime.aclose()
-        runtime = create(thread)
+        runtime = await create(thread)
         try:
             events = [event async for event in runtime.stream("continue")]
             assert isinstance(events[-1], TurnCompleted), events[-1]

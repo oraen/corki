@@ -110,7 +110,7 @@ def test_retry_after_tool_output_uses_updated_history_and_bounded_budget(
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
         model = OpenAIResponsesModel(
-            api_key="fixture",
+            api_key="FAKE_HISTORY_RETRY_KEY_123",
             base_url="https://fixture.invalid/v1",
             client=client,
             max_retries=7,
@@ -121,7 +121,7 @@ def test_retry_after_tool_output_uses_updated_history_and_bounded_budget(
         )
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -186,7 +186,7 @@ def test_many_retries_do_not_consume_logical_step_or_graph_recursion_budget(tmp_
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, max_steps=1, model_max_retries=20
             ),
@@ -262,7 +262,7 @@ def test_retry_preserves_discovered_definitions_and_unknown_side_effects(tmp_pat
 
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, model_retry_base_seconds=0.001
             ),
@@ -346,7 +346,7 @@ def test_failure_commit_crash_preserves_history_and_retry_budget(
 
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -385,8 +385,8 @@ def test_failure_commit_crash_preserves_history_and_retry_budget(
 @pytest.mark.parametrize(
     "status,body,retries",
     [
-        (401, "unauthorized", 1),
-        (413, "context length exceeded", 1),
+        (401, "unauthorized", 0),
+        (413, "context length exceeded", 0),
         (503, "unavailable", 1),
         (200, "data: {broken\n\n", 1),
         (200, "data: []\n\n", 1),
@@ -414,7 +414,7 @@ def test_runtime_retry_classification_and_logical_step_budget(tmp_path, status, 
                 base_url="https://fixture.invalid/v1", api_mode="responses"
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -469,7 +469,7 @@ def test_backoff_is_owned_cancel_interrupts_but_steer_waits(tmp_path, monkeypatc
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "sessions.db",
             model=Model(),

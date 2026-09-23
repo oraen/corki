@@ -99,7 +99,7 @@ def test_shared_adapter_does_not_share_logical_turn_state(tmp_path):
                 client=client,
             )
             runtimes = [
-                LangGraphRuntime.create(
+                await LangGraphRuntime.acreate(
                     settings=settings(tmp_path),
                     model=model,
                     database_path=tmp_path / f"{branch}.db",
@@ -150,8 +150,8 @@ def test_pending_checkpoint_cold_resume_does_not_restore_routing_token(
         )
         config = settings(tmp_path)
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=config,
                 database_path=tmp_path / "s.db",
                 thread_id=thread,
@@ -162,7 +162,7 @@ def test_pending_checkpoint_cold_resume_does_not_restore_routing_token(
             async def emit(self, event):
                 pass
 
-        runtime = create()
+        runtime = await create()
         try:
             await runtime._ensure_ready()
             thread, turn = runtime.thread_id, new_turn_id()
@@ -200,7 +200,7 @@ def test_pending_checkpoint_cold_resume_does_not_restore_routing_token(
                         yield saver
 
                 monkeypatch.setattr(runtime_module.AsyncSqliteSaver, "from_conn_string", context)
-            runtime = create(thread)
+            runtime = await create(thread)
             assert isinstance([e async for e in runtime.resume_pending()][-1], TurnCompleted)
             assert requests == [None, None]
             assert executions == ["cold-call"]
@@ -240,7 +240,7 @@ def test_local_compaction_has_its_own_routing_session(tmp_path, monkeypatch):
             "OwnedHTTPClient",
             lambda *a, **kw: real(*a, **kw, transport=httpx.MockTransport(respond)),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path, context_window_tokens=20000, auto_compact_tokens=1800),
             database_path=tmp_path / "s.db",
             registry=registry(executions),
@@ -290,15 +290,15 @@ def test_cancelled_stream_routing_state_cannot_reach_next_turn(tmp_path, monkeyp
             lambda *a, **kw: real(*a, **kw, transport=httpx.MockTransport(respond)),
         )
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings(tmp_path),
                 database_path=tmp_path / "s.db",
                 registry=registry([]),
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
 
         async def consume():
@@ -312,7 +312,7 @@ def test_cancelled_stream_routing_state_cannot_reach_next_turn(tmp_path, monkeyp
                 await asyncio.wait_for(task, 3)
             assert cleaned.is_set()
             if close:
-                runtime = create(thread)
+                runtime = await create(thread)
             assert isinstance([e async for e in runtime.stream("next turn")][-1], TurnCompleted)
             assert requests == [None, None]
         finally:
@@ -352,7 +352,7 @@ def test_steering_reuses_current_turn_routing_state(tmp_path, monkeypatch):
             "OwnedHTTPClient",
             lambda *a, **kw: real(*a, **kw, transport=httpx.MockTransport(respond)),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path), database_path=tmp_path / "s.db", registry=registry([])
         )
 

@@ -58,7 +58,7 @@ def test_question_panel_owns_input_and_closes_with_real_runtime(tmp_path, outcom
                 raise AttributeError(name)
 
         model = HeldModel()
-        runtime = make_runtime(tmp_path, model, collaboration_mode="plan")
+        runtime = await make_runtime(tmp_path, model, collaboration_mode="plan")
         app = CorkiApplication(
             runtime._settings, CorkiPaths.from_home(tmp_path / "home"), runtime, UI()
         )

@@ -38,7 +38,7 @@ def test_local_template_enters_runtime_and_round_trips_snapshot(tmp_path, messag
             ),
         )
         model = Model()
-        runtime = make_runtime(tmp_path, model, configured=configured)
+        runtime = await make_runtime(tmp_path, model, configured=configured)
         try:
             events = [e async for e in runtime.stream("input")]
             assert isinstance(events[-1], TurnCompleted)

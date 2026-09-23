@@ -171,8 +171,8 @@ def test_resource_inventory_read_and_cold_history(tmp_path, monkeypatch, mode, c
             ),
         )
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 model=Model(),
                 registry=ToolRegistry(),
@@ -182,7 +182,7 @@ def test_resource_inventory_read_and_cold_history(tmp_path, monkeypatch, mode, c
                 mcp_tool_catalog_cache=cache,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             events = [event async for event in runtime.stream("read resource")]
@@ -196,7 +196,7 @@ def test_resource_inventory_read_and_cold_history(tmp_path, monkeypatch, mode, c
             ]
         finally:
             await runtime.aclose()
-        runtime = create(thread)
+        runtime = await create(thread)
         try:
             events = [event async for event in runtime.stream("continue")]
             assert isinstance(events[-1], TurnCompleted), events[-1]

@@ -53,7 +53,7 @@ def test_host_selection_drives_context_and_requirements(tmp_path, catalog, selec
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_include_instructions=catalog,

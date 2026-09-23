@@ -77,7 +77,7 @@ def test_output_schema_roundtrips_but_never_becomes_a_wire_tool_field():
     assert tool_spec_from_payload(tool_spec_to_payload(typed)) == typed
     serializer = checkpoint_serializer()
     assert serializer.loads_typed(serializer.dumps_typed(typed)) == typed
-    assert "output_schema" not in typed.as_response_tool(native_namespaces=True)
+    assert "output_schema" not in typed.as_response_tool()
     assert "output_schema" not in typed.as_chat_completion_tool()["function"]
 
 

@@ -117,7 +117,7 @@ def test_encrypted_observation_http_and_cold_replay(tmp_path, mode, native, fail
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             registry.register(Read())
             adapter = OpenAIResponsesModel if mode == "responses" else OpenAICompatibleModel
@@ -131,7 +131,7 @@ def test_encrypted_observation_http_and_cold_replay(tmp_path, mode, native, fail
                     supports_encrypted_tool_output=native,
                 ),
             )
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
                 database_path=tmp_path / "sessions.db",
                 registry=registry,
@@ -139,7 +139,7 @@ def test_encrypted_observation_http_and_cold_replay(tmp_path, mode, native, fail
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         original = runtime._repository.append_items
         save_turn = runtime._repository.save_turn
@@ -178,7 +178,7 @@ def test_encrypted_observation_http_and_cold_replay(tmp_path, mode, native, fail
                 # This is a crash boundary, not a graceful pending-write flush.
                 runtime._pending_terminals.clear()
             await runtime.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             if failure:
                 recovered = [event async for event in cold.resume_pending()]
@@ -268,7 +268,7 @@ def test_archived_cipher_does_not_trigger_summary_and_js_projection_never_reads_
 
         registry = ToolRegistry()
         registry.register(Read())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

@@ -107,7 +107,7 @@ def test_real_cell_discovers_and_invokes_normal_ledger_backed_tool(
 
         registry = ToolRegistry()
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -171,7 +171,7 @@ def test_yield_wait_incremental_output_and_session_store(tmp_path):
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),
@@ -224,7 +224,7 @@ def test_engine_module_boundaries_are_model_observations(tmp_path, source, expec
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),
@@ -271,7 +271,7 @@ def test_cancel_joins_busy_engine_and_nested_tool(tmp_path, busy):
 
         registry = ToolRegistry()
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),
@@ -341,7 +341,7 @@ def test_nested_errors_use_normal_tool_boundary(tmp_path, fatal):
 
         registry = ToolRegistry()
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),
@@ -421,7 +421,7 @@ def test_nested_parallel_exclusive_order_and_unawaited_tool_cleanup(tmp_path):
         registry = ToolRegistry()
         registry.register(Probe("parallel", True))
         registry.register(Probe("exclusive", False))
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),

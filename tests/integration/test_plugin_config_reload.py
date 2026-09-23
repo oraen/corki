@@ -290,7 +290,7 @@ def test_approval_reload_updates_next_turn_plugin_and_skill_views(
             settings = replace(settings, disabled_plugins=frozenset())
         if change == "host_empty_dirs":
             settings = replace(settings, plugin_dirs=())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             model=model,
             registry=ToolRegistry(),
@@ -660,7 +660,7 @@ def test_approval_reload_updates_next_turn_plugin_and_skill_views(
                 tool_search_mode=settings.tool_search_mode,
                 tool_mode=settings.tool_mode,
             )
-            cold = LangGraphRuntime.create(
+            cold = await LangGraphRuntime.acreate(
                 settings=cold_settings,
                 model=cold_model,
                 registry=ToolRegistry(),

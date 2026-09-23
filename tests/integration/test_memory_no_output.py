@@ -99,7 +99,7 @@ def test_new_empty_source_retracts_old_inputs_then_reopen_deduplicates(tmp_path,
                     connection.execute(
                         "UPDATE memory_jobs SET finished_at=0 WHERE job_key='global'"
                     )
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,

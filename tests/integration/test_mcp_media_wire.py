@@ -135,7 +135,7 @@ def test_mcp_ordered_media_and_cipher_reach_model_without_leaking_into_logs(
         registry = ToolRegistry()
         registry.register(MCPTool("docs", {"name": "read"}, Client()))
         database = tmp_path / "session.db"
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

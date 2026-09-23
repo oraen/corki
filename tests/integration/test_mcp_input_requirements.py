@@ -52,7 +52,7 @@ def test_explicit_mcp_link_waits_before_sampling_and_executes(tmp_path, monkeypa
             async def aclose(self):
                 pass
 
-        runtime, client = make_runtime(
+        runtime, client = await make_runtime(
             tmp_path, monkeypatch, Model(), mcp_optional_startup_grace_ms=10
         )
 
@@ -116,7 +116,7 @@ def test_steered_requirement_rebinds_before_next_model_step(tmp_path, monkeypatc
             async def aclose(self):
                 pass
 
-        runtime, clients, _ = setup_input_runtime(tmp_path, monkeypatch, Model())
+        runtime, clients, _ = await setup_input_runtime(tmp_path, monkeypatch, Model())
         runtime._registry.register(Steer())
 
         async def consume():
@@ -179,7 +179,9 @@ def test_cold_turn_retains_skill_requirement_after_skill_removed(tmp_path, monke
             async def aclose(self):
                 pass
 
-        old, clients, skill = setup_input_runtime(tmp_path, monkeypatch, FirstModel(), kind="skill")
+        old, clients, skill = await setup_input_runtime(
+            tmp_path, monkeypatch, FirstModel(), kind="skill"
+        )
         old._registry.register(Noop())
         turn = new_turn_id()
         try:
@@ -221,7 +223,7 @@ def test_cold_turn_retains_skill_requirement_after_skill_removed(tmp_path, monke
             async def aclose(self):
                 pass
 
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=old._settings,
             model=ColdModel(),
             registry=ToolRegistry(),
@@ -259,7 +261,7 @@ def test_cold_turn_retains_skill_requirement_after_skill_removed(tmp_path, monke
     asyncio.run(scenario())
 
 
-def setup_input_runtime(
+async def setup_input_runtime(
     tmp_path,
     monkeypatch,
     model,
@@ -309,7 +311,7 @@ def setup_input_runtime(
         return client
 
     monkeypatch.setattr("corki.mcp.manager.create_client", factory)
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             plugin_dirs=(tmp_path / ".corki/plugins",),
@@ -353,7 +355,7 @@ def test_guardian_evidence_does_not_request_capabilities(tmp_path, monkeypatch, 
             async def aclose(self):
                 pass
 
-        runtime, clients, path = setup_input_runtime(
+        runtime, clients, path = await setup_input_runtime(
             tmp_path, monkeypatch, Model(), kind=kind, source=SessionSource.internal("guardian")
         )
         mention = (
@@ -409,7 +411,7 @@ def test_explicit_requirement_cannot_override_managed_denial(
             async def aclose(self):
                 pass
 
-        runtime, clients, _ = setup_input_runtime(
+        runtime, clients, _ = await setup_input_runtime(
             tmp_path, monkeypatch, Model(), kind=kind, requirements={"mcp_servers": {}}
         )
         text, path = (
@@ -452,7 +454,7 @@ def test_requirements_do_not_leak_to_next_turn(tmp_path, monkeypatch):
             async def aclose(self):
                 pass
 
-        runtime, clients, _ = setup_input_runtime(tmp_path, monkeypatch, Model())
+        runtime, clients, _ = await setup_input_runtime(tmp_path, monkeypatch, Model())
         try:
             await runtime._ensure_ready()
             clients["pending"].release.set()
@@ -492,7 +494,7 @@ def test_selected_plugin_uses_exact_host_identity(tmp_path, monkeypatch, matches
             async def aclose(self):
                 pass
 
-        runtime, clients, _ = setup_input_runtime(tmp_path, monkeypatch, Model())
+        runtime, clients, _ = await setup_input_runtime(tmp_path, monkeypatch, Model())
         runtime.request_mcp_catalog(
             MCPCatalog(
                 (
@@ -540,7 +542,7 @@ def test_cancel_explicit_wait_preserves_session_startup(tmp_path, monkeypatch):
             async def aclose(self):
                 pass
 
-        runtime, clients, _ = setup_input_runtime(tmp_path, monkeypatch, Model())
+        runtime, clients, _ = await setup_input_runtime(tmp_path, monkeypatch, Model())
 
         async def consume():
             return [e async for e in runtime.stream("[$docs](mcp://pending)")]
@@ -602,7 +604,7 @@ def test_explicit_requirement_reaches_real_code_mode_cell(tmp_path, monkeypatch,
             async def aclose(self):
                 pass
 
-        runtime, clients, skill_path = setup_input_runtime(
+        runtime, clients, skill_path = await setup_input_runtime(
             tmp_path,
             monkeypatch,
             Model(),
@@ -694,7 +696,7 @@ def test_explicit_inputs_reach_discovery_call_and_observation(
             async def aclose(self):
                 pass
 
-        runtime, clients, skill_path = setup_input_runtime(
+        runtime, clients, skill_path = await setup_input_runtime(
             tmp_path, monkeypatch, Model(), kind=kind, mode=mode
         )
         if kind == "mcp":

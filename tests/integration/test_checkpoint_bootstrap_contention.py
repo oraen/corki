@@ -62,7 +62,7 @@ def test_actual_sqlite_busy_bootstrap_retries_without_replaying_turn(tmp_path, m
                 pass
 
         runtimes = [
-            LangGraphRuntime.create(
+            await LangGraphRuntime.acreate(
                 settings=CorkiSettings(tmp_path, skills_enabled=False),
                 database_path=tmp_path / f"{name}.db",
                 registry=ToolRegistry(),
@@ -148,8 +148,8 @@ def test_busy_bootstrap_failure_or_cancel_joins_cleanup_before_reuse(tmp_path, m
             async def aclose(self):
                 pass
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(tmp_path, skills_enabled=False),
                 database_path=tmp_path / "sessions.db",
                 registry=ToolRegistry(),
@@ -157,7 +157,7 @@ def test_busy_bootstrap_failure_or_cancel_joins_cleanup_before_reuse(tmp_path, m
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
 
         async def consume(owner):
             return [event async for event in owner.stream("one input")]
@@ -191,7 +191,7 @@ def test_busy_bootstrap_failure_or_cancel_joins_cleanup_before_reuse(tmp_path, m
                 await action_task
             assert savers[0].conn._connection is None and len(savers) == 1
             if action == "close":
-                runtime = create(runtime.thread_id)
+                runtime = await create(runtime.thread_id)
             assert isinstance((await consume(runtime))[-1], TurnCompleted)
             assert len(savers) == 2 and len(requests) == 1
         finally:

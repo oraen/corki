@@ -139,7 +139,7 @@ def test_native_rejects_invalid_policy_before_any_side_effect(tmp_path, profile)
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, execution_permissions=policy
             ),
@@ -258,7 +258,7 @@ async def _run(tmp_path, policy, name, arguments, nested):
         async def aclose(self):
             pass
 
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,

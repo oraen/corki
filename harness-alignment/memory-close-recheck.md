@@ -1,5 +1,23 @@
 # 记忆关闭与claim所有权复核（D/E）
 
+## 2026-09-22：重置与 OAuth 写入的外层取消复核
+
+检查实际调用链：`LangGraphRuntime.aclose` 创建并 shield 共享 `_close_task`；
+`_close_resources` 先 join 活动 Turn，随后在同一关闭任务中等待
+`MemoryResetter.aclose`，最后才关闭模型及存储。重置自身把 `_run` 作为
+受锁保护的活动任务，`reset` 的取消等待者也必须 join 已开始的重置。
+因此 `MemoryResetter.aclose` 单独被外部取消可能返回早，但公开 Runtime
+关闭入口不会将该取消转发给共享清理任务；不能据内层单个 await 推断
+Runtime 会提前关闭。已有真实 Runtime 文件删除门控测试覆盖关闭等待者
+取消/不取消两个场景。
+
+通用 MCP OAuth 的 File 凭据保存虽用 `asyncio.to_thread`，实际刷新入口
+`refresh_oauth` 持有并 shield `_transaction` 至完成，且 token 请求限时块
+结束后才进入保存；登录入口由 `join_oauth_task` 持有完成任务。未发现
+模型服务认证或官方账户请求被该链路引入。本轮定向运行重置关闭双场景
+与 `tests/unit/mcp/test_oauth_refresh.py`：**20 passed / 1.42s**，退出 0；
+没有生产修改。不将此结果扩大为所有外部存储在进程强杀下的原子性保证。
+
 ## 最新：父关闭等待者取消不遗失超时子任务
 
 2026-09-12 再读原生 memories/write/src/start.rs 的后台所有权与 phase2.rs

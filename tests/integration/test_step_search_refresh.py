@@ -25,21 +25,34 @@ from corki.tools import ToolRegistry
 
 @pytest.mark.parametrize("mode", ["native", "compatible"])
 @pytest.mark.parametrize("streamed", [False, True])
-def test_replaced_search_handler_cannot_change_an_already_prepared_step(tmp_path, mode, streamed):
+@pytest.mark.parametrize("change_kind", ["metadata", "input_schema", "output_schema"])
+def test_replaced_search_handler_cannot_change_an_already_prepared_step(
+    tmp_path, mode, streamed, change_kind
+):
     async def scenario():
         requests, executed = [], []
         registry = ToolRegistry()
         owner = registry.create_owner()
 
         class Tool:
-            def __init__(self, word):
+            def __init__(self, word, enum=True, output_enum=True):
                 self.word = word
+                self.enum = enum
+                self.output_enum = output_enum
                 self.spec = ToolSpec(
-                    "lookup", word, {}, exposure=ToolExposure.DEFERRED, source=word
+                    "lookup",
+                    word,
+                    {"type": "object", "properties": {"value": {"enum": [enum]}}},
+                    exposure=ToolExposure.DEFERRED,
+                    source=word,
+                    output_schema={
+                        "type": "object",
+                        "properties": {"value": {"enum": [output_enum]}},
+                    },
                 )
 
             async def execute(self, call, context):
-                executed.append(self.word)
+                executed.append((self.word, self.enum, self.output_enum))
                 return ToolResult(call.id, call.name, self.word)
 
         old = Tool("amber")
@@ -51,7 +64,16 @@ def test_replaced_search_handler_cannot_change_an_already_prepared_step(tmp_path
                 turn, step = request.items[-1].turn_id, new_step_id()
                 if len(requests) == 1:
                     previous = registry.get("tool_search")
-                    registry.replace_owned(owner, (Tool("cobalt"),))
+                    registry.replace_owned(
+                        owner,
+                        (
+                            Tool("cobalt")
+                            if change_kind == "metadata"
+                            else Tool("amber", enum=1)
+                            if change_kind == "input_schema"
+                            else Tool("amber", output_enum=1),
+                        ),
+                    )
                     await runtime._refresh_tools()
                     assert registry.get("tool_search") is not previous
                     call = ToolCall(new_tool_call_id(), "tool_search", {"query": "amber"})
@@ -71,14 +93,29 @@ def test_replaced_search_handler_cannot_change_an_already_prepared_step(tmp_path
                     assert visible.discovered_tools == ()
                     assert "search again" in visible.content
                     assert "lookup" not in {spec.name for spec in request.tools}
-                    call = ToolCall(new_tool_call_id(), "tool_search", {"query": "cobalt"})
+                    call = ToolCall(
+                        new_tool_call_id(),
+                        "tool_search",
+                        {"query": "cobalt" if change_kind == "metadata" else "amber"},
+                    )
                 elif len(requests) == 3:
-                    assert next(
-                        spec for spec in request.tools if spec.name == "lookup"
-                    ).description == ("cobalt")
+                    loaded = next(spec for spec in request.tools if spec.name == "lookup")
+                    assert loaded.description == (
+                        "cobalt" if change_kind == "metadata" else "amber"
+                    )
+                    enum_value = loaded.parameters["properties"]["value"]["enum"][0]
+                    assert type(enum_value) is (int if change_kind == "input_schema" else bool)
+                    output_enum = loaded.output_schema["properties"]["value"]["enum"][0]
+                    assert type(output_enum) is (int if change_kind == "output_schema" else bool)
                     call = ToolCall(new_tool_call_id(), "lookup", {})
                 else:
-                    assert len(requests) == 4 and executed == ["cobalt"]
+                    assert len(requests) == 4 and executed == [
+                        ("cobalt", True, True)
+                        if change_kind == "metadata"
+                        else ("amber", 1, True)
+                        if change_kind == "input_schema"
+                        else ("amber", True, 1)
+                    ]
                     yield ModelCompleted((AssistantMessageItem("done", turn, step),))
                     return
                 item = ToolCallItem(call, turn, step)
@@ -89,7 +126,7 @@ def test_replaced_search_handler_cannot_change_an_already_prepared_step(tmp_path
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -225,7 +262,7 @@ def test_cold_search_commit_recovery_projects_stale_definitions_before_budget(
         registry = ToolRegistry()
         registry.register(Tool())
         database = tmp_path / "cold-budget.db"
-        warm = LangGraphRuntime.create(
+        warm = await LangGraphRuntime.acreate(
             settings=settings, database_path=database, registry=registry, model=Model()
         )
         try:
@@ -271,7 +308,7 @@ def test_cold_search_commit_recovery_projects_stale_definitions_before_budget(
         cold_registry = ToolRegistry()
         if change != "removed":
             cold_registry.register(Replacement())
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             registry=cold_registry,
@@ -348,7 +385,7 @@ def test_unavailable_large_search_result_does_not_consume_request_budget(tmp_pat
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

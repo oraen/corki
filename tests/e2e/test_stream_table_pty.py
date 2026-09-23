@@ -50,7 +50,7 @@ async def main():
     cwd = Path.cwd()
     settings = CorkiSettings(cwd, skills_enabled=False, plugins_enabled=False)
     model = Model()
-    runtime = LangGraphRuntime.create(settings=settings, model=model,
+    runtime = await LangGraphRuntime.acreate(settings=settings, model=model,
         database_path=cwd / "sessions.db", home_path=cwd / "home")
     steer = runtime.steer
     async def gated_steer(message):

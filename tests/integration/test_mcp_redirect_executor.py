@@ -72,7 +72,7 @@ def test_executor_redirects_keep_credentials_deadlines_ids_and_single_effect(
                 server(),
                 bearer_token_env_var="CORKI_REDIRECT_EXECUTOR_TOKEN" if remote_bearer else None,
             )
-            runtime = runtime_for(
+            runtime = await runtime_for(
                 tmp_path,
                 MCPRuntimeContext((MCPHTTPEnvironment("remote", transport),)),
                 mode=mode,

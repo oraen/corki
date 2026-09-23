@@ -92,10 +92,10 @@ def test_yielded_cell_survives_turn_not_process_and_never_replays_side_effect(tm
             async def aclose(self):
                 pass
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             registry.register(Probe())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
                 ),
@@ -105,7 +105,7 @@ def test_yielded_cell_survives_turn_not_process_and_never_replays_side_effect(tm
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             first = [event async for event in runtime.stream("start background")]
             assert isinstance(first[-1], TurnCompleted), first[-1]
@@ -113,7 +113,7 @@ def test_yielded_cell_survives_turn_not_process_and_never_replays_side_effect(tm
             if reopen:
                 thread = runtime.thread_id
                 await runtime.aclose()
-                runtime = create(thread)
+                runtime = await create(thread)
             second = [event async for event in runtime.stream("observe background")]
             assert isinstance(second[-1], TurnCompleted), second[-1]
             assert len(calls) == 1 and len(requests) == 4
@@ -185,7 +185,7 @@ def test_responses_wire_to_real_module_to_nested_tool_and_back(
         monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
         registry = ToolRegistry()
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -286,7 +286,7 @@ def test_store_commits_js_errors_but_not_terminated_cell_and_plan_reaches_graph(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),
@@ -374,7 +374,7 @@ def test_new_step_has_its_own_nested_execution_gate_but_retry_retains_it(tmp_pat
         registry.register(Probe("hold"))
         registry.register(Probe("ready"))
         registry.register(Probe("release"))
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),

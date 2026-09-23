@@ -69,8 +69,8 @@ class ShutdownModel:
         self.closed = True
 
 
-def runtime_for(tmp_path, model, *, registry=None, queue_size=1):
-    return LangGraphRuntime.create(
+async def runtime_for(tmp_path, model, *, registry=None, queue_size=1):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path, skills_enabled=False, event_queue_size=queue_size
         ),
@@ -89,7 +89,7 @@ def test_runtime_owns_active_model_and_tool_until_durable_terminal(
     async def scenario():
         model, tool, registry = ShutdownModel(site), BlockingTool(), ToolRegistry()
         registry.register(tool)
-        runtime = runtime_for(tmp_path, model, registry=registry)
+        runtime = await runtime_for(tmp_path, model, registry=registry)
         events, close_observations = [], []
         original_close = runtime._repository.close
 
@@ -156,7 +156,7 @@ def test_runtime_interrupt_retains_but_close_terminates_real_exec_process(tmp_pa
                     )
                 )
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "process.db",
             model=ExecModel(),
@@ -213,7 +213,7 @@ def test_runtime_interrupt_retains_but_close_terminates_real_exec_process(tmp_pa
 def test_close_cancels_and_joins_initial_turn_write_before_dependencies(tmp_path: Path):
     async def scenario():
         model = ShutdownModel()
-        runtime = runtime_for(tmp_path, model)
+        runtime = await runtime_for(tmp_path, model)
         saving, cancelled, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
         original_save = runtime._repository.save_turn
 
@@ -273,7 +273,7 @@ def test_concurrent_close_and_cancelled_waiter_share_uninterrupted_cleanup(tmp_p
                 yield
 
         model = CleanupModel()
-        runtime = runtime_for(tmp_path, model)
+        runtime = await runtime_for(tmp_path, model)
         events = []
 
         async def consume():
@@ -334,7 +334,7 @@ def test_close_failure_still_closes_other_resources_and_is_shared(
     tmp_path: Path, fault, error_type
 ):
     async def scenario():
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -396,7 +396,7 @@ def test_close_failure_still_closes_other_resources_and_is_shared(
 def test_cancellation_cleanup_error_preserves_cancel_terminal_but_fails_close(tmp_path: Path):
     async def scenario():
         model = ShutdownModel()
-        runtime = runtime_for(tmp_path, model)
+        runtime = await runtime_for(tmp_path, model)
         calls = 0
         original = runtime._process_manager.terminate_all
 
@@ -438,7 +438,7 @@ def test_cancellation_cleanup_error_preserves_cancel_terminal_but_fails_close(tm
 def test_close_does_not_need_paused_consumer_to_make_progress(tmp_path: Path, phase, queue_size):
     async def scenario():
         model = ShutdownModel("burst", burst_blocked_at=queue_size + 1)
-        runtime = runtime_for(tmp_path, model, queue_size=queue_size)
+        runtime = await runtime_for(tmp_path, model, queue_size=queue_size)
         stream = runtime.stream("wait", realtime=True)
         try:
             await anext(stream)
@@ -472,7 +472,7 @@ def test_close_does_not_need_paused_consumer_to_make_progress(tmp_path: Path, ph
 def test_close_waits_for_selected_terminal_commit_without_reclassifying_it(tmp_path: Path):
     async def scenario():
         model = ShutdownModel("answer")
-        runtime = runtime_for(tmp_path, model)
+        runtime = await runtime_for(tmp_path, model)
         saving, release = asyncio.Event(), asyncio.Event()
         original_save = runtime._repository.save_turn
 

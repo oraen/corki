@@ -63,7 +63,7 @@ def test_real_source_runtime_controls_later_extraction(tmp_path, source_name, ex
     async def scenario():
         database = tmp_path / "history.db"
         settings = CorkiSettings(working_directory=tmp_path, skills_enabled=False)
-        source = LangGraphRuntime.create(
+        source = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             home_path=tmp_path / "home",
@@ -76,7 +76,7 @@ def test_real_source_runtime_controls_later_extraction(tmp_path, source_name, ex
         finally:
             await source.aclose()
         memory_model = MemoryModel()
-        foreground = LangGraphRuntime.create(
+        foreground = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -114,7 +114,7 @@ def test_layout_failure_is_background_only_and_precedes_claims(tmp_path, monkeyp
 
     async def scenario():
         database = tmp_path / "history.db"
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, memories_enabled=True
             ),
@@ -168,7 +168,7 @@ def test_typed_non_root_host_skips_background_startup(tmp_path, variant):
 
     async def scenario():
         memory_model = MemoryModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, memories_enabled=True
             ),
@@ -195,7 +195,7 @@ def test_root_startup_is_not_limited_to_interactive_historical_sources(tmp_path,
     from corki.protocol.session_source import SessionSource
 
     async def scenario():
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, memories_enabled=True
             ),
@@ -238,7 +238,7 @@ def test_runtime_reopen_preserves_history_source_but_uses_current_startup_host(
             if current_internal
             else SessionSource.from_startup_arg("exec")
         )
-        first = LangGraphRuntime.create(
+        first = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=database,
             home_path=tmp_path / "home",
@@ -257,7 +257,7 @@ def test_runtime_reopen_preserves_history_source_but_uses_current_startup_host(
         await sessions.create_thread(other, tmp_path)
         await sessions.append_items(other, (UserMessageItem("other source", new_turn_id()),))
         memory_model = MemoryModel()
-        resumed = LangGraphRuntime.create(
+        resumed = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -304,7 +304,7 @@ def test_shutdown_joins_cancelled_layout_worker_before_closing_storage(tmp_path,
             finished.set()
 
         monkeypatch.setattr("corki.memory.git_baseline.ensure_layout", layout)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, memories_enabled=True
             ),

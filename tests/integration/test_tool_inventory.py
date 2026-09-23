@@ -95,7 +95,7 @@ def test_selected_inventory_follows_search_to_observation(tmp_path, enabled, lit
         )
         registry = ToolRegistry()
         registry.register(Read())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=inventory_settings(tmp_path, lite=lite, enabled=enabled),
             model=model,
             registry=registry,

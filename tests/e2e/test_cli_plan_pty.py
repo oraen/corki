@@ -42,7 +42,7 @@ async def main():
     settings = CorkiSettings(working_directory=cwd, skills_enabled=False,
         plugins_enabled=False, realtime_enabled=False, reasoning_effort="low")
     model = Model()
-    runtime = LangGraphRuntime.create(settings=settings, database_path=cwd / "session.db",
+    runtime = await LangGraphRuntime.acreate(settings=settings, database_path=cwd / "session.db",
                                       model=model)
     if fail:
         async def fail_update(**kwargs):

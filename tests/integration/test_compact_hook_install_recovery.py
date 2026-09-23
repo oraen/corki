@@ -6,7 +6,7 @@ from dataclasses import replace
 
 import pytest
 
-from corki.config import CorkiSettings
+from corki.config import CorkiSettings, MCPServerSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
 from corki.core import LangGraphRuntime
 from corki.core.graph import GraphRunContext
@@ -36,9 +36,14 @@ from corki.tools import ToolRegistry
         ("PostCompact", "invalid_version", "install"),
         ("PostCompact", "invalid_session", "install"),
         ("PostCompact", "legacy_session", "install"),
+        ("PostCompact", "duplicate_command", "install"),
         *[
             ("PostCompact", f"payload_{field}", "install")
             for field in ("model", "cwd", "trigger", "transcript_path", "agent_id")
+        ],
+        *[
+            ("PostCompact", f"mismatch_{field}", "install")
+            for field in ("model", "cwd", "trigger", "transcript_path", "agent", "extra")
         ],
         ("PostCompact", "unchanged", "unknown"),
         ("PostCompact", "removed", "unknown"),
@@ -56,17 +61,31 @@ from corki.tools import ToolRegistry
     ],
 )
 @pytest.mark.parametrize("automatic", [False, True])
+@pytest.mark.parametrize("hook_kind", ["command", "mcp_tool"])
 def test_post_compact_plan_is_bound_before_history_install(
-    tmp_path, monkeypatch, change, automatic, window, event
+    tmp_path, monkeypatch, change, automatic, window, event, hook_kind
 ):
     async def scenario():
         source = tmp_path / "config.toml"
-        fingerprint, _ = command_identity(
-            {"type": "command", "command": "review"}, event_name=event
+        handler = (
+            {
+                "type": "mcp_tool",
+                "server": "policy",
+                "tool": "review",
+                "input": {"session_id": "${session_id}"},
+            }
+            if hook_kind == "mcp_tool"
+            else {"type": "command", "command": "review"}
         )
+        fingerprint, _ = command_identity(handler, event_name=event)
         event_key = "pre_compact" if event == "PreCompact" else "post_compact"
+        handler_document = (
+            'type="mcp_tool"\nserver="policy"\ntool="review"\ninput={session_id="${session_id}"}\n'
+            if hook_kind == "mcp_tool"
+            else 'type="command"\ncommand="review"\n'
+        )
         document = (
-            f'[[hooks.{event}]]\n[[hooks.{event}.hooks]]\ntype="command"\ncommand="review"\n'
+            f"[[hooks.{event}]]\n[[hooks.{event}.hooks]]\n{handler_document}"
             f"[hooks.state.{json.dumps(f'{source}:{event_key}:0:0')}]\n"
             f"trusted_hash={json.dumps(fingerprint)}\n"
         )
@@ -79,6 +98,11 @@ def test_post_compact_plan_is_bound_before_history_install(
             context_window_tokens=8000,
             auto_compact_tokens=3000,
             compact_prompt="SUMMARY_REQUEST",
+            mcp_servers=(
+                (MCPServerSettings("policy", "http", url="https://fixture.invalid"),)
+                if hook_kind == "mcp_tool"
+                else ()
+            ),
             configuration=LocalConfigState(()) if change == "added" else configured,
         )
         calls, summaries = [], []
@@ -100,6 +124,37 @@ def test_post_compact_plan_is_bound_before_history_install(
             }
 
         monkeypatch.setattr("corki.core.compact_hooks.run_command", runner)
+
+        class Client:
+            is_closed = False
+            server_instructions = None
+
+            def __init__(self, settings):
+                self.settings = settings
+
+            async def start(self):
+                pass
+
+            async def list_tools(self):
+                return ({"name": "review", "inputSchema": {"type": "object"}},)
+
+            async def request(self, method, params):
+                assert method == "tools/call"
+                calls.append(params["arguments"])
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": '{"continue":false}' if change == "stopped" else "{}",
+                        }
+                    ]
+                }
+
+            async def aclose(self):
+                self.is_closed = True
+
+        if hook_kind == "mcp_tool":
+            monkeypatch.setattr("corki.mcp.manager.create_client", Client)
 
         class Model:
             async def stream(self, request):
@@ -146,6 +201,8 @@ def test_post_compact_plan_is_bound_before_history_install(
         warm = await create(settings)
         try:
             await warm._ensure_ready()
+            if hook_kind == "mcp_tool":
+                await warm._mcp_manager.start()
             thread, turn = warm.thread_id, new_turn_id()
             user = UserMessageItem("CURRENT INPUT", turn) if automatic else None
             await warm._repository.save_turn(
@@ -210,6 +267,8 @@ def test_post_compact_plan_is_bound_before_history_install(
             thread,
         )
         try:
+            if hook_kind == "mcp_tool":
+                await cold._mcp_manager.start()
             if change == "invalid_receipt":
                 load_receipt = cold._repository.load_hook_batch
 
@@ -229,7 +288,8 @@ def test_post_compact_plan_is_bound_before_history_install(
                 "invalid_version",
                 "invalid_session",
                 "legacy_session",
-            } or change.startswith("payload_"):
+                "duplicate_command",
+            } or change.startswith(("payload_", "mismatch_")):
                 load_batch = cold._repository.load_hook_batch
 
                 async def corrupt_version(*args):
@@ -238,11 +298,42 @@ def test_post_compact_plan_is_bound_before_history_install(
                         snapshot, records = result
                         if change == "invalid_version":
                             return {**snapshot, "version": True}, records
+                        if change == "duplicate_command":
+                            return {
+                                **snapshot,
+                                "commands": [*snapshot["commands"], *snapshot["commands"]],
+                            }, records
                         if change.startswith("payload_"):
                             field = change.removeprefix("payload_")
                             return {
                                 **snapshot,
                                 "payload": {**snapshot["payload"], field: ["invalid"]},
+                            }, records
+                        if change.startswith("mismatch_"):
+                            field = change.removeprefix("mismatch_")
+                            if field == "agent":
+                                return {
+                                    **snapshot,
+                                    "payload": {
+                                        **snapshot["payload"],
+                                        "agent_id": "foreign-agent",
+                                        "agent_type": "foreign-role",
+                                    },
+                                }, records
+                            if field == "extra":
+                                return {
+                                    **snapshot,
+                                    "payload": {**snapshot["payload"], "scope": "foreign"},
+                                }, records
+                            value = {
+                                "model": "foreign-model",
+                                "cwd": "/foreign-cwd",
+                                "trigger": "manual" if automatic else "auto",
+                                "transcript_path": "/foreign/transcript.jsonl",
+                            }[field]
+                            return {
+                                **snapshot,
+                                "payload": {**snapshot["payload"], field: value},
                             }, records
                         return {
                             **snapshot,
@@ -278,6 +369,8 @@ def test_post_compact_plan_is_bound_before_history_install(
             failed = (
                 change == "invalid_receipt"
                 or change.startswith("payload_")
+                or change.startswith("mismatch_")
+                or change == "duplicate_command"
                 or window == "unknown"
                 or (
                     window == "install"
@@ -296,6 +389,10 @@ def test_post_compact_plan_is_bound_before_history_install(
                 assert "Compaction hook session identity mismatch" in events[-1].error
             elif change.startswith("payload_"):
                 assert "Invalid compaction hook payload" in events[-1].error
+            elif change.startswith("mismatch_"):
+                assert "Compaction hook payload identity mismatch" in events[-1].error
+            elif change == "duplicate_command":
+                assert "Duplicate compaction hook command" in events[-1].error
             elif failed:
                 assert ("unknown" if window == "unknown" else "authorization changed") in events[
                     -1

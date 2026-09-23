@@ -89,7 +89,7 @@ def test_ordinary_summary_restores_users_and_archive_without_remote_protocol(
             lambda *a, **kw: real_client(*a, **kw, transport=httpx.MockTransport(respond)),
         )
 
-        def create(thread=None):
+        async def create(thread=None):
             class Guard:
                 spec = ToolSpec("guard", "guard", {"type": "object"})
 
@@ -99,7 +99,7 @@ def test_ordinary_summary_restores_users_and_archive_without_remote_protocol(
 
             registry = ToolRegistry()
             registry.register(Guard())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     tmp_path,
                     api_mode="responses",
@@ -117,7 +117,7 @@ def test_ordinary_summary_restores_users_and_archive_without_remote_protocol(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             assert isinstance([e async for e in runtime.stream("ORIGINAL_USER")][-1], TurnCompleted)
@@ -131,7 +131,7 @@ def test_ordinary_summary_restores_users_and_archive_without_remote_protocol(
             assert routing_headers == [None] * (4 if automatic == "mid" else 3)
         finally:
             await runtime.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             assert isinstance([e async for e in cold.stream("CONTINUE")][-1], TurnCompleted)
             assert "HARNESS_SUMMARY" in json.dumps(requests[-1][1]["input"])

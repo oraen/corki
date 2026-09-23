@@ -80,7 +80,7 @@ def test_retry_node_does_not_repeat_wait_for_an_already_recorded_attempt(
                 pass
 
         repository = Repository(tmp_path / "sessions.db")
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=repository.path,
             repository=repository,
@@ -142,7 +142,7 @@ def test_connection_retries_are_separate_from_stream_budget(
                 base_url="https://fixture.invalid/v1", api_mode=api_mode
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -231,7 +231,7 @@ def test_connection_backoff_survives_process_exit_before_checkpoint(tmp_path, mo
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, model_max_retries=1
             ),

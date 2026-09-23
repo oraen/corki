@@ -40,7 +40,7 @@ def test_agent_url_admission_and_wire_destination_agree(
         value["mcpServers"]["docs"]["url"] = raw
         source.write_text(json.dumps(value))
         carrier = Carrier()
-        runtime = runtime_for(tmp_path, monkeypatch, carrier, mode)
+        runtime = await runtime_for(tmp_path, monkeypatch, carrier, mode)
         try:
             await runtime._ensure_ready()
             await runtime._mcp_manager.refresh_if_dirty()
@@ -73,7 +73,7 @@ def test_agent_invalid_scoped_ipv6_never_reaches_the_carrier(tmp_path, monkeypat
         value["mcpServers"]["docs"]["url"] = "https://[::1%25eth0]/mcp"
         source.write_text(json.dumps(value))
         carrier = Carrier()
-        runtime = runtime_for(tmp_path, monkeypatch, carrier)
+        runtime = await runtime_for(tmp_path, monkeypatch, carrier)
         try:
             await runtime._ensure_ready()
             await runtime._mcp_manager.refresh_if_dirty()
@@ -109,7 +109,7 @@ def test_agent_unauthenticated_redirect_uses_the_same_url_parser(
         value["mcpServers"]["docs"]["headers"] = {}
         source.write_text(json.dumps(value))
         carrier = RedirectCarrier()
-        runtime = runtime_for(tmp_path, monkeypatch, carrier, mode)
+        runtime = await runtime_for(tmp_path, monkeypatch, carrier, mode)
         try:
             events = [e async for e in runtime.stream("needle")]
             assert isinstance(events[-1], TurnCompleted)
@@ -143,7 +143,7 @@ def test_agent_url_engine_failure_never_falls_back_to_unvalidated_http(
 
             monkeypatch.setattr("corki.config.mcp_url._engine", unavailable)
         carrier = Carrier()
-        runtime = runtime_for(tmp_path, monkeypatch, carrier)
+        runtime = await runtime_for(tmp_path, monkeypatch, carrier)
         try:
             await runtime._ensure_ready()
             await runtime._mcp_manager.refresh_if_dirty()

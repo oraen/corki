@@ -117,8 +117,8 @@ def test_runtime_cancel_waits_for_response_cleanup_and_cold_history_does_not_rep
             mcp_servers=(MCPServerSettings("docs", "http", url="https://fixture.invalid"),),
         )
 
-        def create(model, thread=None):
-            return LangGraphRuntime.create(
+        async def create(model, thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 model=model,
                 registry=ToolRegistry(),
@@ -127,7 +127,7 @@ def test_runtime_cancel_waits_for_response_cleanup_and_cold_history_does_not_rep
                 thread_id=thread,
             )
 
-        runtime = create(Model())
+        runtime = await create(Model())
 
         async def consume():
             try:
@@ -173,7 +173,7 @@ def test_runtime_cancel_waits_for_response_cleanup_and_cold_history_does_not_rep
             async def aclose(self):
                 pass
 
-        cold = create(Cold(), runtime._thread_id)
+        cold = await create(Cold(), runtime._thread_id)
         try:
             result = [e async for e in cold.stream("continue")]
             assert isinstance(result[-1], TurnCompleted)

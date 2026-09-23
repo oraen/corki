@@ -38,7 +38,7 @@ def test_explicit_untrusted_project_excludes_agents_instructions(tmp_path, trust
             model_contexts=(ModelContextInfo(model="fixture"),),
         )
         model = Model(mode)
-        runtime = runtime_for(project, None, model, settings=settings, home_path=home)
+        runtime = await runtime_for(project, None, model, settings=settings, home_path=home)
         try:
             await run(runtime, model)
             text = "\n".join(
@@ -75,7 +75,7 @@ def test_configured_trust_controls_actual_permissions_and_approval(tmp_path, com
             model_contexts=(ModelContextInfo(model="fixture"),),
         )
         model = Model(mode)
-        runtime = runtime_for(project, compiler, model, settings=settings)
+        runtime = await runtime_for(project, compiler, model, settings=settings)
         prompts = []
 
         async def approve(request):
@@ -122,7 +122,7 @@ def test_explicit_policy_and_profile_override_untrusted_defaults(tmp_path, compi
             model_contexts=(ModelContextInfo(model="fixture"),),
         )
         model = Model(mode)
-        runtime = runtime_for(tmp_path, compiler, model, settings=settings)
+        runtime = await runtime_for(tmp_path, compiler, model, settings=settings)
         try:
             target = tmp_path / "written"
             await run(runtime, model, {"cmd": "touch " + shlex.quote(str(target))})
@@ -165,7 +165,7 @@ def test_selected_trust_is_shared_by_context_and_execution(tmp_path, compiler, m
         )
         assert settings.working_directory == cwd.resolve()
         model = Model(mode)
-        runtime = runtime_for(root, compiler, model, settings=settings)
+        runtime = await runtime_for(root, compiler, model, settings=settings)
         try:
             # Editing the file after host parsing does not silently change a
             # running configuration's authority or instruction admission.

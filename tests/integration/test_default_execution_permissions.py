@@ -49,7 +49,7 @@ async def exercise(tmp_path, monkeypatch, entry, mode, trust, *, managed=False):
         monkeypatch.setattr(cli.LangGraphRuntime, "create", create_with_model)
         monkeypatch.setattr(cli, "load_mcp_requirements", lambda: requirements)
         monkeypatch.setattr(cli, "TerminalUI", lambda *args: object())
-        runtime = cli.build_application()._runtime
+        runtime = (await cli.build_application_async())._runtime
     else:
         settings = (
             CorkiSettings(
@@ -59,7 +59,7 @@ async def exercise(tmp_path, monkeypatch, entry, mode, trust, *, managed=False):
             if entry == "sdk"
             else CorkiSettings.for_directory(workspace, config_file=config)
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=replace(settings, skills_enabled=False, tool_mode=mode),
             model=model,
             database_path=host_dir / "session.db",
@@ -147,7 +147,7 @@ def test_explicit_full_access_is_native_policy_not_legacy_none(
             else CorkiSettings.for_directory(tmp_path, config_file=config)
         )
         model = Model("direct")
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=replace(settings, skills_enabled=False),
             model=model,
             database_path=host_dir / "state.db",

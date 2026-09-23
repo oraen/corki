@@ -1,5 +1,51 @@
 # B10/A4：MCP 工具型 Hook 的真实执行缺口
 
+`Interrupt` MCP 结果提交边界补证：新增
+`test_interrupt_mcp_recovery.py` 两例，以真实 Runtime/MCPManager/SQLite
+在远端调用完成后分别于完成记录提交前、提交后注入故障，同时令取消终态
+首次写入失败。冷 Runtime 恢复后均保持原始取消，不重新采样或重发已产生
+的一次 MCP 副作用；unknown 仍是 unknown，已提交结果保持原账本。
+首次扩大并行 6 文件回归 **93 passed、1 failed**：失败是已有异步 command
+`Interrupt` 用例在 1 秒期限内等待测试释放，现场 SQLite 记录
+`Interrupt failed: `（超时），串行单例通过。将该测试异步分支改用原生
+允许的 3 秒上限，不弱化副作用/事件断言；修订后相同 6 文件
+**94 passed / 44.94s**，4 workers/loadfile/禁重启，实际退出 0。
+本批没有生产改动，也不把模拟提交故障等同于真实进程强杀。
+
+`Interrupt` 真实 HTTP 故障补证：`test_interrupt_hooks.py` 用实际
+`HttpMCPClient` 与 MockTransport 半截 JSON 响应触发 1 秒 Hook 超时；
+响应体在唯一 `TurnCancelled` 前关闭，Hook 状态是 failed 而非伪成功，
+取消不会升级为 `TurnFailed`，同线程冷 Runtime 不重发远端调用。
+与普通 `Interrupt`、MCP Pre/PostToolUse、MCP 冷恢复、压缩 MCP HTTP
+故障四文件联合 **74 passed / 13.57s**，4 workers/loadfile/禁重启，退出 0。
+本批仅新增离线故障测试，没有改生产代码；不证明真实外网或 OS 强杀后的
+运行中调用，也不覆盖远端已执行但完成事实未落盘的 crash 窗口。
+
+2026-09-22 `Interrupt` 事件补证：Codex
+`core/src/tasks/mod.rs` → `hook_runtime.rs::run_turn_interrupt_hooks` →
+`hooks/src/events/interrupt.rs::run` → dispatcher 调用；
+`hooks/src/engine/discovery.rs::append_matcher_groups` 接受 MCP 工具型
+Interrupt Hook，并把默认/超长 timeout 限到 1/3 秒；Corki
+`stop_hooks.command_identity` 与 `interrupt_hooks.run` 已有对应准入和执行。
+新增真实 Runtime/MCPManager/SQLite、离线 client 的 root 中断与 replaced
+两例：仅显式 root 中断远端调用一次，模板传入当前 Turn 身份、诊断在
+TurnCancelled 前发出，后续重复取消及同线程冷恢复不重放；replaced 零调用。
+`test_interrupt_hooks.py` 全文件 **14 passed**、实际退出 0；本批仅补测试，
+未改生产。此前非 CLI 全量 15699 不包含这两例。此证据不覆盖 MCP
+Interrupt 的半截 HTTP、执行提交前崩溃或其它事件来源；不因此核销整个 B10。
+
+最新 HTTP 故障补证：实际 `HttpMCPClient`、半截响应体、Hook 截止时间与
+活动 Turn 取消已覆盖 Pre/PostCompact × 自动/手动八组合，并在冷 Runtime
+验证不重放；相关六文件 219 通过。见 `compact-hook-gap.md` 顶部。
+因此下方“压缩 MCP HTTP 失败组合仍缺”也是历史记录；真实联网和
+OS 强杀不可从 MockTransport 推出。
+
+最新补证：Pre/PostCompact 的 MCP 工具型 Hook 已经加入真实 Runtime/SQLite
+安装、unknown/completed 执行账本及冷恢复矩阵；新增 54 组合、相关联合
+176 通过，具体范围和离线客户端限制见 `compact-hook-gap.md` 顶部。
+因此下方“Pre/PostCompact MCP 自身冷恢复未验”属于旧状态；真实 HTTP
+超时/取消与跨进程强杀仍需按各自入口单独验证。
+
 当前状态：基础同步执行已接入，原始反例转绿；完整MCP故障/冷恢复验收仍开放。
 不是官方服务排除项。CLI继续暂停；下方缺口记录保留修复前证据。
 

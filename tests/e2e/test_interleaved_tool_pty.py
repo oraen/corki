@@ -9,7 +9,7 @@ import pytest
 PROGRAM = r"""
 import asyncio
 from pathlib import Path
-from rich.console import Console
+from corki.cli.terminal_console import TerminalConsole
 from corki.cli.application import CorkiApplication
 from corki.cli.terminal import TerminalUI
 from corki.config import CorkiPaths, CorkiSettings
@@ -55,9 +55,9 @@ async def main():
     settings = CorkiSettings(working_directory=cwd, skills_enabled=False, plugins_enabled=False)
     registry, model, tool = ToolRegistry(), Model(), Tool()
     registry.register(tool)
-    runtime = LangGraphRuntime.create(settings=settings, database_path=cwd / "sessions.db",
+    runtime = await LangGraphRuntime.acreate(settings=settings, database_path=cwd / "sessions.db",
         model=model, registry=registry, home_path=cwd / "home")
-    ui = TerminalUI(settings, cwd / "history", console=Console(color_system=None))
+    ui = TerminalUI(settings, cwd / "history", console=TerminalConsole(color_system=None))
     app = CorkiApplication(settings, CorkiPaths.from_home(cwd / "home"), runtime, ui)
     try:
         await app._consume_events(runtime.stream("Run"))
@@ -96,15 +96,14 @@ def test_interleaved_tool_waits_for_authoritative_body_on_terminal(tmp_path, wid
     try:
         child.expect_exact("TOOL_EXECUTED")
         before = child.before
-        child.sendline("")
-        child.expect_exact("\x1b[3J\x1b[2J\x1b[H")
-        before += child.before
         assert "during_answer" not in before and "TOOL_EVIDENCE" not in before
         assert "unfinished" not in before
+        child.sendline("")
         child.expect_exact("INTERLEAVED_CLOSED")
         after = child.before
+        assert "\x1b[3J" not in after and "\x1b[2J" not in after
         for text in ("Opening line", "unfinished Closing line", "during_answer", "TOOL_EVIDENCE"):
-            assert after.count(text) == 1
+            assert (before + after).count(text) == 1
         assert (
             after.index("Closing line")
             < after.index("during_answer")

@@ -2,13 +2,15 @@
 
 from rich.text import Text
 
+from corki.cli.display_text import visible_terminal_text
+
 
 def hook_output_text(run):
     """Style provenance or the status bullet, never dim the hook's full output."""
     lines = hook_output_lines(run)
     if not lines:
         return Text()
-    text = Text("\n".join(lines))
+    text = Text(visible_terminal_text("\n".join(lines)))
     if lines[0].startswith("↳ Hook · "):
         text.stylize("dim", 0, len("↳ Hook · "))
     else:

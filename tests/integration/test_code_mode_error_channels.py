@@ -255,7 +255,7 @@ def test_nested_error_channels_reach_js_and_durable_ledger(
 
         registry = ToolRegistry()
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),
@@ -331,7 +331,7 @@ def test_broken_nested_commit_cannot_be_hidden_by_js_catch(
 
         registry = ToolRegistry()
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),

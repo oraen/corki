@@ -54,8 +54,8 @@ class Model:
         pass
 
 
-def runtime_for(root, compiler, model, **kwargs):
-    return LangGraphRuntime.create(
+async def runtime_for(root, compiler, model, **kwargs):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=root,
             skills_enabled=False,
@@ -88,7 +88,7 @@ def test_home_rule_applies_without_explicit_sources(tmp_path, compiler, mode):
             'prefix_rule(pattern=["printf"], decision="forbidden", justification="HOME_RULE")'
         )
         model = Model(mode)
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
         try:
             await run(runtime)
             assert "HOME_RULE" in output(model)
@@ -107,7 +107,7 @@ def test_bad_rules_warn_once_and_discard_earlier_rules(tmp_path, compiler, with_
         (rules / "a.rules").write_text('prefix_rule(pattern=["printf"], decision="forbidden")')
         (rules / "b.rules").write_text("prefix_rule(")
         model = Model(command="printf POLICY_FIXTURE" if with_command else None)
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
         try:
             events = await run(runtime)
             warnings = [e.message for e in events if isinstance(e, WarningEvent)]
@@ -136,7 +136,7 @@ def test_rule_io_failure_prevents_sampling_and_thread_creation(tmp_path, compile
             rules.mkdir()
             (rules / "invalid.rules").write_bytes(b"\xff")
         model = Model(command=None)
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
         try:
             with pytest.raises(ValueError, match="rules"):
                 await run(runtime)
@@ -155,7 +155,7 @@ def test_rules_snapshot_survives_turns_but_cold_runtime_reloads(tmp_path, compil
         source = rules / "default.rules"
         source.write_text('prefix_rule(pattern=["printf"], decision="forbidden")')
         model = Model()
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
         try:
             await run(runtime)
             assert "rejected" in output(model)
@@ -166,7 +166,7 @@ def test_rules_snapshot_survives_turns_but_cold_runtime_reloads(tmp_path, compil
         finally:
             await runtime.aclose()
         model = Model()
-        resumed = runtime_for(tmp_path, compiler, model, thread_id=thread)
+        resumed = await runtime_for(tmp_path, compiler, model, thread_id=thread)
         try:
             await run(resumed)
             assert "POLICY_FIXTURE" in output(model)
@@ -188,7 +188,7 @@ def test_non_regular_and_non_rules_entries_are_not_loaded(tmp_path, compiler):
         (rules / "link.rules").symlink_to(target)
         (rules / "missing.rules").symlink_to(tmp_path / "absent")
         model = Model()
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
         try:
             events = await run(runtime)
             assert "POLICY_FIXTURE" in output(model)
@@ -208,7 +208,7 @@ def test_sorted_earlier_parse_failure_precedes_later_read_failure(tmp_path, comp
         (rules / "z.rules").write_bytes(b"\xff")
         (rules / "a.rules").write_text("prefix_rule(")
         model = Model(command=None)
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
         try:
             events = await run(runtime)
             assert any(isinstance(e, WarningEvent) and "a.rules" in e.message for e in events)
@@ -225,7 +225,7 @@ def test_failed_initialization_does_not_retain_provisional_rules(tmp_path, compi
         source = rules / "default.rules"
         source.write_text('prefix_rule(pattern=["printf"], decision="forbidden")')
         model = Model()
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
         start = runtime._mcp_manager.start_session
 
         async def fail_start():
@@ -259,13 +259,13 @@ def test_child_reuses_snapshot_only_for_same_config_folders(
         rules.mkdir(parents=True)
         source = rules / "default.rules"
         source.write_text('prefix_rule(pattern=["printf"], decision="forbidden")')
-        parent = runtime_for(tmp_path, compiler, Model(command=None))
+        parent = await runtime_for(tmp_path, compiler, Model(command=None))
         try:
             await run(parent)
             settings = parent._settings
             source.write_text("")
             model = Model()
-            child = LangGraphRuntime.create(
+            child = await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "child.db",
                 home_path=tmp_path / ("different-home" if changed_home else "home"),
@@ -303,7 +303,7 @@ def test_only_typed_basic_guardian_omits_home_rules(tmp_path, compiler, guardian
             'prefix_rule(pattern=["printf"], decision="forbidden")'
         )
         model = Model()
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path,
             compiler,
             model,

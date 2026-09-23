@@ -253,8 +253,8 @@ def test_runtime_pty_exact_input_and_cold_no_replay(tmp_path, monkeypatch, neste
             tool_mode="code_mode" if nested else "direct",
         )
 
-        def create(thread=None):
-            runtime = LangGraphRuntime.create(
+        async def create(thread=None):
+            runtime = await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "pty.db",
                 model=Model(),
@@ -277,7 +277,7 @@ def test_runtime_pty_exact_input_and_cold_no_replay(tmp_path, monkeypatch, neste
             manager._enqueue_pty_input = counted_enqueue
             return runtime
 
-        runtime = create()
+        runtime = await create()
         try:
             async with asyncio.timeout(5):
                 events = [e async for e in runtime.stream("roundtrip")]
@@ -285,7 +285,7 @@ def test_runtime_pty_exact_input_and_cold_no_replay(tmp_path, monkeypatch, neste
             assert not runtime._process_manager._sessions
         finally:
             await runtime.aclose()
-        cold = create(runtime.thread_id)
+        cold = await create(runtime.thread_id)
         try:
             events = [e async for e in cold.stream("continue")]
             assert isinstance(events[-1], TurnCompleted) and len(requests) == 4

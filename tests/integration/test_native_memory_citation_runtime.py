@@ -130,9 +130,9 @@ def test_citation_runtime_visibility_usage_and_cold_raw_replay(tmp_path, mode, s
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
         database = tmp_path / "sessions.db"
 
-        def runtime(thread=None):
+        async def runtime(thread=None):
             adapter = OpenAICompatibleModel if mode == "chat" else OpenAIResponsesModel
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,
@@ -163,7 +163,7 @@ def test_citation_runtime_visibility_usage_and_cold_raw_replay(tmp_path, mode, s
                 ),
             )
 
-        first = runtime()
+        first = await runtime()
         try:
             events, deltas = [], ""
             async for event in first.stream("answer"):
@@ -198,7 +198,7 @@ def test_citation_runtime_visibility_usage_and_cold_raw_replay(tmp_path, mode, s
             thread = first.thread_id
         finally:
             await first.aclose()
-        cold = runtime(thread)
+        cold = await runtime(thread)
         try:
             events = [e async for e in cold.stream("continue")]
             assert isinstance(events[-1], TurnCompleted)
@@ -248,7 +248,7 @@ def test_cold_resume_of_committed_step_does_not_count_memory_usage_again(tmp_pat
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(tmp_path, skills_enabled=False),
             database_path=database,
             repository=repository,
@@ -297,7 +297,7 @@ def test_each_completed_message_records_usage_once_even_when_last_is_citation_on
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
         database = tmp_path / "s.db"
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(tmp_path, skills_enabled=False, model_max_retries=0),
             database_path=database,
             repository=SQLiteSessionRepository(database),

@@ -128,7 +128,7 @@ def test_failed_startup_recovers_only_after_explicit_host_refresh(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,

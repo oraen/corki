@@ -6,6 +6,8 @@ object retains its sole reader and owns this framing state across prompt changes
 
 from prompt_toolkit.input.vt100_parser import Vt100Parser
 
+from corki.cli.keyboard import decode_key
+
 
 def _color(response):
     slot, separator, payload = response[2:].partition(";")
@@ -33,6 +35,7 @@ class TerminalResponseParser:
         self.parser = parser
         self.pending = ""
         self.osc = False
+        self.csi = False
         self.overflow = False
         self.escape = False
         self.colors = {}
@@ -40,7 +43,7 @@ class TerminalResponseParser:
 
     def _clear(self):
         self.pending = ""
-        self.osc = self.overflow = self.escape = False
+        self.osc = self.csi = self.overflow = self.escape = False
 
     def feed(self, data):
         cursor = 0
@@ -53,6 +56,23 @@ class TerminalResponseParser:
                 cursor = end
                 continue
             cursor += 1
+            if self.csi:
+                if char == "\x1b" or ord(char) < 32:
+                    self._clear()
+                    if char == "\x1b":
+                        self.pending = char
+                    else:
+                        self.parser.feed(char)
+                    continue
+                if len(self.pending) < 256:
+                    self.pending += char
+                else:
+                    self.overflow = True
+                if "@" <= char <= "~":
+                    if not self.overflow:
+                        self.parser.feed(decode_key(self.pending))
+                    self._clear()
+                continue
             if self.osc:
                 if char == "\x07" or (self.escape and char == "\\"):
                     response = self.pending[:-1] if self.escape else self.pending
@@ -90,6 +110,10 @@ class TerminalResponseParser:
                     self.escape = char == "\x1b"
                     continue
             if self.pending:
+                if char == "[" and not self.parser._in_bracketed_paste:
+                    self.pending += char
+                    self.csi = True
+                    continue
                 if char == "]":
                     self.pending += char
                     self.osc = True
@@ -102,7 +126,7 @@ class TerminalResponseParser:
                 self.parser.feed(char)
 
     def flush(self):
-        if self.pending and not self.osc:
+        if self.pending and not self.osc and not self.csi:
             self.parser.feed(self.pending)
             self.pending = ""
         # An incomplete reply is not an Escape key. Retain bounded framing for

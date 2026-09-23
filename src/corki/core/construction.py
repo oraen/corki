@@ -28,7 +28,7 @@ async def create_owned(factory, kwargs):
 
 
 def synchronous_rollback(factory):
-    """Wait for failed synchronous construction when no event loop is running."""
+    """Require an awaited owner before allocating resources on a running loop."""
 
     @wraps(factory)
     def construct(*args, **kwargs):
@@ -39,9 +39,12 @@ def synchronous_rollback(factory):
         except RuntimeError:
             pass
         else:
-            # In-loop hosts must use acreate to await failure cleanup. Never
-            # block their loop or launch an unowned cleanup task here.
-            return factory(*args, **kwargs)
+            # Arbitrary closers can depend on this loop, so neither blocking it
+            # nor transferring cleanup to another loop preserves ownership.
+            raise RuntimeError(
+                "Synchronous construction on a running event loop requires an owner; "
+                "use await LangGraphRuntime.acreate(...) instead"
+            )
         closers = []
         kwargs["_construction"] = closers
         try:

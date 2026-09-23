@@ -14,9 +14,9 @@ from corki.protocol.events import TurnCompleted
 
 
 @pytest.mark.parametrize(
-    "outcome", ["success", "error", "cancel", "application_error", "run_error"]
+    "outcome", ["success", "error", "io_error", "cancel", "application_error", "run_error"]
 )
-def test_cli_main_awaits_construction_and_rollback(tmp_path, monkeypatch, outcome):
+def test_cli_main_awaits_construction_and_rollback(tmp_path, monkeypatch, capsys, outcome):
     cli = importlib.import_module("corki.cli.main")
     home = tmp_path / "home"
     root = home / "plugins/fixture"
@@ -55,6 +55,8 @@ def test_cli_main_awaits_construction_and_rollback(tmp_path, monkeypatch, outcom
     def create_model(*args):
         if outcome == "error":
             raise ValueError("fixture model construction failed")
+        if outcome == "io_error":
+            raise OSError("PRIVATE_STORAGE_DETAIL")
         if outcome == "cancel":
             raise asyncio.CancelledError
         loops.append(asyncio.get_running_loop())
@@ -85,6 +87,11 @@ def test_cli_main_awaits_construction_and_rollback(tmp_path, monkeypatch, outcom
     elif outcome == "run_error":
         with pytest.raises(ValueError, match="running application failed"):
             cli.main([])
+    elif outcome == "io_error":
+        assert cli.main([]) == 1
+        output = capsys.readouterr()
+        assert "Corki could not start (OSError)" in output.err
+        assert "PRIVATE_STORAGE_DETAIL" not in output.out + output.err
     else:
         assert cli.main([]) == (130 if outcome == "cancel" else 0)
     assert (root / "closed").read_text().splitlines() == ["close"]

@@ -17,7 +17,7 @@ from corki.sessions import TurnRecord, TurnStatus
 def test_cold_display_retains_each_turn_mode_and_legacy_default(tmp_path, read_path):
     async def scenario():
         model = Model()
-        runtime = make_runtime(tmp_path, model)
+        runtime = await make_runtime(tmp_path, model)
         expected = []
         try:
             for mode in ("plan", "default", "plan"):
@@ -46,7 +46,7 @@ def test_cold_display_retains_each_turn_mode_and_legacy_default(tmp_path, read_p
             await runtime.aclose()
 
         cold_model = Model()
-        cold = make_runtime(
+        cold = await make_runtime(
             tmp_path,
             cold_model,
             configured=settings(tmp_path, collaboration_mode="default"),

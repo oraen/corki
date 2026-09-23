@@ -103,7 +103,7 @@ def test_required_mcp_admission_failure_retry_and_owned_cleanup(tmp_path, monkey
             )
             for name in ("z_missing", "healthy", "a_missing")
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

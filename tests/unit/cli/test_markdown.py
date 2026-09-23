@@ -3,12 +3,15 @@
 import asyncio
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from rich.color import ColorType
 from rich.console import Console
 
+from corki.cli.display_text import visible_terminal_text
 from corki.cli.markdown import AssistantMarkdown
+from corki.cli.markdown_cache import MarkdownParseCache
 from corki.cli.terminal import TerminalUI
 from corki.cli.transcript import Transcript
 from corki.config import CorkiSettings
@@ -39,6 +42,56 @@ def test_stream_commits_newlines_and_discards_interrupted_tail(tmp_path):
     asyncio.run(ui.complete_assistant_message("final answer"))
     assert output.getvalue().count("final answer") == 1
     assert "incomplete" not in output.getvalue()
+
+
+def test_untrusted_output_cannot_control_terminal_display():
+    output = StringIO()
+    ui = TerminalUI.__new__(TerminalUI)
+    ui._console = Console(file=output, width=100, force_terminal=True, color_system=None)
+    ui._transcript = Transcript(ui)
+    unsafe = "before\x1b[2Jafter\rreplaced\x07"
+
+    ui.show_tool_started("tool", unsafe)
+    ui.show_tool_output(unsafe)
+    ui.show_assistant_message(unsafe)
+    ui._assistant_started = False
+    ui._write_assistant_stream(unsafe)
+
+    rendered = output.getvalue()
+    assert "\x1b" not in rendered
+    assert "\r" not in rendered
+    assert "\x07" not in rendered
+    assert rendered.count(r"\x1b[2J") == 4
+    assert rendered.count(r"\x0d") == 4
+    assert rendered.count(r"\x07") == 4
+
+
+def test_stream_markdown_cache_escapes_controls_but_preserves_unicode():
+    cache = MarkdownParseCache()
+    cache.document("中文 👩‍💻\n")
+    document = cache.document("中文 👩‍💻\nnext\x1b[2J\x9b0m\n")
+
+    assert document.markup == "中文 👩‍💻\nnext\\x1b[2J\\x9b0m\n"
+    assert visible_terminal_text("中文 👩‍💻\t\n") == "中文 👩‍💻\t\n"
+    output = StringIO()
+    Console(file=output, width=100, force_terminal=True, color_system=None).print(document)
+    assert "\x1b" not in output.getvalue()
+    assert "\x9b" not in output.getvalue()
+
+
+def test_session_header_and_submitted_input_do_not_run_terminal_controls():
+    output = StringIO()
+    ui = TerminalUI.__new__(TerminalUI)
+    ui._console = Console(file=output, width=100, force_terminal=True, color_system=None)
+    ui._transcript = Transcript(ui)
+    ui._settings = SimpleNamespace(model="model\x1b[2Jname", working_directory=Path("/tmp/work"))
+
+    ui.show_welcome()
+    ui._show_submitted_input("draft\x1b[2Jtext")
+
+    rendered = output.getvalue()
+    assert "\x1b" not in rendered
+    assert rendered.count(r"\x1b[2J") == 2
 
 
 SOURCE = """# Result

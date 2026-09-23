@@ -61,7 +61,7 @@ def test_body_prefix_runtime_windows(tmp_path, scenario_name, transport):
             async def aclose(self):
                 pass
 
-        def create(thread=None):
+        async def create(thread=None):
             model = Model()
             if transport != "script":
 
@@ -119,7 +119,7 @@ def test_body_prefix_runtime_windows(tmp_path, scenario_name, transport):
                         base_url="https://fixture.invalid/v1", api_mode=transport
                     ),
                 )
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,
@@ -133,13 +133,13 @@ def test_body_prefix_runtime_windows(tmp_path, scenario_name, transport):
                 model=model,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             for index, (count, compacted) in enumerate(expected):
                 if index == 1 and scenario_name == "cold":
                     thread = runtime.thread_id
                     await runtime.aclose()
-                    runtime = create(thread)
+                    runtime = await create(thread)
                 events = [event async for event in runtime.stream(f"user {index}")]
                 assert isinstance(events[-1], TurnCompleted)
                 assert any(isinstance(event, ContextCompacted) for event in events) == compacted
@@ -199,7 +199,7 @@ def test_tool_observation_growth_counts_against_body_budget(tmp_path, tool_mode)
 
         registry = ToolRegistry()
         registry.register(Echo())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -253,7 +253,7 @@ def test_manual_and_missing_usage_prefix_boundaries(tmp_path, mode):
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

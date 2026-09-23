@@ -129,7 +129,7 @@ def test_runtime_helper_auth_refresh_reconciliation_plugin_and_cold_history(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             model=Model(),
             registry=ToolRegistry(),
@@ -163,7 +163,7 @@ def test_runtime_helper_auth_refresh_reconciliation_plugin_and_cold_history(
             async def aclose(self):
                 pass
 
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=settings,
             model=Cold(),
             registry=ToolRegistry(),

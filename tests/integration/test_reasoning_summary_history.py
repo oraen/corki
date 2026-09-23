@@ -48,7 +48,7 @@ def test_completed_summary_is_visible_without_cold_reload(tmp_path, streamed, an
                 pass
 
         settings = CorkiSettings(tmp_path, skills_enabled=False, plugins_enabled=False)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             model=Model(),
             database_path=tmp_path / "sessions.db",
@@ -112,7 +112,7 @@ def test_reasoning_section_identity_reaches_live_status(tmp_path):
 
         headers = []
         settings = CorkiSettings(tmp_path, skills_enabled=False, plugins_enabled=False)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "sessions.db",
             model=Model(),
@@ -184,7 +184,7 @@ def test_provider_summary_survives_cold_display_history(tmp_path, monkeypatch, s
             ),
         )
         settings = CorkiSettings(tmp_path, skills_enabled=False, plugins_enabled=False)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "sessions.db",
             model=model,
@@ -197,7 +197,7 @@ def test_provider_summary_survives_cold_display_history(tmp_path, monkeypatch, s
             await runtime.aclose()
             await client.aclose()
         # Fresh repository/Runtime, not the original in-memory display transcript.
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "sessions.db",
             model=model,

@@ -1,10 +1,18 @@
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from corki.protocol.ids import new_tool_call_id
-from corki.protocol.tools import ImageAttachment, ToolCall, ToolResult, ToolSpec, ToolStateUpdate
+from corki.protocol.tools import (
+    ImageAttachment,
+    TextContent,
+    ToolCall,
+    ToolResult,
+    ToolSpec,
+    ToolStateUpdate,
+)
 from corki.tools import ToolContext, ToolExecutor, ToolRegistry
 from corki.tools.builtin import UpdatePlanTool
 
@@ -96,6 +104,86 @@ def test_executor_rejects_mismatched_or_non_result_tool_output(tmp_path: Path) -
     assert "different call" in identity_error.content
     assert type_error.is_error
     assert "instead of ToolResult" in type_error.content
+
+
+@pytest.mark.parametrize("source", ["parser", "pre_tool"])
+def test_invalid_unicode_execution_input_is_rejected_before_handler(tmp_path, source):
+    calls = []
+
+    class Tool:
+        spec = ToolSpec("fixture", "fixture", {"type": "object"})
+
+        def parse_call_arguments(self, call):
+            return {"value": "\ud800"} if source == "parser" else call.arguments
+
+        async def execute(self, call, context):
+            calls.append(call)
+            return ToolResult(call.id, call.name, "side effect")
+
+    async def before(call, tool):
+        del tool
+        return replace(call, arguments={"value": "\ud800"})
+
+    async def scenario():
+        registry = ToolRegistry()
+        registry.register(Tool())
+        return await ToolExecutor(registry, output_char_budget=1000).execute(
+            ToolCall(new_tool_call_id(), "fixture", {}),
+            ToolContext(tmp_path, before_tool=before if source == "pre_tool" else None),
+        )
+
+    result = asyncio.run(scenario())
+    assert result.is_error and not calls
+
+
+def test_rewritten_freeform_input_is_validated_before_handler(tmp_path):
+    calls = []
+
+    class Tool:
+        spec = ToolSpec("fixture", "fixture", {}, input_kind="freeform")
+
+        async def execute(self, call, context):
+            calls.append(call)
+            return ToolResult(call.id, call.name, "side effect")
+
+    async def before(call, tool):
+        del tool
+        return replace(call, raw_arguments="\ud800")
+
+    async def scenario():
+        registry = ToolRegistry()
+        registry.register(Tool())
+        return await ToolExecutor(registry, output_char_budget=1000).execute(
+            ToolCall(
+                new_tool_call_id(), "fixture", None, raw_arguments="safe", input_kind="freeform"
+            ),
+            ToolContext(tmp_path, before_tool=before),
+        )
+
+    result = asyncio.run(scenario())
+    assert result.is_error and not calls
+
+
+def test_executor_owns_ordered_content_snapshot_after_handler_returns(tmp_path: Path) -> None:
+    handler_parts = [TextContent("first")]
+
+    class Tool:
+        spec = ToolSpec("ordered", "fixture", {"type": "object"})
+
+        async def execute(self, call, context):
+            return ToolResult(call.id, call.name, "first", content_items=handler_parts)
+
+    async def scenario():
+        registry = ToolRegistry()
+        registry.register(Tool())
+        return await ToolExecutor(registry, output_char_budget=1000).execute(
+            ToolCall(new_tool_call_id(), "ordered", {}), ToolContext(tmp_path)
+        )
+
+    result = asyncio.run(scenario())
+    assert result.content_items == (TextContent("first"),)
+    handler_parts.append(TextContent("later"))
+    assert result.content_items == (TextContent("first"),)
 
 
 @pytest.mark.parametrize("invalid_arguments", [False, True])

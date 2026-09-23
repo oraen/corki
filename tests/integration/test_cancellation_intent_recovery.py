@@ -1,6 +1,7 @@
 """Durable cancellation is control state, never a hint to resample a Turn."""
 
 import asyncio
+from dataclasses import replace
 
 import pytest
 
@@ -30,8 +31,9 @@ from corki.tools import ToolRegistry
         ({"version": 1, "reason": "interrupted"}, True, False),
     ],
 )
+@pytest.mark.parametrize("future_base_override", [False, True])
 def test_cold_cancellation_intent_precedes_model_and_preserves_evidence(
-    tmp_path, intent, claimed, valid
+    tmp_path, intent, claimed, valid, future_base_override
 ):
     async def scenario():
         samples = []
@@ -51,9 +53,11 @@ def test_cold_cancellation_intent_precedes_model_and_preserves_evidence(
             agent_interrupt_message_enabled=False,
         )
 
-        async def create(thread_id=None):
+        async def create(thread_id=None, *, base_override=False):
             return await LangGraphRuntime.acreate(
-                settings=settings,
+                settings=replace(settings, base_instructions="FUTURE BASE")
+                if base_override
+                else settings,
                 model=Model(),
                 registry=ToolRegistry(),
                 database_path=tmp_path / "session.db",
@@ -75,7 +79,7 @@ def test_cold_cancellation_intent_precedes_model_and_preserves_evidence(
         finally:
             await warm.aclose()
 
-        cold = await create(thread)
+        cold = await create(thread, base_override=future_base_override)
         try:
             events = []
 

@@ -35,7 +35,7 @@ def test_manual_compaction_cancel_or_close_preserves_history_and_cleans_up(tmp_p
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -91,7 +91,7 @@ def test_close_with_unconsumed_compaction_events_preserves_atomic_commit(tmp_pat
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, event_queue_size=1
             ),
@@ -142,7 +142,7 @@ def test_manual_compaction_replaces_a_running_normal_turn(tmp_path):
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, event_queue_size=1
             ),

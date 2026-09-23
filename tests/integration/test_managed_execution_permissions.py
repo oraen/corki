@@ -60,7 +60,7 @@ async def run(tmp_path, profile, requirements, script, *, nested=False):
         async def aclose(self):
             pass
 
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -188,7 +188,7 @@ def test_invalid_managed_selection_fails_before_mcp_and_model(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -325,7 +325,7 @@ except OSError:
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

@@ -167,7 +167,7 @@ def test_exact_binding_controls_visibility_approval_and_account(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,

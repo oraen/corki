@@ -73,10 +73,10 @@ def test_explicit_skill_is_frozen_input_history_not_a_step_snapshot(tmp_path, mo
             async def aclose(self):
                 pass
 
-        def create(thread_id=None):
+        async def create(thread_id=None):
             registry = ToolRegistry()
             registry.register(Change())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(working_directory=tmp_path),
                 database_path=tmp_path / "sessions.db",
                 home_path=tmp_path / ".corki",
@@ -85,7 +85,7 @@ def test_explicit_skill_is_frozen_input_history_not_a_step_snapshot(tmp_path, mo
                 thread_id=thread_id,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [e async for e in runtime.stream("use $fixture")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -104,7 +104,7 @@ def test_explicit_skill_is_frozen_input_history_not_a_step_snapshot(tmp_path, mo
             thread = runtime.thread_id
             await runtime.aclose()
             write_skill(path, "UPDATED SKILL BODY")
-            runtime = create(thread)
+            runtime = await create(thread)
             for _ in range(2):
                 events = [e async for e in runtime.stream("use $fixture again")]
                 assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -159,7 +159,7 @@ def test_midturn_compaction_does_not_reinject_old_selected_skill(tmp_path, inclu
 
         registry = ToolRegistry()
         registry.register(Large())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 context_window_tokens=50000,

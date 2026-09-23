@@ -62,7 +62,7 @@ def test_search_default_and_explicit_top_k_bound_loaded_definitions(tmp_path, li
         registry = ToolRegistry()
         for index in range(12):
             registry.register(Tool(index))
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, plugins_enabled=False
             ),
@@ -138,7 +138,7 @@ def test_repeated_query_failures_remain_observations_without_rebuilding_index(
 
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "failure.db",
             registry=registry,
@@ -236,7 +236,7 @@ def test_search_ranking_loads_only_top_candidate_and_executes_it(
         registry = ToolRegistry()
         for tool in candidates:
             registry.register(tool)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

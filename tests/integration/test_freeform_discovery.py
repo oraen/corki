@@ -91,7 +91,7 @@ def test_search_then_raw_call_retains_wire_kind_and_durable_definition(
         registry = ToolRegistry()
         registry.register(Tool())
         repository = SQLiteSessionRepository(tmp_path / "sessions.db")
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -168,7 +168,7 @@ def test_bad_wrapper_is_observation_even_with_legacy_native_configuration(
         monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

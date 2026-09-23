@@ -105,6 +105,71 @@ def test_unrelated_git_repository_is_never_deleted(tmp_path):
     assert (tmp_path / "user-file").read_text() == "keep"
 
 
+@pytest.mark.parametrize(
+    "author,author_email,committer,committer_email",
+    [
+        ("Codex", "noreply@openai.com", "Codex", "noreply@openai.com"),
+        ("Unrelated", "noreply@openai.com", "Codex", "noreply@openai.com"),
+        ("Codex", "other@example.invalid", "Codex", "noreply@openai.com"),
+        ("Codex", "noreply@openai.com", "Unrelated", "noreply@openai.com"),
+        ("Codex", "noreply@openai.com", "Codex", "other@example.invalid"),
+    ],
+)
+def test_native_legacy_baseline_requires_actual_codex_identity(
+    tmp_path, author, author_email, committer, committer_email
+):
+    message = "Initialize Codex git baseline\n\nCo-authored-by: Codex <noreply@openai.com>"
+    env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+    env.update(
+        GIT_CONFIG_NOSYSTEM="1",
+        GIT_CONFIG_GLOBAL=os.devnull,
+        GIT_AUTHOR_NAME=author,
+        GIT_AUTHOR_EMAIL=author_email,
+        GIT_COMMITTER_NAME=committer,
+        GIT_COMMITTER_EMAIL=committer_email,
+    )
+    subprocess.run(["git", "init", "-q", str(tmp_path)], env=env, check=True, timeout=10)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "-c",
+            f"core.hooksPath={os.devnull}",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            message,
+        ],
+        env=env,
+        check=True,
+        timeout=10,
+    )
+    original = git._git(tmp_path, "rev-parse", "HEAD").strip()
+    if (author, author_email, committer, committer_email) != (
+        "Codex",
+        "noreply@openai.com",
+        "Codex",
+        "noreply@openai.com",
+    ):
+        with pytest.raises(ValueError, match="unowned"):
+            git.reset(tmp_path)
+        assert git._git(tmp_path, "rev-parse", "HEAD").strip() == original
+        assert not (tmp_path / ".git/corki-memory-baseline").exists()
+        return
+
+    git.prepare(tmp_path)
+    assert git._git(tmp_path, "rev-parse", "HEAD").strip() == original
+    git.reset(tmp_path)
+    assert git._git(tmp_path, "log", "-1", "--format=%an <%ae> | %cn <%ce>").strip() == (
+        b"Corki <noreply@corki.local> | Corki <noreply@corki.local>"
+    )
+    assert git._git(tmp_path, "log", "-1", "--format=%B").strip() == (
+        b"Initialize Corki git baseline"
+    )
+
+
 def test_ambient_git_routing_and_filters_cannot_redirect_baseline(tmp_path, monkeypatch):
     memory, outside = tmp_path / "memory", tmp_path / "outside"
     memory.mkdir()

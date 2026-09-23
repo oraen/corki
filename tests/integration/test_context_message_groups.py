@@ -142,11 +142,11 @@ def test_runtime_initial_delta_standalone_compaction_and_cold_groups(
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             registry.register(Change())
             cls = OpenAIResponsesModel if api == "responses" else OpenAICompatibleModel
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     api_mode=api,
@@ -182,7 +182,7 @@ def test_runtime_initial_delta_standalone_compaction_and_cold_groups(
                 ),
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             assert isinstance([e async for e in runtime.stream("use $fixture")][-1], TurnCompleted)
             developer = "developer" if api == "responses" else "system"
@@ -241,7 +241,7 @@ def test_runtime_initial_delta_standalone_compaction_and_cold_groups(
             before = await runtime._repository.load_items(thread)
             prior_body = bodies[-1]
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             assert isinstance(
                 [e async for e in runtime.stream("cold unchanged")][-1], TurnCompleted
             )

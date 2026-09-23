@@ -268,8 +268,8 @@ def test_common_stream_search_call_observation_ledger_and_cold_history(
             async def aclose(self):
                 pass
 
-        def create(model, thread=None):
-            return LangGraphRuntime.create(
+        async def create(model, thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 model=model,
                 registry=ToolRegistry(),
@@ -278,7 +278,7 @@ def test_common_stream_search_call_observation_ledger_and_cold_history(
                 thread_id=thread,
             )
 
-        runtime = create(Model())
+        runtime = await create(Model())
         try:
             events = [e async for e in runtime.stream("needle")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -315,7 +315,7 @@ def test_common_stream_search_call_observation_ledger_and_cold_history(
             async def aclose(self):
                 pass
 
-        cold = create(Cold(), runtime._thread_id)
+        cold = await create(Cold(), runtime._thread_id)
         try:
             events = [e async for e in cold.stream("continue")]
             assert isinstance(events[-1], TurnCompleted)

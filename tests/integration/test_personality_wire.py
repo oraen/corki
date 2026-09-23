@@ -86,7 +86,7 @@ def test_personality_ordinary_wire_cold_changes_and_compaction(
             ("small", "pragmatic"),
         )
         for index, (model, personality) in enumerate(choices):
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     tmp_path,
                     model=model,

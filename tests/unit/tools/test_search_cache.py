@@ -96,6 +96,104 @@ def test_dynamic_search_information_changes_invalidate_complete_index(change):
     assert first.index.specs == (spec,)
 
 
+def test_dynamic_schema_json_type_change_invalidates_search_handler(tmp_path):
+    initial = ToolSpec(
+        "lookup",
+        "amber",
+        {"type": "object", "properties": {"value": {"enum": [True]}}},
+        exposure=ToolExposure.DEFERRED,
+    )
+    changed = replace(
+        initial, parameters={"type": "object", "properties": {"value": {"enum": [1]}}}
+    )
+    registry = ToolRegistry()
+    owner = registry.create_owner()
+    registry.replace_owned(owner, (DynamicTool(initial),))
+    cache = ToolSearchHandlerCache()
+    first = cache.get_or_build(registry)
+
+    registry.replace_owned(owner, (DynamicTool(changed),))
+    second = cache.get_or_build(registry)
+    assert second is not first and second.index is not first.index
+
+    async def scenario():
+        call = ToolCall(ToolCallId("s"), "tool_search", {"query": "amber"})
+        assert (await first.execute(call, ToolContext(tmp_path))).discovered_tools == (initial,)
+        result = await second.execute(call, ToolContext(tmp_path))
+        assert result.discovered_tools[0].parameters == changed.parameters
+        assert '"enum": [1]' in result.content
+
+    asyncio.run(scenario())
+
+
+def test_malformed_schema_search_metadata_does_not_block_healthy_cache_results(tmp_path):
+    registry = ToolRegistry()
+    owner = registry.create_owner()
+    registry.replace_owned(
+        owner,
+        (
+            DynamicTool(
+                ToolSpec(
+                    "broken",
+                    "old data",
+                    {"type": "object", "properties": [], "anyOf": None},
+                    exposure=ToolExposure.DEFERRED,
+                )
+            ),
+            DynamicTool(
+                ToolSpec(
+                    "lookup",
+                    "calendar events",
+                    {"type": "object"},
+                    exposure=ToolExposure.DEFERRED,
+                )
+            ),
+        ),
+    )
+    handler = ToolSearchHandlerCache().get_or_build(registry)
+
+    async def scenario():
+        result = await handler.execute(
+            ToolCall(ToolCallId("search"), "tool_search", {"query": "calendar", "limit": 1}),
+            ToolContext(tmp_path),
+        )
+        assert [spec.name for spec in result.discovered_tools] == ["lookup"]
+
+    asyncio.run(scenario())
+
+
+def test_internal_output_schema_type_change_rebinds_discovery_without_reindex(tmp_path):
+    initial = ToolSpec(
+        "lookup",
+        "amber",
+        {"type": "object"},
+        exposure=ToolExposure.DEFERRED,
+        output_schema={"properties": {"value": {"enum": [True]}}, "type": "object"},
+    )
+    changed = replace(
+        initial,
+        output_schema={"properties": {"value": {"enum": [1]}}, "type": "object"},
+    )
+    registry = ToolRegistry()
+    owner = registry.create_owner()
+    registry.replace_owned(owner, (DynamicTool(initial),))
+    cache = ToolSearchHandlerCache()
+    first = cache.get_or_build(registry)
+
+    registry.replace_owned(owner, (DynamicTool(changed),))
+    second = cache.get_or_build(registry)
+    assert second is not first and second.index is first.index
+
+    async def scenario():
+        call = ToolCall(ToolCallId("s"), "tool_search", {"query": "amber"})
+        old = await first.execute(call, ToolContext(tmp_path))
+        new = await second.execute(call, ToolContext(tmp_path))
+        assert type(old.discovered_tools[0].output_schema["properties"]["value"]["enum"][0]) is bool
+        assert type(new.discovered_tools[0].output_schema["properties"]["value"]["enum"][0]) is int
+
+    asyncio.run(scenario())
+
+
 def test_failed_build_keeps_the_previous_complete_cached_handler(monkeypatch):
     spec = ToolSpec("lookup", "amber", {}, exposure=ToolExposure.DEFERRED)
     registry = ToolRegistry()

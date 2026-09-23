@@ -129,7 +129,7 @@ def test_plugin_skill_source_reaches_context(tmp_path, monkeypatch, agent, case)
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=replace(
                 CorkiSettings.for_directory(tmp_path, config_file=config),
                 execution_permissions=None,

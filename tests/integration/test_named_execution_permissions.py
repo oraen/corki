@@ -68,7 +68,7 @@ for name in ['allowed/inside.txt', 'outside.txt', 'extra/allowed/inside.txt']:
         async def aclose(self):
             pass
 
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=chosen,
         model=Model(),
         database_path=tmp_path / "session.db",
@@ -269,7 +269,7 @@ def test_cancel_during_selection_does_not_publish_or_start_runtime(tmp_path, mon
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=configured, model=Model(), database_path=tmp_path / "sessions.db"
         )
 
@@ -329,7 +329,7 @@ extra=true
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=chosen,
             model=Model(),
             database_path=tmp_path / "sessions.db",

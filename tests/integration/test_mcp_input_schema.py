@@ -102,7 +102,7 @@ def test_search_load_call_observation_uses_normalized_schema_not_argument_author
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -222,7 +222,7 @@ def test_agent_total_budget_hides_tool_from_model_dispatch(tmp_path, monkeypatch
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

@@ -72,7 +72,7 @@ def test_pending_call_cold_recovery_keeps_identity_and_never_rebinds_old_name(tm
             async def emit(self, event):
                 pass
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             if thread is None or not legacy:
                 registry.register(Tool())
@@ -84,7 +84,7 @@ def test_pending_call_cold_recovery_keeps_identity_and_never_rebinds_old_name(tm
                 memories_background_enabled=False,
                 memories_dedicated_tools=True,
             )
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 model=Model(),
                 registry=registry,
@@ -93,7 +93,7 @@ def test_pending_call_cold_recovery_keeps_identity_and_never_rebinds_old_name(tm
                 thread_id=thread,
             ), settings
 
-        runtime, settings = create()
+        runtime, settings = await create()
         try:
             await runtime._ensure_ready()
             thread, turn = runtime.thread_id, new_turn_id()
@@ -114,7 +114,7 @@ def test_pending_call_cold_recovery_keeps_identity_and_never_rebinds_old_name(tm
             before = await runtime._repository.load_items(thread)
             assert next(i for i in before if isinstance(i, ToolCallItem)).call == call
             await runtime.aclose()
-            runtime, _ = create(thread)
+            runtime, _ = await create(thread)
             events = [event async for event in runtime.resume_pending()]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert executions == ([] if legacy else [call])

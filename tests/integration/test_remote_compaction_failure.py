@@ -100,7 +100,7 @@ def test_invalid_summary_never_installs_partial_history(tmp_path, monkeypatch, f
             "OwnedHTTPClient",
             lambda *a, **kw: real(*a, **kw, transport=httpx.MockTransport(respond)),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path), database_path=tmp_path / "s.db", registry=ToolRegistry()
         )
         try:
@@ -146,7 +146,7 @@ def test_partial_summary_cancel_closes_http_without_commit(tmp_path, monkeypatch
                 transport=httpx.MockTransport(lambda request: httpx.Response(200, stream=Slow())),
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path), database_path=tmp_path / "s.db", registry=ToolRegistry()
         )
 
@@ -190,7 +190,7 @@ def test_compaction_retries_same_request_after_partial_output(tmp_path, monkeypa
             "OwnedHTTPClient",
             lambda *a, **kw: real(*a, **kw, transport=httpx.MockTransport(respond)),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path), database_path=tmp_path / "s.db", registry=ToolRegistry()
         )
         try:

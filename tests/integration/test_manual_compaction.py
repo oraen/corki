@@ -41,7 +41,7 @@ def test_manual_compaction_of_empty_history_then_regular_turn(tmp_path):
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path),
             database_path=tmp_path / "sessions.db",
             home_path=tmp_path / "home",
@@ -121,7 +121,7 @@ def test_manual_compaction_twice_resets_discovery_and_rebuilds_context(tmp_path)
 
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings.for_directory(tmp_path, config_file=config),
             database_path=tmp_path / "sessions.db",
             home_path=tmp_path / "home",
@@ -158,7 +158,7 @@ def test_manual_compaction_twice_resets_discovery_and_rebuilds_context(tmp_path)
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("failure", ["authentication", "empty", "exception"])
+@pytest.mark.parametrize("failure", ["authentication", "empty", "exception", "incomplete"])
 @pytest.mark.parametrize("has_history", [False, True])
 def test_manual_failure_never_installs_a_summary_or_reports_success(tmp_path, failure, has_history):
     async def scenario():
@@ -171,12 +171,14 @@ def test_manual_failure_never_installs_a_summary_or_reports_success(tmp_path, fa
                     raise ModelError("denied", kind=ModelErrorKind.AUTHENTICATION)
                 if failure == "exception":
                     raise RuntimeError("extension failed")
+                if failure == "incomplete":
+                    return
                 yield ModelCompleted(())
 
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, model_max_retries=1, model_retry_base_seconds=0.001
             ),

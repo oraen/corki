@@ -111,7 +111,7 @@ def test_summary_tool_call_is_not_executed_and_cold_history_stays_ordinary(
             lambda *a, **kw: real_client(*a, **kw, transport=httpx.MockTransport(respond)),
         )
 
-        def create(thread=None):
+        async def create(thread=None):
             class Guard:
                 spec = ToolSpec("guard", "guard", {"type": "object"})
 
@@ -121,7 +121,7 @@ def test_summary_tool_call_is_not_executed_and_cold_history_stays_ordinary(
 
             registry = ToolRegistry()
             registry.register(Guard())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     tmp_path,
                     provider_name="openai",
@@ -140,7 +140,7 @@ def test_summary_tool_call_is_not_executed_and_cold_history_stays_ordinary(
                 session_id="different-new-default" if thread else "stored-remote-session",
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             assert isinstance([e async for e in runtime.stream("ORIGINAL_USER")][-1], TurnCompleted)
@@ -154,7 +154,7 @@ def test_summary_tool_call_is_not_executed_and_cold_history_stays_ordinary(
             assert routing_headers == [None] * (4 if automatic == "mid" else 3)
         finally:
             await runtime.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             assert isinstance([e async for e in cold.stream("CONTINUE")][-1], TurnCompleted)
             assert "SAFE_SUMMARY" in json.dumps(requests[-1]["input"])

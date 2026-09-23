@@ -51,7 +51,7 @@ def test_animation_drains_rows_while_real_model_stream_is_waiting(tmp_path, monk
                         drained.set()
 
         settings = CorkiSettings(tmp_path, skills_enabled=False, plugins_enabled=False)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "animation.db",
             model=Model(),
@@ -125,7 +125,7 @@ def test_owned_terminal_write_failure_closes_real_runtime(tmp_path, monkeypatch,
             working_directory=tmp_path, skills_enabled=False, plugins_enabled=False
         )
         model = Model()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "sessions.db",
             model=model,
@@ -160,8 +160,10 @@ def test_owned_terminal_write_failure_closes_real_runtime(tmp_path, monkeypatch,
             assert len(writes) == 1 and "Opening line" in writes[0]
             assert model.stream_closed
             names = [method.__name__ for method, _, _ in ui._transcript.calls]
-            assert names.count("append_assistant_delta") == 1
-            assert names.count("end_assistant_message") == 1
+            assert names.count("show_assistant_message") == 1
+            assert not {"begin_assistant_message", "append_assistant_delta"} & set(names)
+            assert ui._transcript.render(80).count("Opening line") == 1
+            assert ui._stream_markdown is None and not ui._assistant_started
             assert await runtime._repository.latest_running_turn(runtime.thread_id) is None
         finally:
             release.set()
@@ -217,7 +219,7 @@ def test_interleaved_tool_does_not_split_authoritative_assistant_source(tmp_path
         )
         registry, tool, model = ToolRegistry(), Tool(), Model()
         registry.register(tool)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "sessions.db",
             model=model,
@@ -275,7 +277,7 @@ def test_terminal_fault_after_partial_output_closes_runtime_and_display(tmp_path
             working_directory=tmp_path, skills_enabled=False, plugins_enabled=False
         )
         model = Model()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "sessions.db",
             model=model,
@@ -289,7 +291,12 @@ def test_terminal_fault_after_partial_output_closes_runtime_and_display(tmp_path
             assert model.stream_closed
             names = [method.__name__ for method, _, _ in ui._transcript.calls]
             end = "end_reasoning" if reasoning else "end_assistant_message"
-            assert names[-1] == end and names.count(end) == 1
+            if reasoning:
+                assert names[-1] == end and names.count(end) == 1
+            else:
+                assert names[-1] == "show_assistant_message"
+                assert ui._transcript.render(80).count("partial output") == 1
+                assert ui._stream_markdown is None and not ui._assistant_started
             assert await runtime._repository.latest_running_turn(runtime.thread_id) is None
         finally:
             await runtime.aclose()
@@ -343,7 +350,7 @@ def test_actual_tool_cancellation_marks_display_unconfirmed_once(tmp_path):
         )
         registry, tool, model = ToolRegistry(), Tool(), Model()
         registry.register(tool)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "sessions.db",
             model=model,

@@ -98,7 +98,7 @@ def test_real_loop_retries_compaction_without_replaying_tools(tmp_path, failure)
 
         registry = ToolRegistry()
         registry.register(LargeTool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

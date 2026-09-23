@@ -116,7 +116,7 @@ def test_colliding_catalog_search_calls_all_raw_tools_and_populates_namespace_co
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -179,7 +179,7 @@ def test_runtime_non_prefixed_feature_uses_raw_server_allowlist(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

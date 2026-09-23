@@ -67,7 +67,7 @@ def test_legacy_user_and_tool_media_are_projected_without_rewriting_sqlite(tmp_p
 
         database = tmp_path / "legacy.db"
         repository = SQLiteSessionRepository(database)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -187,7 +187,7 @@ def test_real_view_image_reaches_wire_resized_but_js_and_ledger_keep_typed_origi
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
         monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
         database = tmp_path / "wire.db"
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -286,7 +286,7 @@ def test_malformed_image_is_replaced_in_real_runtime_history(tmp_path, mode):
 
         registry = ToolRegistry()
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode=mode
             ),

@@ -27,8 +27,8 @@ class MainModel:
         pass
 
 
-def make_runtime(tmp_path, *, memory_model=None, **settings):
-    return LangGraphRuntime.create(
+async def make_runtime(tmp_path, *, memory_model=None, **settings):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             api_base="https://example.test/v1",
@@ -63,7 +63,7 @@ def test_startup_runs_for_each_new_turn_not_initialization(
             return MemoryRunReport(claimed=len(calls))
 
         monkeypatch.setattr(LongTermMemoryService, "run_once", counted)
-        runtime = make_runtime(tmp_path, memories_generate=generate)
+        runtime = await make_runtime(tmp_path, memories_generate=generate)
         try:
             await runtime._ensure_ready()
             assert await runtime._memory_service.wait() is None
@@ -93,7 +93,7 @@ def test_no_startup_without_a_new_admitted_input_turn(tmp_path, monkeypatch, ope
             return MemoryRunReport()
 
         monkeypatch.setattr(LongTermMemoryService, "run_once", counted)
-        runtime = make_runtime(tmp_path)
+        runtime = await make_runtime(tmp_path)
         try:
             await runtime._ensure_ready()
             save_turn = runtime._repository.save_turn
@@ -140,7 +140,7 @@ def test_background_failure_does_not_disable_the_next_turn_pass(tmp_path, monkey
             return MemoryRunReport(claimed=2)
 
         monkeypatch.setattr(LongTermMemoryService, "run_once", sometimes_fails)
-        runtime = make_runtime(tmp_path)
+        runtime = await make_runtime(tmp_path)
         try:
             await complete_turn(runtime)
             with pytest.raises(OSError, match="first background"):
@@ -175,7 +175,7 @@ def test_steering_does_not_schedule_a_second_background_pass(tmp_path, monkeypat
                     yield event
 
         monkeypatch.setattr(LongTermMemoryService, "run_once", counted)
-        runtime = make_runtime(tmp_path)
+        runtime = await make_runtime(tmp_path)
         runtime._graph._model = HeldMain()
         running = asyncio.create_task(complete_turn(runtime, realtime=True))
         try:
@@ -211,7 +211,7 @@ def test_wait_covers_older_active_pass_and_does_not_cancel_it(tmp_path, monkeypa
             return MemoryRunReport(claimed=identity)
 
         monkeypatch.setattr(LongTermMemoryService, "run_once", overlapping)
-        runtime = make_runtime(tmp_path)
+        runtime = await make_runtime(tmp_path)
         waiter = None
         try:
             await complete_turn(runtime)
@@ -259,7 +259,7 @@ def test_close_cancels_and_joins_all_passes_despite_repeated_waiter_cancellation
                 exited.append(identity)
 
         monkeypatch.setattr(LongTermMemoryService, "run_once", held)
-        runtime = make_runtime(tmp_path)
+        runtime = await make_runtime(tmp_path)
         closing = None
         try:
             for index in range(2):
@@ -316,7 +316,7 @@ def test_concurrent_real_passes_share_sqlite_claim_without_losing_worker(tmp_pat
                 pass
 
         model = MemoryModel()
-        runtime = make_runtime(tmp_path, memory_model=model, memories_generate=False)
+        runtime = await make_runtime(tmp_path, memory_model=model, memories_generate=False)
         try:
             await complete_turn(runtime)
             await asyncio.wait_for(started.wait(), 2)
@@ -359,7 +359,7 @@ def test_real_worker_stream_closes_before_claim_and_repository_release(
             async def aclose(self):
                 pass
 
-        runtime = make_runtime(tmp_path, memory_model=MemoryModel(), memories_generate=False)
+        runtime = await make_runtime(tmp_path, memory_model=MemoryModel(), memories_generate=False)
         closing = None
 
         def job():
@@ -418,7 +418,7 @@ def test_explicit_background_pause_is_independent_of_source_eligibility(
             pytest.fail("background pass should be paused")
 
         monkeypatch.setattr(LongTermMemoryService, "run_once", unexpected)
-        runtime = make_runtime(
+        runtime = await make_runtime(
             tmp_path, memories_generate=generate, memories_background_enabled=False
         )
         try:

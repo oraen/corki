@@ -220,7 +220,7 @@ def _legacy_text(messages: ModelPermissionMessages | None) -> str:
 def _decode(item: ContextItem | None) -> dict | None:
     try:
         value = json.loads(item.snapshot_state) if item is not None else None
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, RecursionError):
         return None
     if (
         not isinstance(value, dict)

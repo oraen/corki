@@ -100,7 +100,7 @@ def test_runtime_prunes_only_one_batch_then_consolidates_visible_inputs(tmp_path
         memory = MemoryModel()
         for index in range(2):
             main = MainModel()
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path, skills_enabled=False, memories_enabled=True
                 ),
@@ -169,7 +169,7 @@ def test_prune_failure_isolated_but_cancellation_is_not_swallowed(tmp_path, fail
                 raise OSError("injected retention failure")
 
         repository, memory = Repository(database), MemoryModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, memories_enabled=True
             ),
@@ -217,7 +217,7 @@ def test_runtime_close_joins_already_started_retention_write(tmp_path):
                     finished.set()
 
         memory = MemoryModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, memories_enabled=True
             ),

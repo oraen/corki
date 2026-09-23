@@ -169,7 +169,7 @@ def test_mixed_output_commit_recovers_without_repeating_tools(
             return result
 
         warm_model = Model()
-        warm = LangGraphRuntime.create(
+        warm = await LangGraphRuntime.acreate(
             settings=settings, database_path=database, model=warm_model, registry=registry()
         )
         await warm._ensure_ready()
@@ -244,7 +244,7 @@ def test_mixed_output_commit_recovers_without_repeating_tools(
             finally:
                 await padded.close()
         model = Model(recovering=True)
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             thread_id=thread,
@@ -325,7 +325,7 @@ def test_replayed_completed_tool_result_has_one_durable_history_item(tmp_path: P
         tool = DelayTool("stable", 0)
         registry.register(tool)
         repository = SQLiteSessionRepository(tmp_path / "stable.db")
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path),
             database_path=tmp_path / "stable.db",
             repository=repository,
@@ -465,7 +465,7 @@ def test_resume_uses_atomic_model_step_after_pre_checkpoint_crash(tmp_path: Path
         # before LangGraph wrote its node checkpoint.
         await repository.commit_model_step(thread_id, turn_id, 0, completed)
         model = NeverCalledModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path),
             database_path=database,
             repository=repository,
@@ -490,7 +490,7 @@ def test_resume_continues_from_real_langgraph_sqlite_checkpoint(tmp_path: Path) 
         repository = SQLiteSessionRepository(database)
         thread_id, turn_id = new_thread_id(), new_turn_id()
         blocking = BlockingModel()
-        first = LangGraphRuntime.create(
+        first = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             repository=repository,
@@ -517,7 +517,7 @@ def test_resume_continues_from_real_langgraph_sqlite_checkpoint(tmp_path: Path) 
         await first.aclose()
 
         second_repository = SQLiteSessionRepository(database)
-        second = LangGraphRuntime.create(
+        second = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             repository=second_repository,
@@ -603,7 +603,7 @@ def test_checkpoint_startup_failure_is_cleaned_up_and_retryable(
             staticmethod(factory),
         )
         registry = ToolRegistry()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path),
             database_path=tmp_path / "retry.db",
             registry=registry,
@@ -659,7 +659,7 @@ def test_parallel_tools_overlap_in_one_model_step(tmp_path: Path) -> None:
         first, second = DelayTool("first", 0.15), DelayTool("second", 0.15)
         registry.register(first)
         registry.register(second)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path),
             database_path=tmp_path / "parallel.db",
             model=ToolThenAnswerModel(("first", "second")),
@@ -682,7 +682,7 @@ def test_turn_cancellation_propagates_into_running_tool(tmp_path: Path) -> None:
         registry = ToolRegistry()
         registry.register(DelayTool("block", 60, cancelled=cancelled, started=started))
         database = tmp_path / "cancel.db"
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path),
             database_path=database,
             model=ToolThenAnswerModel(("block",)),
@@ -721,7 +721,7 @@ class BurstModel:
 
 def test_closing_consumer_cannot_deadlock_a_full_event_queue(tmp_path: Path) -> None:
     async def scenario() -> None:
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, event_queue_size=1),
             database_path=tmp_path / "backpressure.db",
             model=BurstModel(),
@@ -748,7 +748,7 @@ class FailingModel:
 
 def test_runtime_preserves_typed_provider_failure(tmp_path: Path) -> None:
     async def scenario() -> TurnFailed:
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path),
             database_path=tmp_path / "failure.db",
             model=FailingModel(),
@@ -801,7 +801,7 @@ def test_malformed_provider_items_are_rejected_before_persistence(tmp_path: Path
     async def scenario() -> tuple[TurnFailed, tuple[object, ...]]:
         database = tmp_path / "malformed.db"
         repository = SQLiteSessionRepository(database)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path),
             database_path=database,
             repository=repository,
@@ -823,7 +823,7 @@ def test_duplicate_provider_tool_call_ids_are_rejected_before_execution(
     tmp_path: Path,
 ) -> None:
     async def scenario() -> TurnFailed:
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path),
             database_path=tmp_path / "duplicate-call.db",
             model=DuplicateToolCallModel(),

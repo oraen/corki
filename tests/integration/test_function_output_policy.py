@@ -115,11 +115,11 @@ def test_function_raw_ledger_archive_and_http_history_are_distinct(tmp_path, api
             ),
         )
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             registry.register(Tool())
             adapter = OpenAIResponsesModel if api == "responses" else OpenAICompatibleModel
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "session.db",
                 registry=registry,
@@ -134,7 +134,7 @@ def test_function_raw_ledger_archive_and_http_history_are_distinct(tmp_path, api
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             events = [event async for event in runtime.stream("read")]
@@ -157,7 +157,7 @@ def test_function_raw_ledger_archive_and_http_history_are_distinct(tmp_path, api
             assert _result_from_json(ledger[0]).content == original.content
         finally:
             await runtime.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             assert isinstance([event async for event in cold.stream("continue")][-1], TurnCompleted)
             assert isinstance([event async for event in cold.compact()][-1], TurnCompleted)
@@ -250,10 +250,10 @@ def test_raw_result_survives_completed_ledger_fault_and_nested_call(tmp_path, ne
         )
         database = tmp_path / "session.db"
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             registry.register(Tool())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=database,
                 registry=registry,
@@ -261,7 +261,7 @@ def test_raw_result_survives_completed_ledger_fault_and_nested_call(tmp_path, ne
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         append, save = runtime._repository.append_items, runtime._repository.save_turn
         injected = False
@@ -289,7 +289,7 @@ def test_raw_result_survives_completed_ledger_fault_and_nested_call(tmp_path, ne
             # Simulate loss of the in-memory writer, retaining only committed facts.
             runtime._pending_terminals.clear()
             await runtime.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             assert isinstance([event async for event in cold.resume_pending()][-1], TurnCompleted)
             assert len(requests) == 2 and len(calls) == 1

@@ -65,7 +65,7 @@ def test_http_summary_retry_has_one_sampling_owner(
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
         monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -139,7 +139,7 @@ def test_main_responses_context_overflow_ends_turn_without_implicit_compaction(
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
         monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

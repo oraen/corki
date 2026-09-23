@@ -99,7 +99,7 @@ def test_runtime_policy_update_retains_pending_transport(tmp_path, monkeypatch, 
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

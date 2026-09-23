@@ -52,7 +52,7 @@ def test_shutdown_joins_write_before_releasing_storage(
 
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, plugins_enabled=False
             ),

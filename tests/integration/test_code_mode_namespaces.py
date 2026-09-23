@@ -84,7 +84,7 @@ def test_namespace_policy_controls_real_module_and_direct_dispatch(tmp_path, mod
         registry.register(Probe("allowed::lookup", ToolExposure.DIRECT))
         registry.register(Probe("direct_only::lookup", ToolExposure.DEFERRED))
         registry.register(Probe("excluded::lookup", ToolExposure.DIRECT))
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings, registry=registry, model=Model(), database_path=tmp_path / "state.db"
         )
         try:
@@ -145,7 +145,7 @@ def test_exclusion_preserves_search_load_call_and_observation(tmp_path, search_m
 
         registry = ToolRegistry()
         registry.register(Lookup())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -209,10 +209,10 @@ def test_cold_checkpoint_validates_saved_exposure_before_direct_dispatch(tmp_pat
             async def aclose(self):
                 pass
 
-        def create(selected, thread=None):
+        async def create(selected, thread=None):
             registry = ToolRegistry()
             registry.register(Lookup())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=selected,
                 registry=registry,
                 model=Model(),
@@ -220,7 +220,7 @@ def test_cold_checkpoint_validates_saved_exposure_before_direct_dispatch(tmp_pat
                 thread_id=thread,
             )
 
-        old = create(settings)
+        old = await create(settings)
         await old._ensure_ready()
         thread, turn = old.thread_id, new_turn_id()
         user = UserMessageItem("only once", turn)
@@ -237,7 +237,7 @@ def test_cold_checkpoint_validates_saved_exposure_before_direct_dispatch(tmp_pat
             interrupt_before=["call_model"],
         )
         await old.aclose()
-        cold = create(
+        cold = await create(
             replace(settings, code_mode_direct_only_tool_namespaces=())
             if changed_policy
             else settings,
@@ -275,7 +275,7 @@ def test_missing_engine_fallback_retains_default_namespace_projection(tmp_path, 
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

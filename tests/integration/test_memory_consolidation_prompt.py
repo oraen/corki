@@ -126,7 +126,7 @@ def test_full_policy_is_bound_to_shared_workspace_and_evidence_is_tool_read(
             async def aclose(self):
                 raise AssertionError("borrowed model must not be closed by child")
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,
@@ -264,7 +264,7 @@ def test_full_consolidation_policy_and_lazy_notes_on_actual_http(tmp_path, api_m
                 base_url="https://fixture.invalid/v1", api_mode=api_mode
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,
@@ -307,7 +307,7 @@ def test_seed_failure_warns_without_disabling_consolidation(tmp_path, monkeypatc
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(tmp_path, skills_enabled=False, memories_enabled=True),
             database_path=tmp_path / "sessions.db",
             memory_root=tmp_path / "memories",

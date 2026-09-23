@@ -63,7 +63,7 @@ def test_policy_wire_cold_replace_and_missing_policy_removal(tmp_path, monkeypat
                     ),
                 )
             )
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     tmp_path,
                     skills_enabled=False,

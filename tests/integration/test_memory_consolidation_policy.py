@@ -61,7 +61,7 @@ def test_empty_database_initialization_cooldown_and_file_only_changes(
         model = MemoryModel()
 
         async def run():
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path, skills_enabled=False, memories_enabled=True
                 ),
@@ -123,7 +123,7 @@ def test_repeated_startup_does_not_reenqueue_failed_unchanged_work(tmp_path, mon
 
         model = BrokenMemoryModel()
         for index in range(3):
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,

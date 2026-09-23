@@ -147,7 +147,7 @@ def test_background_generation_then_summary_search_read_and_citation(
                 pass
 
         memory_model, main_model = MemoryModel(), MainModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -238,7 +238,7 @@ def test_runtime_turn_survives_background_heartbeat_failure(tmp_path):
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, memories_enabled=True
             ),
@@ -381,8 +381,8 @@ def test_explicit_note_then_cold_consolidation_preserves_source_and_marks_recall
             async def aclose(self):
                 pass
 
-        def create(model, generate, memory_model, thread=None):
-            return LangGraphRuntime.create(
+        async def create(model, generate, memory_model, thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,
@@ -399,7 +399,7 @@ def test_explicit_note_then_cold_consolidation_preserves_source_and_marks_recall
             )
 
         consolidator = Consolidator()
-        runtime = create(Writer(), False, consolidator)
+        runtime = await create(Writer(), False, consolidator)
         thread = runtime.thread_id
         try:
             assert isinstance(
@@ -415,7 +415,7 @@ def test_explicit_note_then_cold_consolidation_preserves_source_and_marks_recall
         assert (root / "MEMORY.md").read_text() == "v1\nOLD_PREFERENCE\n"
         assert (root / "memory_summary.md").read_text() == "v1\nOld preference\n"
         reader = Reader()
-        cold = create(reader, True, consolidator, thread)
+        cold = await create(reader, True, consolidator, thread)
         try:
             assert isinstance([e async for e in cold.stream("initialize")][-1], TurnCompleted)
             report = await cold._memory_service.wait()
@@ -480,7 +480,7 @@ def test_replaced_note_directory_returns_observation_without_external_write(tmp_
                 pass
 
         model = Model()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

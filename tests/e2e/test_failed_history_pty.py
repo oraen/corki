@@ -2,6 +2,7 @@
 
 import os
 import sys
+from io import StringIO
 
 import pexpect
 import pytest
@@ -27,7 +28,7 @@ class Model:
         yield ModelItemCompleted(AssistantMessageItem(
             'Saved partial answer', request.items[-1].turn_id, new_step_id()
         ))
-        raise ModelError('Saved failure marker')
+        raise ModelError('Saved failure marker Authorization: Bearer FAKE_MODEL_SECRET_123')
     async def aclose(self):
         self.closed += 1
 
@@ -37,16 +38,17 @@ class UI(TerminalUI):
 
 async def main():
     cwd = Path.cwd()
-    settings = CorkiSettings(working_directory=cwd, skills_enabled=False, plugins_enabled=False)
+    settings = CorkiSettings(working_directory=cwd, skills_enabled=False, plugins_enabled=False,
+        api_key='FAKE_MODEL_SECRET_123')
     model = Model()
-    warm = LangGraphRuntime.create(
+    warm = await LangGraphRuntime.acreate(
         settings=settings, database_path=cwd / 'sessions.db', model=model, home_path=cwd
     )
     events = [event async for event in warm.stream('Saved request')]
     assert isinstance(events[-1], TurnFailed)
     thread = warm.thread_id
     await warm.aclose()
-    cold = LangGraphRuntime.create(
+    cold = await LangGraphRuntime.acreate(
         settings=settings, database_path=cwd / 'sessions.db', model=model,
         thread_id=thread, home_path=cwd
     )
@@ -55,6 +57,7 @@ async def main():
     for width in (40, 100):
         rendered = ui._transcript.render(width)
         assert rendered.count('Saved failure marker') == 1
+        assert 'FAKE_MODEL_SECRET_123' not in rendered
         assert rendered.index('Saved partial answer') < rendered.index('Saved failure marker')
     assert model.calls == 1 and model.closed == 2
     print('COLD_HISTORY_CLOSED', flush=True)
@@ -80,11 +83,14 @@ def test_cold_failed_turn_terminal_replay(tmp_path, width):
             "PROMPT_TOOLKIT_NO_CPR": "1",
         },
     )
+    output = StringIO()
+    child.logfile_read = output
     try:
         child.expect_exact("Saved partial answer")
         child.expect_exact("Saved failure marker")
         child.expect_exact("COLD_HISTORY_CLOSED")
         child.expect(pexpect.EOF)
+        assert "FAKE_MODEL_SECRET_123" not in output.getvalue()
         child.close()
         assert child.exitstatus == 0
     finally:

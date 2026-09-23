@@ -78,7 +78,7 @@ def test_independent_nested_cancellation_settles_promise(tmp_path, self_cancel, 
 
         registry = ToolRegistry()
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),
@@ -162,7 +162,7 @@ def test_turn_cancellation_is_not_a_catchable_nested_failure(tmp_path, streamed)
 
         registry = ToolRegistry()
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),

@@ -37,7 +37,7 @@ def test_cold_cli_compaction_and_tool_pairs_across_pages(tmp_path, monkeypatch, 
 
         settings = CorkiSettings(tmp_path, skills_enabled=False, plugins_enabled=False)
         database = tmp_path / "history.db"
-        warm = LangGraphRuntime.create(
+        warm = await LangGraphRuntime.acreate(
             settings=settings, database_path=database, model=NoSampling(), home_path=tmp_path
         )
         await warm._ensure_ready()
@@ -62,7 +62,7 @@ def test_cold_cli_compaction_and_tool_pairs_across_pages(tmp_path, monkeypatch, 
         await warm._repository.save_turn(TurnRecord(turn, thread, TurnStatus.COMPLETED, ""))
         await warm._repository.append_items(thread, items)
         await warm.aclose()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             model=NoSampling(),

@@ -87,7 +87,7 @@ def test_native_package_enablement_precedes_registration_and_skill_discovery(
             tool_mode="code_mode_only" if mode == "code_mode" else "direct",
         )
         registry = ToolRegistry()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             registry=registry,
             model=Model(),

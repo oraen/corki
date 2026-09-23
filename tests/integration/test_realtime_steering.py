@@ -100,3 +100,105 @@ def test_live_input_waits_for_sampling_and_rebuilds_next_context(
             for i in model.requests[0].items
             if isinstance(i, ContextItem) and "STEERING_SKILL_BODY" in i.content
         ]
+
+
+def test_realtime_end_transition_is_explicit_and_not_repeated_after_cold_resume(tmp_path):
+    async def scenario():
+        requests = []
+
+        class Model:
+            async def stream(self, request):
+                requests.append(request)
+                yield ModelCompleted(
+                    (AssistantMessageItem("done", request.items[-1].turn_id, new_step_id()),)
+                )
+
+            async def aclose(self):
+                pass
+
+        settings = CorkiSettings(
+            working_directory=tmp_path,
+            skills_enabled=False,
+            plugins_enabled=False,
+        )
+        runtime = await LangGraphRuntime.acreate(
+            settings=settings,
+            database_path=tmp_path / "realtime.db",
+            home_path=tmp_path / "home",
+            model=Model(),
+        )
+        thread = runtime.thread_id
+        try:
+            live = [e async for e in runtime.stream("live", realtime=True)]
+            normal = [e async for e in runtime.stream("normal", realtime=False)]
+            assert isinstance(live[-1], TurnCompleted)
+            assert isinstance(normal[-1], TurnCompleted)
+            stored = await runtime._repository.load_items(thread)
+            starts = [
+                item
+                for item in requests[0].items
+                if isinstance(item, ContextItem) and item.key == "realtime.active"
+            ]
+            assert len(starts) == 1 and "live text channel" in starts[0].content
+            ends = [
+                item
+                for item in requests[1].items
+                if isinstance(item, ContextItem)
+                and item.content_kind == "corki.realtime.end_instructions"
+            ]
+            assert len(ends) == 1
+            assert "live conversation has ended" in ends[0].content
+        finally:
+            await runtime.aclose()
+
+        cold = await LangGraphRuntime.acreate(
+            settings=settings,
+            database_path=tmp_path / "realtime.db",
+            home_path=tmp_path / "home",
+            model=Model(),
+            thread_id=thread,
+        )
+        try:
+            assert [e async for e in cold.resume_pending()] == []
+            later = [e async for e in cold.stream("later", realtime=False)]
+            assert isinstance(later[-1], TurnCompleted)
+            assert await cold._repository.load_items(thread)
+            assert (await cold._repository.load_items(thread))[: len(stored)] == stored
+            assert (
+                sum(
+                    isinstance(item, ContextItem)
+                    and item.content_kind == "corki.realtime.end_instructions"
+                    for item in requests[-1].items
+                )
+                == 1
+            )
+            assert (
+                sum(
+                    isinstance(item, ContextItem)
+                    and item.content_kind == "corki.realtime.end_instructions"
+                    for item in await cold._repository.load_items(thread)
+                )
+                == 1
+            )
+            assert isinstance(
+                [e async for e in cold.stream("live again", realtime=True)][-1], TurnCompleted
+            )
+            assert (
+                sum(
+                    isinstance(item, ContextItem) and item.key == "realtime.active"
+                    for item in await cold._repository.load_items(thread)
+                )
+                == 3
+            )
+            assert (
+                sum(
+                    isinstance(item, ContextItem)
+                    and item.content_kind == "corki.realtime.end_instructions"
+                    for item in await cold._repository.load_items(thread)
+                )
+                == 1
+            )
+        finally:
+            await cold.aclose()
+
+    asyncio.run(scenario())

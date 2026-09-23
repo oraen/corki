@@ -138,7 +138,7 @@ def test_hosted_catalog_limit_reaches_actual_runtime(
                 MCPRegistration(fallback),
             )
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,
@@ -251,7 +251,7 @@ def test_legacy_hosted_source_change_preserves_ordinary_transport(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,

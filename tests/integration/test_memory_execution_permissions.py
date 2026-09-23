@@ -142,7 +142,7 @@ print('EFFECTS=' + json.dumps(results), flush=True)
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -260,7 +260,7 @@ def test_worker_policy_failure_isolated_and_claim_released_without_sampling(
                 async for event in super().stream(request):
                     yield event
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -341,7 +341,7 @@ def test_shutdown_during_worker_policy_preparation_joins_before_releasing_claim(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 memories_enabled=True,
@@ -391,7 +391,7 @@ def test_background_pass_captures_parent_before_the_scheduled_task_runs(tmp_path
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 memories_enabled=True,

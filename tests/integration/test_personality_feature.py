@@ -45,7 +45,7 @@ def test_personality_feature_and_explicit_none_are_distinct(tmp_path, enabled, s
             ),
         )
         model = Model()
-        runtime = make_runtime(tmp_path, model, configured=configured)
+        runtime = await make_runtime(tmp_path, model, configured=configured)
         try:
             events = [e async for e in runtime.stream("input")]
             assert isinstance(events[-1], TurnCompleted)

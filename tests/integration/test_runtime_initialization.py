@@ -95,7 +95,7 @@ def test_initialization_cancellation_joins_rollback_before_retry_or_close(
             else ()
         )
         monkeypatch.setattr("corki.mcp.manager.create_client", client_factory)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, mcp_servers=servers
             ),
@@ -235,7 +235,7 @@ def test_cancellation_wins_if_startup_dependency_returns_after_cancellation(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "sessions.db",
             registry=ToolRegistry(),

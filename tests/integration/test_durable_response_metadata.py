@@ -135,7 +135,7 @@ def test_item_metadata_survives_execution_and_cold_provider_switch(
                 "deferred", "deferred-proof", {"type": "object"}, exposure=ToolExposure.DEFERRED
             )
 
-        def create(name, thread=None):
+        async def create(name, thread=None):
             settings = CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -164,7 +164,7 @@ def test_item_metadata_survives_execution_and_cold_provider_switch(
             registry = ToolRegistry()
             for tool in (Probe(), Raw(), Deferred()):
                 registry.register(tool)
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 model=model,
                 registry=registry,
@@ -172,7 +172,7 @@ def test_item_metadata_survives_execution_and_cold_provider_switch(
                 thread_id=thread,
             )
 
-        runtime = create("openai")
+        runtime = await create("openai")
         try:
             assert isinstance([e async for e in runtime.stream("original")][-1], TurnCompleted)
             assert calls == (["call-one", "call-two"] if native else ["call-one"])
@@ -205,7 +205,7 @@ def test_item_metadata_survives_execution_and_cold_provider_switch(
             assert META not in first_user
             assert first_user["id"] == "msg_" + str(user.id)
             await runtime.aclose()
-            runtime = create(provider, thread)
+            runtime = await create(provider, thread)
             assert isinstance([e async for e in runtime.stream("following")][-1], TurnCompleted)
             after = await runtime._repository.load_items(thread)
             assert all(i in after for i in originals)
@@ -311,7 +311,7 @@ def test_payload_failure_cannot_become_a_successful_turn(tmp_path, kind, failure
         )
         registry = ToolRegistry()
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 api_mode="responses",

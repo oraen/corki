@@ -32,6 +32,44 @@ class EchoTool:
         return ToolResult(call.id, call.name, "echo observed")
 
 
+def test_completed_model_event_ends_sampling_and_closes_stream(tmp_path: Path):
+    class TerminalThenBrokenTail:
+        samples = 0
+        stream_closed = 0
+
+        async def stream(self, request):
+            self.samples += 1
+            try:
+                yield ModelCompleted(
+                    (AssistantMessageItem("finished", request.items[-1].turn_id, new_step_id()),)
+                )
+                raise RuntimeError("unread events after terminal response")
+            finally:
+                self.stream_closed += 1
+
+        async def aclose(self):
+            pass
+
+    async def scenario():
+        model = TerminalThenBrokenTail()
+        runtime = await LangGraphRuntime.acreate(
+            settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
+            database_path=tmp_path / "terminal-tail.db",
+            model=model,
+            registry=ToolRegistry(),
+        )
+        try:
+            events = [event async for event in runtime.stream("finish")]
+            assert isinstance(events[-1], TurnCompleted), events[-1]
+            assert events[-1].final_answer == "finished"
+            assert model.samples == 1
+            assert model.stream_closed == 1
+        finally:
+            await runtime.aclose()
+
+    asyncio.run(scenario())
+
+
 def output(kind):
     if kind == "text":
         return [
@@ -83,7 +121,7 @@ async def run_responses(tmp_path, responder, *, max_steps=4):
     )
     registry, echo = ToolRegistry(), EchoTool()
     registry.register(echo)
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -224,7 +262,7 @@ def test_continuation_survives_committed_step_and_real_checkpoint_recovery(
         database = tmp_path / "recovery.db"
         repository = SQLiteSessionRepository(database)
         first_model = AnswerModel()
-        first = LangGraphRuntime.create(
+        first = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             repository=repository,
@@ -273,7 +311,7 @@ def test_continuation_survives_committed_step_and_real_checkpoint_recovery(
         assert first_model.requests == []
         await first.aclose()
         model = AnswerModel()
-        resumed = LangGraphRuntime.create(
+        resumed = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             thread_id=first.thread_id,

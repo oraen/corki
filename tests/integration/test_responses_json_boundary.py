@@ -95,7 +95,7 @@ def test_invalid_envelope_does_not_execute_or_count_output(tmp_path, monkeypatch
 
         registry = ToolRegistry()
         registry.register(Guard())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=config(tmp_path), database_path=tmp_path / "s.db", registry=registry
         )
         try:
@@ -152,17 +152,17 @@ def test_valid_duplicate_policy_survives_runtime_and_cold_replay(tmp_path, monke
                 executions.append(call.id)
                 return ToolResult(call.id, call.name, "observation")
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             registry.register(Guard())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=config(tmp_path, legacy=mode == "legacy"),
                 database_path=tmp_path / "s.db",
                 registry=registry,
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             if mode != "normal":
                 await runtime._ensure_ready()
@@ -181,7 +181,7 @@ def test_valid_duplicate_policy_survives_runtime_and_cold_replay(tmp_path, monke
             before = await runtime._repository.load_items(thread)
         finally:
             await runtime.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             assert isinstance([e async for e in cold.stream("next")][-1], TurnCompleted)
             if mode != "normal":
@@ -221,7 +221,7 @@ def test_legacy_json_body_cannot_replace_ordinary_stream_completion(tmp_path, mo
             return httpx.Response(200, content=body)
 
         install(monkeypatch, respond)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=config(tmp_path, legacy=True),
             database_path=tmp_path / "s.db",
             registry=ToolRegistry(),

@@ -32,7 +32,7 @@ def test_long_partial_patch_evidence_survives_runtime_retry_review(
         text = "long committed content " * 1000 + "COMMITTEDEVIDENCETAIL"
         model = Model(mode)
         model.patch = patch(f"*** Add File: first.txt\n+{text}\n*** Add File: {outside}\n+outside")
-        runtime = create_runtime(root, compiler, model)
+        runtime = await create_runtime(root, compiler, model)
         requests = []
         settings = CorkiSettings(root)
 

@@ -28,7 +28,7 @@ async def main():
             yield
         async def aclose(self): self.closed = True
     model = Model()
-    runtime = LangGraphRuntime.create(settings=settings, database_path=cwd / "session.db",
+    runtime = await LangGraphRuntime.acreate(settings=settings, database_path=cwd / "session.db",
                                      home_path=cwd / "home", model=model)
     await runtime._ensure_ready()
     save = runtime._repository.save_thread_model_settings

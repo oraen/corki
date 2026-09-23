@@ -132,7 +132,7 @@ def test_worker_preserves_base_context_and_scoped_skills_without_promoting_histo
                     )
                     yield ModelCompleted((AssistantMessageItem(text, turn, step),))
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=project,
                 memories_consolidation_model="fixture",
@@ -205,7 +205,7 @@ def test_consolidation_does_not_reload_or_expose_parent_plugins(tmp_path):
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, model="main", memories_enabled=True),
             database_path=tmp_path / "sessions.db",
             home_path=home,

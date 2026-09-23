@@ -39,7 +39,7 @@ def test_history_read_does_not_wait_behind_queued_turn_admission(tmp_path, snaps
                 pass
 
         model = Model()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(tmp_path, skills_enabled=False, plugins_enabled=False),
             model=model,
             database_path=tmp_path / "history.db",

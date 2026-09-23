@@ -134,8 +134,8 @@ def test_plugin_feature_gate_survives_updates_and_reopen(
         source = MCPCatalogSource(kind, None if kind == "config" else "fixture")
         catalog = MCPCatalog((MCPRegistration(declaration, source),))
 
-        def create(admitted_settings, thread=None):
-            return LangGraphRuntime.create(
+        async def create(admitted_settings, thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=admitted_settings,
                 model=Model(),
                 registry=ToolRegistry(),
@@ -146,7 +146,7 @@ def test_plugin_feature_gate_survives_updates_and_reopen(
                 thread_id=thread,
             )
 
-        runtime = create(
+        runtime = await create(
             replace(settings, plugins_enabled=True) if lifecycle == "cold" else settings
         )
         if lifecycle == "cold":
@@ -163,7 +163,7 @@ def test_plugin_feature_gate_survives_updates_and_reopen(
             clients.clear()
             calls.clear()
             requests.clear()
-            runtime = create(settings, thread)
+            runtime = await create(settings, thread)
         elif lifecycle != "initial":
             await runtime.mcp_tool_catalog()
             updated = replace(declaration, url="https://updated.invalid")

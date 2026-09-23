@@ -119,7 +119,7 @@ def test_discovery_approval_wire_and_reopened_history(
 
         identity = None
         for run in range(2):
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=settings,
                 model=Model(),
                 registry=ToolRegistry(),

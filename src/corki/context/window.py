@@ -193,6 +193,7 @@ class ContextWindowManager:
         tool_inventory_for_model=None,
         tool_resolver_for_model=None,
         history_projector: HistoryProjector | None = None,
+        legacy_base_unknown: bool = False,
     ) -> PreparedHistory:
         # The Step owns this projection just like its tool resolver. Budgeting,
         # summaries and ordinary requests must all see the same valid definitions.
@@ -275,6 +276,7 @@ class ContextWindowManager:
                         else tools,
                         on_retry=on_retry,
                         on_compact=on_compact,
+                        legacy_base_unknown=legacy_base_unknown,
                         phase="pre_turn",
                         reason=reason,
                     )
@@ -386,6 +388,8 @@ class ContextWindowManager:
                 or _has_post_compaction_activity(all_items)
             )
         ):
+            if legacy_base_unknown:
+                raise ValueError("missing admitted Turn base instructions")
             if on_compact is not None:
                 await on_compact(
                     "PreCompact",
@@ -560,6 +564,7 @@ class ContextWindowManager:
         tools: tuple[ToolSpec, ...] = (),
         phase="standalone_turn",
         reason=None,
+        legacy_base_unknown: bool = False,
     ) -> PreparedHistory:
         """Standalone local compaction; the next normal turn rebuilds world state."""
         stored = await self._repository.load_items(thread_id)
@@ -581,6 +586,8 @@ class ContextWindowManager:
             return PreparedHistory(
                 active, await self._estimate_request_tokens(instructions, active, ()), True
             )
+        if legacy_base_unknown:
+            raise ValueError("missing admitted Turn base instructions")
         historical = self._history(stored)
         if self._media is not None:
             historical = await self._media.prepare_items(historical)
@@ -680,10 +687,16 @@ class ContextWindowManager:
                 active_tokens=total,
                 usage=usage,
             )
+        # Auto-compaction follows provider usage when available, but the hard
+        # admission limit also enforces the complete local request estimate.
+        # Report the same hard ceiling to model tools and budget notices.
+        hard_tokens = max(local, total)
         return BudgetStatus(
-            max(0, min(self._auto_compact_tokens - scope, self._context_window_tokens - total)),
+            max(
+                0, min(self._auto_compact_tokens - scope, self._context_window_tokens - hard_tokens)
+            ),
             scope >= self._auto_compact_tokens + self._fallback_buffer
-            or total >= self._context_window_tokens,
+            or hard_tokens >= self._context_window_tokens,
         ), stored
 
     async def record_budget_notices(self, thread_id, turn_id, *, needs_follow_up: bool):

@@ -44,7 +44,7 @@ async def main():
             yield
         async def aclose(self):
             pass
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=settings, database_path=cwd / "history.db", model=Model(), home_path=cwd,
     )
     await runtime._ensure_ready()
@@ -252,11 +252,18 @@ def test_live_output_does_not_leave_history_screen_until_close(tmp_path, width, 
 
 
 @pytest.mark.parametrize("width", [40, 100])
-@pytest.mark.parametrize("close_key", ["q", "\x1b", "\x14"])
+@pytest.mark.parametrize("close_key", ["q", "\x1b", "\x14", "\x03", "navigation"])
 def test_history_scroll_and_close_preserves_draft(tmp_path, width, close_key):
+    program = PROGRAM
+    if close_key == "navigation":
+        program = program.replace(
+            '    print("HISTORY_INPUT_VERIFIED", flush=True)',
+            "    assert ui._history_view.row == 11, ui._history_view.row\n"
+            '    print("HISTORY_INPUT_VERIFIED", flush=True)',
+        )
     child = pexpect.spawn(
         sys.executable,
-        ["-c", PROGRAM],
+        ["-c", program],
         cwd=tmp_path,
         encoding="utf-8",
         timeout=15,
@@ -272,6 +279,18 @@ def test_history_scroll_and_close_preserves_draft(tmp_path, width, close_key):
         child.expect("HISTORY_ROW_059")
         child.send("\x1b[H")
         child.expect("HISTORY_ROW_000")
+        if close_key == "navigation":
+            # Half-page down/up, page down/up, then down a page, up half and one line.
+            # Closing afterward must preserve both the scroll position and composer draft.
+            child.send("\x04\x15\x06\x02 \x15jq")
+            child.expect_exact("\x1b[?1049l")
+            child.expect("retained draft")
+            child.send("\r")
+            child.expect("HISTORY_INPUT_VERIFIED")
+            child.expect(pexpect.EOF)
+            child.close()
+            assert child.exitstatus == 0
+            return
         child.send("\x1b[6~")
         child.send("xyz\r\t")
         child.send("\x1b[200~pasted\nnot a submission\x1b[201~")

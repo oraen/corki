@@ -79,7 +79,7 @@ def test_implicit_project_plugin_cannot_execute_before_source_admission(tmp_path
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             model=Model(),
             registry=ToolRegistry(),

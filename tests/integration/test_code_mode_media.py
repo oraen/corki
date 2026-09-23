@@ -129,7 +129,7 @@ def test_pending_turn_resumes_media_from_real_graph_checkpoint(tmp_path):
                 )
 
         repository = SQLiteSessionRepository(database)
-        first = LangGraphRuntime.create(
+        first = await LangGraphRuntime.acreate(
             settings=settings, database_path=database, repository=repository, model=Before()
         )
         invocation = None
@@ -163,7 +163,7 @@ def test_pending_turn_resumes_media_from_real_graph_checkpoint(tmp_path):
                 invocation.cancel()
                 await asyncio.gather(invocation, return_exceptions=True)
             await first.aclose()
-        second = LangGraphRuntime.create(
+        second = await LangGraphRuntime.acreate(
             settings=settings, database_path=database, thread_id=thread, model=After()
         )
         try:
@@ -251,7 +251,7 @@ def test_yield_wait_consumes_media_once_and_joins_nested_work(tmp_path, terminat
 
         registry = ToolRegistry()
         registry.register(Gate())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),
@@ -300,8 +300,8 @@ def test_reopened_runtime_replays_media_history_without_rerunning_script(tmp_pat
                 else:
                     yield ModelCompleted((AssistantMessageItem("done", turn, new_step_id()),))
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
                 ),
@@ -310,13 +310,13 @@ def test_reopened_runtime_replays_media_history_without_rerunning_script(tmp_pat
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [event async for event in runtime.stream("emit")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [event async for event in runtime.stream("continue")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             old = next(i for i in requests[1].items if isinstance(i, ToolResultItem))
@@ -364,7 +364,7 @@ def test_media_cost_triggers_real_compaction_without_losing_current_input(tmp_pa
                     else:
                         yield ModelCompleted((AssistantMessageItem("done", turn, new_step_id()),))
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -430,7 +430,7 @@ async def run_media(tmp_path, source, *, registry=None, status="completed", orig
         async def aclose(self):
             pass
 
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -638,7 +638,7 @@ def test_provider_wire_preserves_order_and_audio_capability(
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
         monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

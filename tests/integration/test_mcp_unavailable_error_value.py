@@ -117,7 +117,7 @@ def test_captured_mcp_handler_unavailability_is_a_value_not_a_js_exception(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,

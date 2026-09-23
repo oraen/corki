@@ -91,10 +91,10 @@ def test_catalog_discovery_execution_cold_reopen_and_compaction(tmp_path, enable
             async def aclose(self):
                 pass
 
-        def create(thread_id=None):
+        async def create(thread_id=None):
             registry = ToolRegistry()
             registry.register(Read(calls))
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,
@@ -110,14 +110,14 @@ def test_catalog_discovery_execution_cold_reopen_and_compaction(tmp_path, enable
                 thread_id=thread_id,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [e async for e in runtime.stream("read")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             before = await runtime._repository.load_items(runtime.thread_id)
         finally:
             await runtime.aclose()
-        cold = create(runtime.thread_id)
+        cold = await create(runtime.thread_id)
         try:
             events = [e async for e in cold.stream("continue")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -128,7 +128,7 @@ def test_catalog_discovery_execution_cold_reopen_and_compaction(tmp_path, enable
             # The old search result remains durable, but must not resurrect a
             # released schema when a fresh Runtime rebuilds its active window.
             await cold.aclose()
-            cold = create(runtime.thread_id)
+            cold = await create(runtime.thread_id)
             events = [e async for e in cold.stream("read again")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             after = await cold._repository.load_items(cold.thread_id)
@@ -167,7 +167,7 @@ def test_frozen_prepare_search_and_namespace_deltas_then_last_removal(tmp_path):
             async def aclose(self):
                 pass
 
-        runtime = make_runtime(tmp_path, registry, Model())
+        runtime = await make_runtime(tmp_path, registry, Model())
         # Fault injection targets prepare, after backend admission has published
         # the effective settings/builder (not a retained pre-admission method).
         await runtime._ensure_ready()
@@ -235,7 +235,7 @@ def test_steering_keeps_the_current_step_catalog_until_next_prepare(tmp_path, ph
             async def aclose(self):
                 pass
 
-        runtime = make_runtime(tmp_path, registry, Model())
+        runtime = await make_runtime(tmp_path, registry, Model())
         await runtime._ensure_ready()
         build = runtime._graph._context_builder.build
         first = True
@@ -309,7 +309,7 @@ def test_cancelled_context_build_does_not_publish_a_partial_namespace_snapshot(t
             async def aclose(self):
                 pass
 
-        runtime = make_runtime(tmp_path, registry, Model())
+        runtime = await make_runtime(tmp_path, registry, Model())
         await runtime._ensure_ready()
         build = runtime._graph._context_builder.build
 
@@ -348,8 +348,8 @@ def catalogs(items):
     return [i for i in items if isinstance(i, ContextItem) and i.key == KEY and i.content]
 
 
-def make_runtime(tmp_path, registry, model, **settings):
-    return LangGraphRuntime.create(
+async def make_runtime(tmp_path, registry, model, **settings):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -390,7 +390,7 @@ def test_search_disabled_keeps_existing_exposure_without_namespace_hints(tmp_pat
             async def aclose(self):
                 pass
 
-        runtime = make_runtime(tmp_path, registry, Model(), tool_search_mode="disabled")
+        runtime = await make_runtime(tmp_path, registry, Model(), tool_search_mode="disabled")
         try:
             await complete(runtime, "direct")
         finally:

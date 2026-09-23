@@ -30,7 +30,7 @@ def test_pending_compaction_preserves_distinct_submissions(tmp_path, monkeypatch
             async def aclose(self):
                 pass
 
-        runtime = create_runtime(tmp_path, Model())
+        runtime = await create_runtime(tmp_path, Model())
         manager = runtime._graph._window_manager
         prepare = manager.prepare
 
@@ -63,7 +63,7 @@ def test_pending_compaction_preserves_distinct_submissions(tmp_path, monkeypatch
             assert sum(i.id == users[1].id for i in archived) == 1
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = create_runtime(tmp_path, Model(), thread_id=thread)
+            runtime = await create_runtime(tmp_path, Model(), thread_id=thread)
             events = [event async for event in runtime.stream("after reopen")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert len(requests) == 3 and len(summaries) == 1

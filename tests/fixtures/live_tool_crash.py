@@ -62,7 +62,7 @@ async def main(directory: Path, phase: str, input_kind: str = "json") -> None:
     repository = Repository(directory / "sessions.db")
     registry = ToolRegistry()
     registry.register(Tool())
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(working_directory=directory, skills_enabled=False),
         database_path=repository.path,
         repository=repository,

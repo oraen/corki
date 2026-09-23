@@ -20,7 +20,7 @@ def test_namespace_merge_order_empty_description_fill_and_sorted_children():
         ToolSpec("notes::a", "a", {}, namespace_description="Notes"),
         ToolSpec("history::read", "read", {}),
     )
-    output = group_tool_definitions(specs, native_namespaces=True)
+    output = group_tool_definitions(specs)
     assert [spec["name"] for spec in output] == [compatible_tool_name(spec.name) for spec in specs]
     assert all(spec["type"] == "function" and "tools" not in spec for spec in output)
 
@@ -30,22 +30,19 @@ def test_discovery_coalesces_ranked_outputs_without_resorting_or_replacing_first
         ToolSpec("notes::z", "z", {}, namespace_description=" "),
         ToolSpec("notes::a", "a", {}, namespace_description="Notes"),
     )
-    output = group_tool_definitions(specs, native_namespaces=True, discovered=True)
+    output = group_tool_definitions(specs)
     assert [s["name"] for s in output] == [compatible_tool_name(s.name) for s in specs]
     assert all("defer_loading" not in s for s in output)
 
 
-@pytest.mark.parametrize("discovered", [False, True])
 @pytest.mark.parametrize("control", ["\x1c", "\x1d", "\x1e", "\x1f"])
-def test_namespace_c0_description_is_not_rust_whitespace(discovered, control):
+def test_namespace_c0_description_is_not_rust_whitespace(control):
     specs = (
         ToolSpec("notes::z", "z", {}, namespace_description=control),
         ToolSpec("notes::a", "a", {}, namespace_description="Second"),
     )
     assert (
-        group_tool_definitions(specs, native_namespaces=True, discovered=discovered)[0][
-            "description"
-        ]
+        group_tool_definitions(specs)[0]["description"]
         == specs[0].compatible_description()
     )
 
@@ -65,7 +62,7 @@ def test_namespace_wire_aliases_do_not_enforce_strict_directory_policy(mode):
     )
     assert len(request_tool_aliases(request)) == 2
     assert (
-        group_tool_definitions(request.tools, native_namespaces=True)[0]["description"]
+        group_tool_definitions(request.tools)[0]["description"]
         == request.tools[0].compatible_description()
     )
 

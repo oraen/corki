@@ -96,8 +96,8 @@ def test_cold_downshift_compacts_with_previous_model_before_current_input(
             lambda *a, **kw: client(*a, **kw, transport=httpx.MockTransport(respond)),
         )
 
-        def create(model, thread=None):
-            return LangGraphRuntime.create(
+        async def create(model, thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     tmp_path,
                     model=model,
@@ -122,13 +122,13 @@ def test_cold_downshift_compacts_with_previous_model_before_current_input(
                 thread_id=thread,
             )
 
-        first = create("large")
+        first = await create("large")
         try:
             assert isinstance([e async for e in first.stream("OLD_USER")][-1], TurnCompleted)
             thread = first.thread_id
         finally:
             await first.aclose()
-        second = create("small", thread)
+        second = await create("small", thread)
         try:
             if checkpoint:
                 await second._ensure_ready()
@@ -152,7 +152,7 @@ def test_cold_downshift_compacts_with_previous_model_before_current_input(
                 assert len(requests) == 2
                 assert (await second._compiled.aget_state(config)).next == ("call_model",)
                 await second.aclose()
-                second = create("small", thread)
+                second = await create("small", thread)
                 events = [e async for e in second.resume_pending()]
             else:
                 events = [e async for e in second.stream("NEW_USER")]
@@ -180,7 +180,7 @@ def test_cold_downshift_compacts_with_previous_model_before_current_input(
         finally:
             await second.aclose()
         if not fail:
-            third = create("small", thread)
+            third = await create("small", thread)
             try:
                 assert isinstance([e async for e in third.stream("NEXT_USER")][-1], TurnCompleted)
                 assert len(requests) == 4
@@ -233,8 +233,8 @@ def test_same_model_hash_change_on_cold_resume_with_low_usage(
             lambda *a, **kw: client(*a, **kw, transport=httpx.MockTransport(respond)),
         )
 
-        def create(comp_hash, thread=None):
-            return LangGraphRuntime.create(
+        async def create(comp_hash, thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     tmp_path,
                     model="same",
@@ -253,14 +253,14 @@ def test_same_model_hash_change_on_cold_resume_with_low_usage(
                 thread_id=thread,
             )
 
-        first = create(previous)
+        first = await create(previous)
         try:
             assert isinstance([e async for e in first.stream("OLD")][-1], TurnCompleted)
             thread = first.thread_id
         finally:
             await first.aclose()
         changed = previous is not None and current is not None and previous != current
-        second = create(current, thread)
+        second = await create(current, thread)
         try:
             assert isinstance([e async for e in second.stream("CURRENT")][-1], TurnCompleted)
             stored = await second._repository.load_items(thread)
@@ -274,7 +274,7 @@ def test_same_model_hash_change_on_cold_resume_with_low_usage(
             assert "harness.previous_model" not in json.dumps(requests)
         finally:
             await second.aclose()
-        third = create(current, thread)
+        third = await create(current, thread)
         try:
             before = len(requests)
             assert isinstance([e async for e in third.stream("NEXT")][-1], TurnCompleted)

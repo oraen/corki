@@ -95,7 +95,7 @@ def test_loaded_tools_survive_execution_settings_updates_across_turns_and_reopen
             api_mode="responses",
         )
         database = tmp_path / "loaded.db"
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings, database_path=database, registry=registry, model=Model()
         )
         try:
@@ -107,7 +107,7 @@ def test_loaded_tools_survive_execution_settings_updates_across_turns_and_reopen
                 registry = ToolRegistry()
                 for spec in changed:
                     registry.register(Tool(spec))
-                runtime = LangGraphRuntime.create(
+                runtime = await LangGraphRuntime.acreate(
                     settings=settings,
                     database_path=database,
                     registry=registry,

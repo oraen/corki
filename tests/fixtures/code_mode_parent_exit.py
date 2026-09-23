@@ -37,7 +37,7 @@ async def main(directory):
         async def aclose(self):
             pass
 
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=directory, skills_enabled=False, tool_mode="code_mode_only"
         ),

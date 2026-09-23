@@ -78,21 +78,30 @@ class HistoryView:
         @ui._bindings.add("escape", filter=active, eager=True)
         @ui._bindings.add("q", filter=active, eager=True)
         @ui._bindings.add("c-t", filter=active, eager=True)
+        @ui._bindings.add("c-c", filter=active, eager=True)
         def close(event):
             self.close()
 
-        for key, amount in (("up", -1), ("down", 1), ("pageup", -1), ("pagedown", 1)):
+        navigation = (
+            (("up", "k"), -1, "line"),
+            (("down", "j"), 1, "line"),
+            (("pageup", "c-b"), -1, "page"),
+            (("pagedown", " ", "c-f"), 1, "page"),
+            (("c-u",), -1, "half"),
+            (("c-d",), 1, "half"),
+        )
+        for keys, amount, distance in navigation:
 
-            def move(event, key=key, amount=amount):
+            def move(event, amount=amount, distance=distance):
                 self.text()
                 page = max(1, ui._session.app.output.get_size().rows - 4)
-                self.row = min(
-                    self.rows - 1, max(0, self.row + amount * (page if "page" in key else 1))
-                )
+                step = {"line": 1, "page": page, "half": (page + 1) // 2}[distance]
+                self.row = min(self.rows - 1, max(0, self.row + amount * step))
                 if amount < 0 and self.loader is not None and self.row <= page:
                     self.loader.request_older()
 
-            ui._bindings.add(key, filter=active, eager=True)(move)
+            for key in keys:
+                ui._bindings.add(key, filter=active, eager=True)(move)
 
         @ui._bindings.add("home", filter=active, eager=True)
         def start(event):

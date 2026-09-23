@@ -27,9 +27,9 @@ def markers(items):
     return [item for item in items if item_kind(item) == "turn_aborted"]
 
 
-def create(tmp_path, model, *, thread=None, enabled=True):
+async def create(tmp_path, model, *, thread=None, enabled=True):
     settings = {"agent_interrupt_message_enabled": False} if not enabled else {}
-    return LangGraphRuntime.create(
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False, **settings),
         database_path=tmp_path / "sessions.db",
         registry=ToolRegistry(),
@@ -105,7 +105,7 @@ def test_interrupt_marker_is_durable_once_and_reaches_actual_http_request(
             async def aclose(self):
                 await self.adapter.aclose()
 
-        runtime = create(tmp_path, Model(True), enabled=enabled)
+        runtime = await create(tmp_path, Model(True), enabled=enabled)
         try:
             terminal = await cancel_turn(runtime, started)
             stored = await runtime._repository.load_items(runtime.thread_id)
@@ -116,7 +116,7 @@ def test_interrupt_marker_is_durable_once_and_reaches_actual_http_request(
             if reopen:
                 thread = runtime.thread_id
                 await runtime.aclose()
-                runtime = create(tmp_path, Model(False), thread=thread, enabled=enabled)
+                runtime = await create(tmp_path, Model(False), thread=thread, enabled=enabled)
             for _ in range(2):
                 events = [event async for event in runtime.stream("next")]
                 assert isinstance(events[-1], TurnCompleted)
@@ -153,7 +153,7 @@ def test_marker_is_compaction_input_not_retained_user_but_stays_in_memory_archiv
             async def aclose(self):
                 pass
 
-        runtime = create(tmp_path, Model())
+        runtime = await create(tmp_path, Model())
         try:
             await cancel_turn(runtime, started)
             compacted = [event async for event in runtime.compact()]
@@ -202,7 +202,7 @@ def test_marker_is_compaction_input_not_retained_user_but_stays_in_memory_archiv
                     )
 
             memory_model = MemoryModel()
-            later = LangGraphRuntime.create(
+            later = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,
@@ -246,7 +246,7 @@ def test_committed_marker_prevents_cold_resume_after_cancel_terminal_write_failu
             async def aclose(self):
                 pass
 
-        runtime = create(tmp_path, Model())
+        runtime = await create(tmp_path, Model())
         original = runtime._repository.save_turn
 
         async def save(record):
@@ -264,7 +264,7 @@ def test_committed_marker_prevents_cold_resume_after_cancel_terminal_write_failu
             # Lose process-owned writes; keep durable cancellation facts for cold recovery.
             runtime._pending_terminals.clear()
             await runtime.aclose()
-            runtime = create(tmp_path, Model(), thread=thread, enabled=enabled_after)
+            runtime = await create(tmp_path, Model(), thread=thread, enabled=enabled_after)
             events = []
 
             async def recover():
@@ -301,7 +301,7 @@ def test_compact_replacement_does_not_claim_user_interruption(tmp_path):
             async def aclose(self):
                 pass
 
-        runtime = create(tmp_path, Model())
+        runtime = await create(tmp_path, Model())
 
         async def consume():
             with suppress(asyncio.CancelledError):
@@ -339,7 +339,7 @@ def test_only_explicit_interruption_adds_marker(tmp_path, outcome):
             async def aclose(self):
                 pass
 
-        runtime = create(tmp_path, Model())
+        runtime = await create(tmp_path, Model())
         try:
             with suppress(asyncio.CancelledError):
                 [event async for event in runtime.stream("request")]
@@ -363,7 +363,7 @@ def test_marker_write_failure_preserves_cancel_and_reports_missing_history(tmp_p
             async def aclose(self):
                 pass
 
-        runtime = create(tmp_path, Model())
+        runtime = await create(tmp_path, Model())
         append = runtime._repository.append_items
 
         async def failing_append(thread, items):
@@ -435,7 +435,7 @@ def test_code_mode_nested_cleanup_precedes_marker(tmp_path):
 
         registry = ToolRegistry()
         registry.register(Hold())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),

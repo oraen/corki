@@ -89,7 +89,7 @@ def test_real_startup_claims_only_threads_with_preview_evidence(tmp_path, source
         }[source]
         await sessions.append_items(thread, items)
         memory_model = MemoryModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -131,7 +131,7 @@ def test_provider_cannot_create_user_preview_through_model_output(tmp_path, part
     async def scenario():
         database = tmp_path / "history.db"
         thread = new_thread_id()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=database,
             home_path=tmp_path / "home",

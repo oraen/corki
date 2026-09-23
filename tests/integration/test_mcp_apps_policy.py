@@ -220,7 +220,7 @@ def test_legacy_apps_policy_cannot_override_ordinary_call_admission(
             tool_search_mode="disabled" if mode == "code_mode" else mode,
             tool_mode="code_mode_only" if mode == "code_mode" else "direct",
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             model=Model(),
             registry=ToolRegistry(),

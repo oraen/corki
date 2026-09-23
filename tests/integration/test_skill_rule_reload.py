@@ -212,7 +212,7 @@ def test_skill_rule_reload_keeps_admitted_turn_and_updates_next_turn(
                 settings,
                 skills_config=(SkillRule(change == "host_enabled", name="reload_fixture:guide"),),
             )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             model=model,
             registry=ToolRegistry(),

@@ -116,6 +116,75 @@ class FakeRuntime:
         return None
 
 
+def test_history_load_failure_exits_cleanly_without_accepting_a_new_turn(tmp_path):
+    class Runtime(FakeRuntime):
+        closed = False
+
+        async def load_display_snapshot(self):
+            raise OSError("PRIVATE_STORAGE_DETAIL")
+
+        async def resume_pending(self):
+            raise AssertionError("pending work must not resume without history")
+            yield
+
+        async def aclose(self):
+            self.closed = True
+
+    class UI(FakeUI):
+        def replay_history(self, items):
+            raise AssertionError("history did not load")
+
+        def show_notice(self, message):
+            self.events.append(("notice", message))
+
+        async def read_message(self):
+            raise AssertionError("composer must not accept a new turn")
+
+    runtime = Runtime()
+    ui = UI(iter(()))
+    app = CorkiApplication(
+        CorkiSettings(working_directory=tmp_path),
+        CorkiPaths.from_home(tmp_path / ".corki"),
+        runtime,
+        ui,
+    )
+    assert asyncio.run(app.run()) == 1
+    assert runtime.closed
+    assert ui.events[0] == ("welcome", "")
+    assert ui.events[-1] == ("goodbye", "")
+    notice = next(text for kind, text in ui.events if kind == "notice")
+    assert "Could not load conversation history" in notice
+    assert "No new turn was started" in notice
+    assert "PRIVATE_STORAGE_DETAIL" not in notice
+
+
+@pytest.mark.parametrize("terminal_event", [False, True])
+def test_cancellation_notice_once_per_operation_with_or_without_terminal_event(
+    tmp_path, terminal_event
+):
+    class Runtime(FakeRuntime):
+        async def stream(self, message, *, realtime=False):
+            self.received.append(message)
+            if terminal_event:
+                yield TurnCancelled(new_thread_id(), new_turn_id())
+            raise asyncio.CancelledError
+
+    runtime = Runtime()
+    ui = FakeUI(iter(("first", "second")))
+    app = CorkiApplication(
+        CorkiSettings(working_directory=tmp_path, realtime_enabled=False),
+        CorkiPaths.from_home(tmp_path / ".corki"),
+        runtime,
+        ui,
+    )
+    assert asyncio.run(app.run()) == 0
+    assert runtime.received == ["first", "second"]
+    assert [entry for entry in ui.events if entry == ("notice", "Turn interrupted.")] == [
+        ("notice", "Turn interrupted."),
+        ("notice", "Turn interrupted."),
+    ]
+
+
 def test_hook_completion_is_not_a_tool_or_duplicate_warning(tmp_path):
     async def scenario():
         thread, turn = new_thread_id(), new_turn_id()
@@ -417,7 +486,7 @@ def test_realtime_memory_reset_reaches_actual_runtime_without_steering(tmp_path)
         settings = CorkiSettings(
             working_directory=tmp_path, skills_enabled=False, realtime_enabled=True
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "history.db",
             home_path=tmp_path / "actual-home",
@@ -524,7 +593,7 @@ def test_realtime_memory_mode_updates_real_runtime_without_steering(tmp_path):
         settings = CorkiSettings(
             working_directory=tmp_path, skills_enabled=False, realtime_enabled=True
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             home_path=tmp_path / "home",
@@ -678,6 +747,144 @@ def test_retry_closes_partial_output_without_claiming_user_steering(
     asyncio.run(scenario())
 
 
+def test_retry_before_any_visible_response_does_not_claim_it_was_interrupted(tmp_path):
+    async def scenario():
+        thread, turn = new_thread_id(), new_turn_id()
+        ui = FakeUI(iter(()))
+        app = CorkiApplication(
+            CorkiSettings(working_directory=tmp_path),
+            CorkiPaths.from_home(tmp_path / ".corki"),
+            FakeRuntime(),
+            ui,
+        )
+
+        async def events():
+            yield AssistantMessageInterrupted(thread, turn, reason="retry")
+            yield ModelRetryScheduled(thread, turn, 1, 1, 0.2, "connection unavailable")
+            yield TurnFailed(thread, turn, "connection unavailable")
+
+        await app._consume_events(events())
+        assert ("notice", "Response interrupted; retrying with updated history...") not in ui.events
+        assert any("Reconnecting..." in text for kind, text in ui.events if kind == "notice")
+        assert ui.events[-1] == ("error", "connection unavailable")
+
+    asyncio.run(scenario())
+
+
+def test_model_error_display_redacts_configured_key_and_bearer_token(tmp_path):
+    async def scenario():
+        thread, turn = new_thread_id(), new_turn_id()
+        ui = FakeUI(iter(()))
+        settings = CorkiSettings(working_directory=tmp_path, api_key="FAKE_MODEL_SECRET_123")
+        app = CorkiApplication(
+            settings,
+            CorkiPaths.from_home(tmp_path / ".corki"),
+            FakeRuntime(),
+            ui,
+        )
+
+        async def events():
+            yield ModelRetryScheduled(
+                thread,
+                turn,
+                1,
+                1,
+                1,
+                "Authorization: Bearer FAKE_MODEL_SECRET_123; alternate Bearer OTHER_FAKE_TOKEN",
+            )
+            yield TurnFailed(thread, turn, "provider rejected FAKE_MODEL_SECRET_123")
+
+        await app._consume_events(events())
+        display = repr(ui.events)
+        assert "FAKE_MODEL_SECRET_123" not in display
+        assert "OTHER_FAKE_TOKEN" not in display
+        assert "[redacted]" in display
+        assert "Reconnecting..." in display
+        assert "provider rejected" in display
+
+        output = StringIO()
+        terminal = TerminalUI(
+            settings, tmp_path / "history", console=Console(file=output, width=100)
+        )
+        rendered_app = CorkiApplication(
+            settings, CorkiPaths.from_home(tmp_path / ".corki"), FakeRuntime(), terminal
+        )
+        await rendered_app._consume_events(events())
+        assert "FAKE_MODEL_SECRET_123" not in output.getvalue()
+        assert "OTHER_FAKE_TOKEN" not in output.getvalue()
+        assert "FAKE_MODEL_SECRET_123" not in terminal._transcript.render(100)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("outcome", ["cancel", "fail", "retry", "raise"])
+def test_interrupted_stream_keeps_received_tail_without_final_newline(tmp_path, outcome):
+    async def scenario():
+        thread, turn = new_thread_id(), new_turn_id()
+        output = StringIO()
+        settings = CorkiSettings(working_directory=tmp_path)
+        ui = TerminalUI(settings, tmp_path / "history", console=Console(file=output, width=100))
+        app = CorkiApplication(settings, CorkiPaths.from_home(tmp_path / "home"), FakeRuntime(), ui)
+        text = "已经收到的正文\n没有换行的尾部🙂"
+
+        async def events():
+            yield AssistantTextDelta(thread, turn, text)
+            if outcome == "cancel":
+                yield TurnCancelled(thread, turn)
+            elif outcome == "fail":
+                yield TurnFailed(thread, turn, "Provider failed")
+            elif outcome == "raise":
+                raise OSError("stream ended without a terminal event")
+            else:
+                yield AssistantMessageInterrupted(thread, turn, reason="retry")
+
+        if outcome == "raise":
+            with pytest.raises(OSError, match="without a terminal event"):
+                await app._consume_events(events())
+        else:
+            await app._consume_events(events())
+        assert output.getvalue().count("没有换行的尾部🙂") == 1
+        assert ui._transcript.render(100).count("没有换行的尾部🙂") == 1
+        assert not ui._assistant_pending and ui._table_source is None
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("finish", ["failed", "cancelled"])
+def test_tool_chunks_preserve_lines_and_keep_parallel_calls_separate(tmp_path, finish):
+    async def scenario():
+        output = StringIO()
+        settings = CorkiSettings(tmp_path)
+        ui = TerminalUI(settings, tmp_path / "history", console=Console(file=output, width=100))
+        app = CorkiApplication(settings, CorkiPaths.from_home(tmp_path), FakeRuntime(), ui)
+        thread, turn = new_thread_id(), new_turn_id()
+        first, second = new_tool_call_id(), new_tool_call_id()
+
+        async def events():
+            yield ToolCallStarted(thread, turn, first, "first", "")
+            yield ToolCallStarted(thread, turn, second, "second", "")
+            yield ToolOutputDelta(thread, turn, first, "hel")
+            yield ToolOutputDelta(thread, turn, second, "世界\n")
+            yield ToolOutputDelta(thread, turn, first, "lo\n\n")
+            yield ToolOutputDelta(thread, turn, second, "尾部")
+            yield ToolCallCompleted(thread, turn, first, "first", False)
+            if finish == "failed":
+                yield ToolCallCompleted(thread, turn, second, "second", True)
+            else:
+                yield TurnCancelled(thread, turn)
+
+        await app._consume_events(events())
+        text = output.getvalue()
+        assert "hello\n\n" in text and "hel\n" not in text
+        assert text.count("世界\n") == 1 and "世界\n\n" not in text
+        assert text.count("尾部\n") == 1
+        status = "second failed" if finish == "failed" else "second interrupted"
+        assert text.index("尾部") < text.index(status)
+        assert ui._transcript.render(100) == text
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("queued", [False, True])
 def test_late_steering_submission_is_kept_for_next_turn(tmp_path: Path, queued) -> None:
     from corki.cli.input_owner import QueuedInput
@@ -732,6 +939,58 @@ def test_late_steering_submission_is_kept_for_next_turn(tmp_path: Path, queued) 
             "late input",
         ]
         assert not any(kind == "error" for kind, _ in ui.events)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("command", ["/help", "/status", "/missing", "/clear", "/mcp refresh"])
+def test_local_commands_are_not_sent_as_live_model_input(tmp_path, command):
+    async def scenario():
+        started, release = asyncio.Event(), asyncio.Event()
+        steered = []
+        refreshes = []
+
+        class Runtime(FakeRuntime):
+            async def stream(self, message, *, realtime=False):
+                self.received.append(message)
+                started.set()
+                await release.wait()
+                yield TurnCompleted(new_thread_id(), new_turn_id(), "done")
+
+            async def steer(self, message):
+                steered.append(message)
+
+            def request_mcp_refresh(self):
+                refreshes.append(True)
+
+            async def cancel_active(self):
+                release.set()
+
+        class UI(FakeUI):
+            reads = 0
+
+            async def read_message(self):
+                self.reads += 1
+                if self.reads == 1:
+                    return "initial"
+                await started.wait()
+                if self.reads == 2:
+                    return command
+                raise EOFError
+
+        runtime, ui = Runtime(), UI(iter(()))
+        settings = CorkiSettings(working_directory=tmp_path, realtime_enabled=True)
+        app = CorkiApplication(settings, CorkiPaths.from_home(tmp_path), runtime, ui)
+        assert await asyncio.wait_for(app.run(), 3) == 0
+        assert steered == []
+        assert runtime.received == ["initial"]
+        assert refreshes == ([True] if command == "/mcp refresh" else [])
+        if command == "/clear":
+            assert ("clear", "") not in ui.events
+            assert any("unavailable" in text for _, text in ui.events)
+        else:
+            assert ("notice", app._commands.dispatch(command).output) in ui.events
+        assert any(kind == "notice" and text for kind, text in ui.events)
 
     asyncio.run(scenario())
 
@@ -1113,7 +1372,7 @@ def test_busy_compact_is_rejected_and_idle_compact_remains_available(
         settings = CorkiSettings(
             working_directory=tmp_path, realtime_enabled=True, skills_enabled=False
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "sessions.db",
             model=Model(),
@@ -1188,7 +1447,7 @@ def test_tab_queued_compact_runs_after_current_turn_without_cancellation(tmp_pat
                     compacted.set()
 
         settings = CorkiSettings(working_directory=tmp_path, skills_enabled=False)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "sessions.db",
             model=Model(),
@@ -1278,7 +1537,7 @@ def test_compaction_keeps_input_available_and_owns_followups(tmp_path, cancel, f
         settings = CorkiSettings(
             working_directory=tmp_path, skills_enabled=False, model_max_retries=0
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "sessions.db",
             model=Model(),

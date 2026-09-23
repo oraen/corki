@@ -88,7 +88,7 @@ def test_service_tier_selection_warning_and_compaction_paths(
             CorkiSettings.for_directory(tmp_path, config_file=config),
             remote_compaction_v2=mode != "legacy",
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings, database_path=tmp_path / "s.db", registry=ToolRegistry()
         )
         try:

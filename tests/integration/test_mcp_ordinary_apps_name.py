@@ -69,7 +69,7 @@ def test_ordinary_search_call_observation(
 
         config = tmp_path / "config.toml"
         config.write_text(f"[features]\napps={str(apps_enabled).lower()}\n")
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=replace(
                 CorkiSettings.for_directory(tmp_path, config_file=config),
                 skills_enabled=False,

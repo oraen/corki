@@ -24,5 +24,5 @@ def compatible_tool_name(name: str) -> str:
     return "corki_ns_" + hashlib.sha256(name.encode("utf-8")).hexdigest()[:48]
 
 
-def response_call_name(name: str, *, native_namespaces: bool) -> dict[str, str]:
+def response_call_name(name: str) -> dict[str, str]:
     return {"name": compatible_tool_name(name)}

@@ -88,7 +88,7 @@ class ToolExecutor:
             elif call.input_kind == "json":
                 _validate(execution_call.arguments, spec.parameters, path="arguments")
             else:
-                _text(call.raw_arguments, "input")
+                _text(execution_call.raw_arguments, "input")
             # The handler cannot mutate the durable model call's arguments
             # through nested dict/list aliases after the ledger was claimed.
             execution_input_json = dumps_wire(
@@ -99,6 +99,7 @@ class ToolExecutor:
                     "raw_arguments": execution_call.raw_arguments,
                 }
             )
+            _text(execution_input_json, "execution input")
             result = await tool.execute(execution_call, context)
             result = self._normalize_result(
                 call,

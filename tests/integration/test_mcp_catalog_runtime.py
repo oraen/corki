@@ -39,7 +39,7 @@ def test_only_winning_raw_server_is_exposed_and_executed(tmp_path, monkeypatch, 
     servers = parse_mcp_servers({"docs": {"url": "https://config.test/mcp"}}) if configured else ()
 
     async def scenario():
-        runtime, clients, model = make_runtime(
+        runtime, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             requirements=None,
@@ -73,7 +73,7 @@ def test_disabled_config_winner_prevents_plugin_fallback(tmp_path, monkeypatch):
     )
 
     async def scenario():
-        runtime, clients, model = make_runtime(
+        runtime, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             requirements=None,
@@ -107,7 +107,7 @@ def test_source_change_rechecks_policy_even_with_identical_transport(tmp_path, m
                         runtime.request_mcp_catalog(MCPCatalog((MCPRegistration(old.settings),)))
                     yield event
 
-        runtime, clients, model = make_runtime(
+        runtime, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             plugins=(alpha,),
@@ -131,7 +131,7 @@ def test_source_change_rechecks_policy_even_with_identical_transport(tmp_path, m
 @pytest.mark.parametrize("selected", [False, True])
 def test_host_overlay_retains_disabled_veto_except_selected_plugin(tmp_path, monkeypatch, selected):
     async def scenario():
-        runtime, clients, _ = make_runtime(tmp_path, monkeypatch, requirements=None)
+        runtime, clients, _ = await make_runtime(tmp_path, monkeypatch, requirements=None)
         source = MCPCatalogSource("selected_plugin", "selected") if selected else MCPCatalogSource()
         disabled = MCPRegistration(
             MCPServerSettings("docs", "http", url="https://base.test", enabled=False),
@@ -162,7 +162,7 @@ def test_admitted_call_survives_source_removal_but_new_calls_do_not(tmp_path, mo
         original = MCPServerSettings(
             "docs", "http", url="https://allowed.test", default_tools_approval_mode="prompt"
         )
-        runtime, clients, model = make_runtime(
+        runtime, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             requirements=None,
@@ -214,7 +214,7 @@ def test_old_package_prefixed_route_cannot_alias_new_winner(tmp_path, monkeypatc
     alpha = package(tmp_path, "alpha")
 
     async def scenario():
-        runtime, clients, _ = make_runtime(
+        runtime, clients, _ = await make_runtime(
             tmp_path, monkeypatch, requirements=None, plugins=(alpha,)
         )
         try:
@@ -244,7 +244,7 @@ def test_initial_host_catalog_is_captured_with_runtime_cwd(tmp_path, monkeypatch
         server = MCPServerSettings("docs", "http", url="https://host.test")
         action = MCPRegistration(server, MCPCatalogSource("extension", "host"))
         original = MCPCatalog((action,))
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, api_mode="responses"
             ),

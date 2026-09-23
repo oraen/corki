@@ -41,7 +41,7 @@ async def main():
     settings = CorkiSettings(working_directory=cwd, skills_enabled=False,
                             plugins_enabled=False, collaboration_mode="plan",
                             realtime_enabled=sys.argv[1] == 'true')
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=settings, database_path=cwd / "session.db", model=Model()
     )
     ui = TerminalUI(settings, cwd / "input-history")

@@ -31,7 +31,7 @@ def test_new_turn_continues_with_old_terminal_pending(tmp_path):
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "pending.db",
             home_path=tmp_path / "home",

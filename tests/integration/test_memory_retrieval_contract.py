@@ -202,7 +202,7 @@ def test_summary_search_read_and_rejected_searches_reach_the_model(tmp_path):
                 pass
 
         model = Model()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

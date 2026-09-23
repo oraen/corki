@@ -108,7 +108,7 @@ def test_media_classification_survives_runtime_compaction_and_reopen(
                 calls.append(call.id)
                 return ToolResult(call.id, call.name, "observed")
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             registry.register(Probe())
             caps = replace(
@@ -120,7 +120,7 @@ def test_media_classification_survives_runtime_compaction_and_reopen(
                 supports_remote_compaction=mode != "local",
                 supports_audio_input=audio_supported,
             )
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,
@@ -143,7 +143,7 @@ def test_media_classification_survives_runtime_compaction_and_reopen(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             await runtime._ensure_ready()
             user = UserMessageItem(
@@ -164,7 +164,7 @@ def test_media_classification_survives_runtime_compaction_and_reopen(
                 assert isinstance([e async for e in runtime.compact()][-1], TurnCompleted)
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             assert isinstance([e async for e in runtime.stream("following")][-1], TurnCompleted)
             assert calls == ["one"]
             assert len(bodies) == (3 if mode == "none" else 4)

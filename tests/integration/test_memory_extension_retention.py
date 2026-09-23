@@ -79,7 +79,7 @@ def test_expiry_reaches_runtime_diff_and_preserves_failed_publication(
 
         async def run():
             nonlocal thread
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path, skills_enabled=False, memories_enabled=True
                 ),

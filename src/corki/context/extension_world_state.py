@@ -135,7 +135,7 @@ def render_section(
             if saved["active"]:
                 canonical = _comparison_json(saved["snapshot"])
                 state = PreviousSection(PreviousKind.KNOWN, canonical)
-        except (TypeError, ValueError, KeyError):
+        except (TypeError, ValueError, KeyError, RecursionError):
             state = PreviousSection(PreviousKind.UNKNOWN)
     elif section.legacy_matcher is not None and any(
         section.legacy_matcher(row.role, row.content) for row in retained if row.content

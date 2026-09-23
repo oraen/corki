@@ -35,11 +35,40 @@ class Transcript:
         self.calls = []
         self.replaying = False
         self.include_reasoning = False
-        self.modal_depth = 0
+        self._modal_depth = 0
         self.repair_pending = False
         self.stream_reflowed = False
 
-    def complete_assistant(self, text):
+    @property
+    def modal_depth(self):
+        return self._modal_depth
+
+    @modal_depth.setter
+    def modal_depth(self, value):
+        self._modal_depth = value
+        status = getattr(self.ui, "_working_status", None)
+        if status is not None:
+            status.set_paused(value > 0)
+
+    def assistant_stream_text(self):
+        """Received source for the active display, including its provisional tail."""
+        parts = []
+        for method, args, _ in reversed(self.calls):
+            if method.__name__ == "begin_assistant_message":
+                return "".join(reversed(parts))
+            if method.__name__ == "append_assistant_delta":
+                parts.append(args[0])
+        return ""
+
+    def assistant_stream_is_contiguous(self):
+        for method, _, _ in reversed(self.calls):
+            if method.__name__ == "begin_assistant_message":
+                return True
+            if method.__name__ != "append_assistant_delta":
+                return False
+        return False
+
+    def complete_assistant(self, text, *, already_rendered=False):
         """Replace only the latest assistant run, preserving interleaved notices."""
         start = next(
             (
@@ -71,6 +100,7 @@ class Transcript:
             or self.stream_reflowed
             or (
                 self.ui._console.is_terminal
+                and not already_rendered
                 and (
                     AssistantMarkdown(text).needs_stream_repair
                     or cell_len(text) > max(1, self.ui._console.width - 2)

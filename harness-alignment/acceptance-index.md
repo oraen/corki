@@ -1,5 +1,274 @@
 # A–F 验收索引（当前候选，不能据此宣称完成）
 
+2026-09-22 用户恢复 A–E 核心目标，CLI 细节对齐再次暂停；执行范围见
+`objective.md`。最新 B3/E2：deferred 工具的畸形可选 schema 元数据
+曾使整批搜索索引抛错、健康工具也无法召回；检索文本提取已隔离非预期
+字段形状。先红后绿，索引与实际缓存入口及关联五文件 **69 passed**，
+Ruff/格式/diff 检查通过，见 `tool-search-ranking-review.md` 顶部。
+本批未跑非 CLI 全量；下方最新全量是本次生产改动前基线。
+续轮补证：同目录加入畸形候选后的真实 Runtime 搜索→加载→执行→跨 Turn
+场景通过，坏候选未广告/执行，正常工具副作用一次；相关三文件 54 passed，
+退出 0。Codex 有类型检索入口与 Corki 容错策略的差别已在专项澄清。
+
+最新 A1/A3/E3：模型终态现必须保持此前逐项完成项的精确前缀顺序，
+不再把反序终态提交为成功 Step。真实 Runtime 正文反例先红后绿；
+正文→工具组合验证旧工具结果收束且 Turn 不伪成功。相关七文件
+**137 passed**，生产修改后非 CLI 主组 **15350 passed、7 skipped**，
+单进程敏感组 **459 passed**，合计 **15809 passed、7 skipped**，
+两组退出 0。见 `runtime-lifecycle-acceptance.md` 顶部。
+
+最新 E2：工具最终输入在 handler 副作用前验证可持久化的 UTF-8；此前
+自带解析器/执行前回调注入畸形 Unicode 时，虽返回错误 Observation，
+handler 已先执行。两个反例先红后绿，freeform 改写边界及真实 Runtime
+模型继续/零副作用通过；相关七文件 **150 passed**。生产修改后非 CLI
+主组 **15348 passed、7 skipped**，单进程敏感组 **459 passed**，
+合计 **15807 passed、7 skipped**，两组退出 0。见
+`tool-failure-acceptance.md` 顶部。
+
+最新 D2/D3：stage-one 来源候选的年龄/空闲窗口与扫描前排序现共用精确
+UTC 微秒键，不再由 `julianday` 把新旧来源排成平局或误纳入过期来源。
+两个真实 SQLite 反例先红后绿，另补空闲边界；memory 单测及相关集成
+**372 passed**，新增空闲用例单测 **1 passed**。生产修改后非 CLI
+主组 **15344 passed、7 skipped**，单进程敏感组 **459 passed**，
+合计 **15803 passed、7 skipped**，两组退出 0。见
+`memory-source-review.md` 顶部。
+
+最新 D3：phase-two Top-N 的来源时间不再被 SQLite `julianday` 四舍五入到
+毫秒；修复前真实 SQLite 反例选中较旧版本，改为精确 UTC 微秒键后
+memory 单测 **335 passed**、相关集成 **35 passed**，Ruff 与格式检查通过。
+生产修改后非 CLI 主组 **15341 passed、7 skipped**，单进程敏感组
+**459 passed**，两组均退出 0，合计 **15800 passed、7 skipped**；
+跳过原因不变。见 `memory-source-review.md` 顶部。
+
+最新 D3：stage-one claim 的旧输出、成功水位和失败重试现用精确
+ISO/旧 UTC 版本比较，不再由 SQLite `julianday` 吞掉微秒更新。
+三条 SQLite 反例先红后绿，旧不可解析版本安全退化，真实冷 Runtime
+二次提取通过；记忆相关 **395 passed**。生产修改后非 CLI 独立收集
+**15806 项**，主组 **15340 passed、7 skipped**，敏感组 **459 passed**，
+合计 **15799 passed、7 skipped**，两组均退出 0。见
+`memory-source-review.md` 顶部。
+
+最新 B1/B8：工具定义新增构造阶段的 UTF-8 文本、非空名称与 JSON 对象
+准入，拒绝会在索引/wire 阶段晚爆的非法 schema。九个反例先红后绿，
+另补一项 freeform 格式准入；
+插件注册失败无部分发布，扩大 **1687 passed**。保留搜索结果损坏时
+错误 Observation→纠正后恢复的独立故障注入。非 CLI 独立收集
+**15801 项**，最终分组退出 0：主组 **15335 passed、7 skipped**，
+敏感组 **459 passed**，合计 **15794 passed、7 skipped**；此前两轮
+诊断失败及一次未稳定复现的 MCP stdio 等待超时见专项文档。
+见 `tool-search-ranking-review.md` 顶部。
+
+最新 C3：有效 original JPEG 的尺寸标记在 512 KiB 头部扫描之后时，
+原本会退回低估图片预算；现慢路径完整解码取尺寸并做 32 项有界缓存。
+单位反例先红后绿，真实 Runtime 五份旧图片触发本地自动压缩并保留原归档；
+扩大 **630 passed**。生产修改后非 CLI 全范围分组退出 0：敏感组
+**459 passed**，主组 **15324 passed、7 skipped**，独立收集
+**15790 项**，合计 **15783 passed、7 skipped**。见
+`context-budget-review.md` 顶部；C3 其余范围仍开放。
+
+最新协议隔离边界：普通 Responses wire 构造中原先固定 False 或被忽略的
+native search/namespace/freeform/discovered 形参已清理，工具定义、回放调用
+仍只走普通平铺 function；旧配置和归档安全边界保留。相关八文件
+**152 passed / 11.85s**，Ruff/diff 检查通过。非 CLI 独立收集
+**15788 项**；敏感组 **459 passed**。主组首轮出现一次 MCP HTTP 通知
+结果测试超时；该非超时用例预算从 0.2 秒增至 1 秒，相关文件复跑通过。
+主组第二轮 **15322 passed、7 skipped**、退出 0；本批合计
+**15781 passed、7 skipped**，见 `service-boundary-inventory.md` 顶部。
+
+最新 C1/A8/C8：旧无基础账本/无 checkpoint 且显式换宿主基础时，已提交
+最终模型结果先于未知基础拒绝回放；若需要新摘要则安全失败、不安装
+marker。真实 Runtime 正例先红后绿，取消意图有/无新覆盖 20 例通过，
+相关 12 文件 **256 passed**，见 `model-instructions-gap.md` 顶部。
+本批生产修复后非 CLI 完整范围分组退出 0：敏感组 **459 passed /
+63.84s**，其余组 **15326 passed、7 skipped / 850.83s**；独立收集
+**15792 项**，合计 **15785 passed、7 skipped**，跳过原因不变。
+
+最新 C1/A8：旧 RUNNING Turn 缺准入基础与 checkpoint 时，冷开显式换基础
+不再用新覆盖重新采样；已提交摘要/结果及取消仍可回放。四个真实 Runtime
+反例先红后绿，另补既有摘要正例；相关 12 文件 **244 passed**。初版过早
+拒绝导致 53 项回归，收窄后中间版仍有 34 项旧默认来源失败，最终同范围
+全绿；不能把这些历史诊断批次算通过。见 `model-instructions-gap.md` 顶部。
+本批生产修复后非 CLI 完整范围分组退出 0：敏感组 **459 passed /
+55.38s**，其余组 **15314 passed、7 skipped / 728.54s**；独立收集
+**15780 项**，合计 **15773 passed、7 skipped**，七项跳过原因不变。
+
+最新 B6/B8：旧搜索结果的 namespace 别名与新直接工具平铺名碰撞时，
+真实 Runtime 在适配器前投影失效定义；热更新/冷恢复两例均能继续普通请求，
+旧历史保留且不给模型旧定义，关联五文件 **131 passed**。
+仅新增测试，上方 **15780 项**全量收集已包含本批两例；见
+`tool-search-ranking-review.md` 顶部。直接拼造未投影的 ModelRequest 会误报
+冲突，不能代表 Runtime 路径，也不据此改写安全别名映射。
+
+最新 C8：冷恢复计划若重复同一 Hook 命令 key，原来会先执行一次再因并发
+claim 冲突失败。真实 Runtime/SQLite 的手动/自动 × command/MCP 四例先红
+后绿；现恢复执行前拒绝，零新增副作用，相关七文件 **224 passed**，见
+`compact-hook-gap.md` 顶部。本批生产修复后非 CLI 完整范围分组实际退出 0：
+敏感组六文件 **459 passed / 55.58s**，其余组 **15307 passed、
+7 skipped / 736.34s**；独立收集 **15773 项**，合计 **15766 passed、
+7 skipped**。其它计划损坏与外部副作用保证仍独立验收。
+
+最新 C8：PostCompact 持久计划的 payload 虽通过类型校验，却可被值错配或
+额外字段改写后继续执行 Hook。真实 Runtime/SQLite 安装故障恢复中，
+模型/目录/触发/规范 transcript/agent/额外键 × 自动/手动 × command/MCP
+24 例先红后绿；现在执行前拒绝错配，关联七文件 **220 passed**，见
+`compact-hook-gap.md` 顶部。本批生产修复后非 CLI 完整范围分组实际退出 0：
+敏感组六文件 **459 passed / 57.67s**，其余组 **15303 passed、
+7 skipped / 734.48s**；独立收集 **15769 项**，合计 **15762 passed、
+7 skipped**。七项跳过原因不变；其它计划字段与执行账本窗口仍独立验收。
+
+最新 C2 realtime：Codex active→inactive 专用结束片段已与 Corki 现有实时
+文字输入路径核对。Corki 原来只发通用 section 删除通知；真实 Runtime
+红/绿及冷恢复证实已改为明确结束片段，不重复发布，重新进入时再发 start。
+相关单元目录及六个集成文件 **464 passed**，见 `context-snapshot-wire.md`
+顶部。本批生产改动后非 CLI 完整范围分组实际退出 0：敏感组六文件
+**459 passed / 55.89s**，其余组 **15279 passed、7 skipped / 738.24s**；
+独立收集 **15745 项**，合计 **15738 passed、7 skipped**。取代下方
+15744 项基线；七项跳过原因不变。
+
+最新 C2：完整/精简权限、旧模型切换标记及扩展 world-state 的过深旧比较
+快照冷恢复四例先红后绿；旧数据按 Unknown 降级，历史前缀保留，不放宽
+权限或吞掉 renderer 执行错误。相关 529 passed，详见
+`context-snapshot-wire.md` 顶部。本批三处生产修复之后，非 CLI 完整范围
+敏感组 **459 passed / 55.16s**、其余组 **15278 passed、7 skipped /
+732.12s**，两批退出 0；独立收集 **15744 项**，合计 **15737 passed、
+7 skipped**。取代下方 15740 项基线；七项跳过原因不变。
+
+最新 C3：非内嵌图片引用不再错误套用内嵌 base64 图片成本，真实 Runtime
+红/绿确认避免不必要摘要；相关 context/媒体/预算 529 通过。修复及 C8
+新增用例之后的非 CLI 完整范围按互斥文件分组实际退出 0：敏感组
+**459 passed / 56.29s**，其余组 **15274 passed、7 skipped / 733.24s**；
+独立收集 **15740 项**，合计 **15733 passed、7 skipped**，取代下方
+15717 基线。跳过为六项缺历史编译器及一项文件系统限制。详见
+`context-budget-review.md` 顶部；全量通过不代替其余 A–E 差异验收。
+
+最新 C8：两个并发普通 HTTP MCP 压缩 Hook 的半截响应在取消/超时下均由
+Turn 持有至响应关闭；两个真实 POSIX shell Hook 在 Runtime 关闭或执行
+账本提交失败时均先退出再结束本地关闭/Turn。冷恢复不重发；相关六文件
+**215 passed**。新增 12 个用例已进入上述 15740 项非 CLI 完整收集与
+回归；详见 `compact-hook-gap.md` 顶部。不把离线 MockTransport
+或受管本地进程外推成任意外部副作用 exactly-once。
+
+2026-09-22 C8 新增压缩计划保存故障八例后，非 CLI 完整范围按互斥文件
+分组重新运行并均实际退出 0：短期限敏感六文件单 worker **459 passed /
+55.58s**；其余 unit/integration 排除 CLI 及前六文件，4 workers
+**15258 passed、7 skipped / 726.42s**。独立收集 **15724 项**恰等于
+两批总数，合计 **15717 passed、7 skipped**，替代下方 15709 基线。
+七项跳过仍是六项缺失历史编译器及一项文件系统拒绝非 UTF-8 文件名。
+启动前检查 12 逻辑核、1 分钟 load 6.75、无已有 pytest/sandbox 测试
+进程；命令、分组及本次新增八例见 `patch-worker-cancellation.md` 与
+`compact-hook-gap.md` 顶部。此刷新只有测试/文档变更，不自动关闭其它
+A–E 差异或恢复暂停的 CLI 对齐。
+
+最新 A6/A7/E5/E7：`execution_permissions=None` 的兼容 `apply_patch`
+线程取消早退已由真实 Runtime 反例复现并修复；取消/关闭 × 成功/失败
+4 组合及相关五文件 37 通过。见 `patch-worker-cancellation.md`。
+该生产改动之后的非 CLI 完整范围已在资源恢复后分组实际退出 0：
+短期限敏感六文件单 worker **459 passed / 59.83s**，其余文件
+4 workers **15250 passed、7 skipped / 734.74s**；独立收集
+15716 项恰等于两批总数，合计 **15709 passed、7 skipped**。
+七项仍是六项缺失旧编译器、一项文件系统非 UTF-8 限制。此前高负载下
+8-worker 与 2-worker 两次诊断运行分别出现 29 与 16 项短超时并主动
+中断，均不算通过；当时系统 load average 超过 500（12 逻辑核）。
+完整命令、资源条件、失败及重跑边界见 `patch-worker-cancellation.md`。
+此回归刷新生产基线，不自动核销 A–E 其它开放差异。
+
+最新 C1/C2：插件/延迟工具目录同 Step 撤销、恢复、冷启动未变化的
+增量顺序及去重组合通过；相关五文件 **45 passed / 56.04s**，
+仅测试修改。见 `context-section-inventory.md` 顶部；不等于条件
+Persistent/MultiAgent/多执行环境已有运行时能力。
+
+最新 B10/E5/E7 `Interrupt` MCP Hook：远端调用后完成记录提交前/后与
+取消终态写入失败的两例冷恢复已补；结果未知不重发，已提交不改写。
+首次 6 文件并行 93/1 的既有 command 异步 Hook 超时已根据现场账本
+定位，测试期限修订后同范围 **94 passed / 44.94s**；详见
+`mcp-tool-hook-gap.md` 顶部。仅测试变化，不刷新下方生产全量基线。
+
+此前 B10/E7 `Interrupt` MCP Hook 补证：root 显式中断与输入替换、同线程
+冷恢复，以及实际 HTTP 客户端半截响应超时/关闭顺序已验证；四个关联文件
+**74 passed / 13.57s**，4 workers/loadfile/禁重启。新增三例仅改测试，
+下方 15699 非 CLI 全量是此前生产基线，不包含本次新增用例；
+详见 `mcp-tool-hook-gap.md` 顶部。提交前 crash/外部副作用 unknown
+仍未由此核销。
+
+2026-09-22 C1/C2 首窗组合顺序修复后，非 CLI 同范围全量实际退出 0：
+**15699 passed、7 skipped、583.67s**，12 workers/loadfile/禁 worker 重启。
+组合用例覆盖 AGENTS、权限、plan、本地环境、记忆、技能、插件与 deferred
+目录同请求及冷恢复；相关上下文组 **496 passed**。Codex 首窗按角色分组，
+但 developer 组中插件指引应先于延迟工具目录、扩展插件目录在后；Corki
+已修复 `PromptPhase` 与排序。详见 `context-section-inventory.md` 顶部。
+七项跳过仍为六项缺失历史编译器、一项文件系统拒绝非 UTF-8 名称；
+无 CLI 对齐结论，A–E 也未整体核销。
+
+最新 B10/C8/E2：通用 MCP Pre/PostCompact 的真实 HTTP 客户端超时/取消
+八组合已用离线半截响应体验证，含响应关闭早于终态及同库冷 Runtime 不重放。
+六个压缩/MCP/HTTP 关联文件 **219 passed / 19.65s**；无生产改动，
+此前 15635 非 CLI 全量不包含本次新增测试；现已被上方全量刷新。具体边界见
+`compact-hook-gap.md` 顶部；不把模拟传输当真实外网或 OS 强杀保证。
+
+最新 A4/C8/B10 补证：MCP 型 Pre/PostCompact 的 54 个新冷恢复组合通过，
+与 command/async compact Hook 和 MCP Pre/PostToolUse 恢复联合 176 通过；
+格式修订后 `test_model_continuation.py`（含 `ModelCompleted` 后不读取尾部的
+真实 Runtime 护栏）及 compact 安装恢复两文件 133 通过。当前没有生产改动，
+此前 15635 非 CLI 全量不包含这些新增测试；现已被上方全量刷新。不能把
+两个独立测试批次相加冒称一次全量。详情见 `compact-hook-gap.md` 顶部。
+E4 旧“运行中 loop 同步构造待决”描述已在下方表格更正。
+
+2026-09-22 B1/B8 工具策略注册准入修复后，非 CLI 同范围全量实际退出 0：
+**15635 passed、7 skipped、568.85s**，8 workers/loadfile/禁重启；
+`-rs` 的七项原因与上一批相同。新构造反例七项先红后绿，相关联合
+1401 通过；源码对照和限定结论见 `tool-search-ranking-review.md` 顶部。
+15627 是本批生产改动前基线，不能替代最新结果；A–E 仍未整体完成。
+
+2026-09-22 E2 普通模型输出身份校验修复后，非 CLI 同范围全量实际退出 0：
+**15627 passed、7 skipped、578.55s**；8 workers/loadfile/禁重启。
+六项缺失历史编译器及一项文件系统非 UTF-8 限制均由 `-rs` 确认。
+新增 11 个畸形 provider 身份专项通过，603 个 core/models 与模型提交、
+续行、工具模式、恢复联合用例通过；详情见
+`remaining-implementation-priorities.md` 顶部。此前 15616 为生产修复前基线。
+此结果不关闭其它 A–E 差异，也不恢复 CLI 对齐。
+
+2026-09-22 最新非 CLI 全量：Context 硬窗口剩余量与预检一致性修复后，
+同范围 `tests/unit tests/integration` 排除 CLI 回归实际退出 0，
+**15616 passed、7 skipped、569.03s**；8 workers/loadfile/禁重启。
+七项仍为六项缺失历史编译器、一项文件系统拒绝非 UTF-8 文件名。
+Context/token-budget 同范围专项补传当前编译器后 628 通过、0 跳过；
+真实 Runtime 的 `get_context_remaining`→普通摘要反例和范围见
+`context-budget-review.md`。15614 已是修复前基线，A–E 其它差异继续开放。
+
+2026-09-22 最新非 CLI 全量：旧记忆 Git 基线身份删除准入修复后，
+`tests/unit tests/integration` 排除 CLI 的同范围回归实际退出 0，
+**15614 passed、7 skipped、592.09s**；8 workers/loadfile/禁重启。
+七项仍为六项缺失历史编译器和一项文件系统非 UTF-8 文件名限制。
+所有 memory 单元与集成文件另有 840 通过；旧基线正反例与新 Corki
+提交身份见 `memory-source-review.md`。此前 15609 已是修复前基线；
+全量通过不代表 Context 条件分支及其它 A–E 差异全部关闭。
+
+2026-09-22 最新非 CLI 全量：动态搜索 handler 对内部 `output_schema` 类型变更
+重新绑定后，同范围 `tests/unit tests/integration` 排除 CLI 回归实际退出 0，
+**15609 passed、7 skipped、564.23s**；8 workers/loadfile/禁重启。
+`-rs` 原因仍为六项缺失历史编译器、一项文件系统拒绝非 UTF-8 文件名。
+工具发现专项 140 通过及红绿证据见 `tool-search-ranking-review.md`；
+此前 15604 批次成为修复前基线，不能替代此批。A–E 其它开放项不因全量
+通过自动核销。
+
+2026-09-22 最新非 CLI 全量：工具搜索缓存 JSON 类型身份修复后，
+`tests/unit tests/integration` 排除 CLI 的同范围回归实际退出 0，
+**15604 passed、7 skipped、569.94s**；8 workers/loadfile/禁重启，
+`-rs` 证实六项需已不存在的历史编译器、一项当前文件系统拒绝非 UTF-8
+文件名。工具搜索红绿及 Runtime 冻结/重搜证据见
+`tool-search-ranking-review.md`，其它 A–E 未闭合项仍按清单验收。
+
+2026-09-22 恢复 A–E 核心目标后的当前基线：构造迁移后非 CLI
+`tests/unit tests/integration`（排除 unit/cli 与 integration/test_cli*.py）
+8 workers/loadfile/禁重启完整回归退出 0，**15598 passed、7 skipped、566.65s**。
+异步测试体误用同步 CLI 构造的首败已改走已有异步构造入口，单文件 27 通过；
+过程与完整命令见 `remaining-implementation-priorities.md` 顶部。
+跳过条件随后用 `-rs` 定向核对：六项需已不存在的历史编译器，一项为文件系统
+拒绝非 UTF-8 文件名；均不算通过。之后工具搜索缓存有生产修复，12 文件
+135 项通过，见 `tool-search-ranking-review.md`；因此 15598 的全量仅是该修复前
+基线，已由上方 15604 批次替代。旧 33685/50851 等结果是历史批次，
+不再描述当前回归状态；全量通过不等于 A–E 行为全部对齐。
+
 33685 当前已退出 1：15589 passed、3 failed、1 skipped（544.67s），日志
 full-regression-33685.txt。失败为 stdin 核心终端测试的三个等待断言，需核对
 yield 后仍活跃会话的观察契约；不是已暂停的 CLI 页面/交互对齐任务。
@@ -1034,7 +1303,7 @@ test_recovery_and_concurrency（均为 .py）。逐项阅读测试断言，覆�
 | A5 | 并行/独占/排序/运行中新输入 | 已核验（普通Harness调度）：就绪后FIFO准入、普通错误/致命错误屏障、Code Mode Step归属、结果有序增量发布、工具完成后接入新输入及压缩续采样边界逐项见ordered-tool-publication.md。196/686联合、真实进程退出后前缀不变/未知不重放50联合有证据；修订后非CLI全量15504通过/1文件系统限制跳过。全局副作用原子性、其它Hook提交交错及构造/资源故障仍按A7/C8/E4/E7独立验收 |
 | A6 | 流事件/backpressure/关闭顺序 | 默认输出流控差异已修复：默认无界，正数为宿主显式背压；暂停消费1024delta仍完成并可在关闭后读回。容量1/4/8满队列关闭亦实证；见event-backpressure-review.md，其他资源所有权专项仍独立收敛 |
 | A7 | checkpoint/历史/副作用恢复关系 | 搜索/工具提交恢复已实证；Post原结果与Hook batch同事务、checkpoint投影清单及恢复再中断有专项证据，见post-tool-use-implementation.md与tool-result-commit-cancellation.md。外部副作用到本地提交前仍可能未知，不宣称全局原子 |
-| A8 | 不重复输入/采样/执行 | partial-tool-transport-review.md 补两普通接口断流提交边界及完成后冷历史组合；既有冷恢复、跨 Turn 和 CLI；不是任意外部副作用 exactly-once 承诺 |
+| A8 | 不重复输入/采样/执行 | partial-tool-transport-review.md 补两普通接口断流提交边界及完成后冷历史组合；既有冷恢复、跨 Turn 和 CLI；旧无准入基础且显式换宿主基础的新采样拒绝、既有摘要仍回放见 model-instructions-gap.md 顶部；不是任意外部副作用 exactly-once 承诺 |
 
 ## B Tool Use
 
@@ -1084,14 +1353,14 @@ transport；文件名不是官方服务调用证据，也不据此豁免旧数�
 
 | ID | 目标需求 | 当前证据与待收敛部分 |
 |---|---|---|
-| C1 | instructions/输入/规则/环境/工具/扩展顺序角色 | 部分一致：宿主扩展/模式及内置 memory/skills 条件排序已修复；有效filesystem权限现在经原生约束合并后进入user环境片段，实际Runtime红绿、deny_read及压缩重建联合420通过。网络域名代理入口未开放，不冒充已实现。其他来源继续收敛，见 context-snapshot-wire.md Personality 本地模板、选择与功能门控、独立 developer 片段、普通双接口及 provider 标签隔离已补证；不引入公开 Turn 风格更新 API 或官方目录，见 personality-context-gap.md。 |
-| C2 | 每 Step/key/增量/tombstone/历史视图 | 项目规则冷替换/删除及角色wire已补验；plugin-guidance-state.md指导/目录分离已修复。环境v2权限快照、v1一次刷新、同目录权限改变增量及冷开去重已接通，最终定向86通过。guidance空白入口、专属替换/撤销及旧Message的Unknown恢复已修复，真实冷恢复红绿与完整context/关联预算412通过，见context-snapshot-wire.md；其他typed section继续核验。Personality 的 Known 优先、旧标签 Unknown/模型回退、静默比较快照、跨模型及自动压缩去重、旧列迁移和隐式恢复已补证；独立reference子项已按来源用途核定，43联合通过，见context-reference-compatibility.md，不扩大为Codex rollout格式导入，也不免除Corki自身恢复。 |
-| C3 | 完整 token/输出预留/schema/附件成本 | context-budget-review.md：低 usage 硬超限先压缩、未支持媒体误压缩两项修复；媒体/上下文/压缩/预算 553 通过，图片音频与 usage 锚点 8 组合实证。原生比例余量链已核验；全格式成本与预算精度仍有限制 |
+| C1 | instructions/输入/规则/环境/工具/扩展顺序角色 | 部分一致：宿主扩展/模式及内置 memory/skills 条件排序已修复；有效filesystem权限现在经原生约束合并后进入user环境片段，实际Runtime红绿、deny_read及压缩重建联合420通过。网络域名代理入口未开放，不冒充已实现。其他来源继续收敛，见 context-snapshot-wire.md Personality 本地模板、选择与功能门控、独立 developer 片段、普通双接口及 provider 标签隔离已补证；不引入公开 Turn 风格更新 API 或官方目录，见 personality-context-gap.md。旧无准入基础且冷开显式换宿主基础时，新采样不再静默换指令；未知旧临时覆盖仍无从重建，见 model-instructions-gap.md 顶部。 |
+| C2 | 每 Step/key/增量/tombstone/历史视图 | 项目规则冷替换/删除及角色wire已补验；plugin-guidance-state.md指导/目录分离已修复。环境v2权限快照、v1一次刷新、同目录权限改变增量及冷开去重已接通，最终定向86通过。guidance空白入口、专属替换/撤销及旧Message的Unknown恢复已修复，真实冷恢复红绿与完整context/关联预算412通过；完整/精简权限、模型切换标记、扩展 section 的过深旧比较快照四例红绿，相关529通过。Codex 默认/条件 world-state section 已逐项枚举；realtime active→inactive 的专用结束过渡真实冷热恢复红绿，相关464通过，见context-snapshot-wire.md。Persistent/MultiAgent V2/DeferredExecutor 多环境条件路径仍待范围选择，其余未列明 section 不据枚举自动称一致。Personality 的 Known 优先、旧标签 Unknown/模型回退、静默比较快照、跨模型及自动压缩去重、旧列迁移和隐式恢复已补证；独立reference子项已按来源用途核定，43联合通过，见context-reference-compatibility.md，不扩大为Codex rollout格式导入，也不免除Corki自身恢复。 |
+| C3 | 完整 token/输出预留/schema/附件成本 | context-budget-review.md：低 usage 硬超限先压缩、未支持媒体误压缩两项修复；媒体/上下文/压缩/预算 553 通过，图片音频与 usage 锚点 8 组合实证。新增非 data 图片引用误按内嵌负载计费的真实 Runtime 红/绿修复，相关529通过，生产修改后非 CLI 全范围 15733通过/7跳过。原生比例余量链已核验；全格式成本与预算精度仍有限制 |
 | C4 | 自动/手动压缩触发/选择/失败 | 降窗自动、手动 checkpoint 与失败重试已实证；summary-cancellation-review.md 修复读流/取消被关闭异常覆盖。完整触发与输入选择见 context-budget-review.md 等专项 |
 | C5 | 当前输入/约束/reasoning/tool 对保留 | local-retention-review.md：三种压缩时机的混合reasoning/正文/匹配工具对进入摘要，当前输入与长用户文本保留；两普通适配器与冷回放有证据。不承诺模型摘要事实无损 |
 | C6 | 替换模型历史但保留原始记录 | local-retention-review.md：新窗口移除旧reasoning/工具对，SQLite原始记录前缀不变，关闭后重开同Thread再验证；降窗/失败及跨页投影另有专项 |
 | C7 | 连续历史/搜索/长期记忆召回区别 | local-history-recall-review.md逐链核验本地归档查询、自动压缩后原文搜索/读取与冷恢复；区别于CLI分页和长期记忆。大历史查询成本及跨agent兼容边界仍有说明 |
-| C8 | 恢复/取消/工具中压缩一致性 | summary-cancellation-review.md覆盖摘要取消、手动/自动安装事务冷恢复；异步Pre手动/自动/失败重试后冷开不复活联合116通过。Pre及Post各自实际恢复入口投影落盘但尚未更新采样时被compact取消替换均补验，摘要保留反馈、再次冷开不复活，最近相关204通过，见async-pre-tool-review.md及post-tool-use-implementation.md。新增摘要中/压缩提交前后输入到达与取消六组合，续执行优先、输入唯一/归还及冷开联合53通过；其它Hook投递提交点交错仍未完整验收 compact SessionStart 的计划/consumer 绑定/安装后 RUNNING 冷恢复完整文件 92 通过；手动来源登记与安装失败后新 Turn 8 例、关联154通过；待写取消终态的跨 Turn 消费修复514通过。见 session-start-gap.md，各窗口不互相替代；其余交错仍须给出具体未覆盖场景。 |
+| C8 | 恢复/取消/工具中压缩一致性 | summary-cancellation-review.md覆盖摘要取消、手动/自动安装事务冷恢复；异步Pre手动/自动/失败重试后冷开不复活联合116通过。Pre及Post各自实际恢复入口投影落盘但尚未更新采样时被compact取消替换均补验，摘要保留反馈、再次冷开不复活，最近相关204通过，见async-pre-tool-review.md及post-tool-use-implementation.md。新增摘要中/压缩提交前后输入到达与取消六组合，续执行优先、输入唯一/归还及冷开联合53通过；compact SessionStart 的计划/consumer 绑定/安装后 RUNNING 冷恢复完整文件 92 通过；手动来源登记与安装失败后新 Turn 8 例、关联154通过；待写取消终态的跨 Turn 消费修复514通过。Pre/PostCompact 计划保存写前/写后 × 自动/手动八个真实冷热窗口，五文件联合176通过，确认孤立计划不激活旧 Hook；真实 HTTP MCP 的单/双同步 Hook × 超时/取消，以及双 POSIX shell Hook × 关闭/账本提交失败，六文件联合215通过，资源在 Turn 终态前清理且冷恢复不重发。新增 PostCompact 已保存计划的完整 payload 值身份及额外键拒绝24例红绿，关联七文件220通过，见 compact-hook-gap.md。各窗口不互相替代；其它计划损坏与跨 Hook 投递交错仍须具体反例验收。 |
 | C9 | 普通请求摘要、本地管理，不用专用接口 | 已核验（用户普通路径）：prepare/compact共用无工具ModelRequest摘要与本地历史替换；三入口、双适配器及旧专用请求/历史拒绝联合429通过。见provider-isolation-refresh.md；全部故障窗口归C4/C8 |
 | C10 | 所有 provider/模型/地址统一路径 | 已核验（内置普通适配器）：三入口×两接口×四标签×三地址×两模型成功及冷恢复144例，缺配置冷热零请求8例；能力/构造源码不按标签、地址或模型启用专属协议。见provider-isolation-refresh.md；不约束宿主任意自定义ModelPort |
 
@@ -1118,10 +1387,10 @@ transport；文件名不是官方服务调用证据，也不据此豁免旧数�
 | E1 | Observation/重试/致命/取消分类 | 已核验分类契约：普通工具 Observation/Fatal、模型失败重试与取消分离；Code Mode 内嵌错误交回脚本，不误套普通 Fatal 终止规则。三文件 126 通过，见 error-classification-acceptance.md；完整 HTTP 策略归 E3，构造/资源所有权归 E4/E7，半截输出全路径归 E6，不据分类通过关闭其他缺口 |
 | E2 | 未知/JSON/schema/handler/MCP断连/超时/非法超长结果 | 已核验（普通工具/Code Mode/MCP路径）：逐分类见tool-failure-acceptance.md。八文件246通过，新增未知/非法JSON/handler直接Runtime后定向33通过；含实际32MB超限、HTTP/stdio故障、取消与错误值区分。模型/构造/资源关闭及内部重试仍按E3–E7验收，不承诺所有schema关键字或任意副作用exactly-once |
 | E3 | HTTP/截流/缺终态/部分输出/重试限制 | 已核验（内置普通传输）：状态分类、请求/采样双预算、终态缺失、部分工具与冷恢复、关闭错误优先级及取消，当前七文件148通过。逐要求证据与边界见model-failure-acceptance.md；摘要独立策略归C4，其他资源所有权归E7，不以此声明全部故障处理完成 |
-| E4 | 压缩/记忆/扩展初始化失败与注册回滚 | 压缩/记忆及MCP required失败/部分注册/重载取消见专项；construction.py的acreate和无loop同步create已有回滚。运行中loop直接同步create且无construction owner的失败资源接管仍开放，不能笼统称全部构造路径缺失 |
-| E5 | 幂等/副作用风险，不重放未知结果 | 调用身份/旧账本/完成复用/未知不重放及模型重试已核验，58通过；普通RUNNING公开恢复、嵌套提交失败和MCP断连另有证据。内部process startup重试已有66通过，patch重试已有68通过/1历史编译器跳过，见tool-result-commit-cancellation.md顶部。两条主要内部重试不再列为未审计：重试须遵守审批策略，可能保留或重复首次部分副作用，patch累积committed_delta；不承诺跨系统exactly-once或第三方私有重试安全。当前完整回归仍待终态 |
+| E4 | 压缩/记忆/扩展初始化失败与注册回滚 | 压缩/记忆及MCP required失败/部分注册/重载取消见专项；`construction.py` 的 `acreate` 与无 loop 同步 create 有回滚。运行中 loop 无 owner 的同步 create 已按用户批准在分配资源前 fail-fast，调用方迁移为 await acreate；27 项构造准入专项及后续非 CLI 全量均通过，见 `sync-in-loop-construction-decision.md` 与本索引顶部。其它构造来源仍按实际入口核对，不能把旧“待决”状态当当前缺口 |
+| E5 | 幂等/副作用风险，不重放未知结果 | 调用身份/旧账本/完成复用/未知不重放及模型重试已核验，58通过；普通RUNNING公开恢复、嵌套提交失败和MCP断连另有证据。内部process startup重试已有66通过，patch重试已有68通过/1历史编译器跳过，见tool-result-commit-cancellation.md顶部。两条主要内部重试不再列为未审计：重试须遵守审批策略，可能保留或重复首次部分副作用，patch累积committed_delta；不承诺跨系统exactly-once或第三方私有重试安全。当前非 CLI 完整范围分组退出 0，15738 passed/7 skipped；全量绿不证明外部 exactly-once。 |
 | E6 | 不把半截失败当成功，不吞取消 | 普通两接口正文/未闭合及已闭合计划增量已到达后 EOF/读失败/取消、零重试预算已直接验证，当前文件 26 通过；计划结束标记不产生完成事件。关联 75 通过含旧 CLI 混合断言、不作为 CLI 对齐完成依据。混合项重试/冷恢复与工具掩盖取消另有证据；见 partial-output-acceptance.md，其余未列明输出路径仍待逐项收敛 取消终态写后 ack 失败的精确确认已修复；原成功/失败/取消结果和告警分离，多待写结果真实进程退出冷恢复亦有证据，见 partial-output-acceptance.md；这些子项不再作为整体未知。 |
-| E7 | 每 Turn 终态与全部资源清理 | 已核验的关闭边界按 runtime-close-failure-acceptance.md 资源表归并：14 入口错误/取消与共享 close、在途 reset、MCP 物理 owner、Code Mode 回调/进程、模型响应、记忆子 Runtime、checkpoint fallback 与终态存储屏障。最新生产全量 15532 passed/1 文件系统限制跳过；后加条件资源/reset 五文件 100 通过。不得再沿用旧“11 入口/全量待刷新”。E4 运行中 loop 无 owner 同步构造仍开放，跨 Hook 恢复归 A7/C8；本项不承诺 OS 强杀后运行内存回调或未实测平台。完整生命周期交付还需连同这些独立开放项验收，不单凭本项测试关闭整个 A–E。 |
+| E7 | 每 Turn 终态与全部资源清理 | 已核验的关闭边界按 runtime-close-failure-acceptance.md 资源表归并：14 入口错误/取消与共享 close、在途 reset、MCP 物理 owner、Code Mode 回调/进程、模型响应、记忆子 Runtime、checkpoint fallback 与终态存储屏障。兼容 Patch 线程取消早退的真实 Runtime 反例及修复见 patch-worker-cancellation.md；当前非 CLI 完整范围分组退出 0，15738 passed/7 skipped。E4 运行中 loop 无 owner 同步构造已改为分配资源前拒绝并迁移异步入口，不能再称开放；跨 Hook 恢复仍归 A7/C8。本项不承诺 OS 强杀后运行内存回调、任意第三方副作用 exactly-once 或未实测平台；不单凭全量通过关闭整个 A–E。 |
 
 ## F CLI
 
@@ -1167,11 +1436,13 @@ patch审批扩大447通过1跳过34警告（16ee19）。跳过为旧patch编译�
    于网络隔离完成。通用 MCP OAuth 必须保留并单独验证凭据来源隔离。
 2. 源码对齐：所有待收敛行先链接对应 Codex 调用链，再判断局部实证是否覆盖真实分支；
    不把源码文件存在视为已实现，不把旧审计“待实现”直接当成现在缺失。
-3. 当前项目全面回归与必要原生后端/跳过项核对尚未刷新；不重用旧全量通过作当前验收。
+3. 当前非 CLI unit/integration 已在最新 C2 修复后分组刷新：15738 通过、7 条件跳过，
+   独立收集 15745 项。必要原生后端的七项跳过仍未补跑，不把它们计作通过；
+   CLI 对齐由用户暂停，不将旧 CLI 全量结果冒充本阶段当前基线。
 4. 组合端到端已有搜索/恢复、模型降窗、记忆召回独立证据；最终交付需要明确各自边界，
    不把不同运行拼成一次未执行的全链路测试。
-5. 明确实现缺口仍包括已加载历史源变化的全量渲染成本及 cli-streaming 的剩余项。
-   是否属于必须对齐的原生行为，需要对应源码与可观察影响，不随意扩大为新优化项目。
+5. 已加载历史源变化的全量渲染成本等剩余核心缺口仍需按原生源码与可观察影响验收；
+   `cli-streaming` 的页面体验剩余项由用户暂停，不是当前 A–E 完成门槛。
 
 下一轮优先刷新 provider 隔离/通用 OAuth 与模型流错误组合，然后把上述待收敛行逐项
 转为有具体源码、直接测试与边界说明的关闭记录。不得只反复重跑95组而停留在局部验收。

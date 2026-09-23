@@ -85,7 +85,7 @@ def test_runtime_compacts_large_observation_then_continues_with_current_input(tm
     async def scenario():
         model, registry = Model(), ToolRegistry()
         registry.register(LargeTool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

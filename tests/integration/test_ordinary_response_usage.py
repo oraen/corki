@@ -60,7 +60,7 @@ def test_runtime_uses_only_ordinary_token_counts(tmp_path, provider, private, he
                 base_url="https://fixture.invalid/v1", api_mode="responses", provider_name=provider
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path, skills_enabled=False, api_mode="responses", model_max_retries=0
             ),

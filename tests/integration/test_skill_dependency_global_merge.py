@@ -101,7 +101,7 @@ def test_install_merges_global_servers_without_replacing_current_authority(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 execution_permissions=None,

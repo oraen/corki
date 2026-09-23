@@ -15,6 +15,7 @@ from corki.models.capabilities import ProviderCapabilities
 from corki.protocol.context import ModelContextInfo
 from corki.protocol.events import TurnCompleted, TurnFailed
 from corki.protocol.items import ToolResultItem
+from corki.protocol.tool_names import compatible_tool_name
 from corki.protocol.tools import ToolExposure, ToolResult, ToolSpec
 from corki.tools import ToolRegistry
 
@@ -62,7 +63,7 @@ def test_default_control_collision_uses_harness_handler_without_losing_source(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,
@@ -85,6 +86,120 @@ def test_default_control_collision_uses_harness_handler_without_losing_source(
             assert registry.get(control) is source, "planning must not delete the host source"
         finally:
             await runtime.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cold", [False, True])
+def test_revoked_discovery_alias_does_not_block_current_direct_tool(tmp_path, cold):
+    async def scenario():
+        old_name = "notes::read"
+        current_name = compatible_tool_name(old_name)
+        bodies = []
+
+        class Tool:
+            def __init__(self, name, exposure):
+                description = (
+                    "amberproof old-only definition"
+                    if exposure is ToolExposure.DEFERRED
+                    else "new-only direct definition"
+                )
+                self.spec = ToolSpec(name, description, {}, exposure=exposure)
+
+            async def execute(self, call, context):
+                return ToolResult(call.id, call.name, "current result")
+
+        def respond(request):
+            body = json.loads(request.content)
+            bodies.append(body)
+            output = (
+                [
+                    {
+                        "type": "function_call",
+                        "name": "tool_search",
+                        "call_id": "search-old",
+                        "arguments": json.dumps({"query": "amberproof"}),
+                    }
+                ]
+                if len(bodies) == 1
+                else [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "done"}],
+                    }
+                ]
+            )
+            return httpx.Response(
+                200,
+                text="data: "
+                + json.dumps(
+                    {
+                        "type": "response.completed",
+                        "response": {
+                            "id": f"r-{len(bodies)}",
+                            "output": output,
+                        },
+                    }
+                )
+                + "\n\n",
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+
+        async def create(tool, thread=None):
+            registry = ToolRegistry()
+            owner = registry.create_owner()
+            registry.replace_owned(owner, (tool,))
+            runtime = await LangGraphRuntime.acreate(
+                settings=CorkiSettings(
+                    tmp_path,
+                    model="fixture",
+                    skills_enabled=False,
+                    model_contexts=(ModelContextInfo("fixture", supports_search_tool=True),),
+                ),
+                registry=registry,
+                database_path=tmp_path / "s.db",
+                thread_id=thread,
+                model=OpenAIResponsesModel(
+                    api_key="fixture",
+                    base_url="https://fixture.invalid",
+                    client=client,
+                    capabilities=ProviderCapabilities(name="fixture", api_mode="responses"),
+                ),
+            )
+            return runtime, registry, owner
+
+        runtime, registry, owner = await create(Tool(old_name, ToolExposure.DEFERRED))
+        try:
+            first = [event async for event in runtime.stream("find amberproof")]
+            assert isinstance(first[-1], TurnCompleted), first[-1]
+            assert len(bodies) == 2
+            stored = await runtime._repository.load_items(runtime.thread_id)
+            assert any(
+                isinstance(item, ToolResultItem)
+                and any(spec.name == old_name for spec in item.discovered_tools)
+                for item in stored
+            )
+            if cold:
+                thread = runtime.thread_id
+                await runtime.aclose()
+                runtime, registry, owner = await create(
+                    Tool(current_name, ToolExposure.DIRECT), thread
+                )
+            else:
+                registry.replace_owned(owner, (Tool(current_name, ToolExposure.DIRECT),))
+            second = [event async for event in runtime.stream("use current tool")]
+            assert isinstance(second[-1], TurnCompleted), second[-1]
+            assert len(bodies) == 3
+            assert any(tool["name"] == current_name for tool in bodies[-1]["tools"])
+            replay = json.dumps(bodies[-1]["input"])
+            assert "Definitions changed or are unavailable; search again." in replay
+            assert "old-only definition" not in replay
+            assert "new-only direct definition" in json.dumps(bodies[-1]["tools"])
+        finally:
+            await runtime.aclose()
+            await client.aclose()
 
     asyncio.run(scenario())
 
@@ -159,11 +274,11 @@ def test_strict_current_catalog_does_not_reject_old_discovered_namespace_history
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
 
-        def create(tool, thread=None):
+        async def create(tool, thread=None):
             registry = ToolRegistry()
             owner = registry.create_owner()
             registry.replace_owned(owner, (tool,))
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     tmp_path,
                     model="fixture",
@@ -191,7 +306,7 @@ def test_strict_current_catalog_does_not_reject_old_discovered_namespace_history
             )
             return runtime, registry, owner
 
-        runtime, registry, owner = create(Tool("old", "Old namespace."))
+        runtime, registry, owner = await create(Tool("old", "Old namespace."))
         try:
             first = [e async for e in runtime.stream("discover and read old")]
             assert isinstance(first[-1], TurnCompleted), first[-1]
@@ -200,7 +315,7 @@ def test_strict_current_catalog_does_not_reject_old_discovered_namespace_history
             if cold:
                 thread = runtime.thread_id
                 await runtime.aclose()
-                runtime, registry, owner = create(Tool("new", "New namespace."), thread)
+                runtime, registry, owner = await create(Tool("new", "New namespace."), thread)
             else:
                 registry.replace_owned(owner, (Tool("new", "New namespace."),))
             second = [e async for e in runtime.stream("discover and read new")]
@@ -263,7 +378,7 @@ def test_strict_namespace_owner_policy_is_gated_in_real_turn(
                 ToolExposure.HIDDEN if hidden else ToolExposure.DIRECT,
             )
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 model="fixture",
@@ -335,7 +450,7 @@ def test_namespace_description_policy_reaches_actual_http_or_fails_before_sampli
             )
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             registry=registry,
             model=OpenAIResponsesModel(

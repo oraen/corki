@@ -29,7 +29,7 @@ class RedirectingCarrier(Carrier):
 def test_same_origin_redirect_preserves_runtime_discovery_call_and_cleanup(tmp_path, mode):
     async def scenario():
         carrier = RedirectingCarrier()
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path, MCPRuntimeContext((MCPHTTPEnvironment("remote", carrier),)), mode=mode
         )
         try:
@@ -73,7 +73,7 @@ def test_host_attribution_controls_authenticated_redirects(tmp_path, agent_plugi
         )
         source = MCPCatalogSource("plugin", "fixture", agent_plugin=agent_plugin)
         catalog = MCPCatalog((MCPRegistration(config, source),))
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path, MCPRuntimeContext((MCPHTTPEnvironment("remote", carrier),)), catalog=catalog
         )
         try:
@@ -95,7 +95,7 @@ def test_attribution_change_reconnects_but_same_attribution_reuses_old_session(t
         carrier = RedirectingCarrier()
         legacy = MCPCatalogSource("selected_plugin", "fixture")
         catalog = MCPCatalog((MCPRegistration(server(), legacy),))
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path, MCPRuntimeContext((MCPHTTPEnvironment("remote", carrier),)), catalog=catalog
         )
         try:

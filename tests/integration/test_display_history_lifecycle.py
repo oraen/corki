@@ -26,7 +26,7 @@ def test_display_read_is_joined_before_resources_close(
             async def aclose(self):
                 disposed.append("model")
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, plugins_enabled=False
             ),

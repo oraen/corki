@@ -127,7 +127,7 @@ def test_realtime_application_joins_prompt_cleanup_with_actual_runtime(
                     raise RuntimeError("fixture renderer failed")
 
         settings = CorkiSettings(working_directory=tmp_path, skills_enabled=False)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             model=Model(),
             registry=ToolRegistry(),

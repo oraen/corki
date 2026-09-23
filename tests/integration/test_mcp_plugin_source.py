@@ -46,7 +46,7 @@ def test_plugin_source_search_call_and_cwd_are_preserved(tmp_path, mode, placeme
             value["mcpServers"] = servers
         manifest.write_text(json.dumps(value))
         model = Model(mode)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=project,
                 plugin_dirs=(project / ".corki/plugins",),
@@ -115,7 +115,7 @@ def test_plugin_http_helper_executes_in_runtime_directory(tmp_path, monkeypatch,
             return MCPHttpSession(**kwargs)
 
         monkeypatch.setattr("corki.mcp.client.MCPHttpSession", session)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=project,
                 plugin_dirs=(project / ".corki/plugins",),

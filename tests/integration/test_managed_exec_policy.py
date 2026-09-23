@@ -66,7 +66,7 @@ class Model:
         pass
 
 
-def runtime_for(
+async def runtime_for(
     root,
     compiler,
     model,
@@ -82,7 +82,7 @@ def runtime_for(
             MCPRequirementsLayer(f"{source_name}-{index}", text) for index, text in enumerate(rules)
         )
     )
-    return LangGraphRuntime.create(
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=root,
             skills_enabled=False,
@@ -120,7 +120,7 @@ def test_managed_rule_is_effective_in_actual_loop(tmp_path, compiler, mode, case
         program = "not-printf" if case == "unmatched" else "printf"
         decision = "prompt" if case == "prompt" else "forbidden"
         model = Model(mode)
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path,
             compiler,
             model,
@@ -153,7 +153,7 @@ def test_lower_priority_forbidden_is_not_replaced_by_prompt(tmp_path, compiler, 
         if reverse:
             layers.reverse()
         model = Model()
-        runtime = runtime_for(tmp_path, compiler, model, layers)
+        runtime = await runtime_for(tmp_path, compiler, model, layers)
         try:
             _, result = await run(runtime, model)
             assert "MANAGED_RULE" in result
@@ -181,7 +181,7 @@ def test_lower_priority_forbidden_is_not_replaced_by_prompt(tmp_path, compiler, 
 def test_bad_managed_rules_are_fatal_not_user_rule_fallback(tmp_path, compiler, rules, reason):
     async def scenario():
         model = Model()
-        runtime = runtime_for(tmp_path, compiler, model, [rules])
+        runtime = await runtime_for(tmp_path, compiler, model, [rules])
         try:
             with pytest.raises(ValueError, match=reason):
                 await run(runtime, model)
@@ -206,7 +206,7 @@ def test_inherited_rules_compare_native_managed_identity(tmp_path, compiler, cas
         source.write_text('prefix_rule(pattern=["printf"],decision="forbidden")')
         original = managed_rule("cat") + managed_rule("ls")
         parent_model = Model()
-        parent = runtime_for(tmp_path, compiler, parent_model, [original])
+        parent = await runtime_for(tmp_path, compiler, parent_model, [original])
         try:
             _, result = await run(parent, parent_model)
             assert "rejected" in result
@@ -222,7 +222,7 @@ def test_inherited_rules_compare_native_managed_identity(tmp_path, compiler, cas
                 "non_exec": 'allowed_sandbox_modes=["read-only"]\n' + original,
             }[case]
             model = Model()
-            child = runtime_for(
+            child = await runtime_for(
                 tmp_path,
                 compiler,
                 model,
@@ -250,7 +250,7 @@ def test_managed_alternatives_match_command(tmp_path, compiler):
             'decision="forbidden"\njustification="ALTERNATIVE_RULE"'
         )
         model = Model()
-        runtime = runtime_for(tmp_path, compiler, model, [rules])
+        runtime = await runtime_for(tmp_path, compiler, model, [rules])
         try:
             _, result = await run(runtime, model)
             assert "ALTERNATIVE_RULE" in result
@@ -281,7 +281,7 @@ def test_real_memory_worker_retains_callers_managed_rules(tmp_path, compiler, mo
         requirements = compose_mcp_requirements(
             (MCPRequirementsLayer("managed-memory", managed_rule()),)
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

@@ -20,8 +20,8 @@ class IdleModel:
         pass
 
 
-def create(tmp_path):
-    return LangGraphRuntime.create(
+async def create(tmp_path):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
         database_path=tmp_path / "host.db",
         model=IdleModel(),
@@ -31,7 +31,7 @@ def create(tmp_path):
 @pytest.mark.parametrize("tty", [False, True])
 def test_host_listing_and_targeted_termination_do_not_affect_sibling(tmp_path, tty):
     async def scenario():
-        runtime = create(tmp_path)
+        runtime = await create(tmp_path)
         manager = runtime._process_manager
         children = []
         try:
@@ -73,7 +73,7 @@ def test_host_listing_and_targeted_termination_do_not_affect_sibling(tmp_path, t
 
 def test_exited_unpolled_terminal_hidden_but_explicitly_reapable(tmp_path):
     async def scenario():
-        runtime = create(tmp_path)
+        runtime = await create(tmp_path)
         manager = runtime._process_manager
         gate = tmp_path / "release"
         try:
@@ -98,7 +98,7 @@ def test_exited_unpolled_terminal_hidden_but_explicitly_reapable(tmp_path):
 
 def test_failed_single_termination_retains_owned_handle(tmp_path):
     async def scenario():
-        runtime = create(tmp_path)
+        runtime = await create(tmp_path)
         manager = runtime._process_manager
         stop = manager._stop
         try:
@@ -127,7 +127,7 @@ def test_failed_single_termination_retains_owned_handle(tmp_path):
 @pytest.mark.parametrize("action", ["single", "all", "close"])
 def test_management_during_initial_observation_preserves_result(tmp_path, action):
     async def scenario():
-        runtime = create(tmp_path)
+        runtime = await create(tmp_path)
         manager = runtime._process_manager
         observed = asyncio.Event()
         wait = manager._wait_session
@@ -170,7 +170,7 @@ def test_management_during_initial_observation_preserves_result(tmp_path, action
 
 def test_cancelled_single_termination_joins_cleanup(tmp_path):
     async def scenario():
-        runtime = create(tmp_path)
+        runtime = await create(tmp_path)
         manager = runtime._process_manager
         stopping, release = asyncio.Event(), asyncio.Event()
         stop = manager._stop

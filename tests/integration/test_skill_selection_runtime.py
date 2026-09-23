@@ -55,8 +55,8 @@ def test_repaired_skill_path_selection_is_injected_once_and_survives_cold_reopen
             async def aclose(self):
                 pass
 
-        def create(thread_id=None):
-            return LangGraphRuntime.create(
+        async def create(thread_id=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(working_directory=project),
                 database_path=tmp_path / "sessions.db",
                 home_path=tmp_path / "home",
@@ -65,7 +65,7 @@ def test_repaired_skill_path_selection_is_injected_once_and_survives_cold_reopen
                 thread_id=thread_id,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [
                 e
@@ -89,7 +89,7 @@ def test_repaired_skill_path_selection_is_injected_once_and_survives_cold_reopen
             )
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [e async for e in runtime.stream("Use $alpha now")]
             assert isinstance(events[-1], TurnCompleted)
             following = [

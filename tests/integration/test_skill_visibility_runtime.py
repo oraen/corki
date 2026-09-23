@@ -49,7 +49,7 @@ def test_runtime_distinguishes_hidden_explicit_selection_from_disabled(tmp_path,
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_config=(SkillRule(False, name="fixture"),) if disabled else (),

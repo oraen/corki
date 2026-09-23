@@ -200,7 +200,7 @@ def test_runtime_host_response_survives_human_wait(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "history.db",
             home_path=tmp_path / "home",

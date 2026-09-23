@@ -47,7 +47,7 @@ def test_restored_user_and_tool_audio_are_projected_without_rewriting_history(tm
 
         database = tmp_path / "legacy.db"
         repository = SQLiteSessionRepository(database)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -164,7 +164,7 @@ def test_audio_preparation_in_real_runtime_preserves_order_and_success(
 
         registry = ToolRegistry()
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

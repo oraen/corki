@@ -117,7 +117,7 @@ def test_hard_refresh_updates_next_step_without_confusing_reconnect(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,

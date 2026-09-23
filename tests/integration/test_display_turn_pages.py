@@ -25,8 +25,8 @@ def test_turn_pages_preserve_empty_turns_across_updates_and_cold_resume(tmp_path
             async def aclose(self):
                 pass
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(tmp_path, skills_enabled=False, plugins_enabled=False),
                 database_path=tmp_path / "turn-pages.db",
                 model=Model(),
@@ -34,7 +34,7 @@ def test_turn_pages_preserve_empty_turns_across_updates_and_cold_resume(tmp_path
                 home_path=tmp_path,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             assert (await runtime.load_display_turns_page()).turns == ()
             thread = runtime.thread_id
@@ -62,7 +62,7 @@ def test_turn_pages_preserve_empty_turns_across_updates_and_cold_resume(tmp_path
                 TurnRecord(new_turn_id(), thread, TurnStatus.COMPLETED, "new")
             )
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             collected, cursor = first.turns, first.next_cursor
             while cursor is not None:
                 page = await runtime.load_display_turns_page(cursor=cursor, limit=limit)

@@ -152,8 +152,8 @@ def test_legacy_orchestrator_flag_preserves_ordinary_search_and_dispatch(
             async def aclose(self):
                 pass
 
-        def create(model, selected=settings, thread=None):
-            return LangGraphRuntime.create(
+        async def create(model, selected=settings, thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=selected,
                 model=model,
                 registry=ToolRegistry(),
@@ -166,7 +166,7 @@ def test_legacy_orchestrator_flag_preserves_ordinary_search_and_dispatch(
         thread = None
         warm_history = ()
         if reopen:
-            warm = create(
+            warm = await create(
                 WarmModel(),
                 replace(
                     settings,
@@ -184,7 +184,7 @@ def test_legacy_orchestrator_flag_preserves_ordinary_search_and_dispatch(
             finally:
                 await warm.aclose()
             calls.clear()
-        runtime = create(Model(), thread=thread)
+        runtime = await create(Model(), thread=thread)
         try:
             events = [event async for event in runtime.stream("call both ordinary MCP servers")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -273,7 +273,7 @@ def test_legacy_orchestrator_flag_cannot_enable_native_search(tmp_path, monkeypa
                 supports_native_tool_search=True,
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,

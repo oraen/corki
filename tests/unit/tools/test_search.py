@@ -87,6 +87,41 @@ def test_search_indexes_recursive_metadata_top_k_and_definition_changes():
     assert index.search((first,), "calendar", 8) == ()
 
 
+def test_malformed_optional_schema_metadata_does_not_disable_other_deferred_tools():
+    malformed = ToolSpec(
+        "broken",
+        "old data",
+        {"type": "object", "properties": [], "anyOf": None},
+        exposure=ToolExposure.DEFERRED,
+    )
+    healthy = ToolSpec(
+        "lookup",
+        "calendar events",
+        {"type": "object"},
+        exposure=ToolExposure.DEFERRED,
+    )
+    index = ToolSearchIndex()
+    assert index.search((malformed, healthy), "calendar", 1) == (healthy,)
+
+
+def test_search_index_rebuilds_when_schema_json_type_changes():
+    initial = ToolSpec(
+        "lookup",
+        "amber",
+        {"type": "object", "properties": {"value": {"enum": [True]}}},
+        exposure=ToolExposure.DEFERRED,
+    )
+    changed = replace(
+        initial, parameters={"type": "object", "properties": {"value": {"enum": [1]}}}
+    )
+    index = ToolSearchIndex()
+    index.prepare((initial,))
+    generation = index.generation
+    index.prepare((changed,))
+    assert index.generation == generation + 1
+    assert index.specs[0].parameters == changed.parameters
+
+
 @pytest.mark.parametrize("query,limit", [(" ", 8), ("calendar", 0), ("calendar", True)])
 def test_invalid_search_parameters_return_observation(tmp_path, query, limit):
     async def scenario():

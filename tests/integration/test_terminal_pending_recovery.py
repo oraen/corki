@@ -37,7 +37,7 @@ def test_failed_terminal_reads_keep_owned_result_until_verified(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "reads.db",
             home_path=tmp_path / "home",
@@ -118,7 +118,7 @@ def test_terminal_barrier_retries_only_storage_fault_once(tmp_path, after_commit
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "bounded.db",
             home_path=tmp_path / "home",
@@ -199,7 +199,7 @@ def test_admission_drains_terminal_and_cancellation_joins_writer(tmp_path, actio
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "admission.db",
             home_path=tmp_path / "home",
@@ -305,8 +305,8 @@ def test_cold_resume_recovers_uncommitted_terminal_without_sampling(tmp_path, mo
             async def aclose(self):
                 pass
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
                 database_path=tmp_path / "terminal.db",
                 home_path=tmp_path / "home",
@@ -315,7 +315,7 @@ def test_cold_resume_recovers_uncommitted_terminal_without_sampling(tmp_path, mo
                 thread_id=thread,
             )
 
-        source = create()
+        source = await create()
         save = source._repository.save_turn
 
         async def reject_terminal(record):
@@ -341,7 +341,7 @@ def test_cold_resume_recovers_uncommitted_terminal_without_sampling(tmp_path, mo
             source._pending_terminals.clear()
             await source.aclose()
 
-        cold = create(thread)
+        cold = await create(thread)
         try:
             events = [event async for event in cold.resume_pending()]
             terminal = events[-1]
@@ -381,7 +381,7 @@ def test_shutdown_retries_pending_terminal_without_reclosing_execution(tmp_path,
             async def aclose(self):
                 model_closes.append(True)
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "shutdown.db",
             home_path=tmp_path / "home",

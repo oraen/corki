@@ -35,8 +35,8 @@ class AnswerModel:
         self.closed = True
 
 
-def runtime_for(tmp_path, **kwargs):
-    return LangGraphRuntime.create(
+async def runtime_for(tmp_path, **kwargs):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
         database_path=tmp_path / "history.db",
         home_path=tmp_path / "home",
@@ -48,7 +48,7 @@ def runtime_for(tmp_path, **kwargs):
 def test_archive_closes_runtime_preserves_history_and_requires_explicit_unarchive(tmp_path):
     async def scenario():
         model = AnswerModel()
-        runtime = runtime_for(tmp_path, model=model)
+        runtime = await runtime_for(tmp_path, model=model)
         successor = None
         try:
             assert isinstance(
@@ -63,7 +63,9 @@ def test_archive_closes_runtime_preserves_history_and_requires_explicit_unarchiv
             with pytest.raises(ValueError, match="archived"):
                 runtime._repository.resolve_thread(str(runtime.thread_id), tmp_path)
             successor_model = AnswerModel()
-            successor = runtime_for(tmp_path, thread_id=runtime.thread_id, model=successor_model)
+            successor = await runtime_for(
+                tmp_path, thread_id=runtime.thread_id, model=successor_model
+            )
             with pytest.raises(ValueError, match="archived"):
                 _ = [event async for event in successor.stream("not admitted")]
             assert not successor_model.requests
@@ -102,7 +104,7 @@ def test_archive_closes_runtime_preserves_history_and_requires_explicit_unarchiv
 
 def test_empty_runtime_cannot_be_archived_or_closed_by_failed_preflight(tmp_path):
     async def scenario():
-        runtime = runtime_for(tmp_path)
+        runtime = await runtime_for(tmp_path)
         try:
             await runtime._ensure_ready()
             with pytest.raises(ValueError, match="materialized history"):
@@ -120,12 +122,14 @@ def test_empty_runtime_cannot_be_archived_or_closed_by_failed_preflight(tmp_path
 
 def test_explicit_core_resume_keeps_archive_state_and_blocks_unarchive_until_closed(tmp_path):
     async def scenario():
-        original = runtime_for(tmp_path)
+        original = await runtime_for(tmp_path)
         resumed = None
         try:
             _ = [event async for event in original.stream("original")]
             await original.archive()
-            resumed = runtime_for(tmp_path, thread_id=original.thread_id, include_archived=True)
+            resumed = await runtime_for(
+                tmp_path, thread_id=original.thread_id, include_archived=True
+            )
             assert isinstance(
                 [event async for event in resumed.stream("internal continuation")][-1],
                 TurnCompleted,
@@ -162,7 +166,7 @@ def test_archive_joins_active_turn_and_model_cleanup_before_mutating(tmp_path, c
                 await release.wait()
                 await super().aclose()
 
-        runtime = runtime_for(tmp_path, model=BlockingModel())
+        runtime = await runtime_for(tmp_path, model=BlockingModel())
 
         async def consume():
             return [event async for event in runtime.stream("active request")]
@@ -214,7 +218,7 @@ def test_archive_shutdown_timeout_does_not_grant_write_ownership(tmp_path, monke
                 entered.set()
                 await release.wait()
 
-        runtime = runtime_for(tmp_path, model=Model())
+        runtime = await runtime_for(tmp_path, model=Model())
         try:
             _ = [event async for event in runtime.stream("history")]
             monkeypatch.setattr(archive_module, "SHUTDOWN_TIMEOUT_SECONDS", 0.01)
@@ -234,7 +238,7 @@ def test_archive_shutdown_timeout_does_not_grant_write_ownership(tmp_path, monke
 
 def test_archive_is_independent_of_source_memory_mode_and_source_recency(tmp_path):
     async def scenario():
-        runtime = runtime_for(tmp_path)
+        runtime = await runtime_for(tmp_path)
         try:
             _ = [event async for event in runtime.stream("source")]
             with sqlite3.connect(tmp_path / "history.db") as db:
@@ -259,7 +263,7 @@ def test_archive_is_independent_of_source_memory_mode_and_source_recency(tmp_pat
 
 def test_archive_metadata_fault_rolls_back_before_successor_can_resume(tmp_path, monkeypatch):
     async def scenario():
-        runtime = runtime_for(tmp_path)
+        runtime = await runtime_for(tmp_path)
         successor = None
         try:
             _ = [event async for event in runtime.stream("history")]
@@ -282,7 +286,7 @@ def test_archive_metadata_fault_rolls_back_before_successor_can_resume(tmp_path,
                 await runtime.archive()
             assert calls == 3
             assert await store.read(runtime.thread_id) == before
-            successor = runtime_for(tmp_path, thread_id=runtime.thread_id)
+            successor = await runtime_for(tmp_path, thread_id=runtime.thread_id)
             assert isinstance(
                 [event async for event in successor.stream("after rollback")][-1], TurnCompleted
             )
@@ -296,7 +300,7 @@ def test_archive_metadata_fault_rolls_back_before_successor_can_resume(tmp_path,
 
 def test_cancelled_unarchive_joins_database_worker_before_releasing_writer(tmp_path, monkeypatch):
     async def scenario():
-        runtime = runtime_for(tmp_path)
+        runtime = await runtime_for(tmp_path)
         successor = None
         entered, release = asyncio.Event(), threading.Event()
         loop = asyncio.get_running_loop()
@@ -317,7 +321,7 @@ def test_cancelled_unarchive_joins_database_worker_before_releasing_writer(tmp_p
             restoring = asyncio.create_task(runtime.unarchive())
             await asyncio.wait_for(entered.wait(), 3)
             restoring.cancel()
-            successor = runtime_for(tmp_path, thread_id=runtime.thread_id)
+            successor = await runtime_for(tmp_path, thread_id=runtime.thread_id)
             with pytest.raises(RuntimeError, match="active writer"):
                 _ = [event async for event in successor.stream("too early")]
             assert not restoring.done()
@@ -368,7 +372,7 @@ def test_external_writer_blocks_archive_then_crash_archive_restore_does_not_repl
 
         try:
             assert await asyncio.wait_for(process.stdout.readline(), 10) == b"READY\n"
-            host = runtime_for(tmp_path, thread_id=thread)
+            host = await runtime_for(tmp_path, thread_id=thread)
             with pytest.raises(RuntimeError, match="active writer"):
                 await host.archive()
             assert (await host._archive_store.read(thread)).archived_at is None
@@ -379,7 +383,7 @@ def test_external_writer_blocks_archive_then_crash_archive_restore_does_not_repl
             await host.unarchive()
             registry = ToolRegistry()
             registry.register(Tool())
-            resumed = runtime_for(tmp_path, thread_id=thread, registry=registry)
+            resumed = await runtime_for(tmp_path, thread_id=thread, registry=registry)
             assert isinstance(
                 [event async for event in resumed.resume_pending()][-1], TurnCompleted
             )

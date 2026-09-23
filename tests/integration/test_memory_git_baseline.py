@@ -45,7 +45,7 @@ def test_runtime_memory_uses_git_workspace_inputs(tmp_path, case):
                     )
                 )
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, memories_enabled=True
             ),

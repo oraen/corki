@@ -42,7 +42,10 @@ def http_error(response: httpx.Response, body: str) -> ModelError:
             "usage_not_included": ModelErrorKind.USAGE_NOT_INCLUDED,
         }.get(usage_type, ModelErrorKind.RETRY_LIMIT)
     else:
-        retryable = True
+        # Ordinary provider credentials, permissions and endpoint configuration
+        # cannot be repaired by repeating the same request. There is no
+        # account-token refresh path for the model transport.
+        retryable = status >= 500
         kind = (
             ModelErrorKind.AUTHENTICATION
             if status in (401, 403)

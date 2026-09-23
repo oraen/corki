@@ -95,7 +95,7 @@ def test_fragment_producers_reach_runtime_history_and_compaction(tmp_path, mode,
             async def execute(self, call, context):
                 raise AssertionError("not discovered or called")
 
-        def create(thread=None, chat=False):
+        async def create(thread=None, chat=False):
             registry = ToolRegistry()
             registry.register(Change())
             registry.register(Deferred())
@@ -107,7 +107,7 @@ def test_fragment_producers_reach_runtime_history_and_compaction(tmp_path, mode,
                 supports_remote_compaction=mode != "local",
             )
             cls = OpenAICompatibleModel if chat else OpenAIResponsesModel
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     model="fixture",
@@ -133,7 +133,7 @@ def test_fragment_producers_reach_runtime_history_and_compaction(tmp_path, mode,
                 ),
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             assert isinstance(
                 [
@@ -155,7 +155,7 @@ def test_fragment_producers_reach_runtime_history_and_compaction(tmp_path, mode,
             thread = runtime.thread_id
             before_cold = await runtime._repository.load_items(thread)
             await runtime.aclose()
-            runtime = create(thread, chat=mode == "chat")
+            runtime = await create(thread, chat=mode == "chat")
             assert isinstance([e async for e in runtime.stream("following")][-1], TurnCompleted)
             assert calls == ["one"]
             expected = {
@@ -274,7 +274,7 @@ def test_classification_change_and_removal_keep_producer_ownership(tmp_path):
             )
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "s.db",
             model=OpenAIResponsesModel(

@@ -93,7 +93,7 @@ def test_second_runtime_sees_cached_definition_while_own_connection_pending(tmp_
             mcp_optional_startup_grace_ms=1,
         )
         for index in range(2):
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / f"{index}.db",
                 model=Model(),
@@ -178,7 +178,7 @@ def test_cached_search_then_call_waits_live_connection_and_current_approval(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

@@ -143,8 +143,8 @@ def test_loopback_search_remote_http_error_observation_and_cold_history(
 
         model = Model()
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 model=model,
                 registry=ToolRegistry(),
@@ -154,7 +154,7 @@ def test_loopback_search_remote_http_error_observation_and_cold_history(
                 mcp_runtime_context=context,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             try:
                 events = [e async for e in runtime.stream("needle")]
@@ -162,7 +162,7 @@ def test_loopback_search_remote_http_error_observation_and_cold_history(
                 raw = await runtime._repository.load_items(runtime._thread_id)
             finally:
                 await runtime.aclose()
-            cold = create(runtime._thread_id)
+            cold = await create(runtime._thread_id)
             try:
                 events = [e async for e in cold.stream("continue")]
                 assert isinstance(events[-1], TurnCompleted), events[-1]

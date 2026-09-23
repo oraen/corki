@@ -152,6 +152,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error(str(exc))
         except (asyncio.CancelledError, KeyboardInterrupt):
             return 130
+        except Exception as exc:  # noqa: BLE001 - startup errors may contain private details
+            print(
+                f"Corki could not start ({type(exc).__name__}). "
+                "Check configuration and local storage permissions.",
+                file=sys.stderr,
+            )
+            return 1
         return await application.run()
 
     return asyncio.run(run())

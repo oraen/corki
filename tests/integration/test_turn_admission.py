@@ -35,7 +35,7 @@ def test_new_turn_admission_does_not_require_old_observer_to_close(tmp_path, old
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, event_queue_size=1
             ),
@@ -106,7 +106,7 @@ def test_admission_waits_for_owned_persistence_and_cleanup(tmp_path, boundary):
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "sessions.db",
             model=Model(),
@@ -178,7 +178,7 @@ def test_queued_compact_replaces_the_worker_that_started_while_it_waited(tmp_pat
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, event_queue_size=1
             ),
@@ -232,7 +232,7 @@ def test_resume_does_not_wait_for_old_terminal_observation_or_resample(tmp_path,
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "sessions.db",
             model=Model(),
@@ -322,7 +322,7 @@ def test_cancelled_admission_does_not_cancel_the_previous_worker(tmp_path, close
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "sessions.db",
             model=Model(),

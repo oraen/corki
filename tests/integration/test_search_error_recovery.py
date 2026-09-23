@@ -1,6 +1,7 @@
 """Search argument errors remain observations, not implicit tool discovery."""
 
 import asyncio
+from copy import copy
 
 import pytest
 
@@ -48,12 +49,17 @@ def test_failed_search_does_not_load_tool_and_corrected_search_recovers(
     elif isinstance(arguments, str) and arguments.startswith("invalid_definition"):
         execute = ToolSearchTool.execute
         invalid = None if arguments == "invalid_definition" else {"name": "vault::read"}
-        if arguments == "invalid_definition_object":
-            invalid = ToolSpec("vault::read", "vaultproof", {"default": object()})
-        elif arguments == "invalid_definition_nan":
-            invalid = ToolSpec("vault::read", "vaultproof", {"default": float("nan")})
-        elif arguments == "invalid_definition_surrogate":
-            invalid = ToolSpec("vault::read", "vaultproof", {"description": "\ud800"})
+        malformed_parameters = {
+            "invalid_definition_object": {"default": object()},
+            "invalid_definition_nan": {"default": float("nan")},
+            "invalid_definition_surrogate": {"description": "\ud800"},
+        }
+        if arguments in malformed_parameters:
+            # A normal ToolSpec now rejects these at construction. Simulate a
+            # misbehaving external search handler bypassing that admission gate
+            # to keep the result-publication boundary independently covered.
+            invalid = copy(ToolSpec("vault::read", "vaultproof", {}))
+            object.__setattr__(invalid, "parameters", malformed_parameters[arguments])
         failed = False
 
         async def malformed_once(self, call, context):
@@ -124,7 +130,7 @@ def test_failed_search_does_not_load_tool_and_corrected_search_recovers(
 
         registry = ToolRegistry()
         registry.register(Read())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(tmp_path, skills_enabled=False),
             model=Model(),
             registry=registry,

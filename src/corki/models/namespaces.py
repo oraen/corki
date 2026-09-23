@@ -33,10 +33,5 @@ def request_tool_aliases(request):
     return aliases
 
 
-def group_tool_definitions(
-    specs, *, native_namespaces=False, native_freeform=False, native_search=False, discovered=False
-):
-    output = []
-    for spec in specs:
-        output.append(spec.as_response_tool(native_freeform=native_freeform))
-    return output
+def group_tool_definitions(specs):
+    return [spec.as_response_tool() for spec in specs]

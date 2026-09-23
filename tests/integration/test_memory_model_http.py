@@ -200,7 +200,7 @@ def test_memory_models_and_effort_reach_http_and_failures_stay_background(
             request_max_retries=0,
             client=client,
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             model=model,
@@ -302,7 +302,7 @@ def test_runtime_owned_memory_clients_use_ordinary_configured_transport(
             return instance
 
         monkeypatch.setattr(http_client, "OwnedHTTPClient", owned_client)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 model="main",

@@ -102,7 +102,7 @@ def test_review_wait_allows_refresh_without_rebinding_admitted_execution(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,

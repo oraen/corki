@@ -34,7 +34,7 @@ async def main():
 
     registry = ToolRegistry()
     registry.register(Tool())
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(working_directory=database.parent, skills_enabled=False),
         database_path=database,
         thread_id=thread,

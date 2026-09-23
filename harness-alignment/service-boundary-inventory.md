@@ -1,5 +1,51 @@
 # 当前服务入口与排除项盘点
 
+## 2026-09-22：普通 Responses wire 的死开关清理
+
+沿实际构造调用链移除 `ToolSpec.as_response_tool`、
+`group_tool_definitions`、`response_call_name` 和 Responses 输入编码器中的
+`native_search/native_freeform/native_namespaces/discovered` 无效形参。
+这些形参此前没有任何生效分支；现在普通 Responses 的定义与调用只能通过
+平铺 function 编码。搜索缓存签名也调用同一无参编码器。保留旧配置归一、
+旧归档辨识以及模型响应的专属协议拒绝边界，避免改变恢复语义。
+相应单测去掉对无效形参的排列，相关八文件 **152 passed / 11.85s**；
+Ruff 与 `git diff --check` 通过。非 CLI 独立收集 **15788 项**；
+敏感组 **459 passed / 63.05s**。其余主组首轮 **15321 passed、7 skipped、
+1 failed / 884.34s**，退出 1；失败为 MCP HTTP `json` 通知承载结果测试
+超时，单例复跑 **1 passed**、全文件复跑 **24 passed**。该用例验证通知结果
+路由而非超时，故仅将测试客户端的 0.2 秒预算提高到 1 秒，不改生产代码；
+调整后相关文件 **24 passed**，Ruff/diff 检查通过。主组第二轮
+**15322 passed、7 skipped / 755.29s**，退出 0；与敏感组合计
+**15781 passed、7 skipped**，等于独立收集的 **15788 项**。首轮超时
+根因并未单独证实，七项跳过原因仍是缺历史编译器与文件系统不支持非 UTF-8
+名称。
+
+## 2026-09-22：旧 native 名称与可执行分支复核
+
+按当前生产调用链核对 `settings._validate`、`runtime._create_model`、
+`models/responses.py::_build_payload`、`models/openai_compatible.py::_build_payload`
+及 `models/namespaces.py`：旧 `tool_search_mode`、`tool_namespace_mode`、
+`tool_freeform_mode` 的 native 配置在设置层归一为 compatible；旧远程压缩
+及 Responses Lite 标记归一为关闭。普通 Responses 请求将
+`native_namespaces`/`native_freeform` 固定为 False，工具定义始终为平铺
+function；Chat 对直接传入的 native ModelRequest 拒绝，不能隐式启用。
+Responses 接收边界对 native search/namespace/custom/hosted item 明确报协议
+错误；持久 `tool_search_output` 等字段仍用于旧归档识别，不成为新请求协议。
+能力对象中的 legacy `supports_native_*` 字段没有被这两种内置适配器用来
+开启专用请求。`namespace_tools` 是工具目录语义上限，不是原生 namespace
+wire 编码。故源码中仍有这些历史名称，不能仅凭搜索命中认定官方服务路径
+可达；同样不能把“固定 False”误写成清除了所有兼容墓碑。
+
+旧配置/旧输出/普通 wire 六文件重跑 **218 passed / 11.47s**，
+4 workers/loadfile/禁重启、实际退出 0。运行命令：
+
+```text
+PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring .venv/bin/pytest tests/integration/test_deferred_namespace_wire.py tests/integration/test_remote_compaction_runtime.py tests/integration/test_responses_lite.py tests/integration/test_removed_search_response.py tests/integration/test_namespace_response_boundary.py tests/unit/config/test_settings.py -n 4 --dist=loadfile --max-worker-restart=0 -q -o addopts='' --tb=short
+```
+
+本轮没有生产变更；它验证的是内置构造及适配器路径，不封锁用户自定义
+ModelPort 的行为，也不替代不同 provider 地址的离线请求隔离专项。
+
 本轮范围是生产入口及旧数据恢复边界，不以搜索不到域名代替调用链证据。
 Codex官方服务实现属于用户明确排除项；普通工具搜索的语义参考仍是本地
 ddf04ad26789d040f9ef6a96736f76602e35a6cc的tools/handlers/tool_search.rs，

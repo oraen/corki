@@ -31,7 +31,7 @@ def test_runtime_pages_bound_decoding_and_preserve_compaction_across_concurrent_
     async def scenario():
         import corki.storage.display_pages as storage
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(tmp_path, skills_enabled=False, plugins_enabled=False),
             database_path=tmp_path / "pages.db",
             model=NoSampling(),
@@ -81,7 +81,7 @@ def test_runtime_pages_bound_decoding_and_preserve_compaction_across_concurrent_
                     if cold:
                         thread = runtime.thread_id
                         await runtime.aclose()
-                        runtime = LangGraphRuntime.create(
+                        runtime = await LangGraphRuntime.acreate(
                             settings=CorkiSettings(
                                 tmp_path, skills_enabled=False, plugins_enabled=False
                             ),
@@ -120,7 +120,7 @@ def test_cursor_rejects_invalid_sequence(sequence):
 @pytest.mark.parametrize("limit", [0, -1, 201, True, 1.5, "10"])
 def test_runtime_rejects_unbounded_or_invalid_page_limits(tmp_path, limit):
     async def scenario():
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(tmp_path, skills_enabled=False, plugins_enabled=False),
             database_path=tmp_path / "limits.db",
             model=NoSampling(),

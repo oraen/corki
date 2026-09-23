@@ -35,7 +35,7 @@ def test_actual_delta_reaches_host_and_cold_ledger_not_model(tmp_path, compiler,
         }
         model = Model(mode)
         model.patch = patch(bodies[case])
-        runtime = create_runtime(
+        runtime = await create_runtime(
             tmp_path, compiler, model, policy=workspace_policy(compiler, tmp_path)
         )
         try:

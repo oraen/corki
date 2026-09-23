@@ -1,3 +1,4 @@
+import asyncio
 from io import StringIO
 
 import pytest
@@ -6,6 +7,59 @@ from rich.text import Text
 
 from corki.cli.terminal import TerminalUI
 from corki.config import CorkiSettings
+
+
+@pytest.mark.parametrize(
+    "prefix,tail",
+    [("第一行\n", "第二行🙂"), ("**bold** and `code`\n", "last"), ("```text\ncode\n", "```")],
+)
+def test_matching_stream_finishes_without_full_transcript_repaint(tmp_path, prefix, tail):
+    output = StringIO()
+    ui = TerminalUI(
+        CorkiSettings(tmp_path),
+        tmp_path / "history",
+        console=Console(file=output, force_terminal=True, width=40),
+    )
+    repairs = []
+
+    async def repair():
+        repairs.append(True)
+
+    ui._transcript.repair = repair
+    ui.begin_assistant_message()
+    ui.append_assistant_delta(prefix)
+    ui.append_assistant_delta(tail)
+    asyncio.run(ui.complete_assistant_message(prefix + tail))
+    assert not repairs
+    visible = Text.from_ansi(output.getvalue()).plain
+    replay = Text.from_ansi(ui._transcript.render(40)).plain
+    assert visible.strip() == replay.strip()
+
+
+@pytest.mark.parametrize("change", ["style", "notice", "resize"])
+def test_stream_still_repairs_when_committed_output_cannot_be_appended(tmp_path, change):
+    ui = TerminalUI(
+        CorkiSettings(tmp_path),
+        tmp_path / "history",
+        console=Console(file=StringIO(), force_terminal=True, width=40),
+    )
+    repairs = []
+
+    async def repair():
+        repairs.append(True)
+
+    ui._transcript.repair = repair
+    prefix = "**bold\n" if change == "style" else "first\n"
+    tail = "end**" if change == "style" else "last"
+    ui.begin_assistant_message()
+    ui.append_assistant_delta(prefix)
+    if change == "notice":
+        ui.show_notice("Interleaved notice")
+    elif change == "resize":
+        ui._transcript.stream_reflowed = True
+    ui.append_assistant_delta(tail)
+    asyncio.run(ui.complete_assistant_message(prefix + tail))
+    assert repairs == [True]
 
 
 def test_complete_source_lines_are_rendered_before_final_answer(tmp_path):

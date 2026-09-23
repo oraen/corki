@@ -7,7 +7,7 @@ is model-visible; omitted entries must still participate in later diffs.
 import json
 from dataclasses import replace
 
-from corki.prompting import PromptContribution, PromptRole, PromptSlot, PromptStore
+from corki.prompting import PromptContribution, PromptPhase, PromptRole, PromptSlot, PromptStore
 from corki.protocol.items import ContextItem
 from corki.protocol.tool_names import (
     NAMESPACE_WHITESPACE,
@@ -134,6 +134,7 @@ class DeferredToolsContextContributor:
                 role=PromptRole.DEVELOPER,
                 slot=PromptSlot.EXTENSIONS,
                 order=-10,
+                phase=PromptPhase.WORLD_STATE,
                 variables={"content": full.removesuffix("\n")},
                 snapshot_state=encode_snapshot(namespaces),
             ),

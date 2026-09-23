@@ -1,0 +1,10 @@
+Select model
+Configured models (provider-dependent)
+› 供应商/模型-0-long-name-long-name-lon
+  g-name-long-name-long-name- (current)
+  供应商/模型-1-long-name-long-name-lon
+  g-name-long-name-long-name-
+  供应商/模型-2-long-name-long-name-lon
+  g-name-long-name-long-name-
+↑/↓ select · Enter confirm · Esc cancel
+Model:

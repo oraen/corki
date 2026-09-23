@@ -73,7 +73,7 @@ def test_multi_step_net_diff_and_next_turn_baseline(tmp_path, compiler, mode):
         model = Patches(
             mode, ["*** Add File: a.txt\n+foo", "*** Update File: a.txt\n@@\n foo\n+bar"]
         )
-        runtime = create_runtime(
+        runtime = await create_runtime(
             tmp_path, compiler, model, policy=workspace_policy(compiler, tmp_path)
         )
         try:
@@ -108,7 +108,7 @@ def test_clears_net_zero_or_inexact_but_preserves_prewrite_rejection(
             "bad_arguments": {"wrong": "invalid"},
         }[ending]
         model = Patches(mode, ["*** Add File: a.txt\n+foo", ending_patch])
-        runtime = create_runtime(
+        runtime = await create_runtime(
             tmp_path, compiler, model, policy=workspace_policy(compiler, tmp_path)
         )
         try:
@@ -135,7 +135,7 @@ def test_cold_resume_uses_committed_ledger_without_rereading_or_replaying_worksp
             execution_permissions=workspace_policy(compiler, tmp_path),
         )
         database = tmp_path / "recovery.db"
-        first = LangGraphRuntime.create(
+        first = await LangGraphRuntime.acreate(
             settings=settings,
             model=AnswerModel(),
             database_path=database,
@@ -160,7 +160,7 @@ def test_cold_resume_uses_committed_ledger_without_rereading_or_replaying_worksp
         )
         await first.aclose()
         (tmp_path / "a.txt").write_text("external edit\n")
-        second = LangGraphRuntime.create(
+        second = await LangGraphRuntime.acreate(
             settings=settings,
             model=AnswerModel(),
             database_path=database,
@@ -200,7 +200,7 @@ def test_cancellation_after_write_clears_prior_diff(tmp_path, compiler, monkeypa
 
         monkeypatch.setattr(backend, "run_owned", delayed)
         model = Patches(mode, ["*** Add File: a.txt\n+foo", "*** Add File: a.txt\n+second"])
-        runtime = create_runtime(
+        runtime = await create_runtime(
             tmp_path, compiler, model, policy=workspace_policy(compiler, tmp_path)
         )
         try:
@@ -237,7 +237,7 @@ def test_native_large_rewrite_is_bounded_and_content_exact(tmp_path, compiler):
 def test_interrupted_patch_cleanup_does_not_wait_for_abandoned_event_sink(tmp_path, compiler):
     async def scenario():
         model = Patches("direct", [])
-        runtime = create_runtime(
+        runtime = await create_runtime(
             tmp_path, compiler, model, policy=workspace_policy(compiler, tmp_path)
         )
         await runtime._ensure_ready()
@@ -288,7 +288,7 @@ def test_legacy_sdk_failure_cannot_claim_an_exact_empty_delta(tmp_path, monkeypa
     monkeypatch.setattr(patch_module, "_apply_operations", partial)
 
     async def scenario():
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(tmp_path, skills_enabled=False, execution_permissions=None),
             model=Patches("direct", ["*** Add File: a.txt\n+one"]),
             home_path=tmp_path / "home",

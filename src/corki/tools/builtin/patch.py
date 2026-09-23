@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import stat
 import tempfile
@@ -13,6 +12,7 @@ from corki.execution.approvals import ExecutionApprovals
 from corki.execution.backend import patch_operation
 from corki.protocol.tools import ToolCall, ToolResult, ToolSpec
 from corki.tools.base import ToolContext
+from corki.tools.owned_work import joined_tool_work
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +50,7 @@ class ApplyPatchTool:
             # Explicit embedding-host compatibility path, not the default native
             # parser or its sequential / partial-failure execution semantics.
             operations = _parse_patch(str(call.arguments["patch"]))
-            summary = await asyncio.to_thread(_apply_operations, context.cwd, operations)
+            summary = await joined_tool_work(_apply_operations, context.cwd, operations)
         else:
             try:
                 outcome = await patch_operation(

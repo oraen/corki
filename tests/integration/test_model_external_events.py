@@ -117,7 +117,7 @@ def test_live_external_protocol_is_rejected_but_ordinary_call_is_durable(
                 supports_native_tool_search=True,
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -202,7 +202,7 @@ def test_cold_hosted_history_uses_chat_compatibility_and_notification_startup_po
             )
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -271,7 +271,7 @@ def test_ordinary_external_mark_failure_isolated_but_cancellation_preserves_dura
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -377,7 +377,7 @@ def test_hosted_event_survives_compaction_and_actual_history_search_read(tmp_pat
                 pass
 
         model = Model()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -407,7 +407,7 @@ def test_hosted_event_survives_compaction_and_actual_history_search_read(tmp_pat
                 token_budget=TokenBudgetConfig(use_history_notes_extension=True),
             )
             await runtime.aclose()
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "sessions.db",
                 thread_id=thread,
@@ -483,7 +483,7 @@ def test_cold_recovery_reuses_hosted_fact_without_resampling_original_step(tmp_p
                 supports_native_tool_search=True,
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

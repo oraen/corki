@@ -126,7 +126,7 @@ def test_responses_executes_complete_call_before_stream_terminal(tmp_path, trunc
         )
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -190,7 +190,7 @@ def test_streamed_call_is_budget_checked_before_dispatch(tmp_path, limit):
 
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -255,7 +255,7 @@ def test_steering_drains_live_results_before_accepting_input(tmp_path):
 
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=repository.path,
             repository=repository,
@@ -357,7 +357,7 @@ def test_live_parallel_groups_obey_exclusive_barrier_and_result_order(tmp_path):
         registry = ToolRegistry()
         registry.register(Tool("parallel", True))
         registry.register(Tool("exclusive", False))
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "sessions.db",
             registry=registry,
@@ -440,7 +440,7 @@ def test_live_failure_or_cancel_closes_hung_model_and_tools(tmp_path, fatal, inp
 
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=repository.path,
             repository=repository,
@@ -521,7 +521,7 @@ def test_partial_response_resume_does_not_resample_old_request(tmp_path, claim_s
 
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=repository.path,
             repository=repository,
@@ -596,7 +596,7 @@ def test_real_process_exit_resumes_partial_step_with_checkpoint(tmp_path, phase,
 
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=repository.path,
             repository=repository,

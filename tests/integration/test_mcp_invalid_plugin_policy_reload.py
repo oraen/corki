@@ -150,8 +150,8 @@ def test_invalid_live_plugin_map_releases_selected_policy(
 
         model = Model()
 
-        def create(admitted_settings, thread=None):
-            return LangGraphRuntime.create(
+        async def create(admitted_settings, thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=admitted_settings,
                 model=model,
                 registry=ToolRegistry(),
@@ -163,7 +163,7 @@ def test_invalid_live_plugin_map_releases_selected_policy(
                 thread_id=thread,
             )
 
-        runtime = create(settings)
+        runtime = await create(settings)
         try:
             first = [event async for event in runtime.stream("Find and use POLICY_FIXTURE write")]
             assert isinstance(first[-1], TurnCompleted)

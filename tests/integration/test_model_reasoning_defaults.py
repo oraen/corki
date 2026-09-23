@@ -68,7 +68,7 @@ def test_runtime_uses_pinned_defaults_and_wire_effort_across_turns(
                     supports_reasoning_effort=True,
                 ),
             )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "s.db",
             registry=ToolRegistry(),
@@ -159,7 +159,7 @@ def test_model_summary_default_override_and_gate_reach_manual_compaction(
             CorkiSettings.for_directory(tmp_path, config_file=config),
             remote_compaction_v2=mode != "legacy",
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings, database_path=tmp_path / "s.db", registry=ToolRegistry()
         )
         try:

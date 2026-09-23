@@ -45,7 +45,7 @@ def test_ephemeral_runtime_keeps_cross_turn_context_without_disk_state(tmp_path,
     async def scenario():
         database = tmp_path / "state" / "history.db"
         model = AnswerModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=database,
             home_path=tmp_path / "home",
@@ -100,7 +100,7 @@ def test_ephemeral_close_joins_tool_cleanup_after_waiter_cancellation(tmp_path):
 
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "state" / "history.db",
             home_path=tmp_path / "home",
@@ -219,7 +219,7 @@ def test_ephemeral_initialization_cleanup_and_retry(tmp_path, monkeypatch, cance
                 raise OSError("fixture initialization failed")
 
         monkeypatch.setattr(runtime_module, "setup_checkpoint", fail_once)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "state" / "history.db",
             home_path=tmp_path / "home",
@@ -359,7 +359,7 @@ def test_ephemeral_search_execution_compaction_and_cross_turn_context(tmp_path):
 
         registry, model = ToolRegistry(), Model()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "state" / "history.db",
             home_path=tmp_path / "home",
@@ -424,7 +424,7 @@ def test_ephemeral_memory_reads_remain_available_without_background_generation(t
                     yield ModelCompleted((AssistantMessageItem("done", turn, step),))
 
         model = Model()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

@@ -37,7 +37,7 @@ def test_grammar_snapshot_cannot_be_mutated_through_caller_aliases():
     grammar = {"type": "grammar", "syntax": "lark", "definition": "start: /.+/"}
     spec = ToolSpec("raw", "fixture", {}, input_kind="freeform", freeform_format=grammar)
     grammar["definition"] = "changed"
-    payload = spec.as_response_tool(native_freeform=True)
+    payload = spec.as_response_tool()
     assert payload["type"] == "function" and "format" not in payload
     payload["parameters"]["properties"]["input"]["type"] = "integer"
     assert spec.compatible_parameters()["properties"]["input"]["type"] == "string"

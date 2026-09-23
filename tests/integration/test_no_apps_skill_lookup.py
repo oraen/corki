@@ -26,7 +26,7 @@ def test_normal_input_does_not_read_official_connector_directory(tmp_path, monke
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(tmp_path, skills_enabled=False),
             model=Model(),
             database_path=tmp_path / "session.db",

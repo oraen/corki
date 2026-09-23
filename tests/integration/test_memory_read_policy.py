@@ -150,7 +150,7 @@ def test_read_policy_gate_reaches_wire_and_unknown_tool_observation(tmp_path, mo
                 {"fixture": {"context_window": 272000, "use_responses_lite": mode == "lite"}}
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "host.db",
             repository=repository,
@@ -235,7 +235,7 @@ def test_cold_use_toggle_disables_tools_without_rewriting_current_window(tmp_pat
         )
         database = tmp_path / "s.db"
         model = Model()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings, database_path=database, model=model, memory_root=root
         )
         try:
@@ -248,7 +248,7 @@ def test_cold_use_toggle_disables_tools_without_rewriting_current_window(tmp_pat
             thread = runtime.thread_id
         finally:
             await runtime.aclose()
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=replace(settings, memories_use=False),
             database_path=database,
             model=model,
@@ -373,7 +373,7 @@ def test_progressive_read_uses_real_shell_for_thread_scoped_raw_archive(tmp_path
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,
@@ -434,7 +434,7 @@ def test_custom_repository_does_not_claim_the_configured_sqlite_locator(tmp_path
         root = tmp_path / "memories"
         root.mkdir()
         (root / "memory_summary.md").write_text("INDEX", encoding="utf-8")
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,
@@ -472,7 +472,7 @@ def test_summary_budget_and_window_refresh_preserve_policy_and_old_context(tmp_p
         root.mkdir()
         summary = root / "memory_summary.md"
         summary.write_text("HEAD " + "padding " * 100 + " TAIL", encoding="utf-8")
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,

@@ -30,6 +30,7 @@ async def compact_node(
         thread_id=thread,
         turn_id=turn,
         instructions=state.get("turn_base_instructions", context_builder.base_instructions()),
+        legacy_base_unknown=runtime.context.legacy_base_unknown,
         on_retry=retry_callback(state, runtime),
         on_compact=on_compact,
     )

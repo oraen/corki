@@ -36,7 +36,7 @@ def test_legacy_model_marker_recovers_without_instruction_section(tmp_path, comp
                 ModelContextInfo("small", 200_000, base_instructions="SMALL RULES"),
             ),
         )
-        source = make_runtime(tmp_path, Model(), configured=configured)
+        source = await make_runtime(tmp_path, Model(), configured=configured)
         try:
             assert isinstance([e async for e in source.stream("initial")][-1], TurnCompleted)
             await source.update_thread_settings(model="small")
@@ -59,7 +59,7 @@ def test_legacy_model_marker_recovers_without_instruction_section(tmp_path, comp
         finally:
             await source.aclose()
         model = Model()
-        cold = make_runtime(
+        cold = await make_runtime(
             tmp_path, model, configured=replace(configured, model=next_model), thread=thread
         )
         try:
@@ -117,7 +117,7 @@ def test_mid_turn_compaction_keeps_model_identity_and_tool_commit(tmp_path, next
         model = UsageModel()
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = make_runtime(tmp_path, model, configured=configured, registry=registry)
+        runtime = await make_runtime(tmp_path, model, configured=configured, registry=registry)
         try:
             assert isinstance([e async for e in runtime.stream("initial")][-1], TurnCompleted)
             await runtime.update_thread_settings(model=next_model)
@@ -172,7 +172,7 @@ def test_auto_compaction_reinjects_model_diff_not_raw_catalog(tmp_path, next_mod
             auto_compact_tokens=100_000,
         )
         model = UsageModel()
-        runtime = make_runtime(tmp_path, model, configured=configured)
+        runtime = await make_runtime(tmp_path, model, configured=configured)
         try:
             assert isinstance([e async for e in runtime.stream("initial")][-1], TurnCompleted)
             await runtime.update_thread_settings(model="small")
@@ -210,7 +210,7 @@ def test_compaction_model_diff_uses_previous_model_not_initial_base(tmp_path, co
             ),
         )
         model = Model()
-        runtime = make_runtime(tmp_path, model, configured=configured)
+        runtime = await make_runtime(tmp_path, model, configured=configured)
         try:
             assert isinstance([e async for e in runtime.stream("initial")][-1], TurnCompleted)
             await runtime.update_thread_settings(model="small")
@@ -222,7 +222,7 @@ def test_compaction_model_diff_uses_previous_model_not_initial_base(tmp_path, co
             if cold:
                 thread = runtime.thread_id
                 await runtime.aclose()
-                runtime = make_runtime(
+                runtime = await make_runtime(
                     tmp_path, model, configured=replace(configured, model=next_model), thread=thread
                 )
             else:
@@ -256,7 +256,7 @@ def test_external_cancellation_joins_base_write_before_releasing_writer(
             model_contexts=(ModelContextInfo("large", 200_000, base_instructions="OWNED BASE"),),
         )
         model = Model()
-        runtime = make_runtime(tmp_path, model, configured=configured)
+        runtime = await make_runtime(tmp_path, model, configured=configured)
         original = runtime._repository._ensure_base_instructions
         loop = asyncio.get_running_loop()
         entered = asyncio.Event()
@@ -293,7 +293,7 @@ def test_external_cancellation_joins_base_write_before_releasing_writer(
             assert not runtime._writer.held
             assert runtime._compiled is None
             assert model.requests == []
-            cold = make_runtime(
+            cold = await make_runtime(
                 tmp_path,
                 model,
                 configured=replace(
@@ -329,7 +329,7 @@ def test_base_initialization_failure_recovers_actual_commit(
             model_contexts=(ModelContextInfo("large", 200_000, base_instructions="FIRST BASE"),),
         )
         model = Model()
-        runtime = make_runtime(tmp_path, model, configured=configured)
+        runtime = await make_runtime(tmp_path, model, configured=configured)
         repository = runtime._repository
         original = repository._ensure_base_instructions
         failure = failure_type("base persistence interrupted")
@@ -355,7 +355,7 @@ def test_base_initialization_failure_recovers_actual_commit(
             )
             # Reopen before closing the failed Runtime: rollback must already
             # have released its writer, not rely on a later explicit close.
-            cold = make_runtime(
+            cold = await make_runtime(
                 tmp_path,
                 model,
                 configured=replace(
@@ -403,7 +403,7 @@ def test_local_model_instructions_keep_base_and_append_switch_once(tmp_path, tar
         )
         configured = replace(settings(tmp_path), model_contexts=catalog)
         model = Model()
-        runtime = make_runtime(tmp_path, model, configured=configured)
+        runtime = await make_runtime(tmp_path, model, configured=configured)
         try:
             assert isinstance([e async for e in runtime.stream("first")][-1], TurnCompleted)
             assert model.requests[0].instructions == "INITIAL MODEL RULES"
@@ -417,7 +417,7 @@ def test_local_model_instructions_keep_base_and_append_switch_once(tmp_path, tar
             thread = runtime.thread_id
             prefix = await runtime._repository.load_items(thread)
             await runtime.aclose()
-            runtime = make_runtime(
+            runtime = await make_runtime(
                 tmp_path, model, configured=replace(configured, model="small"), thread=thread
             )
             assert isinstance([e async for e in runtime.stream("cold")][-1], TurnCompleted)
@@ -456,7 +456,7 @@ def test_fork_inherits_base_instructions_even_when_target_model_differs(tmp_path
                 ModelContextInfo("small", 200_000, base_instructions="TARGET BASE"),
             ),
         )
-        source = make_runtime(tmp_path, Model(), configured=configured)
+        source = await make_runtime(tmp_path, Model(), configured=configured)
         try:
             assert isinstance([e async for e in source.stream("original")][-1], TurnCompleted)
             original = await source._repository.load_items(source.thread_id)

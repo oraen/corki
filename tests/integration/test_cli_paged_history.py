@@ -30,7 +30,7 @@ def test_cli_loads_older_pages_preserving_live_output_position_and_empty_failure
                 pass
 
         settings = CorkiSettings(tmp_path, skills_enabled=False, plugins_enabled=False)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "history.db",
             model=Model(),
@@ -170,7 +170,7 @@ def test_closing_pager_joins_read_and_does_not_apply_cancelled_page(
                 pass
 
         settings = CorkiSettings(tmp_path, skills_enabled=False, plugins_enabled=False)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "close.db",
             model=Model(),

@@ -14,9 +14,11 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 
 from corki.cli.elicitation import display_text
+from corki.cli.terminal_responses import frame_terminal_responses
 
 
 async def collect_user_input(session, request, *, clock=time.monotonic):
+    frame_terminal_responses(session.app.input)
     questions = request.questions
     if not questions:
         return {"answers": {}}
@@ -184,8 +186,10 @@ async def collect_user_input(session, request, *, clock=time.monotonic):
         insert(event, event.data)
 
     @bindings.add("escape", "enter", filter=Condition(lambda: notes and confirmation is None))
+    @bindings.add("c-j")
     def newline(event):
-        insert(event, "\n")
+        if notes and confirmation is None:
+            insert(event, "\n")
 
     @bindings.add(Keys.Any, filter=Condition(lambda: confirmation is not None))
     def confirmation_key(event):

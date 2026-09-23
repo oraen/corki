@@ -49,7 +49,7 @@ def test_hidden_automatic_catalog_preserves_explicit_input_and_requested_tools(t
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings.for_directory(tmp_path, config_file=config),
             database_path=tmp_path / "sessions.db",
             home_path=tmp_path / "home",
@@ -117,7 +117,7 @@ def test_catalog_state_transitions_survive_cold_reopen(tmp_path, monkeypatch, in
                 skill.unlink()
             if stage == 4:
                 skill.write_text(document)
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_include_instructions=include,

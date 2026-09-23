@@ -82,11 +82,27 @@ class DiscoveryModel:
         pass
 
 
-def test_search_load_call_observation_and_cross_turn_history(tmp_path: Path) -> None:
+@pytest.mark.parametrize("malformed_sibling", [False, True])
+def test_search_load_call_observation_and_cross_turn_history(
+    tmp_path: Path, malformed_sibling: bool
+) -> None:
+    class MalformedSibling:
+        spec = ToolSpec(
+            "unrelated_metadata",
+            "Unrelated inventory",
+            {"type": "object", "properties": [], "anyOf": None},
+            exposure=ToolExposure.DEFERRED,
+        )
+
+        async def execute(self, call, context):
+            raise AssertionError("search must not execute an unrelated candidate")
+
     async def scenario():
         registry, calendar, model = ToolRegistry(), CalendarTool(), DiscoveryModel()
         registry.register(calendar)
-        runtime = LangGraphRuntime.create(
+        if malformed_sibling:
+            registry.register(MalformedSibling())
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "search.db",
             registry=registry,
@@ -99,6 +115,10 @@ def test_search_load_call_observation_and_cross_turn_history(tmp_path: Path) -> 
             assert isinstance(second[-1], TurnCompleted), second[-1]
             assert calendar.titles == ["team meeting"]
             assert len(model.requests) == 4
+            assert all(
+                MalformedSibling.spec.name not in {spec.name for spec in request.tools}
+                for request in model.requests
+            )
         finally:
             await runtime.aclose()
 
@@ -179,7 +199,7 @@ def test_search_ledger_resume_restores_definitions_without_reexecution(
         registry = ToolRegistry()
         registry.register(CalendarTool())
         warm_model = ResumeModel()
-        first = LangGraphRuntime.create(
+        first = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             registry=registry,
@@ -250,7 +270,7 @@ def test_search_ledger_resume_restores_definitions_without_reexecution(
             )
         registry.register(calendar)
         model = ResumeModel(calendar.spec, reload=catalog_changed, saved_request=checkpoint)
-        resumed = LangGraphRuntime.create(
+        resumed = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             registry=registry,
@@ -362,7 +382,7 @@ def test_responses_search_wire_roundtrip_without_eager_schemas(
                 supports_native_tool_search=mode == "native",
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 api_mode="responses",

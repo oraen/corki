@@ -63,7 +63,7 @@ def test_catalog_mode_overrides_configuration_and_executes(tmp_path, configured,
 
         registry = ToolRegistry()
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings, registry=registry, model=Model(), database_path=tmp_path / "s.db"
         )
         try:
@@ -124,7 +124,7 @@ def test_active_model_update_retains_turn_router_then_next_turn_uses_new_mode(tm
 
         registry = ToolRegistry()
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=mode_settings(tmp_path, step_model_switching=True),
             registry=registry,
             model=Model(),
@@ -174,7 +174,7 @@ def test_new_turn_replans_mcp_mask_inventory_and_context_without_global_mutation
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=mode_settings(
                 tmp_path,
                 initial="direct",
@@ -270,7 +270,7 @@ def test_cell_waits_through_direct_turn_then_uses_new_code_mode_worker(tmp_path)
         registry = ToolRegistry()
         registry.register(Hold())
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=mode_settings(tmp_path),
             registry=registry,
             model=Model(),
@@ -349,7 +349,7 @@ def test_unavailable_engine_model_selection_warns_once_and_returns_observations(
         )
         registry = ToolRegistry()
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             registry=registry,
             model=Model(),

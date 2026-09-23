@@ -100,7 +100,7 @@ def test_installation_runs_active_oauth_discovery_and_preserves_mcp(tmp_path, mo
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path, execution_permissions=None, tool_search_mode="disabled"
             ),

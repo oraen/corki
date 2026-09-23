@@ -89,7 +89,7 @@ def test_stage_one_parser_and_redaction_survive_runtime_publication(tmp_path, ca
                 pass
 
         model = MemoryModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

@@ -130,7 +130,7 @@ def test_plan_data_is_not_rejected_by_extra_semantic_constraints(tmp_path, plan)
         settings = CorkiSettings(working_directory=tmp_path, skills_enabled=False)
         database = tmp_path / "history.db"
         model = Model()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings, database_path=database, home_path=tmp_path / "home", model=model
         )
         try:
@@ -145,7 +145,7 @@ def test_plan_data_is_not_rejected_by_extra_semantic_constraints(tmp_path, plan)
             assert model.calls == 4
         finally:
             await runtime.aclose()
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             home_path=tmp_path / "home",
@@ -205,7 +205,7 @@ def test_plan_acknowledgement_is_separate_from_explanation(tmp_path, mode, expla
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode=mode
             ),

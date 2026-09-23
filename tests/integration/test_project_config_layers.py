@@ -37,7 +37,7 @@ def test_project_document_budget_is_loaded_only_from_trusted_layers(tmp_path, mo
             model_contexts=(ModelContextInfo(model="fixture"),),
         )
         model = Model(mode)
-        runtime = runtime_for(project, None, model, settings=settings)
+        runtime = await runtime_for(project, None, model, settings=settings)
         try:
             await run(runtime, model)
             text = "\n".join(
@@ -78,7 +78,7 @@ def test_admitted_layers_and_rules_remain_frozen_until_cold_reload(tmp_path, com
             )
 
         model, cold_model = Model(mode), Model(mode)
-        runtime = runtime_for(project, compiler, model, settings=settings())
+        runtime = await runtime_for(project, compiler, model, settings=settings())
         cold = None
         try:
             first, second, third = (project / name for name in ("first", "second", "third"))
@@ -101,7 +101,9 @@ def test_admitted_layers_and_rules_remain_frozen_until_cold_reload(tmp_path, com
             assert second.exists()
             assert not [event for event in events if isinstance(event, WarningEvent)]
             assert runtime._settings.max_steps == 5
-            cold = runtime_for(project, compiler, cold_model, name="cold", settings=settings())
+            cold = await runtime_for(
+                project, compiler, cold_model, name="cold", settings=settings()
+            )
             await run(cold, cold_model, {"cmd": "touch " + shlex.quote(str(third))})
             assert not third.exists()
             assert cold._settings.max_steps is None
@@ -146,7 +148,7 @@ def test_project_rules_share_layer_admission_even_without_config_file(
             model_contexts=(ModelContextInfo(model="fixture"),),
         )
         model = Model(mode)
-        runtime = runtime_for(project, compiler, model, settings=settings)
+        runtime = await runtime_for(project, compiler, model, settings=settings)
         try:
             target = project / "written"
             await run(runtime, model, {"cmd": "touch " + shlex.quote(str(target))})

@@ -1,5 +1,27 @@
 # A1：Thread、Turn、Model Step生命周期核验
 
+## 2026-09-22：逐项完成顺序与模型终态一致性
+
+继续追踪 Codex `core/src/session/turn.rs::try_run_sampling_request`：
+`ResponseEvent::OutputItemDone` 按到达顺序处理并将工具 future 加入有序队列；
+终态不能反过来改写已完成项的历史顺序。Corki
+`core/graph.py::_call_model_owned` 原先逐项持久化并可能启动工具，随后却只
+检查每个已完成项是否出现在 `ModelCompleted.items` 中，未检查顺序。
+真实 Runtime 反例先红：逐项输出 first→second，终态返回 second→first，
+Turn 被标成功且 final_answer 变成 first；已发布历史与模型 Step 顺序相悖。
+
+现在终态必须以完全相同的已完成项序列为前缀，允许其后追加尚未逐项上报
+的合法项；不一致归为模型协议失败，不提交成功模型 Step。工具组合用例
+验证正文→工具逐项完成后若终态反序，已启动工具会被收束、结果唯一留账，
+但 Turn 不会伪成功。模型继续/逐项输出/有序工具/截流/恢复七文件
+**137 passed**；初次扩大命令误写不存在的 `test_model_failure.py`，零收集
+退出 5，纠正文件范围后上述七文件实际退出 0。Ruff 与格式检查通过。
+生产修改后非 CLI 主组 **15350 passed、7 skipped / 819.35s**，
+单进程敏感组 **459 passed / 58.97s**，两组退出 0，合计
+**15809 passed、7 skipped**。七项跳过仍是六项缺历史原生编译器、
+一项文件系统不接受非 UTF-8 文件名。该补证不等于 OS 强杀或任意外部
+副作用的 exactly-once 保证。
+
 基准：本地Codex固定ddf04ad26789d040f9ef6a96736f76602e35a6cc，普通本地
 任务/模型路径；不引入官方账户、远程压缩或专有模型协议。CLI对齐暂停。
 

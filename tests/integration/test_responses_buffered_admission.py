@@ -53,8 +53,8 @@ def install(monkeypatch, respond):
     )
 
 
-def create(tmp_path, *, registry=None, thread=None, legacy=False, native=False):
-    return LangGraphRuntime.create(
+async def create(tmp_path, *, registry=None, thread=None, legacy=False, native=False):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             tmp_path,
             api_mode="responses",
@@ -140,7 +140,7 @@ def test_invalid_buffered_item_never_becomes_an_executable_call(tmp_path, monkey
             result.register(Guard())
             return result
 
-        runtime = create(tmp_path, registry=registry())
+        runtime = await create(tmp_path, registry=registry())
         expected = (
             ["good"] if case in {"later_valid", "later_bad", "terminal_replaces_preview"} else []
         )
@@ -153,7 +153,7 @@ def test_invalid_buffered_item_never_becomes_an_executable_call(tmp_path, monkey
             thread = runtime.thread_id
         finally:
             await runtime.aclose()
-        cold = create(tmp_path, registry=registry(), thread=thread)
+        cold = await create(tmp_path, registry=registry(), thread=thread)
         try:
             assert isinstance([e async for e in cold.stream("continue")][-1], TurnCompleted)
             assert executions == expected
@@ -193,7 +193,7 @@ def test_archived_private_numbers_are_filtered_without_rewriting_archive(
             return response(done(message("SUMMARY")), terminal())
 
         install(monkeypatch, respond)
-        runtime = create(tmp_path, legacy=legacy)
+        runtime = await create(tmp_path, legacy=legacy)
         try:
             await runtime._ensure_ready()
             # Seed the normalized archive produced by the former decoder, not
@@ -205,7 +205,7 @@ def test_archived_private_numbers_are_filtered_without_rewriting_archive(
             thread = runtime.thread_id
         finally:
             await runtime.aclose()
-        cold = create(tmp_path, thread=thread, legacy=legacy)
+        cold = await create(tmp_path, thread=thread, legacy=legacy)
         try:
             assert isinstance([e async for e in cold.stream("recall")][-1], TurnCompleted)
             assert b"internal_chat_message_metadata_passthrough" not in requests[0]
@@ -245,7 +245,7 @@ def test_native_search_with_private_invalid_values_cannot_install_summary(
             return response(terminal([bad, message("MUST_NOT_INSTALL")]))
 
         install(monkeypatch, respond)
-        runtime = create(tmp_path, legacy=True)
+        runtime = await create(tmp_path, legacy=True)
         try:
             await runtime._ensure_ready()
             await runtime._repository.append_items(
@@ -323,7 +323,7 @@ def test_ordinary_search_under_legacy_native_setting_loads_and_executes_once(tmp
             result.register(Calendar())
             return result
 
-        runtime = create(tmp_path, registry=registry(), native=True)
+        runtime = await create(tmp_path, registry=registry(), native=True)
         try:
             assert isinstance([e async for e in runtime.stream("schedule")][-1], TurnCompleted)
             assert len(requests) == 3 and executions == ["calendar-call"]
@@ -331,7 +331,7 @@ def test_ordinary_search_under_legacy_native_setting_loads_and_executes_once(tmp
             before = await runtime._repository.load_items(thread)
         finally:
             await runtime.aclose()
-        cold = create(tmp_path, registry=registry(), thread=thread, native=True)
+        cold = await create(tmp_path, registry=registry(), thread=thread, native=True)
         try:
             assert isinstance([e async for e in cold.stream("recall")][-1], TurnCompleted)
             assert len(requests) == 4 and executions == ["calendar-call"]
@@ -362,13 +362,13 @@ def test_ordinary_summary_discards_bad_buffered_item_before_persistence(
             )
 
         install(monkeypatch, respond)
-        runtime = create(tmp_path)
+        runtime = await create(tmp_path)
         try:
             assert isinstance([e async for e in runtime.compact()][-1], TurnCompleted)
             thread = runtime.thread_id
         finally:
             await runtime.aclose()
-        cold = create(tmp_path, thread=thread)
+        cold = await create(tmp_path, thread=thread)
         try:
             assert isinstance([e async for e in cold.stream("next")][-1], TurnCompleted)
             assert "GOOD" in json.dumps(requests[-1]) and "BAD" not in json.dumps(requests[-1])
@@ -389,7 +389,7 @@ def test_private_root_metadata_numbers_do_not_enter_ordinary_summary_archive(
     async def scenario():
         raw = message("SUMMARY", internal_chat_message_metadata_passthrough={"create_time": number})
         install(monkeypatch, lambda _: response(done(raw), terminal()))
-        runtime = create(tmp_path, legacy=True)
+        runtime = await create(tmp_path, legacy=True)
         try:
             await runtime._ensure_ready()
             await runtime._repository.append_items(
@@ -417,7 +417,7 @@ def test_bad_item_does_not_substitute_for_missing_stream_terminal(tmp_path, monk
             monkeypatch,
             lambda _: response(done(message("BAD", unknown=2**64))),
         )
-        runtime = create(tmp_path)
+        runtime = await create(tmp_path)
         try:
             assert isinstance([e async for e in runtime.compact()][-1], TurnFailed)
             assert not any(

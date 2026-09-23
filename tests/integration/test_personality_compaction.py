@@ -48,7 +48,7 @@ def test_personality_compaction_preserves_model_boundary(tmp_path, automatic, ne
             ),
         )
         model = UsageModel()
-        runtime = make_runtime(tmp_path, model, configured=configured)
+        runtime = await make_runtime(tmp_path, model, configured=configured)
         try:
             assert isinstance([e async for e in runtime.stream("first")][-1], TurnCompleted)
             prefix = await runtime._repository.load_items(runtime.thread_id)
@@ -73,7 +73,7 @@ def test_personality_compaction_preserves_model_boundary(tmp_path, automatic, ne
         finally:
             await runtime.aclose()
         cold_model = Model()
-        cold = make_runtime(
+        cold = await make_runtime(
             tmp_path, cold_model, configured=replace(configured, model=next_model), thread=thread
         )
         try:

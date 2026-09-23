@@ -1,6 +1,7 @@
 """Local conversation replay is rendering, never tool execution or model sampling."""
 
 from corki.cli.history_projection import HistoryProjection
+from corki.models.error_safety import display_model_error
 from corki.protocol.items import (
     AssistantMessageItem,
     ReasoningItem,
@@ -40,7 +41,10 @@ def replay_history(ui, history):
         if turn.status in {TurnStatus.COMPLETED, TurnStatus.FAILED, TurnStatus.CANCELLED}:
             close_tools(turn.id)
         if turn.status is TurnStatus.FAILED:
-            ui.show_assistant_message(turn.error or "Turn failed.", is_error=True)
+            key = getattr(getattr(ui, "_settings", None), "api_key", None)
+            ui.show_assistant_message(
+                display_model_error(turn.error or "Turn failed.", key), is_error=True
+            )
         elif turn.status is TurnStatus.CANCELLED and turn.id not in interrupted:
             ui.show_notice("Turn interrupted.")
 

@@ -65,7 +65,7 @@ class Model:
         pass
 
 
-def runtime_for(
+async def runtime_for(
     tmp_path,
     compiler,
     model,
@@ -79,7 +79,7 @@ def runtime_for(
 ):
     if model.mode != "direct" and not CodeModeService.available():
         pytest.skip("install corki[code-mode]")
-    return LangGraphRuntime.create(
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -117,7 +117,7 @@ def fragments(request, kind):
 def test_initial_request_describes_actual_execution_authority(tmp_path, compiler, mode, approval):
     async def scenario():
         model = Model(mode)
-        runtime = runtime_for(tmp_path, compiler, model, approval)
+        runtime = await runtime_for(tmp_path, compiler, model, approval)
         try:
             events = [event async for event in runtime.stream("inspect current execution policy")]
             assert isinstance(events[-1], TurnCompleted)
@@ -155,7 +155,7 @@ def test_saved_rule_is_incremental_context_not_repeated_full_instructions(tmp_pa
                 {"cmd": "printf next"},
             ],
         )
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
 
         async def approve(request):
             runtime.respond_execution_approval(
@@ -194,7 +194,7 @@ def test_startup_prefix_context_uses_model_filtered_policy(tmp_path, compiler, m
         rules.mkdir(parents=True)
         (rules / "default.rules").write_text('prefix_rule(pattern=["printf"], decision="allow")\n')
         model = Model(mode)
-        runtime = runtime_for(tmp_path, compiler, model, cyber=cyber)
+        runtime = await runtime_for(tmp_path, compiler, model, cyber=cyber)
         try:
             events = [event async for event in runtime.stream("inspect effective saved rules")]
             assert isinstance(events[-1], TurnCompleted)
@@ -224,7 +224,7 @@ def test_compact_permissions_only_notify_new_prefixes(tmp_path, compiler, mode):
                 }
             ],
         )
-        runtime = runtime_for(tmp_path, compiler, model, include=False)
+        runtime = await runtime_for(tmp_path, compiler, model, include=False)
 
         async def approve(request):
             runtime.respond_execution_approval(
@@ -260,7 +260,7 @@ def test_default_runtime_describes_native_read_only_policy(tmp_path, mode):
         if mode != "direct" and not CodeModeService.available():
             pytest.skip("install corki[code-mode]")
         model = Model(mode)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode=mode
             ),
@@ -296,7 +296,7 @@ def test_context_renders_managed_denied_reads_and_effective_writable_roots(
             ),
         )
         model = Model(mode)
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path,
             compiler,
             model,
@@ -338,7 +338,7 @@ def test_context_renders_managed_denied_reads_and_effective_writable_roots(
 def test_granular_context_describes_categories_without_unavailable_tools(tmp_path, compiler, mode):
     async def scenario():
         model = Model(mode)
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path,
             compiler,
             model,
@@ -381,7 +381,7 @@ def test_cold_resume_of_saved_rule_does_not_repeat_permissions(tmp_path, compile
                 }
             ],
         )
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
 
         async def approve(request):
             runtime.respond_execution_approval(
@@ -399,7 +399,7 @@ def test_cold_resume_of_saved_rule_does_not_repeat_permissions(tmp_path, compile
         finally:
             await runtime.aclose()
         restored_model = Model(mode)
-        restored = runtime_for(tmp_path, compiler, restored_model, thread_id=thread_id)
+        restored = await runtime_for(tmp_path, compiler, restored_model, thread_id=thread_id)
         try:
             events = [event async for event in restored.stream("continue with saved rule")]
             assert isinstance(events[-1], TurnCompleted)
@@ -443,7 +443,7 @@ def test_manual_compaction_rebuilds_full_permissions_with_saved_prefix(tmp_path,
                 }
             ],
         )
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
 
         async def approve(request):
             runtime.respond_execution_approval(
@@ -490,7 +490,7 @@ def test_failed_save_does_not_notify_model_that_rule_was_saved(tmp_path, compile
                 }
             ],
         )
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
 
         async def approve(request):
             runtime.respond_execution_approval(
@@ -519,7 +519,7 @@ def test_removed_rule_after_restart_refreshes_full_permissions(tmp_path, compile
         policy = rules / "default.rules"
         policy.write_text('prefix_rule(pattern=["printf"], decision="allow")\n')
         model = Model(mode)
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
         try:
             events = [event async for event in runtime.stream("inspect saved prefix")]
             assert isinstance(events[-1], TurnCompleted)
@@ -530,7 +530,7 @@ def test_removed_rule_after_restart_refreshes_full_permissions(tmp_path, compile
             await runtime.aclose()
         policy.write_text("")
         next_model = Model(mode)
-        restored = runtime_for(tmp_path, compiler, next_model, thread_id=thread_id)
+        restored = await runtime_for(tmp_path, compiler, next_model, thread_id=thread_id)
         try:
             events = [event async for event in restored.stream("inspect changed policy")]
             assert isinstance(events[-1], TurnCompleted)
@@ -555,7 +555,7 @@ def test_switching_permission_context_mode_keeps_retirement_out_of_model_message
 ):
     async def scenario():
         model = Model(mode)
-        runtime = runtime_for(tmp_path, compiler, model, include=not include)
+        runtime = await runtime_for(tmp_path, compiler, model, include=not include)
         try:
             events = [event async for event in runtime.stream("initial context mode")]
             assert isinstance(events[-1], TurnCompleted)
@@ -563,7 +563,7 @@ def test_switching_permission_context_mode_keeps_retirement_out_of_model_message
         finally:
             await runtime.aclose()
         model = Model(mode)
-        runtime = runtime_for(tmp_path, compiler, model, thread_id=thread_id, include=include)
+        runtime = await runtime_for(tmp_path, compiler, model, thread_id=thread_id, include=include)
         try:
             events = [event async for event in runtime.stream("new context mode")]
             assert isinstance(events[-1], TurnCompleted)

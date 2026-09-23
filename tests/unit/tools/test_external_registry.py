@@ -194,6 +194,23 @@ def test_plugin_owner_rollback_cannot_remove_other_sources(trusted):
     assert registry.snapshot().first_collision is None
 
 
+def test_invalid_plugin_schema_does_not_publish_a_partial_tool():
+    registry = ToolRegistry()
+    api = PluginRegistrar("sample", registry)
+
+    with pytest.raises(ValueError, match="tool parameters"):
+        api.register_tool(
+            name="broken",
+            description="fixture",
+            parameters={"enum": {"not", "json"}},
+            handler=lambda *_: "unused",
+        )
+
+    assert api.registered_tools == ()
+    assert api.tools == ()
+    assert registry.get("plugin__sample__broken") is None
+
+
 def test_shadowed_metadata_is_frozen_before_it_becomes_visible():
     registry = ToolRegistry()
     high, low = (

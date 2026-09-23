@@ -43,8 +43,8 @@ def call(name, arguments):
     return ToolCall(new_tool_call_id(), name, arguments)
 
 
-def runtime_for(tmp_path, model, *, registry=None, mode="direct", thread_id=None):
-    return LangGraphRuntime.create(
+async def runtime_for(tmp_path, model, *, registry=None, mode="direct", thread_id=None):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -101,7 +101,7 @@ def test_storage_failure_stops_direct_turn_without_resampling(tmp_path, monkeypa
         if case.endswith("scandir"):
             arguments.pop("path")
         model = MemoryModel((call(name, arguments),))
-        runtime = runtime_for(tmp_path, model)
+        runtime = await runtime_for(tmp_path, model)
         injected = []
         if case == "read_invalid_utf8":
             target.write_bytes(b"\xff\xfe")
@@ -217,7 +217,7 @@ def test_storage_failure_stops_direct_turn_without_resampling(tmp_path, monkeypa
             # contains partial bytes and its call did not commit a result.
             monkeypatch.undo()
             reopened_model = MemoryModel(model.calls)
-            reopened = runtime_for(tmp_path, reopened_model, thread_id=runtime.thread_id)
+            reopened = await runtime_for(tmp_path, reopened_model, thread_id=runtime.thread_id)
             try:
                 assert [e async for e in reopened.resume_pending()] == []
                 assert not reopened_model.requests and len(injected) == 1
@@ -273,7 +273,7 @@ def test_semantic_memory_errors_remain_durable_observations(tmp_path, case):
             if case == "duplicate_note":
                 backend.add_note(FILENAME, "original")
         model = MemoryModel((call(name, arguments),))
-        runtime = runtime_for(tmp_path, model)
+        runtime = await runtime_for(tmp_path, model)
         # Replace after composition, so this tests a tool-time path error rather
         # than initialization failure. Keep the original directory recoverable.
         if case == "note_directory_file":
@@ -303,7 +303,7 @@ def test_search_skips_binary_content_without_hiding_valid_matches(tmp_path):
         (root / "binary.md").write_bytes(b"\xff")
         (root / "valid.md").write_text("searchable fact", encoding="utf-8")
         model = MemoryModel((call("memories::search", {"queries": ["fact"]}),))
-        runtime = runtime_for(tmp_path, model)
+        runtime = await runtime_for(tmp_path, model)
         try:
             events = [e async for e in runtime.stream("find fact")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -323,7 +323,7 @@ def test_nul_path_io_conversion_is_not_a_semantic_missing_path(tmp_path, operati
         if operation == "search":
             arguments["queries"] = ["fact"]
         model = MemoryModel((call(f"memories::{operation}", arguments),))
-        runtime = runtime_for(tmp_path, model)
+        runtime = await runtime_for(tmp_path, model)
         try:
             events = [e async for e in runtime.stream("read the requested memory path")]
             assert isinstance(events[-1], TurnFailed), events[-1]
@@ -363,7 +363,7 @@ def test_exclusive_memory_failure_or_cancel_does_not_start_next_tool(tmp_path, m
         registry = ToolRegistry()
         registry.register(Sibling())
         model = MemoryModel((call("memories::read", {"path": "MEMORY.md"}), call("sibling", {})))
-        runtime = runtime_for(tmp_path, model, registry=registry)
+        runtime = await runtime_for(tmp_path, model, registry=registry)
         events = []
 
         async def consume():
@@ -404,7 +404,7 @@ def test_enumeration_skips_only_vanished_paths_and_closes_iterator(
         (root / "b.md").write_text("fact b", encoding="utf-8")
         arguments = {"queries": ["fact"]} if operation == "search" else {}
         model = MemoryModel((call(f"memories::{operation}", arguments),))
-        runtime = runtime_for(tmp_path, model)
+        runtime = await runtime_for(tmp_path, model)
         original = os.scandir
         opened, closed = [], []
 
@@ -480,7 +480,7 @@ def test_nested_memory_io_error_is_catchable_in_real_code_mode(tmp_path, monkeyp
             new_tool_call_id(), "exec", None, raw_arguments=source, input_kind="freeform"
         )
         model = MemoryModel((nested,))
-        runtime = runtime_for(tmp_path, model, mode="code_mode_only")
+        runtime = await runtime_for(tmp_path, model, mode="code_mode_only")
         try:
             events = [e async for e in runtime.stream("read memory in code")]
             assert isinstance(events[-1], TurnCompleted), events[-1]

@@ -36,9 +36,9 @@ class AnswerModel:
         pass
 
 
-def make_runtime(tmp_path, *, max_steps=4):
+async def make_runtime(tmp_path, *, max_steps=4):
     model = AnswerModel()
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path, skills_enabled=False, max_steps=max_steps
         ),
@@ -53,7 +53,7 @@ def make_runtime(tmp_path, *, max_steps=4):
 @pytest.mark.parametrize("max_steps", [None, 1, 4])
 def test_input_accepted_before_finalization_respects_turn_budget(tmp_path: Path, phase, max_steps):
     async def scenario():
-        runtime, model = make_runtime(tmp_path, max_steps=max_steps)
+        runtime, model = await make_runtime(tmp_path, max_steps=max_steps)
         original = (
             runtime._repository.commit_model_step
             if phase == "model_commit"
@@ -123,7 +123,7 @@ def test_input_accepted_before_finalization_respects_turn_budget(tmp_path: Path,
 @pytest.mark.parametrize("next_realtime", [False, True])
 def test_input_flush_failure_retries_storage_before_next_turn(tmp_path, committed, next_realtime):
     async def scenario():
-        runtime, model = make_runtime(tmp_path, max_steps=1)
+        runtime, model = await make_runtime(tmp_path, max_steps=1)
         original_commit = runtime._repository.commit_model_step
         original_append = runtime._repository.append_items
         injected = False
@@ -177,7 +177,7 @@ def test_input_flush_failure_retries_storage_before_next_turn(tmp_path, committe
 @pytest.mark.parametrize("close_fails", [False, True])
 def test_close_flushes_pending_inputs_and_can_retry_storage_only(tmp_path, close_fails):
     async def scenario():
-        runtime, model = make_runtime(tmp_path, max_steps=1)
+        runtime, model = await make_runtime(tmp_path, max_steps=1)
         original_commit = runtime._repository.commit_model_step
         original_append = runtime._repository.append_items
         failures = 0
@@ -236,7 +236,7 @@ def test_close_flushes_pending_inputs_and_can_retry_storage_only(tmp_path, close
             assert closes == 1
             assert len(model.requests) == 1
             # Read the actual database through a fresh runtime after writer release.
-            reopened = LangGraphRuntime.create(
+            reopened = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(tmp_path, skills_enabled=False),
                 database_path=tmp_path / "boundary.db",
                 thread_id=runtime.thread_id,
@@ -258,7 +258,7 @@ def test_close_flushes_pending_inputs_and_can_retry_storage_only(tmp_path, close
 
 def test_cancelled_input_retry_joins_database_thread_before_close(tmp_path):
     async def scenario():
-        runtime, model = make_runtime(tmp_path, max_steps=1)
+        runtime, model = await make_runtime(tmp_path, max_steps=1)
         original_commit = runtime._repository.commit_model_step
         original_append = runtime._repository.append_items
         sync_append = runtime._repository._append_items
@@ -330,7 +330,7 @@ def test_durable_new_input_before_continuation_checkpoint_is_processed_after_res
     tmp_path: Path,
 ):
     async def scenario():
-        first, first_model = make_runtime(tmp_path)
+        first, first_model = await make_runtime(tmp_path)
         recorded = asyncio.Event()
         original_evaluate = first._graph._evaluate
         original_accept = first._graph._accept_pending_realtime
@@ -375,7 +375,7 @@ def test_durable_new_input_before_continuation_checkpoint_is_processed_after_res
         assert len(first_model.requests) == 1
         await first.aclose()
         model = AnswerModel()
-        resumed = LangGraphRuntime.create(
+        resumed = await LangGraphRuntime.acreate(
             settings=first._settings,
             database_path=tmp_path / "boundary.db",
             thread_id=first.thread_id,
@@ -400,7 +400,7 @@ def test_durable_new_input_before_continuation_checkpoint_is_processed_after_res
 @pytest.mark.parametrize("phase", ["terminal_save", "terminal_event"])
 def test_steer_is_rejected_once_turn_stops_accepting_input(tmp_path: Path, phase):
     async def scenario():
-        runtime, _ = make_runtime(tmp_path)
+        runtime, _ = await make_runtime(tmp_path)
         original = runtime._repository.save_turn
         checked = False
 
@@ -440,7 +440,7 @@ def test_accepted_input_survives_failure_or_cancel_without_duplicate_history(
     tmp_path: Path, outcome
 ):
     async def scenario():
-        runtime, model = make_runtime(tmp_path, max_steps=1 if outcome == "budget" else 4)
+        runtime, model = await make_runtime(tmp_path, max_steps=1 if outcome == "budget" else 4)
         original_commit = runtime._repository.commit_model_step
         original_append = runtime._repository.append_items
         injected = False
@@ -532,7 +532,7 @@ def test_accepted_input_survives_failure_or_cancel_without_duplicate_history(
 @pytest.mark.parametrize("partial", [False, True])
 def test_terminal_model_stream_error_preserves_pending_without_automatic_retry(tmp_path, partial):
     async def scenario():
-        runtime, model = make_runtime(tmp_path)
+        runtime, model = await make_runtime(tmp_path)
         original_stream = model.stream
         failed = False
 

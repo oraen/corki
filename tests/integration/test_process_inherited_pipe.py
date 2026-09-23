@@ -152,8 +152,8 @@ def test_inherited_stdout_completes_real_runtime_and_cold_history(tmp_path, tty,
             tool_mode="code_mode" if nested else "direct",
         )
 
-        def create(thread=None):
-            runtime = LangGraphRuntime.create(
+        async def create(thread=None):
+            runtime = await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "runtime.db",
                 model=Model(),
@@ -169,7 +169,7 @@ def test_inherited_stdout_completes_real_runtime_and_cold_history(tmp_path, tty,
             runtime._process_manager._start_session = capture
             return runtime
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             async with asyncio.timeout(3):
@@ -196,7 +196,7 @@ def test_inherited_stdout_completes_real_runtime_and_cold_history(tmp_path, tty,
                     with suppress(ProcessLookupError):
                         os.killpg(session.process.pid, signal.SIGKILL)
             await runtime.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             events = [e async for e in cold.stream("continue")]
             assert isinstance(events[-1], TurnCompleted), events[-1]

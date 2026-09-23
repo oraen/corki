@@ -59,10 +59,10 @@ def test_cold_resume_keeps_admitted_mode_then_new_turn_reads_changed_catalog(
 
         settings = mode_settings(tmp_path, initial=initial)
 
-        def create(selected, thread=None):
+        async def create(selected, thread=None):
             registry = ToolRegistry()
             registry.register(Probe())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=selected,
                 registry=registry,
                 model=Model(),
@@ -70,7 +70,7 @@ def test_cold_resume_keeps_admitted_mode_then_new_turn_reads_changed_catalog(
                 thread_id=thread,
             )
 
-        old = create(settings)
+        old = await create(settings)
         try:
             await old._ensure_ready()
             thread, turn = old.thread_id, new_turn_id()
@@ -111,7 +111,7 @@ def test_cold_resume_keeps_admitted_mode_then_new_turn_reads_changed_catalog(
                 for info in settings.model_contexts
             ),
         )
-        cold = create(changed, thread)
+        cold = await create(changed, thread)
         try:
             events = [e async for e in cold.resume_pending()]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -175,7 +175,7 @@ def test_retry_uses_selected_router_and_handler_after_model_and_registry_update(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=mode_settings(tmp_path, step_model_switching=True),
             registry=registry,
             model=Model(),
@@ -239,7 +239,7 @@ def test_realtime_steering_keeps_admitted_mode_after_sampling_model_change(tmp_p
 
         registry = ToolRegistry()
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=mode_settings(tmp_path, initial=initial, step_model_switching=True),
             registry=registry,
             model=Model(),

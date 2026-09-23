@@ -91,7 +91,7 @@ def test_no_manual_compiler_config_reaches_real_runtime_enforcement(
             pass
 
     async def scenario():
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=chosen, model=Model(), database_path=tmp_path / "state.db"
         )
         try:

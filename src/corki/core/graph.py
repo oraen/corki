@@ -104,6 +104,7 @@ class GraphRunContext:
     request_user_input: Callable | None = None
     is_non_root_agent: bool = False
     session_source: SessionSource = DEFAULT_SESSION_SOURCE
+    legacy_base_unknown: bool = False
     # Runtime-owned terminal facts whose durable writes are still pending.
     # Never reconstructed from model history or carried across a cold restart.
     terminal_pending_turns: frozenset[TurnId] = frozenset()
@@ -414,6 +415,16 @@ class CorkiGraph:
     async def _prepare_model_context(
         self, state: CorkiState, runtime: Runtime[GraphRunContext]
     ) -> dict[str, object]:
+        if runtime.context.legacy_base_unknown:
+            index = _sample_index(state)
+            completed = await self._repository.load_model_step(
+                state["thread_id"], state["turn_id"], index
+            )
+            partial = await self._repository.load_partial_step(
+                state["thread_id"], state["turn_id"], index
+            )
+            if completed is None and not partial:
+                raise ValueError("missing admitted Turn base instructions")
         from corki.core.start_hooks import drain as drain_start
         from corki.core.start_hooks import run as run_start
 
@@ -567,6 +578,7 @@ class CorkiGraph:
             tool_resolver_for_model=tools_for_model,
             on_retry=self._compaction_retry_callback(state, runtime),
             on_compact=self._compaction_hook_callback(state, runtime),
+            legacy_base_unknown=runtime.context.legacy_base_unknown,
         )
         await self._emit_catalog_warnings(state, runtime, prepared.warnings)
         if prepared.compacted:
@@ -1050,6 +1062,8 @@ class CorkiGraph:
         )
         recorded_citation_items: set[str] = set()
         if completed is None:
+            if runtime.context.legacy_base_unknown:
+                raise ValueError("missing admitted Turn base instructions")
             realtime = runtime.context.realtime if state.get("realtime_active", False) else None
             async with aclosing(
                 model_events(self._model, request, realtime, live.failure)
@@ -1119,7 +1133,7 @@ class CorkiGraph:
         if completed is None:
             raise ModelError("model stream ended without a completed response", retryable=True)
         completed, _, _ = _normalize_memory_citations(completed)
-        if any(item not in completed.items for item in partial_items):
+        if completed.items[: len(partial_items)] != tuple(partial_items):
             raise ModelError("completed response changed or omitted an already completed item")
         _validate_model_items(completed, state["turn_id"], allow_legacy_hosted=not sampled)
         # Deduplicate blocks within an item, not distinct completed messages.
@@ -1864,9 +1878,17 @@ def _validate_model_items(
             "provider adapter returned a non-model conversation item",
             kind=ModelErrorKind.PROTOCOL,
         )
-    if any(item.turn_id != turn_id for item in completed.items):
+    if any(
+        not _valid_model_wire_id(item.turn_id) or item.turn_id != turn_id
+        for item in completed.items
+    ):
         raise ModelError(
             "provider adapter returned an item for a different turn",
+            kind=ModelErrorKind.PROTOCOL,
+        )
+    if any(not _valid_model_wire_id(item.step_id) for item in completed.items):
+        raise ModelError(
+            "provider adapter returned an invalid step id",
             kind=ModelErrorKind.PROTOCOL,
         )
     step_ids = {item.step_id for item in completed.items}
@@ -1876,6 +1898,11 @@ def _validate_model_items(
             kind=ModelErrorKind.PROTOCOL,
         )
     item_ids = [item.id for item in completed.items]
+    if any(not _valid_model_wire_id(item_id) for item_id in item_ids):
+        raise ModelError(
+            "provider adapter returned an invalid conversation item id",
+            kind=ModelErrorKind.PROTOCOL,
+        )
     if len(item_ids) != len(set(item_ids)):
         raise ModelError(
             "provider adapter returned duplicate conversation item ids",
@@ -1883,6 +1910,11 @@ def _validate_model_items(
         )
     calls = [item.call for item in completed.items if isinstance(item, ToolCallItem)]
     call_ids = [call.id for call in calls]
+    if any(not _valid_model_wire_id(call_id) for call_id in call_ids):
+        raise ModelError(
+            "provider adapter returned an invalid tool call id",
+            kind=ModelErrorKind.PROTOCOL,
+        )
     if len(call_ids) != len(set(call_ids)):
         raise ModelError(
             "provider adapter returned duplicate tool call ids",
@@ -1890,11 +1922,21 @@ def _validate_model_items(
         )
     # Empty/whitespace strings are valid wire names. An unregistered name is a
     # tool Observation, not a malformed model step; do not trim or replace it.
-    if any(not isinstance(call.name, str) for call in calls):
+    if any(not _valid_model_wire_id(call.name) for call in calls):
         raise ModelError(
-            "provider adapter returned a tool call with a nonstring name",
+            "provider adapter returned a tool call with an invalid name",
             kind=ModelErrorKind.PROTOCOL,
         )
+
+
+def _valid_model_wire_id(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeError:
+        return False
+    return True
 
 
 def _normalize_memory_citations(

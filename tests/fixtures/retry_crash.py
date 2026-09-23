@@ -72,7 +72,7 @@ async def main(directory, crash_retry, kind=ModelErrorKind.TRANSPORT):
     repository = Repository(directory / "sessions.db")
     registry = ToolRegistry()
     registry.register(Tool())
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=directory,
             skills_enabled=False,

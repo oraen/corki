@@ -222,6 +222,8 @@ class AgentRuntime(Protocol):
         server_metadata: Mapping[str, MCPServerMetadata] | None = None,
     ) -> None: ...
 
+    async def mcp_tool_catalog(self) -> tuple[MCPToolCatalogEntry, ...]: ...
+
     def request_mcp_reconcile(
         self,
         servers: tuple[MCPServerSettings, ...] | None = None,
@@ -1521,6 +1523,10 @@ class LangGraphRuntime:
                     bases.append(value)
                 if len(set(bases)) > 1:
                     raise ValueError("Turn base instructions conflict with checkpoint")
+                # Legacy RUNNING turns may have already committed their model or
+                # summary result. Defer the missing-base guard until a fresh
+                # sample is actually required, so replay/cancellation still work.
+                legacy_base_unknown = not bases and self._settings.base_instructions is not None
                 step_settings = checkpoint_channels.get("step_model_settings")
                 if "step_model_settings" in checkpoint_channels:
                     if not isinstance(step_settings, ModelSettingsSnapshot):
@@ -1567,6 +1573,7 @@ class LangGraphRuntime:
                     realtime=False,
                     operation=turn.operation,
                     resumed_step_settings=step_settings,
+                    legacy_base_unknown=legacy_base_unknown,
                 )
                 first = await anext(events)
         async with aclosing(events):
@@ -1584,6 +1591,7 @@ class LangGraphRuntime:
         realtime: bool,
         operation: str = "normal",
         resumed_step_settings: ModelSettingsSnapshot | None = None,
+        legacy_base_unknown: bool = False,
     ) -> AsyncIterator[RuntimeEvent]:
         run = TurnRun(turn_id, self._settings.event_queue_size)
         admitted = capture_model_settings(self._graph._settings)
@@ -1611,6 +1619,7 @@ class LangGraphRuntime:
                 operation=operation,
                 compiled=compiled,
                 memory_permissions=memory_permissions,
+                legacy_base_unknown=legacy_base_unknown,
             )
         )
         self._active_run = run
@@ -1724,6 +1733,7 @@ class LangGraphRuntime:
         operation: str = "normal",
         compiled: Any = None,
         memory_permissions: MemoryPermissionSnapshot | None = None,
+        legacy_base_unknown: bool = False,
     ) -> RuntimeEvent:
         """Own work, cleanup, and the durable terminal independently of the UI."""
         turn_id = run.turn_id
@@ -1740,6 +1750,7 @@ class LangGraphRuntime:
             ),
             is_non_root_agent=self._session_source.is_non_root_agent,
             session_source=self._session_source,
+            legacy_base_unknown=legacy_base_unknown,
             realtime=self._realtime,
             terminal_pending_turns=frozenset(self._pending_terminals),
             models=run.models,

@@ -99,7 +99,7 @@ def test_discover_schema_call_observation_across_turns(tmp_path, mode, exposure)
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode=mode
             ),

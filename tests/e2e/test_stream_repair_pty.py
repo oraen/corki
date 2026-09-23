@@ -15,7 +15,7 @@ from corki.config import CorkiPaths, CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted, ModelTextDelta
 from corki.protocol.items import AssistantMessageItem, new_step_id
-from rich.console import Console
+from corki.cli.terminal_console import TerminalConsole
 
 class Model:
     closed = False
@@ -37,9 +37,9 @@ class UI(TerminalUI):
 async def main():
     cwd = Path.cwd()
     settings = CorkiSettings(working_directory=cwd, skills_enabled=False, plugins_enabled=False)
-    ui = UI(settings, cwd / 'history', console=Console(color_system=None))
+    ui = UI(settings, cwd / 'history', console=TerminalConsole(color_system=None))
     model = Model()
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=settings, database_path=cwd / 'sessions.db', model=model
     )
     app = CorkiApplication(settings, CorkiPaths.from_home(cwd / 'home'), runtime, ui)
@@ -100,7 +100,7 @@ def test_completed_long_code_preserves_continuation_indent(tmp_path, width):
 
 @pytest.mark.parametrize("width", [40, 100])
 @pytest.mark.parametrize("nested", [False, True])
-def test_identical_markdown_completion_repairs_raw_stream(tmp_path, width, nested):
+def test_identical_markdown_completion_appends_without_full_repaint(tmp_path, width, nested):
     raw = r"1. outer\n   - inner" if nested else "**Bold** and `code`"
     rendered = "1. outer" if nested else "Bold and code"
     program = (
@@ -126,20 +126,23 @@ def test_identical_markdown_completion_repairs_raw_stream(tmp_path, width, neste
     )
     try:
         child.expect_exact("DELTA_RENDERED")
+        seen = child.before
         if nested:
             # Delta admission now queues rendered lines; the model stays held
             # while the display's independent tick commits the stable prefix.
             before = child.before
             if "1. outer" not in before:
                 child.expect_exact("1. outer")
+                seen += child.before + child.after
                 before += child.before
             assert "inner" not in before
         else:
             assert raw not in child.before
         child.sendline("")
-        child.expect_exact("\x1b[3J\x1b[2J\x1b[H")
         child.expect_exact("FIXTURE_CLOSED")
-        assert child.before.count(rendered) == 1
+        assert "\x1b[3J" not in child.before
+        assert "\x1b[2J" not in child.before
+        assert (seen + child.before).count(rendered) == 1
         assert "**Bold**" not in child.before and "`code`" not in child.before
         if nested:
             assert child.before.count("      - inner") == 1

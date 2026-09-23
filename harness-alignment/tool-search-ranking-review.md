@@ -1,5 +1,144 @@
 # B3/B4/B7 搜索排序与缓存复核
 
+## 2026-09-22：畸形可选 schema 元数据不再击穿整批检索
+
+恢复 A–E 核心目标后重新核对 Codex `core/src/tools/handlers/tool_search.rs`
+的检索入口与 Corki `ToolSpec`→`ToolSearchHandlerCache`→`ToolSearchIndex`。
+进一步追踪到 `tools/src/tool_search.rs::append_schema_search_text`，它遍历
+`JsonSchema` 中有类型的 properties/any_of；`tools/src/json_schema/types.rs`
+将二者分别定义为可选 BTreeMap 和 Vec，故 Corki 的 list/null 属性访问异常
+不是该有类型检索入口中的同类状态。跳过不规范文本字段是 Corki 的容错选择，
+不能写成已证实 Codex 对畸形原始 schema 也采用相同策略。原生输出协议仍排除。
+
+Corki 的 JSON 可编码准入仍允许 `properties: []`、`anyOf: null` 这类
+不规范的可选 schema 字段。此前 `_schema_text` 假定它们总是对象/数组，
+在索引所有 deferred 工具时抛 `AttributeError`，导致同目录正常工具也
+无法检索。先增加失败反例，再只让索引提取器遍历实际为对象的
+`properties` 和实际为数组的 `anyOf`；原 schema 不改写，正常的递归
+描述仍参与排序。缓存入口和索引直接入口均验证正常工具可返回。
+
+相关五文件 69 passed、0 skipped，4 workers/loadfile，实际退出 0；
+改动 Python 文件 Ruff check/format 与 diff check 通过。此修复不宣称
+畸形 schema 可以被模型供应商接受或执行器完整校验，也不证明真实模型
+的工具选择质量。全量核心回归本批未执行；其他 B8/E2 schema 语义边界
+仍按各专项收敛。
+
+续轮补充真实 Runtime 验收：在现有搜索→加载→调用→Observation→跨 Turn
+场景中加入一个不相关、畸形可选元数据的 deferred 工具；正常 calendar
+工具完整执行且只产生一次副作用，坏候选未广告、未执行。原正常目录对照
+仍保留；真实 Runtime 文件及索引/缓存单位联合 54 passed、0 skipped，
+4 workers/loadfile，句柄 96678 实际退出 0（225485），Ruff/格式检查通过。
+模型是离线脚本；该证据验证主循环链路，不验证远程供应商对坏 schema 的接受度。
+
+## 2026-09-22：工具定义在目录发布前拒绝非法类型与非 JSON schema
+
+沿 Codex `tools/src/responses_api.rs::ResponsesApiTool` 的 `String` 名称/描述和
+`JsonSchema` 有类型字段，以及 Corki `ToolSpec`→`ToolRegistry`→搜索/模型请求链
+重新核对。Corki 原仅靠 Python 注解：整数名称在 `split_tool_name` 抛
+`AttributeError`，空名、整数描述/检索来源、列表形式或含 set/NaN 的 schema
+能构造并进入目录，直到索引或 wire 序列化才失败。九个构造反例先红；
+另补一个 `freeform_format` 非对象的明确准入断言。
+
+现 `ToolSpec.__post_init__` 在发布前要求名称/描述及可选检索文本为 UTF-8
+字符串，名称非空，参数/output schema 为可编码 JSON 对象；原合法
+`WireNumber`、普通函数定义、旧枚举字符串归一与动态工具行为不变。
+插件注册坏 schema 的直接回归验证没有部分发布。协议、工具、插件、MCP
+schema 与真实搜索/插件集成范围 **1687 passed / 11.94s**，实际退出 0。
+这只验证类型和 JSON 可编码性，不伪称校验 JSON Schema 所有语义关键字，
+也不以此关闭 B1/B8 的所有来源组合。
+
+首次非 CLI 主组 **15332 passed、7 skipped、3 failed**：旧搜索错误恢复
+用例构造 object/NaN/孤立 surrogate schema 的步骤现在正确提前拒绝，故
+夹具无法到达原目标。未删减这三条错误恢复断言；改为复制合法 ToolSpec 后
+由故障注入的外部搜索 handler 绕过构造准入，验证结果发布层仍把损坏定义
+转为错误 Observation，随后重新搜索成功。该文件 **9 passed**。第二次主组
+在 MCP elicitation 的 stdio 可选预热等待出现一次 3 秒超时：单例复跑通过。
+曾尝试放宽该测试的 stdio 请求预算，但它改变目录与采样时序并造成 9 项
+工具未广告失败，因此完全撤回；恢复原测试后该文件 **37 passed**。
+这两轮失败不计作全量通过。
+
+最终生产修改后的非 CLI 全范围独立收集 **15801 项**。第三次主组
+**15335 passed、7 skipped / 729.10s**、敏感六文件
+**459 passed / 56.82s**，两组均退出 0，合计 **15794 passed、7 skipped**。
+七项跳过仍为六项缺历史原生编译器、一项文件系统不接受非 UTF-8 文件名。
+修改文件 Ruff、格式及 diff 检查通过。MCP 的单次并发时序超时根因尚未
+独立证实，不据单例通过宣称它已修复。
+
+## 2026-09-22：旧搜索别名与当前目录碰撞的真实请求边界
+
+复核 `models/namespaces.py::request_tool_aliases` 时，直接构造含旧发现定义
+与新平铺同名工具的 `ModelRequest` 会因别名碰撞报错；但这绕过了真实
+`window.prepare` 的失效定义投影，不能据此判定 Runtime 存在故障。
+新增普通 Responses/离线 HTTP 的真实 Runtime/SQLite 用例：第一 Turn
+搜索 `notes::read`，随后撤销它并注册平铺名相同的直接工具；同 Runtime
+与同 Thread 冷恢复各一例。两种路径均保留原始搜索历史，但下一模型请求
+只带当前直接工具定义，旧搜索结果明确提示需重新搜索，不发生错误别名路由
+或伪冲突。两例通过；与工具碰撞、搜索生命周期、deferred 上下文/普通 wire
+及 namespace 身份五文件联合 **131 passed / 11.06s**，4 workers/loadfile/
+禁重启，退出 0。仅新增测试，不改生产；后续非 CLI 完整范围已刷新为
+**15773 passed、7 skipped**，独立收集 15780 项，包含本批两例，详见
+`acceptance-index.md` 顶部。本结果不证明真实模型的工具选择质量。
+
+## 2026-09-22：B1/B8 工具策略注册准入
+
+Codex `tools/src/tool_executor.rs::ToolExposure` 是有类型枚举，工具运行器的
+并行能力是布尔契约；非法曝光/调度策略不会作为目录元数据进入主循环。
+Corki `ToolSpec.__post_init__` 此前只规范化 `input_kind`，接受未知
+`exposure`/`concurrency` 字符串：未知曝光值要到 `build_tool_plan` 读取
+`is_model_visible` 时才报 `AttributeError`；非整数输出预算还可能把 `True`
+当成 1 字符，或因字符串比较抛 `TypeError`。七个构造反例先全部失败。
+现把曝光/并发值在工具定义构造时转为相应枚举，拒绝非法值，输出预算
+仅接受正整数且排除布尔。有效字符串归一化保留旧配置/归档兼容。
+新增七项转绿，工具/协议与搜索、schema、Agent循环相关联合
+**1401 passed / 8.80s**，4 workers/loadfile/禁重启、退出 0。
+
+另核实 `ToolResult.__post_init__` 已把有序 `content_items` 复制为 tuple；
+handler 返回后修改原列表不会改写已规范化结果，故只加一个回归断言，
+没有对此做生产重写。本批不证明 B1 所有注册来源或 A–E 整体完成。
+
+## 2026-09-22：动态搜索缓存的 JSON 类型身份修复
+
+后续同一缓存链再确认一个遗漏：当工具搜索文本、普通模型可见输入定义均未变，
+只有内部 `output_schema` 的 JSON `true`→`1` 变化时，
+`search_cache.get_or_build` 的最后一层 `specs == _definitions` 仍错误命中旧
+handler。Codex `ToolSearchInfo::from_spec` 明确剥除 output_schema，因此原生
+搜索语料不因它重建；Corki 也不应重建相同的 BM25 索引。但 Corki 的发现
+Observation 与已加载定义身份包含该内部字段，必须重新绑定当前定义，否则
+旧搜索结果被身份校验剔除，新搜索仍只返回旧定义，工具无法重新加载。
+现用既有 `same_tool_spec` 判定 handler 定义重绑定，保留索引实例。
+单位反例修复前 1 failed，修复后单位与真实 Runtime 两文件 37 passed，
+工具发现相关 12 文件 140 passed / 9.02s（4 workers/loadfile/禁重启）；
+Runtime 的 metadata/input_schema/output_schema 三种替换 × 普通/流式 × 两种
+旧配置迁移输入均验证已准备 Step 不被改写、下一 Step 重新搜索并执行新版本。
+随后修复后的同范围非 CLI 全量实际退出 0：**15609 passed、7 skipped、
+564.23s**，8 workers/loadfile/禁重启；`-rs` 跳过原因与上一批相同，
+见 `acceptance-index.md` 顶部。
+这是 Corki 普通函数路径的内部契约修复，不复制原生 namespace/output 协议。
+
+延续下方“已加载定义”类型修复，重新核对 Codex
+`core/src/tools/handlers/tool_search.rs::sources_match/get_or_build`：动态
+`ToolSearchInfo` 使用有类型的 Rust 值相等比较，改变 schema 的 JSON `true` 为
+数字 `1` 会建立新 handler。Corki 此前 `same_tool_spec` 仅用于已加载定义和
+executor；`search_cache._DynamicSearchInfo.output` 与
+`ToolSearchIndex.prepare` 仍用 Python 容器/dataclass 相等，把 `True == 1`
+误当作相同，导致刷新后 `tool_search` 返回旧定义。
+
+新增两个单位反例在修复前均失败：动态目录替换后 handler 原样复用，独立索引
+generation 未推进。现把动态搜索输出键保存为排序后的精确 JSON wire 字符串，
+索引逐项使用 `same_tool_spec`；对象键顺序仍不影响身份，执行期预算/并发变化
+仍由原逻辑重绑定。现有真实 Runtime 的已准备 Step 冻结测试扩展到 schema
+仅从 `true` 改为 `1`：旧 Step 搜索返回旧定义，下一 Step 旧结果投影失效，
+重新搜索加载新定义并执行新 handler；覆盖普通/流式及两种历史兼容配置输入，
+不恢复原生 tool search 输出协议。
+
+红测 2 failed；修复后四文件 44 passed，扩大工具发现相关 12 文件
+**135 passed / 8.53s**（4 workers、loadfile、禁重启），均退出 0。
+五个变更 Python 文件的 ruff check、format --check 与 diff check 通过。
+之后同范围非 CLI 全量实际退出 0：15604 passed、7 skipped、569.94s，
+8 workers/loadfile/禁重启；跳过原因见 `acceptance-index.md` 顶部。
+这证明缓存与 Runtime 刷新链的该类型边界，不证明真实模型检索质量或所有
+A–E 项已完成。
+
 ## JSON类型敏感的已加载定义身份（已实施）
 
 本轮实际冷Runtime反例发现：discovery._loaded_definition_matches采用ToolSpec

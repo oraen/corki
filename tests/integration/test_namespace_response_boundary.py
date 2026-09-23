@@ -73,7 +73,7 @@ def test_namespace_cannot_be_ignored_or_routed_to_leaf(tmp_path, monkeypatch, na
         registry = ToolRegistry()
         registry.register(Probe("probe"))
         registry.register(Probe("group::probe"))
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 api_mode="responses",

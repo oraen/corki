@@ -20,6 +20,7 @@ from corki import http_client
 from corki.models.backoff import backoff, retry_limit
 from corki.models.base import ModelError, ModelErrorKind
 from corki.models.capabilities import ProviderCapabilities, StructuredOutputProtocol
+from corki.models.error_safety import sanitized_model_error
 from corki.models.freeform import compatible_arguments, compatible_call
 from corki.models.http_stream import model_http_stream
 from corki.models.media import chat_content
@@ -145,18 +146,21 @@ class OpenAICompatibleModel:
                         yield event
                 return
             except ModelError as exc:
+                safe_error = sanitized_model_error(exc, self._api_key)
                 if (
                     request.harness_managed_retries
                     or emitted_data
                     or not exc.retryable
                     or attempt >= self._max_retries
                 ):
-                    raise
+                    if safe_error is exc:
+                        raise
+                    raise safe_error from None
                 attempt += 1
                 delay = exc.retry_after_seconds
                 if delay is None:
                     delay = backoff(self._retry_base_seconds, attempt - 1)
-                yield ModelRetrying(attempt, self._max_retries, delay, str(exc))
+                yield ModelRetrying(attempt, self._max_retries, delay, str(safe_error))
                 await asyncio.sleep(delay)
 
     def _build_payload(self, request: ModelRequest) -> dict[str, Any]:

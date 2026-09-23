@@ -74,8 +74,8 @@ class CallsModel:
         pass
 
 
-def runtime_for(tmp_path, route, model, thread=None):
-    return LangGraphRuntime.create(
+async def runtime_for(tmp_path, route, model, thread=None):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -112,7 +112,7 @@ def test_independent_shell_calls_overlap_and_recover_without_replay(
             await asyncio.wait_for(both.wait(), 3)
 
         model = CallsModel(route, calls, check, before_completed)
-        runtime = runtime_for(tmp_path, route, model)
+        runtime = await runtime_for(tmp_path, route, model)
         manager = runtime._process_manager
         start, write = manager._start_session, manager._write_stdin
 
@@ -184,7 +184,7 @@ raise SystemExit({exit_code})
                 assert result["code_mode_output"]["value"]["exit_code"] == exit_code
         finally:
             await runtime.aclose()
-        cold = runtime_for(tmp_path, route, model, runtime.thread_id)
+        cold = await runtime_for(tmp_path, route, model, runtime.thread_id)
         cold_start = cold._process_manager._start_session
 
         async def count_replay(*args, **kwargs):
@@ -215,7 +215,7 @@ def test_parallel_stdin_calls_keep_same_session_lock(tmp_path, route):
             assert "SECOND_" + locked_calls[1].strip() in text
 
         model = CallsModel(route, calls, check)
-        runtime = runtime_for(tmp_path, route, model)
+        runtime = await runtime_for(tmp_path, route, model)
         manager = runtime._process_manager
         public, locked = manager.write_stdin, manager._write_stdin
 
@@ -303,7 +303,7 @@ def test_shell_parallel_declaration_preserves_exclusive_barrier(tmp_path, route)
             ("barrier", {}),
             ("exec_command", {"cmd": "printf OUT_1", "login": False}),
         ]
-        runtime = runtime_for(tmp_path, route, CallsModel(route, calls, check))
+        runtime = await runtime_for(tmp_path, route, CallsModel(route, calls, check))
         runtime._registry.register(Barrier())
         execute = runtime._process_manager.execute
 
@@ -343,7 +343,7 @@ def test_cancel_parallel_shells_retains_until_explicit_cleanup(tmp_path, route):
             )
         ] * 2
         model = CallsModel(route, calls, lambda _: pytest.fail("unexpected model step"))
-        runtime = runtime_for(tmp_path, route, model)
+        runtime = await runtime_for(tmp_path, route, model)
         manager = runtime._process_manager
         wait = manager._wait_session
 

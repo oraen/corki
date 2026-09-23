@@ -212,7 +212,7 @@ def test_polluted_published_source_enqueues_and_cold_runtime_rebuilds_memory(tmp
         assert claim is not None and await memories.complete_consolidation(claim, (memory,))
         registry = ToolRegistry()
         registry.register(ExternalMCPTool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -276,7 +276,7 @@ def test_polluted_published_source_enqueues_and_cold_runtime_rebuilds_memory(tmp
             RuntimeModel([("answer", "ready"), ("answer", "summary"), ("answer", "recalled")]),
             MemoryModel(),
         )
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, memories_enabled=True
             ),
@@ -362,7 +362,7 @@ MEMORY.md:2-3|note=[durable command]
 </thread_ids>
 </corki-memory-citation>"""
         model = RuntimeModel([("answer", response)])
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

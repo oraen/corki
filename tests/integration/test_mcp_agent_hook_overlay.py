@@ -33,7 +33,7 @@ def test_hook_overlay_failure_and_precedence_reach_runtime(
         overlay.parent.mkdir()
         overlay.write_text(json.dumps({field: hooks}))
         carrier = Carrier()
-        runtime = runtime_for(tmp_path, monkeypatch, carrier, mode)
+        runtime = await runtime_for(tmp_path, monkeypatch, carrier, mode)
         try:
             await runtime._ensure_ready()
             await runtime._mcp_manager.refresh_if_dirty()

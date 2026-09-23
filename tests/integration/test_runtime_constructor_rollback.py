@@ -14,6 +14,32 @@ from corki.core import runtime as runtime_module
 from corki.tools import ToolRegistry
 
 
+@pytest.mark.parametrize("borrowed", [False, True])
+def test_sync_constructor_in_loop_rejects_before_allocating(tmp_path, monkeypatch, borrowed):
+    async def scenario():
+        registry = ToolRegistry()
+        baseline = asyncio.all_tasks()
+
+        def unexpected(*args, **kwargs):
+            pytest.fail("synchronous admission allocated a resource")
+
+        monkeypatch.setattr(runtime_module, "_create_model", unexpected)
+        monkeypatch.setattr(runtime_module, "ProcessManager", unexpected)
+        monkeypatch.setattr(runtime_module, "SQLiteSessionRepository", unexpected)
+        with pytest.raises(RuntimeError, match="await.*acreate"):
+            LangGraphRuntime.create(
+                settings=CorkiSettings(tmp_path, skills_enabled=False, plugins_enabled=False),
+                database_path=tmp_path / "state.db",
+                registry=registry,
+                model=object() if borrowed else None,
+            )
+        assert registry.specs() == ()
+        assert asyncio.all_tasks() == baseline
+        assert list(tmp_path.iterdir()) == []
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("failure", [ValueError, asyncio.CancelledError])
 @pytest.mark.parametrize("borrowed", [False, True])
 @pytest.mark.parametrize("close_failure", [None, OSError, asyncio.CancelledError])

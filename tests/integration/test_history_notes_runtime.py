@@ -66,7 +66,7 @@ def test_official_configuration_still_uses_local_recovery(
                 ("notes::read_file", {"path": "p", "start_line": -1}),
             ]
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

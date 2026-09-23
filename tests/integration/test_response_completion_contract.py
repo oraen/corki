@@ -48,8 +48,8 @@ BAD = [
 ]
 
 
-def create(tmp_path, *, thread=None, registry=None):
-    return LangGraphRuntime.create(
+async def create(tmp_path, *, thread=None, registry=None):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             tmp_path,
             api_mode="responses",
@@ -99,7 +99,7 @@ def test_invalid_completion_cannot_end_sampling_or_install_compaction(
             return packet(events)
 
         install(monkeypatch, respond)
-        runtime = create(tmp_path)
+        runtime = await create(tmp_path)
         try:
             events = (
                 [e async for e in runtime.compact()]
@@ -120,7 +120,7 @@ def test_invalid_completion_cannot_end_sampling_or_install_compaction(
             thread = runtime.thread_id
         finally:
             await runtime.aclose()
-        cold = create(tmp_path, thread=thread)
+        cold = await create(tmp_path, thread=thread)
         try:
             stored = await cold._repository.load_items(thread)
             assert any(isinstance(i, CompactionItem) for i in stored) is (compact and later_valid)
@@ -167,7 +167,7 @@ def test_done_tool_before_bad_terminal_is_not_replayed_on_cold_next_turn(
             result.register(Guard())
             return result
 
-        runtime = create(tmp_path, registry=registry())
+        runtime = await create(tmp_path, registry=registry())
         try:
             events = [e async for e in runtime.stream("test")]
             assert isinstance(events[-1], TurnCompleted if later_valid else TurnFailed)
@@ -175,7 +175,7 @@ def test_done_tool_before_bad_terminal_is_not_replayed_on_cold_next_turn(
             thread = runtime.thread_id
         finally:
             await runtime.aclose()
-        cold = create(tmp_path, registry=registry(), thread=thread)
+        cold = await create(tmp_path, registry=registry(), thread=thread)
         try:
             assert isinstance([e async for e in cold.stream("next")][-1], TurnCompleted)
             assert executions == ["call"] and len(requests) == (3 if later_valid else 2)
@@ -213,7 +213,7 @@ def test_compaction_later_valid_terminal_wins_over_pending_error(tmp_path, monke
             )
 
         install(monkeypatch, respond)
-        runtime = create(tmp_path)
+        runtime = await create(tmp_path)
         try:
             assert isinstance([e async for e in runtime.compact()][-1], TurnCompleted)
             assert len(requests) == 1
@@ -257,7 +257,7 @@ def test_usage_fields_metadata_and_exact_numbers_survive_runtime_and_cold_storag
             return httpx.Response(200, text="data: " + dumps_wire(body) + "\n\n")
 
         install(monkeypatch, respond)
-        runtime = create(tmp_path)
+        runtime = await create(tmp_path)
         try:
             events = [e async for e in runtime.stream("test")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -276,7 +276,7 @@ def test_usage_fields_metadata_and_exact_numbers_survive_runtime_and_cold_storag
             await runtime._repository.commit_model_step(thread, turn, 0, saved)
         finally:
             await runtime.aclose()
-        cold = create(tmp_path, thread=thread)
+        cold = await create(tmp_path, thread=thread)
         try:
             recovered = await cold._repository.load_model_step(thread, turn, 0)
             assert recovered == saved and count == 1
@@ -312,7 +312,7 @@ def test_ordinary_compaction_does_not_store_or_replay_private_usage(tmp_path, mo
             )
 
         install(monkeypatch, respond)
-        runtime = create(tmp_path)
+        runtime = await create(tmp_path)
         try:
             assert isinstance([e async for e in runtime.compact()][-1], TurnCompleted)
             thread = runtime.thread_id
@@ -322,7 +322,7 @@ def test_ordinary_compaction_does_not_store_or_replay_private_usage(tmp_path, mo
             assert marker.summary == "ORDINARY_SUMMARY" and marker.remote_payload_json is None
         finally:
             await runtime.aclose()
-        cold = create(tmp_path, thread=thread)
+        cold = await create(tmp_path, thread=thread)
         try:
             stored = await cold._repository.load_items(thread)
             assert next(i for i in stored if isinstance(i, CompactionItem)) == marker

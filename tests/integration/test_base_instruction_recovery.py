@@ -8,9 +8,10 @@ from test_thread_settings_update import Model, make_runtime, settings
 
 from corki.core.graph import GraphRunContext
 from corki.core.runtime import _initial_state
+from corki.models import ModelCompleted
 from corki.protocol.events import TurnCompleted, TurnFailed
 from corki.protocol.ids import new_turn_id
-from corki.protocol.items import UserMessageItem
+from corki.protocol.items import AssistantMessageItem, CompactionItem, UserMessageItem, new_step_id
 from corki.protocol.tools import ToolResult, ToolSpec
 from corki.sessions import TurnRecord, TurnStatus
 from corki.tools import ToolRegistry
@@ -23,7 +24,7 @@ def test_resume_validates_base_against_ledger_before_sampling(tmp_path, ledger_b
             async def emit(self, event):
                 pass
 
-        source = make_runtime(
+        source = await make_runtime(
             tmp_path,
             Model(),
             configured=replace(settings(tmp_path), base_instructions="PREPARED BASE"),
@@ -53,7 +54,7 @@ def test_resume_validates_base_against_ledger_before_sampling(tmp_path, ledger_b
         finally:
             await source.aclose()
         model = Model()
-        cold = make_runtime(tmp_path, model, thread=thread)
+        cold = await make_runtime(tmp_path, model, thread=thread)
         try:
             if ledger_base in (None, "PREPARED BASE"):
                 assert isinstance([e async for e in cold.resume_pending()][-1], TurnCompleted)
@@ -71,14 +72,108 @@ def test_resume_validates_base_against_ledger_before_sampling(tmp_path, ledger_b
     asyncio.run(scenario())
 
 
+def test_legacy_compaction_without_base_replays_installed_summary_under_new_override(tmp_path):
+    async def scenario():
+        source = await make_runtime(
+            tmp_path,
+            Model(),
+            configured=replace(settings(tmp_path), base_instructions="ADMITTED BASE"),
+        )
+        try:
+            await source._ensure_ready()
+            thread, turn = source.thread_id, new_turn_id()
+            await source._repository.save_turn(
+                TurnRecord(turn, thread, TurnStatus.RUNNING, "", operation="compact")
+            )
+            marker = CompactionItem("SAVED SUMMARY", None, turn)
+            await source._repository.append_items(thread, (marker,))
+        finally:
+            await source.aclose()
+        model = Model()
+        cold = await make_runtime(
+            tmp_path,
+            model,
+            thread=thread,
+            configured=replace(settings(tmp_path), base_instructions="FUTURE BASE"),
+        )
+        try:
+            assert isinstance([e async for e in cold.resume_pending()][-1], TurnCompleted)
+            assert not model.requests
+            assert await cold._repository.load_items(thread) == (marker,)
+        finally:
+            await cold.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("large_history", [False, True])
+def test_legacy_turn_without_base_replays_committed_model_under_new_override(
+    tmp_path, large_history
+):
+    async def scenario():
+        source = await make_runtime(
+            tmp_path,
+            Model(),
+            configured=replace(settings(tmp_path), base_instructions="ADMITTED BASE"),
+        )
+        try:
+            await source._ensure_ready()
+            thread, turn = source.thread_id, new_turn_id()
+            await source._repository.save_turn(
+                TurnRecord(turn, thread, TurnStatus.RUNNING, "input")
+            )
+            if large_history:
+                await source._repository.append_items(
+                    thread, (UserMessageItem("x" * 20000, new_turn_id()),)
+                )
+            await source._repository.append_items(thread, (UserMessageItem("input", turn),))
+            await source._repository.commit_model_step(
+                thread,
+                turn,
+                0,
+                ModelCompleted((AssistantMessageItem("SAVED ANSWER", turn, new_step_id()),)),
+            )
+        finally:
+            await source.aclose()
+        model = Model()
+        cold = await make_runtime(
+            tmp_path,
+            model,
+            thread=thread,
+            configured=replace(
+                settings(tmp_path),
+                base_instructions="FUTURE BASE",
+                context_window_tokens=8000,
+                auto_compact_tokens=3000,
+            ),
+        )
+        try:
+            events = [e async for e in cold.resume_pending()]
+            assert isinstance(events[-1], TurnFailed if large_history else TurnCompleted), events[
+                -1
+            ]
+            if large_history:
+                assert "missing admitted Turn base instructions" in events[-1].error
+                assert not any(
+                    isinstance(item, CompactionItem)
+                    for item in await cold._repository.load_items(thread)
+                )
+            assert not model.requests
+        finally:
+            await cold.aclose()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("operation", ["normal", "compact"])
 @pytest.mark.parametrize("admitted_base", ["ADMITTED BASE", ""])
+@pytest.mark.parametrize("legacy_missing_base", [False, True])
 def test_ledger_only_turn_retains_base_before_first_checkpoint(
-    tmp_path, monkeypatch, operation, admitted_base
+    tmp_path, monkeypatch, operation, admitted_base, legacy_missing_base
 ):
     async def scenario():
         model = Model()
-        source = make_runtime(
+        source = await make_runtime(
             tmp_path,
             model,
             configured=replace(settings(tmp_path), base_instructions=admitted_base),
@@ -105,18 +200,31 @@ def test_ledger_only_turn_retains_base_before_first_checkpoint(
             assert pending.base_instructions == admitted_base
             assert not model.requests
             thread = source.thread_id
+            if legacy_missing_base:
+                with source._repository._connect() as connection:
+                    connection.execute(
+                        "UPDATE turns SET base_instructions=NULL WHERE id=?",
+                        (str(pending.id),),
+                    )
         finally:
             # Preserve the crash boundary while still releasing fixture resources.
             source._pending_terminals.clear()
             await source.aclose()
         cold_model = Model()
-        cold = make_runtime(
+        cold = await make_runtime(
             tmp_path,
             cold_model,
             thread=thread,
             configured=replace(settings(tmp_path), base_instructions="FUTURE BASE"),
         )
         try:
+            if legacy_missing_base:
+                events = [e async for e in cold.resume_pending()]
+                assert isinstance(events[-1], TurnFailed)
+                assert "missing admitted Turn base instructions" in events[-1].error
+                assert not cold_model.requests
+                assert await cold._repository.latest_running_turn(thread) is None
+                return
             assert isinstance([e async for e in cold.resume_pending()][-1], TurnCompleted)
             assert len(cold_model.requests) == 1
             assert cold_model.requests[0].instructions == admitted_base
@@ -150,7 +258,7 @@ def test_pending_turn_base_is_not_replaced_by_new_host_override(
         registry = ToolRegistry()
         registry.register(Tool())
         original_model = Model(calls=after_tools)
-        source = make_runtime(
+        source = await make_runtime(
             tmp_path,
             original_model,
             registry=registry,
@@ -187,7 +295,7 @@ def test_pending_turn_base_is_not_replaced_by_new_host_override(
         model = Model()
         registry = ToolRegistry()
         registry.register(Tool())
-        cold = make_runtime(
+        cold = await make_runtime(
             tmp_path,
             model,
             registry=registry,

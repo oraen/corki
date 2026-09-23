@@ -69,7 +69,7 @@ def test_runtime_rejects_worker_config_before_sync_or_noop(tmp_path, monkeypatch
                 raise AssertionError("invalid worker config must not sample")
                 yield
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

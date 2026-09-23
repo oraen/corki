@@ -52,10 +52,10 @@ class Ping:
         return ToolResult(call.id, call.name, "pong")
 
 
-def create_runtime(tmp_path, model, **settings):
+async def create_runtime(tmp_path, model, **settings):
     registry = ToolRegistry()
     registry.register(Ping())
-    return LangGraphRuntime.create(
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             model_contexts=(ModelContextInfo("gpt-5", 65536),),
@@ -96,7 +96,7 @@ def test_runtime_warns_and_omits_only_unreadable_skill(tmp_path, monkeypatch, fa
 
         monkeypatch.setattr(SkillService, "read", read)
         model = RecordingModel()
-        runtime = create_runtime(tmp_path, model)
+        runtime = await create_runtime(tmp_path, model)
         try:
             events = []
             async for event in runtime.stream("Use $missing-host and $available-host"):
@@ -161,7 +161,7 @@ def test_warning_backpressure_is_cancellable_without_sampling(tmp_path, monkeypa
         monkeypatch.setattr(_QueueEventSink, "emit", observe)
         monkeypatch.setattr(SkillService, "read", read)
         model = RecordingModel()
-        runtime = create_runtime(tmp_path, model, event_queue_size=1)
+        runtime = await create_runtime(tmp_path, model, event_queue_size=1)
         stream = runtime.stream("Use $missing-host and $available-host")
         events = []
         try:
@@ -200,7 +200,7 @@ def test_skill_loading_does_not_downgrade_infrastructure_failure_or_cancel(
 
         monkeypatch.setattr(SkillService, "read", read)
         model = RecordingModel()
-        runtime = create_runtime(tmp_path, model)
+        runtime = await create_runtime(tmp_path, model)
         events = []
 
         async def consume():

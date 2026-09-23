@@ -122,7 +122,7 @@ def test_mcp_admission_refresh_does_not_change_current_search_handler_corpus(
                 pass
 
         registry = ToolRegistry()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -165,7 +165,7 @@ def test_eager_index_build_failure_does_not_publish_and_startup_can_retry(tmp_pa
 
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "failure.db",
             registry=registry,
@@ -239,7 +239,7 @@ def test_refresh_index_failure_stops_before_next_sample_and_preserves_old_handle
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "refresh-failure.db",
             registry=registry,

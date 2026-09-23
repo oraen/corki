@@ -132,7 +132,7 @@ def test_runtime_uses_selected_extraction_window_before_sampling_and_publication
                 pass
 
         memory_model = MemoryModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             model=MainModel(),
@@ -204,7 +204,7 @@ def test_static_main_catalog_drives_actual_compaction_not_only_memory_math(tmp_p
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "sessions.db",
             model=Model(),

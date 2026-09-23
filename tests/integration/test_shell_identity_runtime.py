@@ -103,15 +103,15 @@ def test_runtime_injects_own_identity_across_turns_and_reopen(tmp_path, monkeypa
     )
 
     async def scenario():
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "sessions.db",
                 model=ProbeModel(mode, tty),
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         expected = [str(thread), str(thread), __version__, None, None, None]
         try:
@@ -120,12 +120,12 @@ def test_runtime_injects_own_identity_across_turns_and_reopen(tmp_path, monkeypa
                 assert isinstance(events[-1], TurnCompleted), events[-1]
                 assert _identity(runtime._model.requests[-1]) == expected
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [e async for e in runtime.stream("cold reopen")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert _identity(runtime._model.requests[-1]) == expected
             await runtime.aclose()
-            runtime = create()
+            runtime = await create()
             events = [e async for e in runtime.stream("new root")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert _identity(runtime._model.requests[-1]) == [
@@ -154,7 +154,7 @@ def test_stored_custom_session_identity_wins_on_cold_reopen(tmp_path, mode):
     async def scenario():
         settings = CorkiSettings(working_directory=tmp_path, skills_enabled=False, tool_mode=mode)
         stored = new_session_id()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "session.db",
             model=ProbeModel(mode),
@@ -170,7 +170,7 @@ def test_stored_custom_session_identity_wins_on_cold_reopen(tmp_path, mode):
             assert _identity(runtime._model.requests[-1])[:2] == [thread, stored]
             await runtime.aclose()
             for supplied in (None, new_session_id()):
-                runtime = LangGraphRuntime.create(
+                runtime = await LangGraphRuntime.acreate(
                     settings=settings,
                     database_path=tmp_path / "session.db",
                     model=ProbeModel(mode),
@@ -227,7 +227,7 @@ def test_memory_consolidation_has_fresh_independent_internal_identity(tmp_path, 
                     )
 
         memory = Memory()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -269,7 +269,7 @@ def test_corrupt_stored_identity_stops_runtime_before_model_or_tool_admission(tm
         with sqlite3.connect(path) as db:
             db.execute("UPDATE threads SET session_id=?", (invalid,))
         model = ProbeModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=path,
             thread_id=thread,
@@ -306,8 +306,8 @@ def test_prepared_checkpoint_uses_restored_durable_identity(tmp_path, mode):
         settings = CorkiSettings(working_directory=tmp_path, skills_enabled=False, tool_mode=mode)
         session = new_session_id()
 
-        def create(thread=None, requested=session):
-            return LangGraphRuntime.create(
+        async def create(thread=None, requested=session):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "checkpoint.db",
                 model=ProbeModel(mode),
@@ -315,7 +315,7 @@ def test_prepared_checkpoint_uses_restored_durable_identity(tmp_path, mode):
                 session_id=requested,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [e async for e in runtime.stream("initialize")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -334,7 +334,7 @@ def test_prepared_checkpoint_uses_restored_durable_identity(tmp_path, mode):
             assert (await runtime._compiled.aget_state(config)).next == ("call_model",)
             prepared = await runtime._repository.load_items(thread)
             await runtime.aclose()
-            runtime = create(thread, new_session_id())
+            runtime = await create(thread, new_session_id())
             events = [e async for e in runtime.resume_pending()]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             visible = tuple(
@@ -362,7 +362,7 @@ def test_host_prewarm_resolves_identity_before_first_stream(tmp_path, tty):
 
     async def scenario():
         session = new_session_id()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "prewarm.db",
             model=ProbeModel(),

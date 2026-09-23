@@ -38,7 +38,7 @@ def test_second_runtime_cannot_write_while_first_thread_owner_remains_open(tmp_p
     async def scenario():
         database, thread = tmp_path / "history.db", new_thread_id()
         settings = CorkiSettings(working_directory=tmp_path, skills_enabled=False)
-        first = LangGraphRuntime.create(
+        first = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             thread_id=thread,
@@ -50,7 +50,7 @@ def test_second_runtime_cannot_write_while_first_thread_owner_remains_open(tmp_p
             assert isinstance([event async for event in first.stream("first")][-1], TurnCompleted)
             original = await first._repository.load_items(thread)
             model = AnswerModel()
-            second = LangGraphRuntime.create(
+            second = await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=database,
                 thread_id=thread,
@@ -87,7 +87,7 @@ def test_failed_initialization_releases_writer_and_retry_reacquires_it(tmp_path,
 
         monkeypatch.setattr(runtime_module, "setup_checkpoint", fail_once)
         first, second = [
-            LangGraphRuntime.create(
+            await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=database,
                 thread_id=thread,
@@ -121,7 +121,7 @@ def test_cancellation_joins_acquisition_then_releases_returned_guard(tmp_path, m
         loop = asyncio.get_running_loop()
         settings = CorkiSettings(working_directory=tmp_path, skills_enabled=False)
         first, second = [
-            LangGraphRuntime.create(
+            await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=database,
                 thread_id=thread,
@@ -181,14 +181,14 @@ def test_close_holds_writer_until_model_cleanup_finishes(tmp_path, cancel_waiter
 
         database, thread = tmp_path / "history.db", new_thread_id()
         settings = CorkiSettings(working_directory=tmp_path, skills_enabled=False)
-        first = LangGraphRuntime.create(
+        first = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             thread_id=thread,
             home_path=tmp_path / "home",
             model=Model(),
         )
-        second = LangGraphRuntime.create(
+        second = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             thread_id=thread,
@@ -227,7 +227,7 @@ def test_thread_creation_failure_releases_writer_before_retry(tmp_path, monkeypa
     async def scenario():
         database, thread = tmp_path / "history.db", new_thread_id()
         first, second = [
-            LangGraphRuntime.create(
+            await LangGraphRuntime.acreate(
                 settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
                 database_path=database,
                 thread_id=thread,
@@ -264,7 +264,7 @@ def test_cleanup_error_is_reported_after_writer_release(tmp_path, monkeypatch, s
     async def scenario():
         database, thread = tmp_path / "history.db", new_thread_id()
         first, second = [
-            LangGraphRuntime.create(
+            await LangGraphRuntime.acreate(
                 settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
                 database_path=database,
                 thread_id=thread,
@@ -336,7 +336,7 @@ def test_process_death_releases_writer_and_does_not_replay_unknown_tool(tmp_path
             registry = ToolRegistry()
             registry.register(Tool())
             model = AnswerModel()
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
                 database_path=database,
                 thread_id=thread,
@@ -347,7 +347,7 @@ def test_process_death_releases_writer_and_does_not_replay_unknown_tool(tmp_path
             with pytest.raises(RuntimeError, match="active writer"):
                 _ = [event async for event in runtime.stream("must not be admitted")]
             assert not model.requests
-            independent = LangGraphRuntime.create(
+            independent = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
                 database_path=database,
                 home_path=tmp_path / "home",
@@ -418,7 +418,7 @@ def test_opening_unrelated_runtime_does_not_interrupt_an_active_tool_ledger(tmp_
         registry = ToolRegistry()
         registry.register(Tool())
         settings = CorkiSettings(working_directory=tmp_path, skills_enabled=False)
-        first = LangGraphRuntime.create(
+        first = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=database,
             home_path=tmp_path / "home",
@@ -433,7 +433,7 @@ def test_opening_unrelated_runtime_does_not_interrupt_an_active_tool_ledger(tmp_
         consumer = asyncio.create_task(consume())
         try:
             await asyncio.wait_for(entered.wait(), 3)
-            second = LangGraphRuntime.create(
+            second = await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=database,
                 home_path=tmp_path / "home",

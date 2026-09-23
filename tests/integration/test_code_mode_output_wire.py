@@ -90,9 +90,9 @@ def test_cell_output_http_projection_and_cold_archive(tmp_path, api, budget, fai
         )
         database = tmp_path / "cell.db"
 
-        def create(thread=None):
+        async def create(thread=None):
             adapter = OpenAIResponsesModel if api == "responses" else OpenAICompatibleModel
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=database,
                 registry=ToolRegistry(),
@@ -107,7 +107,7 @@ def test_cell_output_http_projection_and_cold_archive(tmp_path, api, budget, fai
                 ),
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             events = [e async for e in runtime.stream("execute")]
@@ -131,7 +131,7 @@ def test_cell_output_http_projection_and_cold_archive(tmp_path, api, budget, fai
                 assert not value.get("dispatch_error", False)
         finally:
             await runtime.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             assert isinstance([e async for e in cold.stream("continue")][-1], TurnCompleted)
             assert isinstance([e async for e in cold.compact()][-1], TurnCompleted)

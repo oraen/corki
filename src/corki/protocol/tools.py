@@ -22,6 +22,13 @@ from corki.protocol.tool_names import compatible_tool_name, split_tool_name
 from corki.protocol.wire_numbers import WireNumber, dumps_wire, iterencode_wire, loads_number_values
 
 
+def _validate_tool_json(field_name: str, value: Mapping[str, Any]) -> None:
+    try:
+        dumps_wire(value).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError, RecursionError, OverflowError) as error:
+        raise ValueError(f"tool {field_name} must contain JSON data") from error
+
+
 def same_tool_spec(left, right):
     """Compare model definitions without Python's bool/number aliasing in JSON."""
     if left is None or right is None:
@@ -88,6 +95,23 @@ class ToolSpec:
     output_schema: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
+        for field_name in ("name", "description"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or (field_name == "name" and not value):
+                raise ValueError(f"tool {field_name} must be text")
+            try:
+                value.encode("utf-8")
+            except UnicodeEncodeError as error:
+                raise ValueError(f"tool {field_name} must be UTF-8 text") from error
+        for field_name in ("search_text", "source", "source_description", "namespace_description"):
+            value = getattr(self, field_name)
+            if value is not None:
+                if not isinstance(value, str):
+                    raise ValueError(f"tool {field_name} must be text")
+                try:
+                    value.encode("utf-8")
+                except UnicodeEncodeError as error:
+                    raise ValueError(f"tool {field_name} must be UTF-8 text") from error
         namespace, leaf = split_tool_name(self.name)
         if namespace is not None and (
             not namespace or namespace == "functions" or not leaf or "::" in leaf
@@ -101,15 +125,23 @@ class ToolSpec:
             raise ValueError("namespace_description requires a namespaced tool and text")
         # Keep checkpoint serialization portable. ``mappingproxy`` appears
         # immutable but cannot be encoded by LangGraph's durable serializer.
-        object.__setattr__(self, "parameters", deepcopy(dict(self.parameters)))
+        if not isinstance(self.parameters, Mapping):
+            raise ValueError("tool parameters must be an object")
+        parameters = deepcopy(dict(self.parameters))
+        _validate_tool_json("parameters", parameters)
+        object.__setattr__(self, "parameters", parameters)
+        object.__setattr__(self, "exposure", ToolExposure(self.exposure))
+        object.__setattr__(self, "concurrency", ToolConcurrency(self.concurrency))
         object.__setattr__(self, "input_kind", ToolInputKind(self.input_kind))
         if self.output_schema is not None:
             if not isinstance(self.output_schema, Mapping):
                 raise ValueError("tool output_schema must be an object")
-            object.__setattr__(self, "output_schema", deepcopy(dict(self.output_schema)))
-        if self.source_description is not None and not isinstance(self.source_description, str):
-            raise ValueError("tool source_description must be a string")
+            output_schema = deepcopy(dict(self.output_schema))
+            _validate_tool_json("output_schema", output_schema)
+            object.__setattr__(self, "output_schema", output_schema)
         if self.freeform_format is not None:
+            if not isinstance(self.freeform_format, Mapping):
+                raise ValueError("tool freeform_format must be an object")
             value = deepcopy(dict(self.freeform_format))
             if self.input_kind != ToolInputKind.FREEFORM:
                 raise ValueError("freeform_format requires a freeform tool")
@@ -123,7 +155,9 @@ class ToolSpec:
             ):
                 raise ValueError("invalid freeform tool format")
             object.__setattr__(self, "freeform_format", value)
-        if self.output_char_budget is not None and self.output_char_budget <= 0:
+        if self.output_char_budget is not None and (
+            type(self.output_char_budget) is not int or self.output_char_budget <= 0
+        ):
             raise ValueError("tool output_char_budget must be positive")
 
     def as_chat_completion_tool(self) -> dict[str, Any]:
@@ -151,9 +185,7 @@ class ToolSpec:
             return self.description
         return "\n".join(filter(None, (self.name, self.namespace_description, self.description)))
 
-    def as_response_tool(
-        self, *, native_freeform: bool = False, native_namespaces: bool = False
-    ) -> dict[str, Any]:
+    def as_response_tool(self) -> dict[str, Any]:
         name = compatible_tool_name(self.name)
         description = self.compatible_description()
         return {

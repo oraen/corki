@@ -80,7 +80,7 @@ def test_owned_http_consumer_cancellation_reclaims_socket(monkeypatch, tmp_path,
             (),
         )
         if consumer.startswith("summary_"):
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
                 database_path=tmp_path / "summary.db",
                 model=owner,
@@ -172,7 +172,7 @@ def test_runtime_owned_model_tls_cancel_has_one_terminal_and_no_socket(
         monkeypatch.setenv("NO_PROXY", "*")
         monkeypatch.setenv("no_proxy", "*")
         server = await asyncio.start_server(peer, "127.0.0.1", 0)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 api_base=f"https://127.0.0.1:{server.sockets[0].getsockname()[1]}",

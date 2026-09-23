@@ -118,7 +118,7 @@ def test_runtime_shell_environment_policy(tmp_path, monkeypatch, mode, tty, poli
 
         settings = CorkiSettings.for_directory(tmp_path, config_file=config)
         assert settings.tool_mode == mode
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings, database_path=tmp_path / "sessions.db", model=Model()
         )
         try:

@@ -1,5 +1,142 @@
 # A4/C8：压缩生命周期 Hook 缺口（未完成）
 
+## 2026-09-22：冷恢复计划重复命令在副作用前拒绝
+
+Codex `compact.rs::run_compact_task_inner`、`hook_runtime.rs::run_post_compact_hooks`
+在当前 Turn 构造并运行 Hook 请求；Corki 为冷恢复另存命令计划。
+真实 Runtime/SQLite 的 PostCompact 安装故障恢复中，将已保存计划的同一命令
+重复一次，手动/自动 × command/MCP 四例修复前均先产生一次 Hook 副作用，
+再因第二次 claim 的 unknown 账本失败。现于恢复执行前检查命令 key 唯一，
+拒绝重复计划；四例先红后绿，均零新增 Hook 调用、TurnFailed、摘要与历史
+前缀保留，二次恢复不重放。相关七文件 **224 passed / 26.62s**，
+4 workers/loadfile/禁重启，实际退出 0。随后非 CLI 完整范围按短期限敏感
+六文件与其余文件分组重跑，两批分别 **459 passed / 55.58s**、
+**15307 passed、7 skipped / 736.34s**，均退出 0；独立收集
+**15773 项**等于两批总数，合计 **15766 passed、7 skipped**。
+七项跳过仍为六项缺失历史编译器和一项文件系统不接受非 UTF-8 文件名。
+不据此证明其它任意计划损坏或外部副作用 exactly-once。
+
+## 2026-09-22：已落盘计划 payload 的值身份及额外字段拒绝
+
+Codex `compact.rs::run_compact_task_inner` 在同一 Turn/Step 捕获压缩来源与
+Hook 生命周期；Corki 为冷恢复额外持久化 Pre/Post 计划，因此必须在重启后
+重新绑定当时的身份，不能只检查字段类型。真实 Runtime/SQLite 的 PostCompact
+安装后故障窗口中，对保存计划读取结果注入类型合法但值错配的 `model`、`cwd`、
+`trigger`、`transcript_path`，或注入根会话不应有的 `agent_id/agent_type`、
+额外 `scope` 字段；手动/自动 × command/MCP 共 24 例。修复前全部会继续执行
+Hook（先 12 例、再 8 例、最后 4 例红），将错误来源传给本地命令或 MCP；
+修复后均在 claim/远端调用前 `TurnFailed`，零新增 Hook 副作用，原摘要
+及历史前缀保留，二次恢复不重复。
+
+`compact_hooks.run` 现将保存 payload 的完整键集合、原 Turn 的模型与
+触发来源、工作目录、已持久 session/thread 来源对应的 agent 身份，以及
+从该 Thread 规范历史重新物化的 transcript 路径逐项核对；原有旧 v1
+`session_id==thread_id` 兼容仍仅在此单字段允许，不放宽其余身份。
+关联计划安装、保存边界、普通压缩、HTTP MCP、真实 shell 与异步 Hook
+七文件 **220 passed / 23.92s**，4 workers/loadfile/禁重启，实际退出 0；
+Ruff/format/diff 通过。随后非 CLI 完整范围按短期限敏感六文件与其余文件
+分组重新运行，两批分别 **459 passed / 57.67s**、**15303 passed、
+7 skipped / 734.48s**，均退出 0；独立收集 **15769 项**等于两批总数，
+合计 **15762 passed、7 skipped**。七项跳过仍为六项缺失历史编译器和
+一项文件系统不接受非 UTF-8 文件名。未据此宣称任意损坏命令数组、
+执行账本迁移或远端副作用 exactly-once 均已验证。
+
+## 2026-09-22：双同步 shell Hook 的进程清理与账本失败
+
+新增真实 Runtime/SQLite、真实 POSIX 子进程的四个组合：Pre/PostCompact ×
+Runtime 关闭/首个 Hook 执行账本提交失败。两条命令同时启动并等待各自释放；
+关闭路径要求两个进程在 `aclose` 返回前退出，提交失败路径要求首个进程
+释放后取消、join 另一个进程，且在 `TurnFailed` 发布前两个 PID 均不存活。
+两种路径的执行结果账本均保持 unknown，不发成功 `HookCompleted`；Post
+摘要已安装、Pre 未开始摘要。冷 Runtime 的 `resume_pending` 不重放进程。
+新文件 **4 passed / 0.87s**；与普通压缩 Hook、MCP HTTP 半截故障、计划
+安装/保存边界及 MCP 工具 Hook 六文件联合 **215 passed / 20.13s**，
+4 workers/loadfile/禁重启，实际退出 0。只新增测试，不改生产；此证据仅
+适用于受管 POSIX 进程，不保证强杀或远端副作用 exactly-once。新增四例及
+上节八例后来已进入完整非 CLI 回归：两批合计 15733 passed、7 skipped，
+详见 `context-budget-review.md` 顶部；单独故障窗口证据仍以上述六文件为准。
+
+## 2026-09-22：并发 MCP 压缩 Hook 的响应清理所有权
+
+将真实 `HttpMCPClient`／离线半截 JSON 响应体测试从单 Hook 扩展为
+单个/两个同步 MCP Hook × Pre/PostCompact × 自动/手动 × 超时/取消。
+两个 Hook 在同一事件中并发发起普通 `tools/call`，各自响应体停在半截；
+取消路径要求两份 body 都关闭后才发布 Turn 终态，超时路径要求两个
+`HookCompleted` 均为 failed，任一分支都不把半截输出当成功。冷 Runtime
+同 Thread 的公开恢复不重发远端调用，也不重做自动路径的大工具副作用。
+单文件 **16 passed / 11.37s**；与普通压缩 Hook、计划冷热恢复、计划
+保存边界及 MCP 工具 Hook 五文件联合 **211 passed / 20.18s**，
+4 workers/loadfile/禁重启、实际退出 0，Ruff/format/diff 通过。
+只有测试/文档变更，不将 MockTransport 冒充真实外网或强杀后远端原子性。
+本批新增 8 例晚于下方 15717 非 CLI 全范围基线；后续完整回归已刷新为
+15733 passed、7 skipped，详见 `context-budget-review.md` 顶部。
+
+联合批次命令：
+
+```text
+PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring CORKI_TEST_SANDBOX_COMPILER=/Users/corki/PycharmProjects/corki/src/corki/_native/sandbox/corki-sandbox .venv/bin/pytest tests/integration/test_compact_mcp_http_failure.py tests/integration/test_compact_hooks.py tests/integration/test_compact_hook_install_recovery.py tests/integration/test_compact_plan_save_boundary.py tests/integration/test_mcp_tool_hooks.py -n 4 --dist=loadfile --max-worker-restart=0 -q -o addopts='' --tb=short
+```
+
+## 2026-09-22：计划保存写前／写后失败不激活孤立 Hook
+
+Codex `core/src/compact.rs::run_compact_task_inner` 只在实际摘要成功后
+进入 PostCompact；Corki 为冷恢复额外持久化 Pre/Post 执行计划，计划
+保存失败不能单独产生可执行义务。新增真实 Runtime/SQLite 测试覆盖
+Pre/Post × 自动/手动 × `save_hook_batch` 写前/写后报错八例：原 Turn
+失败，Pre 不生成摘要、Post 摘要已生成但均未安装压缩 marker，Hook
+零执行；写后允许留下孤立计划，冷 Runtime 的 `resume_pending` 和下个
+普通 Turn 不执行它，原历史前缀及自动工具副作用不重放。冷对照使用较大
+窗口，避免旧大结果在新 Turn 合法触发另一次自动压缩，测试精确针对旧计划。
+
+新文件 **8 passed / 2.05s**。与计划安装恢复、SessionStart 来源安装、
+普通压缩 Hook、真实 HTTP MCP 半截故障五文件联合 **176 passed /
+19.71s**，4 workers/loadfile/禁重启，实际退出 0；Ruff/format/diff
+通过。本轮只增测试，不改生产。首次扩大命令误写不存在的 MCP 恢复文件，
+pytest 零收集退出 5，修正为 `test_compact_mcp_http_failure.py` 后运行上述
+完整目标范围。不能以此证明任意损坏计划、进程强杀或外部副作用 exactly-once。
+
+联合批次命令（在项目根目录）：
+
+```text
+PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring CORKI_TEST_SANDBOX_COMPILER=/Users/corki/PycharmProjects/corki/src/corki/_native/sandbox/corki-sandbox .venv/bin/pytest tests/integration/test_compact_plan_save_boundary.py tests/integration/test_compact_hook_install_recovery.py tests/integration/test_compact_start_install.py tests/integration/test_compact_hooks.py tests/integration/test_compact_mcp_http_failure.py -n 4 --dist=loadfile --max-worker-restart=0 -q -o addopts='' --tb=short
+```
+
+包含新增八例的后续非 CLI 完整范围已按短期限敏感组/其余组实际退出 0，
+合计 **15717 passed、7 skipped**；独立收集 15724 项无分组遗漏，
+跳过原因仍为历史编译器缺失及文件系统限制。完整两批命令及资源条件
+见 `patch-worker-cancellation.md`，不以全量通过代替其余 C8 窗口验收。
+
+## 2026-09-22：实际 HTTP MCP 压缩 Hook 的超时/取消与冷恢复
+
+新增 `test_compact_mcp_http_failure.py`，用真实 `HttpMCPClient` 和离线
+`httpx.MockTransport` 将 `tools/call` 的 JSON 响应体读至半截后永久等待。
+Pre/PostCompact × 自动/手动 × 1 秒 Hook 超时/活动 Turn 取消八组合均通过。
+每例断言 MCP 业务调用恰好一次、响应体在 Turn 终态前关闭、超时为失败 Hook
+但不阻断压缩、取消传播且不伪装完成；Pre 取消不安装摘要，Post 取消保留
+已安装摘要，自动压缩的大工具副作用仅一次。关闭 warm 后以同库同 Thread
+重建 cold Runtime，`resume_pending` 为空、原历史逐项不变，调用/副作用不重放。
+联合压缩、MCP 工具 Hook、HTTP 清理和上批冷恢复六文件
+**219 passed / 19.65s**，4 workers/loadfile/禁重启，实际退出 0。
+本批只新增离线故障注入测试，未修改生产；不冒充真实互联网故障或
+操作系统强杀后的远端 exactly-once 保证。
+
+## 2026-09-22：通用 MCP Pre/PostCompact 冷恢复补证
+
+将既有真实 Runtime/SQLite 的压缩 Hook 安装与执行故障窗口扩为
+`type=mcp_tool`，使用已信任的普通 MCP server/tool 身份、MCPManager 与离线
+客户端，而不是把 MCP Hook 伪装成 shell command。新增 54 组合覆盖 Pre/Post ×
+自动/手动 × 安装、unknown/completed 账本、回执及配置变更/损坏；记录远端
+`tools/call` 的 session 身份和次数。unknown 不重发结果未知的调用，completed
+复用已落盘输出，配置移除时不追溯授权；摘要/工具副作用及原始历史仍按原
+测试断言保持一次。MCP 新组合单独 54 passed，和命令、异步压缩及 MCP
+Pre/PostToolUse 恢复联合 **176 passed / 19.66s**，4 workers/loadfile/
+禁重启，实际退出 0。无生产修改。
+
+该证据使用真实主循环、管理器和持久账本，但 MCP 客户端是离线替身；不能
+推出真实 HTTP 响应体超时、跨进程强杀或任意远端副作用 exactly-once。
+下方“自身冷恢复尚缺”是此前状态，不再作为该窗口的当前结论。其余
+压缩 Hook/可选来源仍按具体故障入口判断，不能用笼统“全部未验”替代。
+
 自动异步实际进程补验：test_async_compact_hooks现覆盖自动/手动 × Pre/Post ×
 后台完成/运行中关闭八场景（5d7d00）。自动路径为真实Runtime.stream→大工具结果
 16000字符→普通摘要→安装→后续采样；脚本等待release时Turn已完成且PID仍活。
@@ -139,12 +276,15 @@ receipt修改后，相关手动/自动恢复、previous-model、MCP Hook及conte
 
 剩余具体边界，不可因原四项转绿而关闭本项：
 - Post计划现已先保存、后安装并按marker关联；安装后配置新增/移除/保留的自动/
-  手动冷恢复已验。计划自身损坏、保存失败及执行账本提交窗口仍需专项。
+  手动冷恢复已验。计划保存写前/写后失败的八个冷热窗口已补验；其它计划
+  字段损坏及未列明执行账本提交窗口仍需专项。
 - session、ThreadSpawn agent及摘要owner模型字段已修复；Step激活和previous-model
   降档有真实Runtime/HTTP证据，其它计划字段损坏与执行恢复仍按下列项验收。
 - 多同步Hook并发完成事件已按配置顺序聚合，受控runner的提交失败取消join已验；
-  实际shell/MCP多任务资源清理与冷恢复仍需补验。
-- 异步/mcp_tool、执行失败/摘要失败无Post、完整冷热恢复/新输入/取消需专项测试。
+  两个实际 HTTP MCP Hook 的超时/取消、响应关闭及冷恢复，以及两个实际 POSIX
+  shell Hook 的关闭/提交失败、进程退出及冷恢复已补验；跨类型交错仍需补验。
+- 异步命令、执行失败/摘要失败无Post，以及未列明的冷热恢复/新输入/取消窗口
+  仍需专项测试；普通 mcp_tool 已有上述单/双 Hook 与执行账本证据。
 - receipt与snapshot严格字段类型、完整payload身份校验及持久迁移要补验；当前
   只有基础版本、请求身份、未知拒绝和已保存命令恢复，不称完整损坏矩阵通过。
 

@@ -33,10 +33,10 @@ class RecordingModel:
         pass
 
 
-def create(tmp_path, model, **kwargs):
+async def create(tmp_path, model, **kwargs):
     project = tmp_path / "project"
     project.mkdir(exist_ok=True)
-    return LangGraphRuntime.create(
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(working_directory=project, skills_enabled=False),
         home_path=tmp_path / "home",
         database_path=tmp_path / "s.db",
@@ -58,7 +58,7 @@ def test_explicit_falsey_provider_is_loaded_once_and_keeps_provenance(tmp_path):
                 return LoadedUserInstructions(Instructions("HOST RULE", tmp_path / "host.md"))
 
         provider, model = Provider(), RecordingModel()
-        runtime = create(tmp_path, model, user_instructions_provider=provider)
+        runtime = await create(tmp_path, model, user_instructions_provider=provider)
         try:
             for _ in range(2):
                 assert isinstance([e async for e in runtime.stream("go")][-1], TurnCompleted)
@@ -95,7 +95,7 @@ def test_guardian_does_not_inherit_global_instructions(tmp_path, source):
             async def load_user_instructions(self):
                 raise AssertionError("internal host must not reload global files")
 
-        runtime = create(
+        runtime = await create(
             tmp_path,
             model,
             session_source=source,
@@ -119,7 +119,7 @@ def test_guardian_does_not_inherit_global_instructions(tmp_path, source):
 def test_failed_startup_reloads_unpublished_instruction_snapshot(tmp_path, monkeypatch):
     async def scenario():
         model = RecordingModel()
-        runtime = create(tmp_path, model)
+        runtime = await create(tmp_path, model)
         home = tmp_path / "home"
         home.mkdir(exist_ok=True)
         rule = home / "AGENTS.md"
@@ -173,7 +173,7 @@ def test_startup_owns_global_file_reader_until_joined(tmp_path, action):
                 return result
 
         provider, model = HeldProvider(home), RecordingModel()
-        runtime = create(tmp_path, model, user_instructions_provider=provider)
+        runtime = await create(tmp_path, model, user_instructions_provider=provider)
         startup = asyncio.create_task(runtime.instruction_sources())
         closing = None
         try:
@@ -223,7 +223,7 @@ def test_non_root_uses_only_host_inherited_global_snapshot(tmp_path, inherited):
 
         model = RecordingModel()
         snapshot = Instructions("PARENT SNAPSHOT", tmp_path / "parent.md") if inherited else None
-        runtime = create(
+        runtime = await create(
             tmp_path,
             model,
             session_source=SessionSource.internal("memory_consolidation"),

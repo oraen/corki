@@ -26,7 +26,7 @@ def test_invalid_denial_cannot_retry_approved_command(
     launches = capture_spawns(monkeypatch)
 
     async def scenario():
-        runtime, model = setup(tmp_path, compiler, mode)
+        runtime, model = await setup(tmp_path, compiler, mode)
         target = tmp_path / "must-not-exist"
         classifications, approvals = [], []
 
@@ -83,7 +83,7 @@ def test_invalid_permission_context_fails_before_model_and_can_recover(
 
     async def scenario():
         nonlocal broken
-        runtime, model = setup(tmp_path, compiler, mode)
+        runtime, model = await setup(tmp_path, compiler, mode)
         events = []
         try:
             try:

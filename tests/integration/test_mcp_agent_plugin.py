@@ -68,7 +68,7 @@ def test_real_plugin_refresh_budgets_ordinary_definitions(tmp_path, monkeypatch,
             return client
 
         monkeypatch.setattr("corki.mcp.client.MCPHttpSession", session)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 plugin_dirs=(tmp_path / ".corki/plugins",),
@@ -155,13 +155,13 @@ def package(tmp_path, *, overlay=True, schema=SCHEMA):
     return root
 
 
-def runtime_for(tmp_path, monkeypatch, carrier, mode="direct"):
+async def runtime_for(tmp_path, monkeypatch, carrier, mode="direct"):
     def session(**kwargs):
         kwargs["transport"] = carrier
         return MCPHttpSession(**kwargs)
 
     monkeypatch.setattr("corki.mcp.client.MCPHttpSession", session)
-    return LangGraphRuntime.create(
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             plugin_dirs=(tmp_path / ".corki/plugins",),
@@ -186,7 +186,7 @@ def test_agent_plugin_root_discovers_and_calls_with_trusted_format(
     async def scenario():
         package(tmp_path, overlay=overlay)
         carrier = Carrier()
-        runtime = runtime_for(tmp_path, monkeypatch, carrier, mode)
+        runtime = await runtime_for(tmp_path, monkeypatch, carrier, mode)
         try:
             await runtime._ensure_ready()
             await runtime._mcp_manager.refresh_if_dirty()
@@ -212,7 +212,7 @@ def test_agent_plugin_overlay_cannot_downgrade_authenticated_redirect(tmp_path, 
     async def scenario():
         package(tmp_path)
         carrier = RedirectingCarrier()
-        runtime = runtime_for(tmp_path, monkeypatch, carrier)
+        runtime = await runtime_for(tmp_path, monkeypatch, carrier)
         try:
             await runtime._ensure_ready()
             await runtime._mcp_manager.refresh_if_dirty()
@@ -239,7 +239,7 @@ def test_agent_client_owned_headers_do_not_become_plugin_credentials(tmp_path, m
         }
         source.write_text(json.dumps(document))
         carrier = RedirectingCarrier()
-        runtime = runtime_for(tmp_path, monkeypatch, carrier)
+        runtime = await runtime_for(tmp_path, monkeypatch, carrier)
         try:
             await runtime._ensure_ready()
             await runtime._mcp_manager.refresh_if_dirty()
@@ -264,7 +264,7 @@ def test_agent_unicode_header_survives_actual_transport(tmp_path, monkeypatch):
         document["mcpServers"]["docs"]["headers"] = {"X-Plugin": "café"}
         source.write_text(json.dumps(document))
         carrier = Carrier()
-        runtime = runtime_for(tmp_path, monkeypatch, carrier)
+        runtime = await runtime_for(tmp_path, monkeypatch, carrier)
         try:
             events = [e async for e in runtime.stream("needle")]
             assert isinstance(events[-1], TurnCompleted)
@@ -289,7 +289,7 @@ def test_invalid_agent_root_never_falls_back_to_legacy_overlay(tmp_path, monkeyp
             else:
                 (root / "plugin.json").mkdir()
         carrier = Carrier()
-        runtime = runtime_for(tmp_path, monkeypatch, carrier)
+        runtime = await runtime_for(tmp_path, monkeypatch, carrier)
         try:
             await runtime._ensure_ready()
             await runtime._mcp_manager.refresh_if_dirty()
@@ -343,7 +343,7 @@ def test_agent_stdio_source_environment_reaches_actual_process(tmp_path, monkeyp
         if not inline:
             (root / ".mcp.json").write_text(json.dumps(servers))
         carrier = Carrier()
-        runtime = runtime_for(tmp_path, monkeypatch, carrier, mode)
+        runtime = await runtime_for(tmp_path, monkeypatch, carrier, mode)
         process = None
         try:
             await runtime._ensure_ready()

@@ -96,8 +96,8 @@ def server(name="docs"):
     return MCPServerSettings(name, "http", url="https://fixture.invalid", environment_id="remote")
 
 
-def runtime_for(tmp_path, context, *, mode="direct", catalog=None):
-    return LangGraphRuntime.create(
+async def runtime_for(tmp_path, context, *, mode="direct", catalog=None):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -122,7 +122,7 @@ def test_bound_carrier_search_call_stream_recovery_and_host_ownership(tmp_path, 
     async def scenario():
         carrier = Carrier(expire=expire)
         binding = MCPHTTPEnvironment("remote", carrier)
-        runtime = runtime_for(tmp_path, MCPRuntimeContext((binding,)), mode=mode)
+        runtime = await runtime_for(tmp_path, MCPRuntimeContext((binding,)), mode=mode)
         try:
             events = [event async for event in runtime.stream("needle")]
             assert isinstance(events[-1], TurnCompleted)
@@ -150,7 +150,7 @@ def test_same_id_new_binding_switches_carrier_but_admitted_call_keeps_old_lease(
     async def scenario():
         first, second = Carrier(), Carrier("second")
         binding = MCPHTTPEnvironment("remote", first)
-        runtime = runtime_for(tmp_path, MCPRuntimeContext((binding,)))
+        runtime = await runtime_for(tmp_path, MCPRuntimeContext((binding,)))
         await runtime._ensure_ready()
         await runtime._mcp_manager.refresh_if_dirty()
         manager = runtime._mcp_manager
@@ -191,7 +191,7 @@ def test_owner_policy_rejects_all_sources_before_http_startup(tmp_path, kind):
         source = MCPCatalogSource(kind, None if kind == "config" else "package")
         catalog = MCPCatalog((MCPRegistration(server(), source),))
         binding = MCPHTTPEnvironment("remote", carrier, requirements=MCPRequirements(servers=()))
-        runtime = runtime_for(tmp_path, MCPRuntimeContext((binding,)), catalog=catalog)
+        runtime = await runtime_for(tmp_path, MCPRuntimeContext((binding,)), catalog=catalog)
         try:
             await runtime._ensure_ready()
             await runtime._mcp_manager.refresh_if_dirty()
@@ -218,7 +218,7 @@ def test_binding_mismatch_rejected_before_http_allocation(monkeypatch):
 
 def test_invalid_context_rejected_before_runtime_allocates_resources(tmp_path):
     with pytest.raises(ValueError, match="host-owned"):
-        runtime_for(tmp_path, {"remote": Carrier()})
+        asyncio.run(runtime_for(tmp_path, {"remote": Carrier()}))
     assert not (tmp_path / "history.db").exists()
 
 
@@ -227,7 +227,7 @@ def test_changed_host_binding_controls_next_admission(tmp_path, change):
     async def scenario():
         carrier = Carrier()
         binding = MCPHTTPEnvironment("remote", carrier)
-        runtime = runtime_for(tmp_path, MCPRuntimeContext((binding,)))
+        runtime = await runtime_for(tmp_path, MCPRuntimeContext((binding,)))
         try:
             await runtime._ensure_ready()
             await runtime._mcp_manager.refresh_if_dirty()
@@ -277,7 +277,7 @@ def test_shared_environment_survives_one_server_removal_and_other_runtime_shutdo
         carrier = Carrier()
         binding = MCPHTTPEnvironment("remote", carrier)
         context = MCPRuntimeContext((binding,))
-        runtime = runtime_for(tmp_path, context)
+        runtime = await runtime_for(tmp_path, context)
         manager = MCPManager(
             (server("one"), server("two")), ToolRegistry(), runtime_context=context
         )
@@ -312,7 +312,7 @@ def test_owner_denied_config_winner_does_not_fall_back_to_allowed_plugin(tmp_pat
                 MCPRegistration(server()),
             )
         )
-        runtime = runtime_for(tmp_path, context, catalog=catalog)
+        runtime = await runtime_for(tmp_path, context, catalog=catalog)
         try:
             await runtime._ensure_ready()
             await runtime._mcp_manager.refresh_if_dirty()
@@ -340,7 +340,7 @@ def test_owner_plugin_policy_uses_package_identity_not_route_prefix(tmp_path, ki
         )
         context = MCPRuntimeContext((MCPHTTPEnvironment("remote", carrier, policy),))
         catalog = MCPCatalog((MCPRegistration(server(), MCPCatalogSource(kind, "package")),))
-        runtime = runtime_for(tmp_path, context, catalog=catalog)
+        runtime = await runtime_for(tmp_path, context, catalog=catalog)
         try:
             await runtime._ensure_ready()
             await runtime._mcp_manager.refresh_if_dirty()
@@ -385,7 +385,9 @@ def test_context_captures_list_without_copying_transport_or_binding_identity():
 def test_cancelled_bound_call_releases_session_but_not_shared_environment(tmp_path):
     async def scenario():
         carrier = Carrier()
-        runtime = runtime_for(tmp_path, MCPRuntimeContext((MCPHTTPEnvironment("remote", carrier),)))
+        runtime = await runtime_for(
+            tmp_path, MCPRuntimeContext((MCPHTTPEnvironment("remote", carrier),))
+        )
         try:
             await runtime._ensure_ready()
             await runtime._mcp_manager.refresh_if_dirty()
@@ -420,7 +422,9 @@ def test_context_replaced_during_initialization_is_not_lost(tmp_path):
                 return await super().handle_async_request(request)
 
         first, second = SlowCarrier(), Carrier("second")
-        runtime = runtime_for(tmp_path, MCPRuntimeContext((MCPHTTPEnvironment("remote", first),)))
+        runtime = await runtime_for(
+            tmp_path, MCPRuntimeContext((MCPHTTPEnvironment("remote", first),))
+        )
         startup = asyncio.create_task(runtime._ensure_ready())
         try:
             await asyncio.wait_for(entered.wait(), 2)
@@ -446,7 +450,9 @@ def test_context_replaced_during_initialization_is_not_lost(tmp_path):
 def test_failed_publication_retains_old_binding_and_retries_desired_context(tmp_path, monkeypatch):
     async def scenario():
         first, second = Carrier(), Carrier("second")
-        runtime = runtime_for(tmp_path, MCPRuntimeContext((MCPHTTPEnvironment("remote", first),)))
+        runtime = await runtime_for(
+            tmp_path, MCPRuntimeContext((MCPHTTPEnvironment("remote", first),))
+        )
         try:
             await runtime._ensure_ready()
             await runtime._mcp_manager.refresh_if_dirty()

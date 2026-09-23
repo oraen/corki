@@ -9,6 +9,7 @@ screen widget framework before Corki needs one.
 from __future__ import annotations
 
 import asyncio
+from contextlib import ExitStack, contextmanager
 from io import StringIO
 from pathlib import Path
 from time import monotonic
@@ -16,13 +17,14 @@ from time import monotonic
 from prompt_toolkit import ANSI, HTML, PromptSession
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
-from prompt_toolkit.formatted_text import AnyFormattedText
+from prompt_toolkit.formatted_text import AnyFormattedText, to_formatted_text
 from prompt_toolkit.history import DummyHistory, FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import ConditionalContainer, HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.patch_stdout import patch_stdout
 from rich import box
+from rich.cells import cell_len, set_cell_size
 from rich.console import Console
 from rich.panel import Panel
 from rich.segment import Segment, Segments
@@ -31,12 +33,19 @@ from rich.text import Text
 from corki import __version__
 from corki.cli.approval import choose_approval
 from corki.cli.approval_details import request_details
+from corki.cli.command_completion import (
+    CommandCompleter,
+    bind_command_navigation,
+    complete_command,
+)
+from corki.cli.display_text import visible_terminal_text
 from corki.cli.elicitation import collect_elicitation
 from corki.cli.history import replay_history
 from corki.cli.history_view import HistoryView
 from corki.cli.hook_activity import HookActivity
 from corki.cli.hook_output import hook_output_text
 from corki.cli.input_owner import CycleModeInput, QueuedInput
+from corki.cli.keyboard import enhanced_keyboard
 from corki.cli.markdown import AssistantBlock
 from corki.cli.pending_input import pending_input_lines
 from corki.cli.plan_stream import PlanStreamUI
@@ -45,10 +54,12 @@ from corki.cli.stream_animation import ChunkingPolicy
 from corki.cli.stream_commit import commit_delta
 from corki.cli.stream_markdown import StreamMarkdown
 from corki.cli.stream_table import TableStreamSource
+from corki.cli.terminal_console import TerminalConsole
 from corki.cli.terminal_palette import TerminalPalette
 from corki.cli.terminal_responses import frame_terminal_responses
 from corki.cli.transcript import Transcript, remember_display
 from corki.cli.user_input import collect_user_input
+from corki.cli.working_status import WorkingStatus
 from corki.cli.wrapping import wrap_plan_text
 from corki.config import CorkiSettings
 
@@ -68,7 +79,10 @@ class TerminalUI(PlanStreamUI):
     ) -> None:
         self._settings = settings
         self._live_input_enabled = settings.realtime_enabled
-        self._console = console or Console()
+        self._console = console or TerminalConsole()
+        self._working_status = WorkingStatus(
+            lambda: self._session.app.invalidate(), animated=self._console.is_terminal
+        )
         self._transcript = Transcript(self)
         self._bindings = self._build_key_bindings()
         self._queue_submission = False
@@ -79,8 +93,25 @@ class TerminalUI(PlanStreamUI):
         self._reasoning_header = None
         self._reasoning_active = False
         self._reasoning_expanded = False
+        self._turn_active = False
+        self._active_tools: dict[str, str] = {}
         self._hook_activity = HookActivity()
         self._hook_timer: asyncio.TimerHandle | None = None
+        self._mcp_loading = False
+        self._model_menu = None
+
+        @self._bindings.add(
+            "c-c",
+            filter=Condition(
+                lambda: not self._history_view.active and bool(self._session.default_buffer.text)
+            ),
+        )
+        def clear_composer_draft(event):
+            # Codex consumes Ctrl+C on nonempty composer input before interrupt/quit.
+            # Keep the cleared draft recoverable through input history, not model history.
+            event.current_buffer.append_to_history()
+            event.current_buffer.reset()
+            self._draft = ""
 
         @self._bindings.add("c-t")
         async def toggle_reasoning_history(event):
@@ -95,7 +126,14 @@ class TerminalUI(PlanStreamUI):
 
         @self._bindings.add("tab")
         def queue_submission(event):
+            if complete_command(event.current_buffer, trailing_space=True):
+                return
             self._queue_submission = True
+            event.current_buffer.validate_and_handle()
+
+        @self._bindings.add("enter")
+        def submit_composer(event):
+            complete_command(event.current_buffer)
             event.current_buffer.validate_and_handle()
 
         @self._bindings.add(
@@ -110,13 +148,66 @@ class TerminalUI(PlanStreamUI):
         self._session: PromptSession[str] = PromptSession(
             history=FileHistory(str(history_file)),
             multiline=True,
+            completer=CommandCompleter(),
+            complete_while_typing=True,
         )
+        # Once the terminal has decoded Escape, don't hold the popup open for
+        # the default one-second multi-key binding timeout. Alt+Enter delivered
+        # as a chord still uses the existing newline binding.
+        self._session.app.timeoutlen = 0.1
+        self._last_composer_activity: float | None = None
+        composer_before_key = ""
+
+        def before_composer_key(processor):
+            nonlocal composer_before_key
+            composer_before_key = self._session.default_buffer.text
+
+        def after_composer_key(processor):
+            # Observe actual editing/submission, not buffer resets when restoring
+            # a draft or merely moving the cursor. CPR replies are excluded by
+            # prompt-toolkit's key processor from these callbacks.
+            if not self._history_view.active and (
+                self._session.default_buffer.text != composer_before_key
+                or self._session.app.is_done
+            ):
+                self._last_composer_activity = monotonic()
+
+        self._session.app.key_processor.before_key_press += before_composer_key
+        self._session.app.key_processor.after_key_press += after_composer_key
+
+        @self._bindings.add(
+            "escape",
+            filter=Condition(
+                lambda: (
+                    not self._history_view.active
+                    and self._session.default_buffer.complete_state is not None
+                )
+            ),
+        )
+        def dismiss_command_completion(event):
+            buffer = event.current_buffer
+            buffer.cancel_completion()
+            self._session.completer.dismissed_text = buffer.text
+
+        def clear_completion_dismissal(buffer):
+            completer = self._session.completer
+            if buffer.text != completer.dismissed_text:
+                completer.dismissed_text = None
+
+        self._session.default_buffer.on_text_changed += clear_completion_dismissal
         self._pending_inputs: tuple[str, ...] = ()
         self._table_source: TableStreamSource | None = None
         self._stream_markdown: StreamMarkdown | None = None
         self._tail_cache = None
         self._session.layout.container = HSplit(
             [
+                ConditionalContainer(
+                    Window(
+                        FormattedTextControl([("fg:ansicyan", "  Loading MCP tools…")]),
+                        height=1,
+                    ),
+                    Condition(lambda: self._mcp_loading and not self._history_view.active),
+                ),
                 ConditionalContainer(
                     Window(
                         FormattedTextControl(self._stream_tail_fragments), dont_extend_height=True
@@ -134,10 +225,25 @@ class TerminalUI(PlanStreamUI):
                     ),
                     Condition(lambda: bool(self._pending_inputs) and not self._session.app.is_done),
                 ),
+                ConditionalContainer(
+                    Window(FormattedTextControl(self._working_fragments), dont_extend_height=True),
+                    Condition(
+                        lambda: (
+                            self._turn_active
+                            and not self._session.app.is_done
+                            and not self._history_view.active
+                        )
+                    ),
+                ),
                 self._session.layout.container,
+                ConditionalContainer(
+                    Window(FormattedTextControl(self._toolbar), height=1),
+                    Condition(lambda: not self._session.app.is_done and not self._turn_active),
+                ),
             ]
         )
         self._history_view = HistoryView(self)
+        bind_command_navigation(self._bindings, self._session, self._history_view)
         self._draft = ""
         self._form_session: PromptSession[str] = PromptSession(history=DummyHistory())
         frame_terminal_responses(self._session.app.input)
@@ -158,9 +264,9 @@ class TerminalUI(PlanStreamUI):
     def _build_key_bindings() -> KeyBindings:
         """Create Codex-like composer controls.
 
-        Enter submits the current buffer. Escape followed by Enter inserts a
-        newline, which keeps the common single-line flow fast while retaining
-        multiline prompts. prompt-toolkit's default Ctrl+C binding raises
+        Enter submits the current buffer. Enhanced modified Enter is decoded
+        as Ctrl+J; it and Escape followed by Enter insert a newline.
+        prompt-toolkit's default Ctrl+C binding raises
         ``KeyboardInterrupt`` and is intentionally left intact.
         """
 
@@ -171,6 +277,7 @@ class TerminalUI(PlanStreamUI):
             event.current_buffer.validate_and_handle()
 
         @bindings.add("escape", "enter")
+        @bindings.add("c-j")
         def insert_newline(event) -> None:  # type: ignore[no-untyped-def]
             event.current_buffer.insert_text("\n")
 
@@ -185,11 +292,11 @@ class TerminalUI(PlanStreamUI):
         body.append(f" (v{__version__})", style="dim")
         body.append("\n\n")
         body.append("model:     ", style="dim")
-        body.append(self._settings.model)
+        body.append(visible_terminal_text(self._settings.model))
         body.append("   /model to change", style="cyan")
         body.append("\n")
         body.append("directory: ", style="dim")
-        body.append(str(self._settings.working_directory))
+        body.append(visible_terminal_text(str(self._settings.working_directory)))
 
         self._console.print(
             Panel(
@@ -200,21 +307,28 @@ class TerminalUI(PlanStreamUI):
                 expand=False,
             )
         )
-        self._console.print("\n  [dim]Tip: press Esc then Enter to add a new line[/dim]\n")
+        self._console.print(
+            "\n  [dim]Tip: Shift+Enter adds a new line; "
+            "Alt+Enter or Esc then Enter also works[/dim]\n"
+        )
 
     async def read_message(self) -> str | QueuedInput | CycleModeInput:
         """Wait for one message while preserving asynchronous stdout safety."""
 
+        scope = getattr(self, "_input_scope", None)
+        if scope is not None and not self._input_raw:
+            scope.enter_context(self._session.app.input.raw_mode())
+            self._input_raw = True
         self._queue_submission = False
         self._mode_cycle_requested = False
-        with patch_stdout(raw=True):
+        self._session.completer.dismissed_text = None
+        with patch_stdout(raw=True), enhanced_keyboard(self._session.app):
             try:
                 message = await self._session.prompt_async(
                     HTML("<ansicyan><b>›</b></ansicyan> "),
                     placeholder=HTML(
                         '<style fg="ansibrightblack">Ask Corki to do anything</style>'
                     ),
-                    bottom_toolbar=self._toolbar,
                     key_bindings=self._bindings,
                     default=self._draft,
                 )
@@ -231,24 +345,55 @@ class TerminalUI(PlanStreamUI):
                 self._transcript.calls.append((TerminalUI._show_submitted_input, (message,), {}))
             return QueuedInput(message) if self._queue_submission else message
 
+    @contextmanager
+    def input_mode(self):
+        # Keep CR distinct from Ctrl+J while switching between modal/composer
+        # readers. Restoring cooked mode in those gaps converts queued CR to LF.
+        # Acquire on first read, so startup/history loading retain signal handling.
+        with ExitStack() as scope:
+            self._input_scope, self._input_raw = scope, False
+            try:
+                yield
+            finally:
+                self._input_scope = None
+                self._input_raw = False
+
     @remember_display
     def _show_submitted_input(self, message: str) -> None:
-        self._console.print(Text.assemble(("› ", "cyan bold"), message))
+        self._console.print(Text.assemble(("› ", "cyan bold"), visible_terminal_text(message)))
 
     def replay_history(self, items) -> None:
         replay_history(self, items)
+
+    def try_overlay_approval(self, request):
+        if self._model_menu is None:
+            return None
+        if (
+            self._last_composer_activity is not None
+            and monotonic() < self._last_composer_activity + 1.0
+        ):
+            return None
+        return self._model_menu.offer(self.read_elicitation, request)
+
+    async def wait_for_approval_idle(self):
+        """Let ongoing composer edits settle before transferring approval focus."""
+        while self._last_composer_activity is not None:
+            remaining = self._last_composer_activity + 1.0 - monotonic()
+            if remaining <= 0:
+                return
+            await asyncio.sleep(remaining)
 
     async def read_elicitation(self, request):
         self._transcript.modal_depth += 1
 
         async def read(label):
-            with patch_stdout(raw=True):
+            with patch_stdout(raw=True), enhanced_keyboard(self._form_session.app):
                 return await self._form_session.prompt_async(
                     label, key_bindings=self._form_bindings
                 )
 
         def notice(message):
-            self._console.print(Text(message))
+            self._console.print(Text(visible_terminal_text(message)))
 
         async def decide():
             with patch_stdout(raw=True):
@@ -287,13 +432,92 @@ class TerminalUI(PlanStreamUI):
     async def read_user_input(self, request):
         self._transcript.modal_depth += 1
         try:
-            with patch_stdout(raw=True):
+            with patch_stdout(raw=True), enhanced_keyboard(self._form_session.app):
                 return await collect_user_input(self._form_session, request)
         finally:
             self._transcript.modal_depth -= 1
 
+    async def read_model(self, current):
+        from corki.cli.menu_overlay import MenuOverlayHost
+        from corki.cli.model_picker import ModelSelection, choose_model
+
+        self._transcript.modal_depth += 1
+        overlay_host = MenuOverlayHost(self._form_session)
+        self._model_menu = overlay_host
+        try:
+            # Bundled context metadata is not evidence that a provider offers a model.
+            models = tuple(info.model for info in (self._settings.model_contexts or ()))
+            with patch_stdout(raw=True):
+                model = await choose_model(
+                    self._form_session, current.model, models, overlay_host=overlay_host
+                )
+                if model is None:
+                    return None
+                info = self._settings.model_context_info(model)
+                levels = info.supported_reasoning_levels
+                if not levels:
+                    return ModelSelection(model)
+                effort = info.reasoning_effort_for_model_switch(current.reasoning_effort)
+                effort = await choose_model(
+                    self._form_session,
+                    effort,
+                    levels,
+                    title="Select reasoning effort",
+                    subtitle=model,
+                    allow_custom=False,
+                    overlay_host=overlay_host,
+                )
+                if effort in {"max", "ultra"}:
+                    confirmation = await choose_model(
+                        self._form_session,
+                        "Cancel",
+                        ("Cancel", f"Use {effort}"),
+                        title="Confirm reasoning effort",
+                        subtitle="May increase time and token usage.",
+                        allow_custom=False,
+                        overlay_host=overlay_host,
+                    )
+                    if confirmation != f"Use {effort}":
+                        return None
+                return ModelSelection(model, effort) if effort is not None else None
+        finally:
+            overlay_host.close()
+            self._model_menu = None
+            self._transcript.modal_depth -= 1
+
+    def set_model_settings(self, snapshot) -> None:
+        from dataclasses import replace
+
+        self._settings = replace(
+            self._settings, model=snapshot.model, reasoning_effort=snapshot.reasoning_effort
+        )
+        self._session.app.invalidate()
+
+    def set_mcp_loading(self, loading: bool) -> None:
+        """Update transient discovery activity without replacing turn status/history."""
+        self._mcp_loading = loading
+        self._session.app.invalidate()
+
     def set_collaboration_mode(self, mode: str) -> None:
         self._collaboration_mode = mode
+        self._session.app.invalidate()
+
+    def set_turn_active(self, active: bool) -> None:
+        if not active or not getattr(self, "_turn_active", False):
+            self._active_tools = {}
+        self._turn_active = active
+        if status := getattr(self, "_working_status", None):
+            status.set_active(active)
+        if session := getattr(self, "_session", None):
+            session.app.invalidate()
+
+    def set_tool_activity(self, call_id: str, name: str | None) -> None:
+        if not self._turn_active:
+            return
+        if name is None:
+            self._active_tools.pop(call_id, None)
+        else:
+            self._active_tools[call_id] = name
         self._session.app.invalidate()
 
     def set_mode_cycle_enabled(self, enabled: bool) -> None:
@@ -309,7 +533,50 @@ class TerminalUI(PlanStreamUI):
         )
 
     def _toolbar(self) -> AnyFormattedText:
+        if self._turn_active:
+            return self._working_fragments()
+        width = max(0, self._session.app.output.get_size().columns)
+        remaining = width
+        fitted = []
+        for style, value in to_formatted_text(self._toolbar_content()):
+            if remaining <= 0:
+                break
+            if cell_len(value) > remaining:
+                value = set_cell_size(value, remaining).rstrip()
+            fitted.append((style, value))
+            remaining -= cell_len(value)
+        return fitted
+
+    def _working_fragments(self):
+        detail = self._hook_activity.summary
+        if not detail and self._active_tools:
+            detail = (
+                f"Running {next(iter(self._active_tools.values()))}"
+                if len(self._active_tools) == 1
+                else f"Running {len(self._active_tools)} tools"
+            )
+        if not detail and self._reasoning_active:
+            detail = self._reasoning_header or "Thinking"
+        return self._working_status.fragments(
+            max(0, self._session.app.output.get_size().columns),
+            detail=detail,
+            has_draft=bool(self._session.default_buffer.text),
+        )
+
+    def _toolbar_content(self) -> AnyFormattedText:
         if header := self._hook_activity.summary:
+            header = " ".join("".join(c for c in header if c.isprintable() or c.isspace()).split())
+            return [("fg:ansibrightblack", f"  {header}   ctrl+t history")]
+        if self._active_tools:
+            if len(self._active_tools) == 1:
+                name = visible_terminal_text(next(iter(self._active_tools.values())))
+                activity = f"Running {' '.join(name.split())}"
+            else:
+                activity = f"Running {len(self._active_tools)} tools"
+            return [("fg:ansibrightblack", f"  {activity}   ctrl+t history")]
+        if self._reasoning_active:
+            header = self._reasoning_header or "Thinking"
+            # Provider text is a literal, single-line label, never terminal markup.
             header = " ".join("".join(c for c in header if c.isprintable() or c.isspace()).split())
             return [("fg:ansibrightblack", f"  {header}   ctrl+t history")]
         if self._can_cycle_mode():
@@ -323,16 +590,20 @@ class TerminalUI(PlanStreamUI):
                 text += extra
             return [("fg:ansicyan" if mode == "plan" else "fg:ansibrightblack", text[:width])]
         if getattr(self, "_collaboration_mode", self._settings.collaboration_mode) == "plan":
-            return [("fg:ansicyan", "  Plan mode"), ("", "   ctrl+t history")]
-        if self._reasoning_active:
-            header = self._reasoning_header or "Thinking"
-            # Provider text is a literal, single-line label, never terminal markup.
-            header = " ".join("".join(c for c in header if c.isprintable() or c.isspace()).split())
-            return [("fg:ansibrightblack", f"  {header}   ctrl+t history")]
-        return HTML(
-            '  <style fg="ansibrightblack">? for shortcuts   '
-            "ctrl+t history   ctrl+c to quit</style>"
+            label = "  Plan mode"
+            history = "   ctrl+t history"
+            if len(label + history) <= self._session.app.output.get_size().columns:
+                return [("fg:ansicyan", label), ("", history)]
+            return [("fg:ansicyan", label)]
+        width = self._session.app.output.get_size().columns
+        hints = (
+            "  ? for shortcuts   ctrl+t history   ctrl+c to quit",
+            "  ? for shortcuts   ctrl+t history",
+            "  ? help   ctrl+t history",
+            "  ? help",
+            "?",
         )
+        return [("fg:ansibrightblack", next((hint for hint in hints if len(hint) <= width), ""))]
 
     def hook_started(self, run) -> None:
         self._hook_activity.start(run, monotonic())
@@ -393,7 +664,9 @@ class TerminalUI(PlanStreamUI):
 
         self._console.print()
         self._console.print(
-            Text.assemble(("• ", "red"), message) if is_error else AssistantBlock(message)
+            Text.assemble(("• ", "red"), visible_terminal_text(message))
+            if is_error
+            else AssistantBlock(message)
         )
         self._console.print()
 
@@ -446,7 +719,9 @@ class TerminalUI(PlanStreamUI):
             self._console.print()
             self._console.print("• ", style="green", end="")
             self._assistant_started = True
-        self._console.print(text, end="", markup=False, highlight=False, soft_wrap=True)
+        self._console.print(
+            visible_terminal_text(text), end="", markup=False, highlight=False, soft_wrap=True
+        )
 
     async def append_assistant_delta_live(self, delta: str) -> None:
         if getattr(self, "_animation_enabled", False) and self._stream_markdown is not None:
@@ -554,9 +829,45 @@ class TerminalUI(PlanStreamUI):
             self._console.print("\n")
         self._assistant_started = False
 
+    async def interrupt_assistant_message(self) -> None:
+        # Finalize only the received display source, not the runtime turn. The
+        # caller still emits its failure/cancellation/retry notice afterwards.
+        await self.complete_assistant_message(self._transcript.assistant_stream_text())
+
+    def abandon_assistant_stream(self) -> None:
+        """Close display state from source when the terminal cannot be written."""
+
+        text = self._transcript.assistant_stream_text()
+        self._transcript.complete_assistant(text)
+        self._assistant_pending = ""
+        self._assistant_started = False
+        self._table_source = None
+        self._stream_markdown = None
+        self._tail_cache = None
+
     async def complete_assistant_message(self, text: str) -> None:
         if getattr(self, "_animation_enabled", False):
             await self.commit_stream_tick(finish=True)
+        rendered = False
+        stream = self._stream_markdown
+        if (
+            stream is not None
+            and self._table_source is not None
+            and not self._table_source.tail
+            and not self._transcript.stream_reflowed
+            and self._transcript.assistant_stream_is_contiguous()
+            and text == self._transcript.assistant_stream_text()
+        ):
+
+            def finish():
+                nonlocal rendered
+                rendered = stream.finish_matching_prefix(self._console, text)
+                if rendered:
+                    self._assistant_started |= bool(stream.emitted)
+
+            await commit_delta(self, "\n", operation=finish)
+        if rendered:
+            self._assistant_pending = ""
         pending = self._assistant_pending
         if pending and (
             not self._console.is_terminal or (not self._assistant_started and text == pending)
@@ -566,7 +877,7 @@ class TerminalUI(PlanStreamUI):
             with self._history_view.capture_output():
                 self._write_assistant_stream(pending)
         self.end_assistant_message()
-        if self._transcript.complete_assistant(text):
+        if self._transcript.complete_assistant(text, already_rendered=rendered):
             if self._console.is_terminal:
                 await self._transcript.repair()
             else:
@@ -602,7 +913,7 @@ class TerminalUI(PlanStreamUI):
                 self._session.app.invalidate()
             return
         self._console.print(
-            delta,
+            visible_terminal_text(delta),
             style="dim italic",
             end="",
             markup=False,
@@ -627,7 +938,8 @@ class TerminalUI(PlanStreamUI):
     def show_tool_started(self, name: str, arguments_preview: str) -> None:
         """Render a compact tool-call header; detailed output follows separately."""
 
-        preview = arguments_preview.replace("\n", " ")
+        name = visible_terminal_text(name)
+        preview = visible_terminal_text(arguments_preview.replace("\n", " "))
         if len(preview) > 180:
             preview = preview[:177] + "..."
         self._console.print(Text.assemble(("• ", "cyan"), (name, "bold"), (f" {preview}", "dim")))
@@ -637,14 +949,24 @@ class TerminalUI(PlanStreamUI):
         """Display bounded evidence returned by a tool."""
 
         if output:
-            self._console.print(output, style="dim", markup=False, highlight=False)
+            self._console.print(
+                visible_terminal_text(output),
+                style="dim",
+                markup=False,
+                highlight=False,
+                end="" if output.endswith("\n") else "\n",
+            )
 
     @remember_display
     def show_tool_completed(self, name: str, *, is_error: bool) -> None:
         """Make tool failure visible without duplicating successful output."""
 
         if is_error:
-            self._console.print(Text(f"  {name} failed", style="red"))
+            self._console.print(Text(f"  {visible_terminal_text(name)} failed", style="red"))
+
+    async def commit_tool_display(self, action) -> None:
+        """Commit a tool event before a later answer can overtake its output."""
+        await commit_delta(self, "\n", operation=action)
 
     @remember_display
     def show_plan(
@@ -661,7 +983,7 @@ class TerminalUI(PlanStreamUI):
         first = True
         if explanation and explanation.strip():
             for line in wrap_plan_text(
-                Text(explanation.strip(), style="dim italic"),
+                Text(visible_terminal_text(explanation.strip()), style="dim italic"),
                 self._console,
                 self._console.width - 4,
             ):
@@ -674,7 +996,7 @@ class TerminalUI(PlanStreamUI):
             self._console.print(Text(prefix + "(no steps provided)", style="dim italic"))
         for item in plan:
             marker, style = styles.get(item["status"], styles["pending"])
-            text = Text(item["step"], style=style)
+            text = Text(visible_terminal_text(item["step"]), style=style)
             for index, line in enumerate(
                 wrap_plan_text(text, self._console, self._console.width - 6)
             ):
@@ -702,7 +1024,7 @@ class TerminalUI(PlanStreamUI):
         """Render local command output in the transcript."""
 
         self._console.print()
-        self._console.print(Text(message), style="dim")
+        self._console.print(Text(visible_terminal_text(message)), style="dim")
         self._console.print()
 
     def clear(self) -> None:

@@ -152,8 +152,8 @@ def test_oauth_session_404_preserves_live_auth_but_cold_client_reloads(
             mcp_servers=(MCPServerSettings("docs", "http", url="https://fixture.invalid"),),
         )
 
-        def create():
-            return LangGraphRuntime.create(
+        async def create():
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 model=Model(),
                 registry=ToolRegistry(),
@@ -161,7 +161,7 @@ def test_oauth_session_404_preserves_live_auth_but_cold_client_reloads(
                 database_path=tmp_path / (phase + ".db"),
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [e async for e in runtime.stream("read")]
             assert isinstance(events[-1], TurnCompleted)
@@ -172,7 +172,7 @@ def test_oauth_session_404_preserves_live_auth_but_cold_client_reloads(
         finally:
             await runtime.aclose()
         phase = "cold"
-        cold = create()
+        cold = await create()
         try:
             events = [e async for e in cold.stream("inspect")]
             assert isinstance(events[-1], TurnCompleted)
@@ -326,8 +326,8 @@ def test_search_recover_observe_ledger_and_cold_history(tmp_path, monkeypatch, m
         )
         database = tmp_path / "history.db"
 
-        def create(model, thread=None):
-            return LangGraphRuntime.create(
+        async def create(model, thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 model=model,
                 registry=ToolRegistry(),
@@ -336,7 +336,7 @@ def test_search_recover_observe_ledger_and_cold_history(tmp_path, monkeypatch, m
                 thread_id=thread,
             )
 
-        runtime = create(Model())
+        runtime = await create(Model())
         try:
             events = [e async for e in runtime.stream("needle")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -376,7 +376,7 @@ def test_search_recover_observe_ledger_and_cold_history(tmp_path, monkeypatch, m
             async def aclose(self):
                 pass
 
-        cold = create(Cold(), runtime._thread_id)
+        cold = await create(Cold(), runtime._thread_id)
         try:
             events = [e async for e in cold.stream("continue")]
             assert isinstance(events[-1], TurnCompleted)

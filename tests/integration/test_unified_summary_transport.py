@@ -71,8 +71,8 @@ def test_summary_transport_is_provider_independent(
             lambda *a, **kw: client_type(*a, **kw, transport=httpx.MockTransport(respond)),
         )
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     tmp_path,
                     api_mode="responses",
@@ -94,7 +94,7 @@ def test_summary_transport_is_provider_independent(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             assert isinstance([e async for e in runtime.stream("ORIGINAL")][-1], TurnCompleted)
             if not automatic:
@@ -108,7 +108,7 @@ def test_summary_transport_is_provider_independent(
             assert markers[0].remote_payload_json is None
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             assert isinstance([e async for e in runtime.stream("COLD")][-1], TurnCompleted)
             assert len(summaries) == 1
             assert "SUMMARY_PROOF" in json.dumps(requests[-1])

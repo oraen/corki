@@ -5,8 +5,12 @@ from __future__ import annotations
 import base64
 import json
 import math
+from collections import OrderedDict
 from collections.abc import Iterable
+from hashlib import sha256
+from threading import Lock
 
+from corki.media.images import validated_image
 from corki.prompting.compaction import render_compaction_summary
 from corki.protocol.audio import wav_duration_seconds
 from corki.protocol.compaction import compaction_payload
@@ -41,6 +45,9 @@ _RESIZED_IMAGE_TOKENS = math.ceil(7_373 / 4)
 _ORIGINAL_IMAGE_PATCH_SIZE = 32
 _ORIGINAL_IMAGE_MAX_PATCHES = 10_000
 _IMAGE_HEADER_DECODE_LIMIT = 512 * 1_024
+_ORIGINAL_IMAGE_CACHE_LIMIT = 32
+_decoded_dimensions_cache: OrderedDict[bytes, tuple[int, int] | None] = OrderedDict()
+_decoded_dimensions_lock = Lock()
 
 
 def estimate_text_tokens(text: str) -> int:
@@ -192,6 +199,12 @@ def estimate_audio_tokens(attachment: AudioAttachment) -> int:
 
 
 def _estimate_image_tokens(attachment: ImageAttachment) -> int:
+    metadata, separator, _ = attachment.data_url.partition(",")
+    parts = metadata.casefold().split(";")
+    if not separator or not parts[0].startswith("data:image/") or "base64" not in parts[1:]:
+        # Only inline base64 payloads replace serialized URL bytes with an
+        # image estimate. Other references stay visible as ordinary URL text.
+        return estimate_text_tokens(attachment.data_url)
     if attachment.detail != "original":
         return _RESIZED_IMAGE_TOKENS
     dimensions = _image_dimensions(attachment.data_url)
@@ -224,10 +237,33 @@ def _image_dimensions(data_url: str) -> tuple[int, int] | None:
     if raw[:3] in {b"GIF", b"gif"} and len(raw) >= 10:
         return int.from_bytes(raw[6:8], "little"), int.from_bytes(raw[8:10], "little")
     if raw.startswith(b"\xff\xd8"):
-        return _jpeg_dimensions(raw)
+        return _jpeg_dimensions(raw) or _decoded_image_dimensions(payload)
     if raw.startswith(b"RIFF") and raw[8:12] == b"WEBP":
-        return _webp_dimensions(raw)
-    return None
+        return _webp_dimensions(raw) or _decoded_image_dimensions(payload)
+    return _decoded_image_dimensions(payload)
+
+
+def _decoded_image_dimensions(payload: str) -> tuple[int, int] | None:
+    # Long JPEG metadata can put the size marker beyond the bounded fast scan.
+    # These bytes are already part of the model-visible attachment; validate
+    # them as image preparation does before falling back to resized cost.
+    key = sha256(payload.encode("utf-8")).digest()
+    with _decoded_dimensions_lock:
+        if key in _decoded_dimensions_cache:
+            _decoded_dimensions_cache.move_to_end(key)
+            return _decoded_dimensions_cache[key]
+    try:
+        raw = base64.b64decode(payload, validate=True)
+        with validated_image(raw) as image:
+            dimensions = image.size
+    except Exception:  # noqa: BLE001 - invalid media uses the conservative fallback
+        dimensions = None
+    with _decoded_dimensions_lock:
+        _decoded_dimensions_cache[key] = dimensions
+        _decoded_dimensions_cache.move_to_end(key)
+        if len(_decoded_dimensions_cache) > _ORIGINAL_IMAGE_CACHE_LIMIT:
+            _decoded_dimensions_cache.popitem(last=False)
+    return dimensions
 
 
 def _jpeg_dimensions(raw: bytes) -> tuple[int, int] | None:

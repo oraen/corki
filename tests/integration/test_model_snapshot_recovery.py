@@ -22,7 +22,7 @@ def test_broken_old_model_snapshot_uses_accepted_identity(tmp_path, snapshot, vi
             settings(tmp_path),
             model_contexts=(ModelContextInfo("large", 200_000, base_instructions="CURRENT RULES"),),
         )
-        source = make_runtime(tmp_path, Model(), configured=configured)
+        source = await make_runtime(tmp_path, Model(), configured=configured)
         try:
             await source._ensure_ready()
             thread = source.thread_id
@@ -47,7 +47,7 @@ def test_broken_old_model_snapshot_uses_accepted_identity(tmp_path, snapshot, vi
         finally:
             await source.aclose()
         model = Model()
-        cold = make_runtime(tmp_path, model, configured=configured, thread=thread)
+        cold = await make_runtime(tmp_path, model, configured=configured, thread=thread)
         try:
             for _ in range(2):
                 events = [e async for e in cold.stream("next")]
@@ -88,7 +88,7 @@ def test_unknown_model_snapshot_fallback_respects_base_provenance(tmp_path, comp
                 ModelContextInfo("small", 200_000, base_instructions="FROZEN BASE"),
             ),
         )
-        source = make_runtime(
+        source = await make_runtime(
             tmp_path,
             Model(),
             configured=replace(
@@ -117,7 +117,7 @@ def test_unknown_model_snapshot_fallback_respects_base_provenance(tmp_path, comp
         finally:
             await source.aclose()
         model = Model()
-        cold = make_runtime(tmp_path, model, configured=configured, thread=thread)
+        cold = await make_runtime(tmp_path, model, configured=configured, thread=thread)
         try:
             for _ in range(2):
                 events = [e async for e in cold.stream("next")]

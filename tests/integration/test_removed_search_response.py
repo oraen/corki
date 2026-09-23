@@ -77,7 +77,7 @@ def test_native_search_response_is_fatal(tmp_path, monkeypatch, provider, kind, 
             "OwnedHTTPClient",
             lambda *a, **kw: client_type(*a, **kw, transport=httpx.MockTransport(respond)),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 api_mode="responses",

@@ -92,7 +92,7 @@ def test_unready_mcp_does_not_hold_execution_gate(
             async def aclose(self):
                 pass
 
-        runtime, clients, started, _ = setup_runtime(
+        runtime, clients, started, _ = await setup_runtime(
             tmp_path,
             monkeypatch,
             Model(),
@@ -187,7 +187,7 @@ def test_cold_saved_mcp_call_skips_dispatch_readiness_and_rpc(tmp_path, monkeypa
                 pass
 
         model = Model()
-        warm, warm_clients, _, _ = setup_runtime(tmp_path, monkeypatch, model)
+        warm, warm_clients, _, _ = await setup_runtime(tmp_path, monkeypatch, model)
         turn = new_turn_id()
         try:
             await warm._ensure_ready()
@@ -209,7 +209,7 @@ def test_cold_saved_mcp_call_skips_dispatch_readiness_and_rpc(tmp_path, monkeypa
                 )
         finally:
             await warm.aclose()
-        cold, cold_clients, _, _ = setup_runtime(
+        cold, cold_clients, _, _ = await setup_runtime(
             tmp_path, monkeypatch, model, thread_id=warm.thread_id
         )
         factory = manager_module.create_client
@@ -273,7 +273,7 @@ def test_fatal_exclusive_call_does_not_release_queued_side_effect(tmp_path, monk
             async def aclose(self):
                 pass
 
-        runtime, clients, _, _ = setup_runtime(tmp_path, monkeypatch, Model())
+        runtime, clients, _, _ = await setup_runtime(tmp_path, monkeypatch, Model())
         runtime._registry.register(Tool("fatal"))
         runtime._registry.register(Tool("effect"))
         try:

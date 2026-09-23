@@ -20,6 +20,7 @@ from typing import TypeVar
 from corki.memory.consolidation import claim_consolidation, enqueue_consolidation
 from corki.memory.extraction import claim_extraction_jobs
 from corki.memory.models import ConsolidationClaim, MemoryExtractionClaim, StageOneMemory
+from corki.memory.source_version import source_version_at_least, source_version_epoch_micros
 from corki.protocol.ids import ThreadId
 
 _STAGE_ONE = "memory_stage1"
@@ -40,6 +41,9 @@ class SQLiteMemoryRepository:
         connection = sqlite3.connect(self._path, timeout=10)
         try:
             connection.row_factory = sqlite3.Row
+            connection.create_function(
+                "source_version_epoch_micros", 1, source_version_epoch_micros, deterministic=True
+            )
             connection.execute("PRAGMA foreign_keys=ON")
             connection.execute("PRAGMA busy_timeout=10000")
             with connection:
@@ -197,7 +201,7 @@ class SQLiteMemoryRepository:
                 connection.create_function(
                     "memory_source_version_at_least",
                     2,
-                    _source_version_at_least,
+                    source_version_at_least,
                     deterministic=True,
                 )
                 connection.execute(
@@ -350,10 +354,13 @@ class SQLiteMemoryRepository:
                     JOIN threads AS thread ON thread.id=output.thread_id
                     WHERE thread.memory_mode='enabled'
                       AND (length(trim(raw_memory)) > 0 OR length(trim(rollout_summary)) > 0)
-                      AND julianday(COALESCE(last_used_at, source_updated_at)) >= julianday(?)
+                      AND source_version_epoch_micros(COALESCE(last_used_at, source_updated_at))
+                          >= source_version_epoch_micros(?)
                     ORDER BY COALESCE(usage_count, 0) DESC,
-                             julianday(COALESCE(last_used_at, source_updated_at)) DESC,
-                             julianday(source_updated_at) DESC,
+                             source_version_epoch_micros(
+                                 COALESCE(last_used_at, source_updated_at)
+                             ) DESC,
+                             source_version_epoch_micros(source_updated_at) DESC,
                              thread_id DESC
                     LIMIT ?
                 ) ORDER BY thread_id ASC
@@ -375,9 +382,12 @@ class SQLiteMemoryRepository:
                 DELETE FROM memory_stage1_outputs WHERE thread_id IN (
                     SELECT thread_id FROM memory_stage1_outputs
                     WHERE selected_for_phase2=0
-                      AND julianday(COALESCE(last_used_at, source_updated_at)) < julianday(?)
-                    ORDER BY julianday(COALESCE(last_used_at, source_updated_at)) ASC,
-                             julianday(source_updated_at) ASC, thread_id ASC
+                      AND source_version_epoch_micros(COALESCE(last_used_at, source_updated_at))
+                          < source_version_epoch_micros(?)
+                    ORDER BY source_version_epoch_micros(
+                                 COALESCE(last_used_at, source_updated_at)
+                             ) ASC,
+                             source_version_epoch_micros(source_updated_at) ASC, thread_id ASC
                     LIMIT ?
                 )
                 """,
@@ -522,16 +532,6 @@ async def _joined_write(write: Callable[[], _WriteResult]) -> _WriteResult:
                 "Memory write failed during cancellation: %s", error
             )
         raise
-
-
-def _source_version_at_least(candidate: str, stored: str) -> bool:
-    # SQLite julianday loses sub-millisecond precision; source version ordering
-    # must not let a slightly older snapshot replace a newer one. Legacy naive
-    # CURRENT_TIMESTAMP strings represent UTC, unlike local wall-clock timestamps.
-    left, right = datetime.fromisoformat(candidate), datetime.fromisoformat(stored)
-    left = left if left.tzinfo is not None else left.replace(tzinfo=UTC)
-    right = right if right.tzinfo is not None else right.replace(tzinfo=UTC)
-    return left >= right
 
 
 def _stage_one_from_row(row: sqlite3.Row) -> StageOneMemory:

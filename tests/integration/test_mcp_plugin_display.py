@@ -99,7 +99,7 @@ def test_plugin_display_name_search_call_observation(tmp_path, monkeypatch, mode
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 plugin_dirs=(tmp_path / ".corki/plugins",),

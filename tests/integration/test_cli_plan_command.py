@@ -14,7 +14,7 @@ def test_plan_command_publishes_before_inline_input_and_retains_failed_input(tmp
     async def scenario():
         configured = settings(tmp_path, realtime_enabled=False)
         model = Model()
-        runtime = make_runtime(tmp_path, model, configured=configured)
+        runtime = await make_runtime(tmp_path, model, configured=configured)
         modes = []
         messages = iter(["/plan", "/plan Review Foo\nKeepCase"])
 
@@ -80,7 +80,7 @@ def test_cancelled_plan_publication_retains_input_and_reflects_joined_commit(
     async def scenario():
         configured = settings(tmp_path, realtime_enabled=False)
         model = Model()
-        runtime = make_runtime(tmp_path, model, configured=configured)
+        runtime = await make_runtime(tmp_path, model, configured=configured)
         await runtime._ensure_ready()
         before = runtime.thread_settings
         entered, release = asyncio.Event(), asyncio.Event()
@@ -178,7 +178,7 @@ def test_plan_command_during_active_turn_is_not_steering(tmp_path):
                 raise AttributeError(name)
 
         model = HeldModel()
-        runtime = make_runtime(tmp_path, model)
+        runtime = await make_runtime(tmp_path, model)
         app = CorkiApplication(
             settings(tmp_path), CorkiPaths.from_home(tmp_path / "home"), runtime, UI()
         )

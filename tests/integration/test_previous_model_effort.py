@@ -105,8 +105,8 @@ def test_cold_previous_model_effort_is_resolved_without_changing_main(
             small["service_tiers"] = [{"id": "priority"}] if tiers[1] else []
         catalog = parse_model_contexts({"large": old, "small": small})
 
-        def create(model, thread=None):
-            return LangGraphRuntime.create(
+        async def create(model, thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     tmp_path,
                     model=model,
@@ -128,13 +128,13 @@ def test_cold_previous_model_effort_is_resolved_without_changing_main(
                 thread_id=thread,
             )
 
-        first = create("large")
+        first = await create("large")
         try:
             assert isinstance([e async for e in first.stream("OLD")][-1], TurnCompleted)
             thread = first.thread_id
         finally:
             await first.aclose()
-        second = create("small", thread)
+        second = await create("small", thread)
         try:
             if outcome == "checkpoint":
                 await second._ensure_ready()
@@ -156,7 +156,7 @@ def test_cold_previous_model_effort_is_resolved_without_changing_main(
                 )
                 assert len(requests) == 2
                 await second.aclose()
-                second = create("small", thread)
+                second = await create("small", thread)
                 assert isinstance([e async for e in second.resume_pending()][-1], TurnCompleted)
             elif outcome in ("failure", "cancel"):
                 events = []

@@ -31,8 +31,8 @@ class Main:
         pass
 
 
-def _runtime(tmp_path, *, enabled=False, thread_id=None):
-    return LangGraphRuntime.create(
+async def _runtime(tmp_path, *, enabled=False, thread_id=None):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -56,7 +56,7 @@ def _mode(database, thread_id):
 @pytest.mark.parametrize("enabled", [False, True])
 def test_current_mode_before_sampling_persists_across_turns_and_reopen(tmp_path, enabled):
     async def scenario():
-        runtime = _runtime(tmp_path, enabled=enabled)
+        runtime = await _runtime(tmp_path, enabled=enabled)
         database = tmp_path / "history.db"
         root = tmp_path / "memories"
         root.mkdir(exist_ok=True)
@@ -88,7 +88,7 @@ def test_current_mode_before_sampling_persists_across_turns_and_reopen(tmp_path,
                 )
         finally:
             await runtime.aclose()
-        cold = _runtime(tmp_path, enabled=enabled, thread_id=runtime.thread_id)
+        cold = await _runtime(tmp_path, enabled=enabled, thread_id=runtime.thread_id)
         try:
             await cold.set_thread_memory_mode("disabled")
             assert await cold._repository.load_items(cold.thread_id) == history
@@ -101,7 +101,7 @@ def test_current_mode_before_sampling_persists_across_turns_and_reopen(tmp_path,
 
 def test_stored_target_missing_and_invalid_requests_do_not_create_threads(tmp_path):
     async def scenario():
-        runtime = _runtime(tmp_path)
+        runtime = await _runtime(tmp_path)
         database = tmp_path / "history.db"
         stored, missing = new_thread_id(), new_thread_id()
         await runtime._repository.create_thread(stored, tmp_path)
@@ -130,7 +130,7 @@ def test_stored_target_missing_and_invalid_requests_do_not_create_threads(tmp_pa
 
 def test_mode_gates_claim_and_selection_without_rewriting_extraction_state(tmp_path):
     async def scenario():
-        runtime = _runtime(tmp_path)
+        runtime = await _runtime(tmp_path)
         database = tmp_path / "history.db"
         memory = SQLiteMemoryRepository(database)
         try:
@@ -186,7 +186,7 @@ def test_mode_write_cancellation_and_close_join_started_database_worker(
     tmp_path, monkeypatch, phase
 ):
     async def scenario():
-        runtime = _runtime(tmp_path)
+        runtime = await _runtime(tmp_path)
         if phase == "update":
             await runtime.set_thread_memory_mode("enabled")
         entered, release = asyncio.Event(), threading.Event()
@@ -233,7 +233,7 @@ def test_mode_schema_migrates_legacy_threads_without_initializing_memory_jobs(tm
         db.execute("INSERT INTO threads(id,cwd) VALUES (?,?)", (thread, str(tmp_path)))
 
     async def scenario():
-        runtime = _runtime(tmp_path)
+        runtime = await _runtime(tmp_path)
         try:
             assert _mode(database, thread) == ("enabled",)
             await runtime.set_thread_memory_mode("disabled", thread_id=thread)
@@ -251,7 +251,7 @@ def test_mode_schema_migrates_legacy_threads_without_initializing_memory_jobs(tm
 
 def test_mode_sql_failure_rolls_back_and_runtime_can_retry(tmp_path):
     async def scenario():
-        runtime = _runtime(tmp_path)
+        runtime = await _runtime(tmp_path)
         database = tmp_path / "history.db"
         try:
             await runtime.set_thread_memory_mode("enabled")
@@ -276,7 +276,7 @@ def test_mode_sql_failure_rolls_back_and_runtime_can_retry(tmp_path):
 
 def test_unsupported_session_repository_fails_before_materializing_thread(tmp_path, monkeypatch):
     async def scenario():
-        runtime = _runtime(tmp_path)
+        runtime = await _runtime(tmp_path)
         monkeypatch.setattr(runtime._repository, "set_thread_memory_mode", None)
         try:
             with pytest.raises(RuntimeError, match="does not support"):
@@ -293,7 +293,7 @@ def test_unsupported_session_repository_fails_before_materializing_thread(tmp_pa
 @pytest.mark.parametrize("stop", ["cancel_waiter", "close_runtime"])
 def test_waiting_mode_operation_cannot_outlive_admission(tmp_path, monkeypatch, stop):
     async def scenario():
-        runtime = _runtime(tmp_path)
+        runtime = await _runtime(tmp_path)
         await runtime.set_thread_memory_mode("enabled")
         entered, release = asyncio.Event(), asyncio.Event()
         setter = runtime._repository.set_thread_memory_mode
@@ -337,7 +337,7 @@ def test_waiting_mode_operation_cannot_outlive_admission(tmp_path, monkeypatch, 
 
 def test_runtime_close_rejects_queued_metadata_before_active_turn_finishes(tmp_path, monkeypatch):
     async def scenario():
-        runtime = _runtime(tmp_path)
+        runtime = await _runtime(tmp_path)
         sampling, cancelling, model_release = asyncio.Event(), asyncio.Event(), asyncio.Event()
         writing, write_release = asyncio.Event(), asyncio.Event()
         setter = runtime._repository.set_thread_memory_mode

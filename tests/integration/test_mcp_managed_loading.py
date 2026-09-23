@@ -8,7 +8,7 @@ import pytest
 from test_mcp_server_requirements import make_runtime
 from test_mcp_tool_approval import Client, Model
 
-from corki.cli.main import build_application
+from corki.cli.main import build_application, build_application_async
 from corki.config import CorkiPaths, CorkiSettings, managed_mcp
 from corki.config.features import MCPServerSettings
 from corki.config.mcp_requirements import MCPRequirements
@@ -91,7 +91,7 @@ def test_managed_file_policy_reaches_search_execution_and_replacement_denial(
                         )
                     yield event
 
-        runtime, clients, model = make_runtime(
+        runtime, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             requirements=None,
@@ -161,7 +161,7 @@ def test_cli_captures_file_once_before_directories_and_runs_real_tool_loop(tmp_p
     monkeypatch.setattr("corki.mcp.manager.create_client", client)
 
     async def scenario():
-        app = build_application()
+        app = await build_application_async()
         try:
             events = [event async for event in app._runtime.stream("needle")]
             assert isinstance(events[-1], TurnCompleted)
@@ -188,7 +188,7 @@ def test_explicit_host_policy_is_a_complete_snapshot_not_reread(tmp_path, monkey
         policy = managed_mcp.MCPRequirementsSnapshot(policy, (("mcp_servers", ("host",)),))
 
     async def scenario():
-        runtime, clients, model = make_runtime(
+        runtime, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             requirements=policy,

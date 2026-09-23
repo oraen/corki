@@ -87,7 +87,7 @@ def test_worker_deletion_is_immediate_and_does_not_redelete_recreated_summary(tm
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,

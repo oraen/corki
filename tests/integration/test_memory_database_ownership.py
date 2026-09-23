@@ -87,7 +87,7 @@ def test_runtime_close_joins_claim_and_releases_only_its_undispatched_lease(
                 raise AssertionError("cancelled undispatched claim must not sample")
                 yield
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -205,7 +205,7 @@ def test_runtime_close_releases_claims_waiting_for_extraction_concurrency(tmp_pa
                 await asyncio.Event().wait()
                 yield
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -284,7 +284,7 @@ def test_foreground_citation_write_is_joined_before_runtime_close(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=database,
             memory_repository=repository,

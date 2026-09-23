@@ -26,7 +26,7 @@ def test_old_compiler_rejected_before_sampling_or_publishing_context(tmp_path, e
                 await PermissionContext().snapshot(permissions, tmp_path, honor_allow_rules=True)
             return
         model = Model("direct")
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

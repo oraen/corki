@@ -17,6 +17,80 @@ from corki.protocol.events import TurnCancelled, TurnCompleted, TurnFailed
 from corki.protocol.items import AssistantMessageItem, ContextItem, ContextRole, new_step_id
 
 
+def test_deep_old_extension_snapshot_is_unknown_on_cold_resume(tmp_path):
+    async def scenario():
+        seen, requests = [], []
+
+        class Source:
+            async def world_state_contributions(self, **kwargs):
+                def render(previous):
+                    seen.append(previous.kind)
+                    return WorldStateFragment(ContextRole.DEVELOPER, "CURRENT_EXTENSION")
+
+                return (WorldStateSection("fixture", '"current"', render),)
+
+        class Model:
+            async def stream(self, request):
+                requests.append(request)
+                yield ModelCompleted(
+                    (AssistantMessageItem("done", request.items[-1].turn_id, new_step_id()),)
+                )
+
+            async def aclose(self):
+                pass
+
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
+                settings=CorkiSettings(
+                    working_directory=tmp_path,
+                    skills_enabled=False,
+                    plugins_enabled=False,
+                    memories_enabled=False,
+                ),
+                database_path=tmp_path / "history.db",
+                home_path=tmp_path / "home",
+                model=Model(),
+                context_contributors=(Source(),),
+                thread_id=thread,
+            )
+
+        source = await create()
+        try:
+            await source._ensure_ready()
+            thread = source.thread_id
+            old = ContextItem(
+                "extension.world_state.fixture",
+                ContextRole.DEVELOPER,
+                "OLD_EXTENSION",
+                "old-turn",
+                content_kind="extension.world_state.fixture.instructions",
+                snapshot_state="[" * 16000 + "0" + "]" * 16000,
+            )
+            await source._repository.append_items(thread, (old,))
+            prefix = await source._repository.load_items(thread)
+        finally:
+            await source.aclose()
+        cold = await create(thread)
+        try:
+            events = [event async for event in cold.stream("next")]
+            assert isinstance(events[-1], TurnCompleted), events[-1]
+            assert seen[-1] is PreviousKind.UNKNOWN
+            history = await cold._repository.load_items(thread)
+            assert history[: len(prefix)] == prefix
+            assert any(
+                isinstance(item, ContextItem) and item.content == "OLD_EXTENSION"
+                for item in requests[-1].items
+            )
+            assert any(
+                isinstance(item, ContextItem) and item.content == "CURRENT_EXTENSION"
+                for item in requests[-1].items
+            )
+        finally:
+            await cold.aclose()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("automatic", [False, True])
 def test_extension_diff_silent_removal_and_cold_reattachment(tmp_path, automatic):
     async def scenario():

@@ -13,10 +13,10 @@ from corki.protocol.tools import ToolCall, ToolResult, ToolSpec
 from corki.tools import ToolRegistry
 
 
-def budget_runtime(tmp_path, model, *, thread=None, scope="total", **options):
+async def budget_runtime(tmp_path, model, *, thread=None, scope="total", **options):
     from corki.config import TokenBudgetConfig
 
-    return LangGraphRuntime.create(
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -54,7 +54,7 @@ class CompletingModel:
 def test_host_guidance_uses_same_blank_semantics_as_configuration(tmp_path, guidance):
     async def scenario():
         model = CompletingModel(output=0)
-        runtime = budget_runtime(tmp_path, model, guidance_message=guidance)
+        runtime = await budget_runtime(tmp_path, model, guidance_message=guidance)
         try:
             for _ in range(2):
                 events = [event async for event in runtime.stream("work")]
@@ -84,7 +84,7 @@ def test_host_guidance_uses_same_blank_semantics_as_configuration(tmp_path, guid
 def test_guidance_cold_update_retires_previous_instructions_once(tmp_path, guidance, legacy):
     async def scenario():
         model = CompletingModel(output=0)
-        runtime = budget_runtime(tmp_path, model, guidance_message="old guidance")
+        runtime = await budget_runtime(tmp_path, model, guidance_message="old guidance")
         thread = runtime.thread_id
         try:
             if legacy:
@@ -110,7 +110,7 @@ def test_guidance_cold_update_retires_previous_instructions_once(tmp_path, guida
             prefix = await runtime._repository.load_items(thread)
         finally:
             await runtime.aclose()
-        runtime = budget_runtime(tmp_path, model, thread=thread, guidance_message=guidance)
+        runtime = await budget_runtime(tmp_path, model, thread=thread, guidance_message=guidance)
         try:
             for _ in range(2):
                 assert isinstance([e async for e in runtime.stream("next")][-1], TurnCompleted)
@@ -158,7 +158,7 @@ def test_nonterminal_assistant_step_records_positive_reminder_only_once(tmp_path
 
     async def scenario():
         model = Model()
-        runtime = budget_runtime(
+        runtime = await budget_runtime(
             tmp_path,
             model,
             scope=scope,
@@ -200,7 +200,7 @@ def test_completion_records_once_across_turns_and_cold_runtime_then_new_window(t
             auto_compact_fallback_buffer_tokens=4000,
         )
         model = CompletingModel(scope=scope)
-        runtime = budget_runtime(tmp_path, model, scope=scope, **options)
+        runtime = await budget_runtime(tmp_path, model, scope=scope, **options)
         thread = runtime.thread_id
         try:
             for text in ("FIRST_FACT", "SECOND_FACT"):
@@ -221,7 +221,7 @@ def test_completion_records_once_across_turns_and_cold_runtime_then_new_window(t
             assert [item.notice_kind for item in original] == ["reminder", "fallback"]
         finally:
             await runtime.aclose()
-        cold = budget_runtime(tmp_path, model, thread=thread, scope=scope, **options)
+        cold = await budget_runtime(tmp_path, model, thread=thread, scope=scope, **options)
         try:
             [event async for event in cold.stream("THIRD_FACT")]
             stored = await cold._repository.load_items(thread)
@@ -265,7 +265,7 @@ def test_immediate_rollover_skips_fallback_even_with_large_buffer(tmp_path, reas
 
     async def scenario():
         model = Model()
-        runtime = budget_runtime(
+        runtime = await budget_runtime(
             tmp_path,
             model,
             reminder_threshold_tokens=2000,
@@ -297,7 +297,7 @@ def test_notice_write_failure_does_not_replay_completed_sampling(tmp_path, failu
 
     async def scenario():
         model = CompletingModel()
-        runtime = budget_runtime(
+        runtime = await budget_runtime(
             tmp_path,
             model,
             reminder_threshold_tokens=2000,
@@ -393,7 +393,7 @@ def test_completed_usage_notices_reach_actual_provider_payload(tmp_path, mode):
             client=client,
             capabilities=resolve_capabilities(base_url="https://fixture.invalid/v1", api_mode=mode),
         )
-        runtime = budget_runtime(
+        runtime = await budget_runtime(
             tmp_path,
             model,
             reminder_threshold_tokens=2000,
@@ -481,7 +481,7 @@ def test_fallback_preserves_work_then_summarizes(tmp_path, ending, scope):
 
         registry = ToolRegistry()
         registry.register(Save())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

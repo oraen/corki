@@ -572,7 +572,7 @@ def test_notification_post_response_can_complete_a_pending_rpc(wire):
             )
 
         server.call = call
-        client = server.client()
+        client = server.client(timeout=1)
         try:
             await client.start()
             task = asyncio.create_task(client.request("tools/call", {}))

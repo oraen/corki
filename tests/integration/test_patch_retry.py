@@ -33,7 +33,7 @@ def test_denied_patch_retries_only_after_fresh_host_review(
         policy = replace(
             workspace_policy(compiler, root), approval_policy_json=json.dumps(approval)
         )
-        runtime = create_runtime(root, compiler, model, policy=policy)
+        runtime = await create_runtime(root, compiler, model, policy=policy)
         prompts = []
 
         async def respond(request):

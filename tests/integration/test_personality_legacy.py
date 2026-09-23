@@ -34,7 +34,7 @@ def test_legacy_personality_uses_only_known_model_reference(tmp_path, previous_m
                 }
             ),
         )
-        source = make_runtime(tmp_path, Model(), configured=configured)
+        source = await make_runtime(tmp_path, Model(), configured=configured)
         try:
             await source._ensure_ready()
             thread = source.thread_id
@@ -59,7 +59,7 @@ def test_legacy_personality_uses_only_known_model_reference(tmp_path, previous_m
 
         for _ in range(2):
             model = Model()
-            cold = make_runtime(tmp_path, model, configured=configured, thread=thread)
+            cold = await make_runtime(tmp_path, model, configured=configured, thread=thread)
             try:
                 assert isinstance([e async for e in cold.stream("next")][-1], TurnCompleted)
                 stored = await cold._repository.load_items(thread)
@@ -110,7 +110,7 @@ def test_invalid_old_personality_snapshot_falls_back_without_rewriting_history(
                 }
             ),
         )
-        source = make_runtime(tmp_path, Model(), configured=configured)
+        source = await make_runtime(tmp_path, Model(), configured=configured)
         try:
             await source._ensure_ready()
             thread = source.thread_id
@@ -131,7 +131,7 @@ def test_invalid_old_personality_snapshot_falls_back_without_rewriting_history(
         finally:
             await source.aclose()
         model = Model()
-        cold = make_runtime(tmp_path, model, configured=configured, thread=thread)
+        cold = await make_runtime(tmp_path, model, configured=configured, thread=thread)
         try:
             for _ in range(2):
                 events = [e async for e in cold.stream("next")]

@@ -278,8 +278,8 @@ def test_runtime_refresh_persists_before_rpc_and_cold_restart(
         )
         model = Model()
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 model=model if model_transport == "scripted" else None,
                 registry=ToolRegistry(),
@@ -288,7 +288,7 @@ def test_runtime_refresh_persists_before_rpc_and_cold_restart(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [e async for e in runtime.stream("read")]
             assert isinstance(events[-1], TurnCompleted)
@@ -303,7 +303,7 @@ def test_runtime_refresh_persists_before_rpc_and_cold_restart(
                 assert path.stat().st_mode & 0o777 == 0o600
                 thread = runtime.thread_id
                 await runtime.aclose()
-                runtime = create(thread)
+                runtime = await create(thread)
                 assert isinstance([e async for e in runtime.stream("continue")][-1], TurnCompleted)
                 assert len(tokens) == len(calls) == 1
         finally:

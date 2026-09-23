@@ -34,7 +34,7 @@ def test_root_runtime_loads_global_home_instructions_separately_from_project(tmp
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=project, skills_enabled=False),
             home_path=home,
             model=Main(),
@@ -78,7 +78,7 @@ def test_project_creation_snapshot_and_cold_refresh_preserve_history(tmp_path, r
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=project, skills_enabled=False),
             home_path=tmp_path / "home",
             model=Main(),
@@ -178,7 +178,7 @@ def test_managed_deny_read_of_project_instructions_fails_before_sampling(tmp_pat
                 ),
             )
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=project,
                 skills_enabled=False,

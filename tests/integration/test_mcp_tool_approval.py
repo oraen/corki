@@ -118,7 +118,7 @@ class Model:
         pass
 
 
-def runtime_for(tmp_path, monkeypatch, settings, model, *, annotations=None):
+async def runtime_for(tmp_path, monkeypatch, settings, model, *, annotations=None):
     clients = []
 
     def factory(config):
@@ -127,7 +127,7 @@ def runtime_for(tmp_path, monkeypatch, settings, model, *, annotations=None):
         return client
 
     monkeypatch.setattr("corki.mcp.manager.create_client", factory)
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=settings,
         model=model,
         registry=ToolRegistry(),
@@ -144,7 +144,7 @@ def test_real_runtime_waits_before_remote_effect_and_returns_observation(
 ):
     async def scenario():
         model = Model(mode)
-        runtime, clients = runtime_for(
+        runtime, clients = await runtime_for(
             tmp_path, monkeypatch, settings_for(tmp_path, mode=mode), model
         )
         received, release = asyncio.Event(), asyncio.Event()
@@ -222,7 +222,7 @@ def test_runtime_native_policy_and_annotation_matrix(
     tmp_path, monkeypatch, mode, annotations, asks, policy
 ):
     async def scenario():
-        runtime, clients = runtime_for(
+        runtime, clients = await runtime_for(
             tmp_path,
             monkeypatch,
             settings_for(tmp_path, policy=policy, approval=mode),
@@ -255,7 +255,7 @@ def test_remember_is_session_local_and_only_auto_across_arguments_and_turns(
 ):
     async def scenario():
         settings = settings_for(tmp_path, approval=mode)
-        runtime, clients = runtime_for(tmp_path, monkeypatch, settings, Model(repeat=2))
+        runtime, clients = await runtime_for(tmp_path, monkeypatch, settings, Model(repeat=2))
         received = []
 
         async def host(request):
@@ -279,7 +279,7 @@ def test_remember_is_session_local_and_only_auto_across_arguments_and_turns(
             assert len(received) == (1 if mode == "auto" else 4)
         finally:
             await runtime.aclose()
-        cold, cold_clients = runtime_for(tmp_path, monkeypatch, settings, Model())
+        cold, cold_clients = await runtime_for(tmp_path, monkeypatch, settings, Model())
         try:
             # A new host session must ask again; missing handler declines, not consents.
             events = [e async for e in cold.stream("needle")]
@@ -296,7 +296,7 @@ def test_remember_is_session_local_and_only_auto_across_arguments_and_turns(
 def test_approval_failure_and_teardown_never_reach_effect(tmp_path, monkeypatch, case, mode):
     async def scenario():
         model = Model(mode)
-        runtime, clients = runtime_for(
+        runtime, clients = await runtime_for(
             tmp_path, monkeypatch, settings_for(tmp_path, mode=mode), model
         )
         entered, cleaned = asyncio.Event(), asyncio.Event()
@@ -355,7 +355,7 @@ def test_waiting_approval_keeps_exact_connection_but_later_calls_use_new_policy(
 ):
     async def scenario():
         settings = settings_for(tmp_path)
-        runtime, clients = runtime_for(tmp_path, monkeypatch, settings, Model(repeat=2))
+        runtime, clients = await runtime_for(tmp_path, monkeypatch, settings, Model(repeat=2))
         received = []
 
         async def host(request):
@@ -407,7 +407,7 @@ def test_latest_per_tool_override_wins_at_admission(tmp_path, monkeypatch):
                         )
                     yield event
 
-        runtime, clients = runtime_for(tmp_path, monkeypatch, settings, UpdatingModel())
+        runtime, clients = await runtime_for(tmp_path, monkeypatch, settings, UpdatingModel())
         try:
             events = [e async for e in runtime.stream("needle")]
             assert isinstance(events[-1], TurnCompleted)
@@ -452,7 +452,7 @@ def test_mcp_scoped_approval_policy_rejects_unimplemented_or_invalid_values(tmp_
 @pytest.mark.parametrize("value", ["true", 1, [], {}])
 def test_malformed_remote_hint_cannot_publish_an_unreviewed_tool(tmp_path, monkeypatch, value):
     async def scenario():
-        runtime, clients = runtime_for(
+        runtime, clients = await runtime_for(
             tmp_path,
             monkeypatch,
             settings_for(tmp_path, approval="auto"),
@@ -484,7 +484,7 @@ def test_approval_outcome_keeps_prepared_tool_output_budget(tmp_path, monkeypatc
             ),
         )
         model = Model()
-        runtime, clients = runtime_for(tmp_path, monkeypatch, settings, model)
+        runtime, clients = await runtime_for(tmp_path, monkeypatch, settings, model)
 
         async def host(request):
             if action == "failure":

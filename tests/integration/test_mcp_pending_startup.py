@@ -59,11 +59,11 @@ class PendingClient(MCPClient):
         raise AssertionError(message)
 
 
-def make_runtime(tmp_path, monkeypatch, model, **options):
+async def make_runtime(tmp_path, monkeypatch, model, **options):
     server = MCPServerSettings("pending", "http", url="https://pending.test")
     client = PendingClient(server)
     monkeypatch.setattr("corki.mcp.manager.create_client", lambda _: client)
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -88,7 +88,7 @@ def test_default_turn_started_does_not_wait_for_optional_mcp(tmp_path, monkeypat
             async def aclose(self):
                 pass
 
-        runtime, client = make_runtime(tmp_path, monkeypatch, Model())
+        runtime, client = await make_runtime(tmp_path, monkeypatch, Model())
         stream = runtime.stream("start now")
         try:
             event = await asyncio.wait_for(anext(stream), 1)
@@ -114,7 +114,7 @@ def test_active_turn_cancel_retains_pending_startup_until_idle_interrupt(tmp_pat
             async def aclose(self):
                 pass
 
-        runtime, client = make_runtime(
+        runtime, client = await make_runtime(
             tmp_path, monkeypatch, Model(), mcp_optional_startup_grace_ms=0
         )
         events = []
@@ -162,7 +162,7 @@ def test_failed_session_setup_joins_unpublished_optional_startup(tmp_path, monke
             async def aclose(self):
                 pass
 
-        runtime, client = make_runtime(tmp_path, monkeypatch, Model())
+        runtime, client = await make_runtime(tmp_path, monkeypatch, Model())
         original = runtime_module.setup_checkpoint
 
         async def fail_setup(checkpointer):
@@ -223,7 +223,7 @@ def test_cold_step_rebind_waits_saved_servers_not_new_unrelated_startup(tmp_path
             async def emit(self, event):
                 pass
 
-        old, first_client = make_runtime(tmp_path, monkeypatch, Model())
+        old, first_client = await make_runtime(tmp_path, monkeypatch, Model())
         first_client.release.set()
         turn = new_turn_id()
         try:
@@ -253,7 +253,7 @@ def test_cold_step_rebind_waits_saved_servers_not_new_unrelated_startup(tmp_path
             return client
 
         monkeypatch.setattr("corki.mcp.manager.create_client", factory)
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -320,7 +320,7 @@ def test_optional_grace_omits_pending_then_loads_ready_tool_next_step(tmp_path, 
             async def aclose(self):
                 pass
 
-        runtime, client = make_runtime(
+        runtime, client = await make_runtime(
             tmp_path, monkeypatch, Model(), mcp_optional_startup_grace_ms=10
         )
         try:
@@ -351,7 +351,7 @@ def test_zero_grace_waits_for_server_but_not_turn_started(tmp_path, monkeypatch)
             async def aclose(self):
                 pass
 
-        runtime, client = make_runtime(
+        runtime, client = await make_runtime(
             tmp_path, monkeypatch, Model(), mcp_optional_startup_grace_ms=0
         )
         stream = runtime.stream("wait for tools")

@@ -54,7 +54,7 @@ async def seed_source(database, directory):
     return thread
 
 
-def make_runtime(tmp_path, *, memory_model=None, runtime_options=None, **settings):
+async def make_runtime(tmp_path, *, memory_model=None, runtime_options=None, **settings):
     values = dict(
         working_directory=tmp_path,
         api_base="https://inference.example.test/v1",
@@ -66,7 +66,7 @@ def make_runtime(tmp_path, *, memory_model=None, runtime_options=None, **setting
         skills_enabled=False,
     )
     values.update(settings)
-    return LangGraphRuntime.create(
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(**values),
         database_path=tmp_path / "sessions.db",
         home_path=tmp_path / "home",
@@ -98,7 +98,7 @@ def test_memory_generation_never_queries_account(tmp_path, monkeypatch, provider
             ),
         )
         memory_model = MemoryModel()
-        runtime = make_runtime(tmp_path, memory_model=memory_model, provider_name=provider)
+        runtime = await make_runtime(tmp_path, memory_model=memory_model, provider_name=provider)
         if prune_fails:
 
             async def broken_prune(**kwargs):

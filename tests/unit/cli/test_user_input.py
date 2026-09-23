@@ -64,6 +64,8 @@ def test_multiple_questions_preserve_commits_and_confirm_unanswered(keys, expect
         ("\x1b[B\r", ["B"]),
         ("2", ["B"]),
         ("\tcustom\r", ["A", "user_note: custom"]),
+        ("\tfirst\x1b[13;2usecond\r", ["A", "user_note: first\nsecond"]),
+        ("\x1b[13;2u\r", ["A"]),
         ("\x1b[B\x1b[B\rcustom\r", ["None of the above", "user_note: custom"]),
         ("\x1b", None),
         ("\x03", None),

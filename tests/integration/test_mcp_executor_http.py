@@ -174,7 +174,7 @@ def test_executor_http_search_call_observe_and_cleanup(tmp_path, mode, outcome):
             await delta(socket, packet, 2, body[5:], done=True)
 
         async with executor(handle) as (transport, packets):
-            runtime = runtime_for(
+            runtime = await runtime_for(
                 tmp_path, MCPRuntimeContext((MCPHTTPEnvironment("remote", transport),)), mode=mode
             )
             try:

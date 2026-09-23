@@ -69,7 +69,7 @@ def test_mode_changes_future_turn_context_and_plan_guard(tmp_path, tool_mode):
                 pass
 
         model = Model()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -123,7 +123,7 @@ def test_mode_changes_future_turn_context_and_plan_guard(tmp_path, tool_mode):
 def test_custom_mode_instructions_are_replaced_and_removed_in_real_context(tmp_path):
     async def scenario():
         model = SettingsModel()
-        runtime = make_runtime(tmp_path, model)
+        runtime = await make_runtime(tmp_path, model)
         try:
             for instructions in ("Unique planning instructions", "", None):
                 await runtime.update_thread_settings(
@@ -154,7 +154,7 @@ def test_custom_mode_instructions_are_replaced_and_removed_in_real_context(tmp_p
 def test_mode_snapshot_tracks_model_and_emits_one_section_per_transition(tmp_path):
     async def scenario():
         model = SettingsModel()
-        runtime = make_runtime(tmp_path, model)
+        runtime = await make_runtime(tmp_path, model)
         try:
             for mode, selected_model, instructions, expected in (
                 ("default", "large", "same instructions", 1),
@@ -186,7 +186,7 @@ def test_mode_snapshot_tracks_model_and_emits_one_section_per_transition(tmp_pat
                     assert updates[0] in model.requests[-1].items
                 thread = runtime.thread_id
                 await runtime.aclose()
-                runtime = make_runtime(tmp_path, model, thread=thread)
+                runtime = await make_runtime(tmp_path, model, thread=thread)
         finally:
             await runtime.aclose()
 
@@ -199,7 +199,7 @@ def test_legacy_mode_fragment_is_reconciled_once_on_cold_resume(tmp_path, instru
 
     async def scenario():
         model = SettingsModel()
-        runtime = make_runtime(tmp_path, model)
+        runtime = await make_runtime(tmp_path, model)
         await runtime._ensure_ready()
         thread = runtime.thread_id
         try:
@@ -216,7 +216,7 @@ def test_legacy_mode_fragment_is_reconciled_once_on_cold_resume(tmp_path, instru
             prefix = await runtime._repository.load_items(thread)
         finally:
             await runtime.aclose()
-        runtime = make_runtime(tmp_path, model, thread=thread)
+        runtime = await make_runtime(tmp_path, model, thread=thread)
         try:
             await runtime.update_thread_settings(
                 collaboration_mode=CollaborationMode(
@@ -228,7 +228,7 @@ def test_legacy_mode_fragment_is_reconciled_once_on_cold_resume(tmp_path, instru
                 await runtime.aclose()
                 # A new host supplies future-Turn defaults explicitly; keep
                 # those defaults fixed while testing history reconciliation.
-                runtime = make_runtime(
+                runtime = await make_runtime(
                     tmp_path,
                     model,
                     thread=thread,
@@ -260,7 +260,7 @@ def test_legacy_mode_fragment_is_reconciled_once_on_cold_resume(tmp_path, instru
 
 def test_legacy_mode_settings_migrate_and_snapshots_default_safely(tmp_path):
     async def scenario():
-        runtime = make_runtime(tmp_path, SettingsModel())
+        runtime = await make_runtime(tmp_path, SettingsModel())
         await runtime._ensure_ready()
         path, thread = runtime._repository.path, runtime.thread_id
         payload = runtime.thread_settings.to_payload()
@@ -291,7 +291,7 @@ def test_checkpoint_recovery_retains_mode_against_new_host_defaults(tmp_path):
                 pass
 
         configured = settings(tmp_path, collaboration_mode="plan")
-        runtime = make_runtime(tmp_path, SettingsModel(), configured=configured)
+        runtime = await make_runtime(tmp_path, SettingsModel(), configured=configured)
         await runtime._ensure_ready()
         turn = new_turn_id()
         user = UserMessageItem("prepared once", turn)
@@ -318,7 +318,7 @@ def test_checkpoint_recovery_retains_mode_against_new_host_defaults(tmp_path):
         finally:
             await runtime.aclose()
         model = SettingsModel()
-        cold = make_runtime(
+        cold = await make_runtime(
             tmp_path,
             model,
             configured=replace(configured, collaboration_mode="default"),

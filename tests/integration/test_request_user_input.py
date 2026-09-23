@@ -70,8 +70,8 @@ class Model:
         pass
 
 
-def make_runtime(tmp_path, model, source=None, **settings):
-    return LangGraphRuntime.create(
+async def make_runtime(tmp_path, model, source=None, **settings):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False, **settings),
         database_path=tmp_path / "history.db",
         home_path=tmp_path / "home",
@@ -88,7 +88,7 @@ def test_question_reply_is_a_tool_result_not_a_user_message(tmp_path, tool_mode,
 
     async def scenario():
         model = Model()
-        runtime = make_runtime(
+        runtime = await make_runtime(
             tmp_path,
             model,
             tool_mode=tool_mode,
@@ -138,7 +138,7 @@ def test_question_is_not_exposed_to_nested_code_mode(tmp_path):
 
     async def scenario():
         model = Model(nested=True)
-        runtime = make_runtime(
+        runtime = await make_runtime(
             tmp_path, model, collaboration_mode="plan", tool_mode="code_mode_only"
         )
         try:
@@ -161,7 +161,7 @@ def test_waiting_question_does_not_outlive_its_turn(tmp_path, action):
     async def scenario():
         ready = asyncio.Event()
         model = Model()
-        runtime = make_runtime(tmp_path, model, collaboration_mode="plan")
+        runtime = await make_runtime(tmp_path, model, collaboration_mode="plan")
         requests = []
 
         async def consume():
@@ -227,7 +227,7 @@ def test_waiting_question_does_not_outlive_its_turn(tmp_path, action):
 def test_question_rejection_returns_an_observation(tmp_path, settings, questions, error):
     async def scenario():
         model = Model(questions)
-        runtime = make_runtime(tmp_path, model, **settings)
+        runtime = await make_runtime(tmp_path, model, **settings)
         try:
             events = [e async for e in runtime.stream("ask")]
             assert isinstance(events[-1], TurnCompleted)

@@ -61,7 +61,7 @@ def test_timeout_with_denial_text_cannot_authorize_retry(tmp_path, compiler, mod
     monkeypatch.setattr("corki.tools.builtin.process_retry.is_sandbox_denial", classify)
 
     async def scenario():
-        runtime, model = setup(tmp_path, compiler, mode, approval=granular(), timeout=0.05)
+        runtime, model = await setup(tmp_path, compiler, mode, approval=granular(), timeout=0.05)
         try:
             await run(runtime, model, {"cmd": "printf 'Permission denied'; sleep 3"})
             assert len(launches) == 1 and launches[0][0].returncode is not None
@@ -74,7 +74,7 @@ def test_timeout_with_denial_text_cannot_authorize_retry(tmp_path, compiler, mod
     asyncio.run(scenario())
 
 
-def setup(
+async def setup(
     root,
     compiler,
     mode,
@@ -100,7 +100,7 @@ def setup(
             approval_policy_json=approval,
         ),
     )
-    return runtime_for(root, compiler, model, settings=settings), model
+    return await runtime_for(root, compiler, model, settings=settings), model
 
 
 def capture_spawns(monkeypatch):
@@ -126,7 +126,7 @@ def test_approved_early_denial_retries_once_before_handoff(
     launches = capture_spawns(monkeypatch)
 
     async def scenario():
-        runtime, model = setup(tmp_path, compiler, mode)
+        runtime, model = await setup(tmp_path, compiler, mode)
         target = tmp_path / "approved-retry"
         prompts = []
 
@@ -163,7 +163,7 @@ def test_cancel_or_close_joins_private_attempt_before_retry(
 
     async def scenario():
         entered, finalized = asyncio.Event(), asyncio.Event()
-        runtime, model = setup(tmp_path, compiler, mode, approval=granular())
+        runtime, model = await setup(tmp_path, compiler, mode, approval=granular())
         target = tmp_path / "never-retried"
         helpers = []
         script = "import time; time.sleep(60)"
@@ -241,7 +241,7 @@ def test_classifier_failure_never_replays_completed_first_attempt(
     monkeypatch.setattr("corki.tools.builtin.process_retry.is_sandbox_denial", fail)
 
     async def scenario():
-        runtime, model = setup(tmp_path, compiler, mode, approval=granular())
+        runtime, model = await setup(tmp_path, compiler, mode, approval=granular())
         try:
             await run(runtime, model, {"cmd": "printf 'Permission denied'; exit 1"})
             assert len(launches) == 1 and launches[0][0].returncode is not None
@@ -284,7 +284,7 @@ def test_policy_and_actual_backend_can_forbid_automatic_retry(
             if case in {"never", "on-request"}
             else '"untrusted"'
         )
-        runtime, model = setup(
+        runtime, model = await setup(
             tmp_path,
             compiler,
             mode,
@@ -321,7 +321,7 @@ def test_unapproved_retry_requires_explicit_review_after_first_process_exit(
     launches = capture_spawns(monkeypatch)
 
     async def scenario():
-        runtime, model = setup(tmp_path, compiler, mode, approval=granular())
+        runtime, model = await setup(tmp_path, compiler, mode, approval=granular())
         target = tmp_path / "reviewed-retry"
         prompts = []
         reviewed = []
@@ -358,7 +358,7 @@ def test_no_retry_loop_or_replay_after_handoff(tmp_path, compiler, mode, kind, m
     launches = capture_spawns(monkeypatch)
 
     async def scenario():
-        runtime, model = setup(tmp_path, compiler, mode, approval=granular())
+        runtime, model = await setup(tmp_path, compiler, mode, approval=granular())
         prompts = []
 
         async def review(request):

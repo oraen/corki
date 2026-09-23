@@ -212,7 +212,7 @@ def test_native_installed_plugin_selection_reaches_runtime(tmp_path, monkeypatch
             tool_mode="code_mode_only" if mode == "code_mode" else "direct",
         )
         model = Model()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             model=model,
             registry=ToolRegistry(),
@@ -253,7 +253,7 @@ def test_native_installed_plugin_selection_reaches_runtime(tmp_path, monkeypatch
                     thread = runtime.thread_id
                     await runtime.aclose()
                     assert all(client.is_closed for client in clients)
-                    runtime = LangGraphRuntime.create(
+                    runtime = await LangGraphRuntime.acreate(
                         settings=settings,
                         model=model,
                         registry=ToolRegistry(),

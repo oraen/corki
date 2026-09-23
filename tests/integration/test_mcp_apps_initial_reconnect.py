@@ -72,7 +72,7 @@ def test_initial_failure_recovers_only_after_explicit_refresh(tmp_path, monkeypa
                 pass
 
         model = Model()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,
@@ -177,7 +177,7 @@ def test_required_validation_preserves_each_observed_outcome(
         names = [failed_name, slow_name]
         if reverse_declarations:
             names.reverse()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,

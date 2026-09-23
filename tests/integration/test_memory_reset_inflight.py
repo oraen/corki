@@ -81,8 +81,8 @@ def test_reset_rejects_inflight_shared_worker_and_can_retry_after_close(
 
         root = tmp_path / "memories"
 
-        def create():
-            return LangGraphRuntime.create(
+        async def create():
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(tmp_path, skills_enabled=False, memories_enabled=True),
                 database_path=tmp_path / "history.db",
                 home_path=tmp_path / "home",
@@ -91,8 +91,8 @@ def test_reset_rejects_inflight_shared_worker_and_can_retry_after_close(
                 memory_model=Worker(),
             )
 
-        runtime = create()
-        host = create() if other_host else runtime
+        runtime = await create()
+        host = await create() if other_host else runtime
         try:
             assert isinstance([e async for e in runtime.stream("work")][-1], TurnCompleted)
             await asyncio.wait_for(entered.wait(), 3)

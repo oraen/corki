@@ -166,7 +166,7 @@ def test_real_cell_cleanup_fault_preserves_terminal_and_joins_callbacks(
 
         registry = ToolRegistry()
         registry.register(Hold())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),
@@ -280,7 +280,7 @@ def test_cancel_joins_all_cells_and_calls_even_when_one_termination_fails(tmp_pa
             finally:
                 joined.append("call")
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),

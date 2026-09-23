@@ -107,7 +107,7 @@ def test_runtime_consolidation_receives_named_change_and_cold_recall(
 
         async def run(*, new_window=False):
             nonlocal thread
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path, skills_enabled=False, memories_enabled=True
                 ),

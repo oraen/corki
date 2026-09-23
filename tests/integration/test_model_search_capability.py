@@ -101,7 +101,7 @@ def test_model_catalog_gate_replans_mcp_and_executes(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             registry=ToolRegistry(),
             model=Model(),
@@ -158,7 +158,7 @@ def test_bundled_catalog_controls_real_search_and_execution(tmp_path, model_name
 
         registry = ToolRegistry()
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 model=model_name,

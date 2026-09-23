@@ -52,8 +52,8 @@ def test_token_budget_summary_pending_input_checkpoint_and_cold_resume(tmp_path,
             async def emit(self, event):
                 pass
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 model=Model(),
                 database_path=tmp_path / "s.db",
@@ -61,7 +61,7 @@ def test_token_budget_summary_pending_input_checkpoint_and_cold_resume(tmp_path,
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             assert isinstance(
                 [e async for e in runtime.stream("seed old window")][-1], TurnCompleted
@@ -112,7 +112,7 @@ def test_token_budget_summary_pending_input_checkpoint_and_cold_resume(tmp_path,
             assert "use $fixture" not in str(requests[-1].items)
             skill.write_text("---\nname: fixture\ndescription: fixture\n---\nCHANGED SKILL BODY")
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             assert isinstance([e async for e in runtime.resume_pending()][-1], TurnCompleted)
             assert len(requests) == 3
             assert any(

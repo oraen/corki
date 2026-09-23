@@ -51,7 +51,7 @@ async def main():
     settings = CorkiSettings(cwd, skills_enabled=False, plugins_enabled=False,
                             collaboration_mode=mode)
     model = Model()
-    runtime = LangGraphRuntime.create(settings=settings, database_path=cwd / "sessions.db",
+    runtime = await LangGraphRuntime.acreate(settings=settings, database_path=cwd / "sessions.db",
                                      model=model, home_path=cwd / "home")
     app = Application(settings, CorkiPaths.from_home(cwd / "home"), runtime,
                       UI(settings, cwd / "input-history"))

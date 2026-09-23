@@ -295,7 +295,7 @@ def test_runtime_discovery_refresh_shutdown_and_cold_history_own_distinct_proces
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             model=Model(),
             registry=ToolRegistry(),
@@ -326,7 +326,7 @@ def test_runtime_discovery_refresh_shutdown_and_cold_history_own_distinct_proces
             async def aclose(self):
                 pass
 
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=settings,
             model=ColdModel(),
             registry=ToolRegistry(),

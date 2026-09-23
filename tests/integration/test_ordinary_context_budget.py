@@ -59,8 +59,8 @@ def test_private_archive_metadata_cannot_force_summary(
             async def aclose(self):
                 pass
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,
@@ -73,14 +73,14 @@ def test_private_archive_metadata_cannot_force_summary(
                 model=Model(),
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [event async for event in runtime.stream("first")]
             assert isinstance(events[-1], TurnCompleted)
             thread = runtime.thread_id
             if cold:
                 await runtime.aclose()
-                runtime = create(thread)
+                runtime = await create(thread)
             events = [event async for event in runtime.stream("followup")]
             assert isinstance(events[-1], TurnCompleted)
             assert (

@@ -49,7 +49,9 @@ def business_items(items):
     )
 
 
-def create_runtime(tmp_path, model, *, registry=None, window=200_000, retries=0, thread_id=None):
+async def create_runtime(
+    tmp_path, model, *, registry=None, window=200_000, retries=0, thread_id=None
+):
     class Context(ContextBuilder):
         def base_instructions(self):
             return "BASE"
@@ -57,7 +59,7 @@ def create_runtime(tmp_path, model, *, registry=None, window=200_000, retries=0,
         async def build(self, **options):
             return ContextSnapshot("BASE", (), tmp_path)
 
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             model="fixture",
@@ -129,7 +131,7 @@ def test_summary_sees_accepted_current_input_but_not_unaccepted_next_input(tmp_p
     async def scenario():
         model, registry = Model(), ToolRegistry()
         registry.register(Effect())
-        runtime = create_runtime(tmp_path, model, registry=registry)
+        runtime = await create_runtime(tmp_path, model, registry=registry)
         try:
             assert isinstance(
                 [e async for e in runtime.stream("ACCEPTED CURRENT INPUT")][-1], TurnCompleted
@@ -179,7 +181,7 @@ def test_summary_sees_accepted_current_input_but_not_unaccepted_next_input(tmp_p
             await runtime.aclose()
             registry = ToolRegistry()
             registry.register(Effect())
-            runtime = create_runtime(tmp_path, model, registry=registry, thread_id=thread)
+            runtime = await create_runtime(tmp_path, model, registry=registry, thread_id=thread)
             assert isinstance([e async for e in runtime.stream("AFTER REOPEN")][-1], TurnCompleted)
             assert len(model.summaries) == 1
             assert not any(
@@ -215,7 +217,7 @@ def test_prompt_only_compaction_is_submitted_once_even_when_estimate_is_large(tm
 
     async def scenario():
         model = Model()
-        runtime = create_runtime(tmp_path, model, window=1000, retries=1)
+        runtime = await create_runtime(tmp_path, model, window=1000, retries=1)
         runtime._graph._context_builder.base_instructions = lambda: "x" * 8000
         try:
             events = [e async for e in runtime.compact()]
@@ -271,7 +273,7 @@ def test_summary_read_error_survives_separate_close_failure_and_retries(tmp_path
             async def aclose(self):
                 pass
 
-        runtime = create_runtime(tmp_path, Model(), retries=1)
+        runtime = await create_runtime(tmp_path, Model(), retries=1)
         original = UserMessageItem("KEEP ORIGINAL", new_turn_id())
         try:
             await runtime._ensure_ready()
@@ -307,7 +309,7 @@ def test_summary_close_failure_without_cancellation_does_not_install_summary(tmp
             async def aclose(self):
                 pass
 
-        runtime = create_runtime(tmp_path, Model())
+        runtime = await create_runtime(tmp_path, Model())
         original = UserMessageItem("KEEP THIS CONSTRAINT", new_turn_id())
         try:
             await runtime._ensure_ready()
@@ -353,7 +355,7 @@ def test_cancellation_of_large_summary_request_preserves_raw_history(
             async def aclose(self):
                 pass
 
-        runtime = create_runtime(tmp_path, Model(), window=1000)
+        runtime = await create_runtime(tmp_path, Model(), window=1000)
         original = (AssistantMessageItem("evidence " * 2000, new_turn_id(), new_step_id()),)
         if with_tool_pair:
             turn, step = new_turn_id(), new_step_id()
@@ -464,7 +466,7 @@ def test_summary_cancellation_cannot_be_hidden_by_a_normal_model_return(tmp_path
         registry = ToolRegistry()
         if trigger == "after_tool":
             registry.register(Effect())
-        runtime = create_runtime(
+        runtime = await create_runtime(
             tmp_path, Model(), registry=registry, window=8000 if automatic else 200_000
         )
         original = UserMessageItem(
@@ -519,7 +521,7 @@ def test_summary_cancellation_cannot_be_hidden_by_a_normal_model_return(tmp_path
             await runtime.aclose()
 
         if trigger == "after_tool":
-            cold = create_runtime(tmp_path, Model(), thread_id=runtime.thread_id, window=8000)
+            cold = await create_runtime(tmp_path, Model(), thread_id=runtime.thread_id, window=8000)
             try:
                 assert [event async for event in cold.resume_pending()] == []
                 assert await cold._repository.load_items(cold.thread_id) == stored
@@ -555,7 +557,7 @@ def test_provider_overflow_removes_pair_and_resets_local_retry_budget(tmp_path):
 
     async def scenario():
         model = Model()
-        runtime = create_runtime(tmp_path, model, window=1000, retries=1)
+        runtime = await create_runtime(tmp_path, model, window=1000, retries=1)
         old = new_turn_id()
         call = ToolCall(new_tool_call_id(), "effect", {})
         original = (
@@ -602,7 +604,7 @@ def test_manual_summary_submits_full_history_before_real_provider_overflow(tmp_p
 
     async def scenario():
         model = Model()
-        runtime = create_runtime(tmp_path, model, window=1000)
+        runtime = await create_runtime(tmp_path, model, window=1000)
         old = new_turn_id()
         original = (
             AssistantMessageItem("OLDEST EVIDENCE " + "x" * 8000, old, new_step_id()),

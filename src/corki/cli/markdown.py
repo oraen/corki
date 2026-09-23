@@ -8,6 +8,7 @@ from rich.markdown import BlockQuote, CodeBlock, Heading, ListElement, ListItem,
 from rich.segment import Segment
 from rich.text import Text
 
+from corki.cli.display_text import visible_terminal_text
 from corki.cli.markdown_fences import unwrap_markdown_fences
 from corki.cli.syntax import highlight_code
 
@@ -111,7 +112,7 @@ class AssistantMarkdown(Markdown):
 
     def __init__(self, source):
         # Keep link destinations visible in non-hyperlink terminals and exports.
-        super().__init__(unwrap_markdown_fences(source), hyperlinks=False)
+        super().__init__(unwrap_markdown_fences(visible_terminal_text(source)), hyperlinks=False)
 
     def __rich_console__(self, console, options):
         # Rich's nested-element bookkeeping emits a separator before a root

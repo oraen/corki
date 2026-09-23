@@ -72,7 +72,7 @@ def test_runtime_catalog_budget_does_not_disable_reading_or_repeat_warnings(
 
         registry = ToolRegistry()
         registry.register(Change())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 context_window_tokens=100_000,

@@ -76,7 +76,7 @@ def test_catalog_messages_are_used_by_runtime_context(tmp_path, mode, native, va
             else None,
         )
         model = Model()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             model=model,
             home_path=tmp_path / "home",
@@ -156,7 +156,7 @@ def test_bundled_auto_review_model_suppresses_default_permission_sections(tmp_pa
         if native and (not compiler or sys.platform != "darwin"):
             pytest.skip("requires native compiler")
         model = Model()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -232,7 +232,7 @@ def test_step_switch_keeps_turn_messages_but_next_turn_uses_new_model(tmp_path, 
         registry = ToolRegistry()
         registry.register(Hold())
         model = StepModel(calls=True, code_mode=mode != "direct")
-        runtime = make_runtime(tmp_path, model, configured=configured, registry=registry)
+        runtime = await make_runtime(tmp_path, model, configured=configured, registry=registry)
 
         async def consume():
             return [event async for event in runtime.stream("switch model during a turn")]
@@ -263,7 +263,7 @@ def test_step_switch_keeps_turn_messages_but_next_turn_uses_new_model(tmp_path, 
             thread_id = runtime.thread_id
             await runtime.aclose()
             restored_model = Model()
-            restored = make_runtime(
+            restored = await make_runtime(
                 tmp_path,
                 restored_model,
                 configured=replace(configured, model="small"),
@@ -309,7 +309,7 @@ def test_approval_override_does_not_suppress_saved_prefix_delta(tmp_path, mode, 
                 }
             ],
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -382,7 +382,7 @@ def test_empty_model_messages_do_not_disable_execution_gate(tmp_path, mode, nati
                 }
             ],
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

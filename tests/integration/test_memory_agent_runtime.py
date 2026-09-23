@@ -88,7 +88,7 @@ def test_memory_worker_uses_real_tools_before_owner_fenced_publication(tmp_path,
                 self.closed += 1
 
         model = Memory()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -197,7 +197,7 @@ def test_file_editing_worker_repairs_tool_error_verifies_and_recalls(
                     yield ModelItemCompleted(item)
                 yield ModelCompleted((item,))
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -276,7 +276,7 @@ def test_unconfirmed_child_shutdown_keeps_lease_even_during_stop(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, memories_enabled=True
             ),
@@ -425,7 +425,7 @@ def test_file_editing_child_preserves_side_effects_without_false_success(
                         )
                 yield ModelCompleted((AssistantMessageItem("done", turn, step),))
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -493,7 +493,7 @@ def test_file_editing_child_preserves_side_effects_without_false_success(
                 cold = failure == "database_success_cold"
                 if cold:
                     await runtime.aclose()
-                    runtime = LangGraphRuntime.create(
+                    runtime = await LangGraphRuntime.acreate(
                         settings=runtime._settings,
                         database_path=database,
                         memory_root=root,

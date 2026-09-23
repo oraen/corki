@@ -2,16 +2,17 @@
 
 import os
 import sys
+from pathlib import Path
 
 import pexpect
 import pytest
 
 PROGRAM = r"""
-import asyncio
+import asyncio, sys
 from pathlib import Path
 from corki.cli.application import CorkiApplication
 from corki.cli.terminal import TerminalUI
-from corki.config import CorkiPaths, CorkiSettings
+from corki.config import CorkiPaths, CorkiSettings, MCPServerSettings
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted, ModelTextDelta
 from corki.protocol.items import AssistantMessageItem, UserMessageItem, new_step_id
@@ -19,9 +20,11 @@ from corki.protocol.items import AssistantMessageItem, UserMessageItem, new_step
 async def main():
     class Model:
         requests = []
+        models = []
         closed = False
         release = asyncio.Event()
         async def stream(self, request):
+            self.models.append(request.model)
             user = next(i for i in reversed(request.items) if isinstance(i, UserMessageItem))
             self.requests.append((user.content, user.turn_id))
             if len(self.requests) == 1:
@@ -36,11 +39,19 @@ async def main():
             self.closed = True
     cwd = Path.cwd()
     settings = CorkiSettings(working_directory=cwd, skills_enabled=False,
-                            plugins_enabled=False)
+                            plugins_enabled=False,
+                            mcp_servers=(MCPServerSettings("numbers", "stdio",
+                                command=sys.executable, args=(sys.argv[1],)),))
     model = Model()
-    runtime = LangGraphRuntime.create(settings=settings, database_path=cwd / "sessions.db",
+    runtime = await LangGraphRuntime.acreate(settings=settings, database_path=cwd / "sessions.db",
                                      model=model, home_path=cwd / "home")
     original_steer = runtime.steer
+    original_update = runtime.update_thread_settings
+    changes = []
+    async def update(**kwargs):
+        changes.append(kwargs)
+        return await original_update(**kwargs)
+    runtime.update_thread_settings = update
     async def steer(message):
         assert message == "steer now"
         assert len(model.requests) == 1
@@ -56,6 +67,8 @@ async def main():
     app = Application(settings, CorkiPaths.from_home(cwd / "home"), runtime, ui)
     assert await app.run() == 0
     assert model.closed
+    assert changes == [{"model": "Local/Other"}]
+    assert model.models == [settings.model, settings.model, "Local/Other", "Local/Other"]
     assert [text for text, _ in model.requests] == [
         "initial", "steer now", "queued one", "queued two"]
     turns = [turn for _, turn in model.requests]
@@ -64,6 +77,7 @@ async def main():
     for text in ("initial", "steer now", "queued one", "queued two"):
         assert history.count("+" + text + "\n") == 1
     assert "QueuedInput" not in history
+    assert "+Local/Other" not in history and "Discard/Model" not in history
     print("QUEUE_VERIFIED", flush=True)
 
 asyncio.run(main())
@@ -83,7 +97,7 @@ def test_tab_queue_and_enter_steering_use_distinct_turns(tmp_path, width, edit):
         )
     child = pexpect.spawn(
         sys.executable,
-        ["-c", program],
+        ["-c", program, str(Path(__file__).resolve().parents[1] / "fixtures/mcp_number_server.py")],
         cwd=tmp_path,
         encoding="utf-8",
         timeout=15,
@@ -100,6 +114,28 @@ def test_tab_queue_and_enter_steering_use_distinct_turns(tmp_path, width, edit):
         child.expect("Ask Corki to do anything")
         child.send("initial\r")
         child.expect_exact("MODEL_WAITING")
+        child.send("/model\r")
+        child.expect_exact("Select model")
+        child.send("Discard/Model")
+        child.send("\x1b")
+        child.expect("Ask Corki to do anything")
+        child.send("/model\r")
+        child.expect_exact("Select model")
+        child.send("Invalid Model\r")
+        child.expect_exact("Model names cannot contain")
+        child.send("\x15Local/Other\r")
+        child.expect_exact("Model: Local/Other.")
+        child.expect_exact("turns.")
+        child.expect("Ask Corki to do anything")
+        for command, feedback in (
+            ("/mcp", "mcp__numbers::read"),
+            ("/status", "Corki home:"),
+            ("/missing", "Unknown command: /missing"),
+            ("/clear", "unavailable while"),
+        ):
+            child.send(command + "\r")
+            child.expect_exact(feedback)
+            child.expect("Ask Corki to do anything")
         child.send("queued one\t")
         child.expect_exact("Queued for the next turn.")
         child.expect_exact("Queued follow-up inputs")

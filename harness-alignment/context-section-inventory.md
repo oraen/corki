@@ -1,11 +1,83 @@
 # C1/C2：按实际生产入口拆分 world-state section
 
+## 2026-09-22：默认普通 Step 与条件能力重新分界
+
+增量组合补证：`test_default_world_state_combination.py` 新增同线程插件与
+deferred 工具目录的存在→同时撤销→同时恢复→冷 Runtime 未变化 Step。
+Codex `WorldState::render_diff` 保留 section 插入链，
+`updates::merge_contextual_fragments` 仅合并相邻同角色片段；Corki 每次
+Step 增量也保留顺序。实际新片段在撤销与恢复时均为工具目录先于扩展插件
+目录；插件通用指引只在首次注入，冷恢复不追加重复上下文事实。
+首次测试错误地把已 sealed 的热 Runtime 工具注册表交给冷 Runtime，
+构造前拒绝；改为冷 Runtime 自有注册表后两例通过，相关五文件
+**45 passed / 56.04s**，4 workers/loadfile/禁重启。本批只有测试修改，
+不把这项组合扩展为所有 section 状态转换的全称证明。
+
+同一请求组合复核：`test_default_world_state_combination.py` 同时启用
+项目 AGENTS、权限、plan 模式、本地环境、初始记忆、宿主技能、插件指引/目录、
+延迟工具目录，并在冷启动同线程后再次采样。Codex 首窗将 world-state
+片段先按 developer/user 分组，故不能把源码 section 插入链误当作跨角色的
+最终线性顺序；Corki 的 `freeze_context_messages` 也按角色分组。对照 Codex
+`session/world_state.rs` 的 plugins→tools→扩展及 `session/mod.rs` 的首窗分组，
+修正 Corki deferred 目录被当作初始扩展提前的问题：它现为 WORLD_STATE，
+插件指引在其前，插件目录在其后。组合及相关上下文测试 **496 passed /
+12.56s**，4 workers/loadfile；冷恢复中历史前缀未重写，记忆与目录各仅一份。
+此证据覆盖该组合，不等于所有条件能力已对齐。
+
+重新按 Codex `session/world_state.rs::build_world_state_for_step` 的实际插入链核对：
+model/personality→token budget/guidance→realtime→agents.md→permissions/
+compact permissions→collaboration→persistent→environment→多环境指导→
+Apps（用户排除）→plugins/tools→扩展→multi-agent→managed developer。
+这些是 section 的比较次序，不等于全部都在默认配置生成正文。
+Corki `ContextBuilder.build`、`Runtime` contributor/step contributor 与
+`PromptSlot` 对应默认普通模型、项目规则、权限、协作模式、本地环境、
+技能/记忆/插件、deferred 目录、managed 和扩展的生产入口；初始窗口
+memory 指导与每 Step world-state 来源由 `InitialContextContributor` 明确分离。
+本轮将 `tests/unit/context` 与七个角色、初始窗口、模型/风格、目录、环境、
+managed 集成文件同批执行，**483 passed / 8.23s**，4 workers/loadfile/
+禁重启，实际退出 0。首次命令误写 `test_runtime_environment.py` 导致
+pytest 退出 5、零收集；已按实际文件名 `test_runtime_environment_context.py`
+重跑完整预定范围，失败命令不计通过。
+
+当前默认路径未由这次核查发现新的缺失 section，但这批测试并非所有 section
+同一请求的全排列证明，C1/C2 不据此整体核销。Codex 的 Persistent 需有效
+`ReasoningEffort::Persistent` 及宿主再次采样；Corki 当前只有普通 provider 参数，
+没有本地续行调度。MultiAgent V2 需真正子 Agent 编排，Corki 现有来源标签/
+Hook 名称/模型 metadata 均不能代替。DeferredExecutor 默认关闭，但跨机器
+环境能力不是 MCP HTTP 绑定；尚未实现就不能只注入该指导。Codex Realtime
+是 intermediary/转录角色，Corki 的直接文字 steer 不应复制其角色文案。
+这些条件能力须按用户范围决定是否纳入本阶段；不因普通路径通过宣称它们
+一致，也不借它们无限扩大已明确排除的官方产品/专有模型协议。
+
 自定义扩展项已从差异诊断进入实现验证：新增 WorldStateContributor 接入
 Runtime，生产者控制 diff 与 legacy/retained matcher；显式来源标记区分旧
 PromptContribution，来源消失写静默比较状态而非通用撤销。冷恢复、取消、
 自动/手动 compact、普通 HTTP 两模式已有证据，见 extension-world-state-contract.md。
-608 定向通过不代替全量，当前全量句柄 33685 尚在运行。下方“没有对应接口”
+608 定向通过不代替全量。33685 已失败，stdin 等待断言随后修订；51160 最终
+结果未保留，新全量 25019 正在运行，详见 full-regression-25019.md。下方“没有对应接口”
 是发现时记录，不再描述当前实现；其它条件 section 未据此宣布完成。
+
+## 多 Agent 版本与名称边界（2026-09-14 只读复核）
+
+完整读取 session/multi_agents.rs 及 world_state/multi_agent_mode.rs：角色正文
+只在有效版本V2且根来源/ThreadSpawn子来源下生成；配置正文优先于目录正文，
+显式空字符串阻止回退。策略自定义正文限制400 tokens；无自定义正文才由有效
+effort推导Proactive/ExplicitRequestOnly。策略撤销不是通用撤销文案。
+features/src/lib.rs:1252 的 Collab/multi_agent 默认 true，而紧邻的
+MultiAgentV2 默认 false。因此“V2默认关闭”不能外推成整个多Agent默认关闭。
+进一步核对 config/mod.rs:1540–1578：显式V2优先，其次agents_enabled=false
+禁用；无覆盖时接受模型目录版本，最后按Collab选择V1/Disabled。
+session/mod.rs:3868 的 resolve_multi_agent_version_for_model 用OnceLock固定
+首次选择，后续仍应用显式配置覆盖。因此目录也可选择V2，并非必须显式开启V2。
+实际工具注册/执行器链仍需继续追踪，不能仅凭功能表将整个能力排除。
+已向用户询问本轮是否包括真正子Agent创建/消息/等待/取消，还是独立留后续；
+回复前保持范围待确认，不把普通模型路径误判为不能支持子Agent。
+
+Corki protocol/collaboration.py 的 CollaborationMode 只有 default/plan；
+pre_tool_hooks/post_tool_hooks 中 spawn_agent 名称仅用于Hook匹配/转换，
+model_context/bundled_models 的 multi_agent_reasoning_effort 仅是元数据。
+这些均不是子线程所有权、消息投递或调度实现证据。本轮未新增编排能力，
+未将占位字段标为一致；回归25019运行期间没有修改生产或测试。
 
 ## Realtime 的角色边界修正
 

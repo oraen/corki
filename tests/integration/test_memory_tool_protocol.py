@@ -140,7 +140,7 @@ def test_memory_tool_contract_on_real_http_requests(tmp_path, mode, leaf, argume
                 supports_native_namespaces=mode == "native",
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 model="fixture",
@@ -259,7 +259,7 @@ def test_native_memory_values_and_semantic_errors_in_code_mode(tmp_path, mode):
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,
@@ -338,7 +338,7 @@ def test_memory_tools_are_exclusive_even_when_model_requests_concurrency(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,
@@ -409,7 +409,7 @@ def test_legacy_completed_call_is_not_rebound_and_new_call_can_use_native_tool(t
 
         registry = ToolRegistry()
         registry.register(Legacy())
-        first = LangGraphRuntime.create(
+        first = await LangGraphRuntime.acreate(
             settings=CorkiSettings(tmp_path, skills_enabled=False),
             database_path=tmp_path / "sessions.db",
             registry=registry,
@@ -421,7 +421,7 @@ def test_legacy_completed_call_is_not_rebound_and_new_call_can_use_native_tool(t
         finally:
             await first.aclose()
         model = Model(False)
-        second = LangGraphRuntime.create(
+        second = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,

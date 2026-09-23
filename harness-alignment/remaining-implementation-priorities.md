@@ -1,6 +1,176 @@
 # 当前实现缺口与验收顺序（不替代完整 A–F 清单）
 
+2026-09-22 用户再次恢复 A–E Harness 核心对齐，`objective.md` 已切换；
+CLI 交互细节暂缓，原目标单独归档。最新 B3/E2 检索故障隔离反例：畸形
+可选 schema 元数据原会使整批 deferred 索引失败，现跳过非预期形状的
+检索文本字段，不改原 schema；相关五文件 69 passed、0 skipped，静态
+检查通过，详见 `tool-search-ranking-review.md` 顶部。未跑本批全量，
+下方全量数字均为此次生产改动前基线，不冒称当前代码全绿。
+
+最新 B1/B8 工具策略注册准入修复后，非 CLI 同范围全量实际退出 0：
+**15635 passed、7 skipped、568.85s**，8 workers/loadfile/禁重启。
+`-rs` 确认六项仍需不存在的历史编译器、一项为文件系统非 UTF-8 名称限制。
+七项新构造反例先红后绿，工具/协议与搜索/Agent 循环联合 1401 通过；
+详见 `tool-search-ranking-review.md` 顶部。下方 15627 为此次生产改动前基线。
+仍需核对 A–E 的其它开放项；不能用全量绿代替行为差异审计。
+
+最新非 CLI 全量在 E2 模型输出身份边界修复后实际退出 0：
+**15627 passed、7 skipped、578.55s**，8 workers/loadfile/禁重启。
+七项跳过仍为六项依赖已不存在的历史编译器、一项当前文件系统拒绝非 UTF-8
+文件名，本批 `-rs` 已核对。此结果替代下方 15616 生产前基线，不代表条件能力
+或全部 A–E 差异已完成。
+
+## 2026-09-22 E2 普通模型输出身份边界
+
+Codex `protocol/src/models.rs` 的函数调用 `call_id` 是 `String`，反序列化/类型系统
+保证字符串身份；Corki `ToolCall` 和 conversation item 的 Python 注解不作运行时
+校验。`graph._validate_model_items` 原先先对 step/item/call ID 建集合，异常适配器
+返回列表会抛未分类 `TypeError`；整数会被接受，孤立 surrogate 会在后续 UTF-8
+持久化时失败。六个反例先全部失败，现于模型输出提交前按普通协议错误拒绝
+非法 turn/step/item/call ID 与工具名；空字符串仍沿用既有合法语义，不按名称
+自动匹配任何工具。11 个专项通过；core/models 与模型提交、续行、工具模式、
+恢复集成合计 603 passed，退出 0。没有新增官方协议或服务请求。修复后的
+全量结果见本页顶部；A–E 仍开放。
+
+## 2026-09-22 恢复 A–E 核心目标（覆盖下方 CLI 阶段入口）
+
+最新 C3/D1 修复：普通供应商低报 usage、可见历史已超过本地硬窗口时，
+`get_context_remaining` 原仍报告 17900，下一请求却立即压缩。现在剩余量
+和通知的硬上限与 `prepare` 的完整请求本地估算一致，同时保留 usage 对
+自动阈值的所有权。真实 Runtime 反例先红后绿，total/body-after-prefix
+均覆盖；相关 97 通过。扩大 context/token-budget 初批 600 通过、28 跳过，
+确认全部因未传原生编译器；补传后同范围 **628 通过、0 跳过**，
+见 `context-budget-review.md` 顶部。该生产改动晚于下方 15614 全量，
+但修复后的同范围非 CLI 全量现已退出 0：**15616 passed、7 skipped、
+569.03s**，8 workers/loadfile/禁重启；跳过原因同此前，15614 已被本批
+替代。不能因此宣布 C3 或 A–E 全部完成。
+
+最新 D/E 数据安全修复：旧记忆 Git 基线原仅凭一条提交及 Codex 固定正文
+认定“自有”，可能把相同正文的无关仓库交给 `reset` 删除 `.git` 历史；
+现还核验作者/提交者的名称与邮箱。真实旧基线仍可迁移并改用 Corki 身份，
+伪造身份在删除前拒绝。反例先红后绿，四文件 44 passed，详见
+`memory-source-review.md` 顶部。新提交从未使用 Codex 身份，之前的
+身份疑点已纠正。扩大 memory 全组 840 passed；生产修复后非 CLI 全量
+已退出 0：**15614 passed、7 skipped、592.09s**，8 workers/loadfile/禁重启。
+跳过原因与下方历史批次相同，15609 已被本批替代；其它 A–E 差异仍开放。
+
+最新 B4 继续修复：动态搜索输出 `output_schema` 仅 JSON 类型改变时，
+缓存最后一层仍把当前与旧 handler 定义当成相同；现重新绑定定义但复用
+不变的检索索引。单位反例先红后绿，真实 Runtime 三种替换 × 两类流式
+结果 × 两类旧配置输入通过；两文件 37 passed。详见
+`tool-search-ranking-review.md`，扩大 12 文件 140 passed。生产修复后的
+同范围非 CLI 全量现已退出 0：**15609 passed、7 skipped、564.23s**，
+8 workers/loadfile/禁重启，跳过原因同下方历史批次。15604 已被本批替代；
+其它 A–E 差异仍未全部关闭。
+
+最新 B3/B4 修复：动态搜索缓存与索引仍把 schema 中的 JSON `true`/`1`
+视为相同，导致换代后继续返回旧定义；两个单位反例先红后绿，真实 Runtime
+已准备 Step 冻结→新 Step 重搜→新定义执行链通过。工具发现 12 文件
+135 passed，详见 `tool-search-ranking-review.md` 顶部。修复后的同范围非 CLI
+unit+integration 全量现已退出 0：**15604 passed、7 skipped、569.94s**，
+8 workers/loadfile/禁重启，`-rs` 确认六项因五份历史编译器不存在而跳过、
+一项因当前文件系统拒绝非 UTF-8 文件名而跳过。命令同下方 15598 批次，
+增加 `-rs`。这是本次修复后的全量基线；不据此关闭其它 A–E 差异。
+
+用户已明确恢复 A–E Harness 核心对齐，范围以
+`objective-core-paused-2026-09-21.md` 为准。此前 CLI 基础体验目标已结束；
+本阶段不继续扩张 CLI 样式/斜杆命令，仅处理必要的核心安全与生命周期故障。
+
+构造迁移后首次当前代码非 CLI `unit+integration` 回归，8 workers、
+`--dist=loadfile --max-worker-restart=0 -x`，在 54% 首败终止：
+8653 passed、1 skipped、1 failed，340.55s。失败为
+`test_mcp_managed_loading.py::test_cli_captures_file_once_before_directories_and_runs_real_tool_loop`
+在运行中的事件循环内调用同步 `build_application()`，触发预期的无 owner 拒绝。
+该测试已改为 `await build_application_async()`，保留原 managed policy 捕获、
+真实工具循环与清理断言；该文件 27 passed。生产代码未因本批更动。
+随后相同非 CLI 范围（移除 `-x`）完整回归实际退出 0：
+**15598 passed、7 skipped，566.65s**；8 workers、loadfile、禁 worker 重启，
+设置当前原生沙箱编译器。命令使用 `PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring`
+及 `CORKI_TEST_SANDBOX_COMPILER=.../src/corki/_native/sandbox/corki-sandbox`，
+执行 `pytest tests/unit tests/integration --ignore=tests/unit/cli
+--ignore-glob='tests/integration/test_cli*.py' -n 8 --dist=loadfile
+--max-worker-restart=0 -o addopts='' -q --tb=short`。本批未传 `-rs`，
+7 项跳过已用 `-rs` 定向核对：六项需要五份不再存在的历史原生编译器，
+一项由当前文件系统拒绝非 UTF-8 文件名；不能当作通过。新增修改文件的 ruff check、
+ruff format --check 与 git diff --check 均通过。原 50851 的 799 失败是历史结果，
+不能继续当作当前失败数；此轮全量通过也不代表 A–E 全部行为对齐。
+下一步回到差异表中的未闭合源码/行为契约，优先可在独立兼容模型路径验证的缺口。
+
 ## 当前入口（覆盖下方按时间保留的旧状态）
+
+2026-09-21 用户明确切换目标：以 objective.md 为准，当前优先 CLI/TUI
+交互对齐和实际使用 bug 修复，暂停 A–E 核心独立扩展及全面等价审计。
+下方核心待办和测试状态仅作历史记录，不再决定当前执行顺序；旧目标完整归档
+于 objective-core-paused-2026-09-21.md。仅在修复 CLI 故障必需时做最小核心改动。
+先建立 cli-interaction-audit.md，优先启动、输入、流式显示、审批、取消和退出，
+再完善布局和样式；继续排除 OpenAI 官方专属服务依赖。
+核心构造迁移的后续局部回归没有已确认的最终通过结果，保留为未验证，不能宣称全绿。
+
+### 以下为切换前的历史状态（不是当前执行指令）
+
+50851失败已按JUnit归类（e49d2b）：137例同步构造准入拒绝，其余主要是未await
+协程的属性/解包错误，另1例预期ValueError未抛。跨文件直接async调用135处
+已补await（93382退出0，e311e1）；还剩sandbox_denial_retry:103与
+context_snapshot_depth:30的同步包装层，以及原合法同步helper被异步调用的
+路径需迁移。当前未启动新测试，不能把源码补齐当作失败已修复验证。
+
+50851已实际退出1（b05d1f）：799失败/14801通过/1文件系统skip/103warnings，
+613.79s；完整日志full-regression-50851.txt，JUnit在原临时目录。现可修复
+跨文件导入helper的await遗漏；先按具体失败类别确认，不把全部失败预判同因。
+不要再轮询已结束句柄，不以旧全量或局部constructor通过宣称当前迁移全绿。
+
+50851仍运行，已输出多项失败，不能称迁移完成/全绿。只读AST跨文件引用检查
+89814退出0（6045ef）发现137处导入已迁移async helper的调用未await；初次
+迁移仅检查定义文件内引用，遗漏外部调用。下一步先等50851实际终态及具体
+失败清单，再迁移跨文件调用（含同步包装层），保持原断言/故障窗口。
+本轮仅诊断，运行期间没有修改生产/测试；不得提前并发重跑同范围。
+
+构造调用迁移第二批完成（helper/嵌入式脚本），完整非CLI回归句柄50851
+正在运行，日志 /private/tmp/corki-construction-regression.BHOX16/pytest.log，
+JUnit同目录results.xml。命令存储construction_full_command，工具最近状态
+construction_full_result；8 workers/loadfile/禁重启。先等实际退出，不重跑，
+不在测试期间修改生产/测试。详情sync-in-loop-construction-decision.md。
+
+用户已批准E4修复及目标内合理兼容调整，不再等待同一确认。无owner的in-loop
+同步create现提前拒绝，constructor27专项已先红后绿；531处直接async调用
+已迁移，仍需处理同步helper/字符串内进程fixture，见
+sync-in-loop-construction-decision.md。联合94761已退出0（38c869），core单元+
+constructor/CLI构造204通过/2.30s，4 workers/loadfile/禁重启。当前无活动测试。
+旧25019全量是本次生产修改前的证据，不冒称新版本全绿。
+
+2026-09-14 等待用户决策：连续三轮确认E4构造兼容选择仍无答复；已复核
+construction.py、实际故障证据和仓内迁移影响，没有可保持同步签名且在当前
+event loop等待任意异步closer完成的安全替代。不能后台无owner清理或换loop
+冒充等价修复。首要解阻：是否允许运行中loop无owner的create在分配前拒绝，
+迁移为await acreate。Persistent调度入口、多执行环境及真正多Agent范围亦
+未确认，不自行扩建或排除。已有全量/E2E已终态且生产未变，无测试进程待等；
+不会以重复已通过回归替代选择。目标未完成，等待明确决策后恢复实施与验收。
+
+组合E2E三项已通过（85843退出0，ce81fe，3.41s），覆盖多Step/跨Turn、
+终端/patch/图片、搜索→定义加载→真实stdio MCP→Observation。编译与依赖检查
+通过；项目规定lint通过，format仅无关用户文件tests/example/vivi.py未通过，
+未改该文件。详见core-e2e-2026-09-14.md。生产/测试未变，不再重复全量；
+继续A–E开放项，E4与条件能力的用户选择仍未收到，不自动把它们排除。
+
+25019 已实际退出0（299418）：15598 passed、1 skipped、553.20s；唯一skip
+为文件系统拒绝非UTF-8文件名。完整命令/范围见 full-regression-25019.md，
+原始日志在 /private/tmp/corki-harness-regression.XUK755/pytest.log。
+这是当前stdin修订及world-state生产接口的非CLI全量证据，不关闭其它A–E
+开放项。51160结果未知与33685失败仍保留。下一步继续能力范围核定和组合
+E2E/静态验收；多Agent版本选择的新证据见 context-section-inventory.md，
+已询问用户是否本轮纳入真正子Agent编排，不以V2默认关闭排除整个能力。
+
+2026-09-14 重新核实：51160 句柄已不存在（Unknown process id），pgrep 未发现
+pytest/execnet；累计输出仅至约20%，最终退出码与汇总未保留，故本批结果未知，
+不能写成通过或仍在运行。当前 Corki HEAD=e53a368，启动前工作树干净；Codex
+仍为 ddf04ad26789d040f9ef6a96736f76602e35a6cc，工作树干净。
+重新评估12逻辑核/18GiB/38%空闲及测试子进程成本，采用8 workers/loadfile，
+不提高到96。相同非CLI unit+integration全量重新执行，日志直接写入
+/private/tmp/corki-harness-regression.XUK755/pytest.log，JUnit写入同目录results.xml。
+该批命令为下方51160原命令追加 --junitxml=上述results.xml，并重定向stdout/stderr
+到pytest.log；六个compiler均已确认存在。跟进工具实际退出，不以日志进度当终态。
+本次ruff check通过；format额外发现用户文件 tests/example/vivi.py 未格式化，
+其余1527文件通过（teach.md仍按要求额外排除）；不擅自修改该无关文件。
 
 stdin 等待修订后的新非 CLI 全量已启动，句柄 **51160**，尚未完成。范围与
 33685一致：unit+integration排除CLI，8 workers/loadfile/禁重启，当前及五个

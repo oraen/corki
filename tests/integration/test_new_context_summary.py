@@ -67,8 +67,8 @@ def test_new_context_summary_failure_and_cold_continuation(tmp_path, mode, finis
             async def aclose(self):
                 pass
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     tmp_path,
                     skills_enabled=False,
@@ -83,7 +83,7 @@ def test_new_context_summary_failure_and_cold_continuation(tmp_path, mode, finis
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         task = None
         try:
 
@@ -115,7 +115,7 @@ def test_new_context_summary_failure_and_cold_continuation(tmp_path, mode, finis
             thread = runtime.thread_id
             await runtime.aclose()
             fail = "success"
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [e async for e in runtime.stream("CONTINUE")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert len(summaries) == (1 if finish == "success" else 2)

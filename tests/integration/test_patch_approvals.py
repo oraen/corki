@@ -59,9 +59,9 @@ class Model:
         pass
 
 
-def create_runtime(root, compiler, model, *, policy=None):
+async def create_runtime(root, compiler, model, *, policy=None):
     policy = policy or replace(workspace_policy(compiler, root), approval_policy_json='"untrusted"')
-    return LangGraphRuntime.create(
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             root, skills_enabled=False, tool_mode=model.mode, execution_permissions=policy
         ),
@@ -77,7 +77,7 @@ def create_runtime(root, compiler, model, *, policy=None):
 def test_patch_review_precedes_writes_and_has_one_terminal(tmp_path, compiler, mode, host, action):
     async def scenario():
         model = Model(mode)
-        runtime = create_runtime(tmp_path, compiler, model)
+        runtime = await create_runtime(tmp_path, compiler, model)
         prompts = []
         target = tmp_path / "allowed.txt"
 
@@ -135,7 +135,7 @@ def test_session_patch_consent_covers_subsets_but_not_new_move_destinations(
 ):
     async def scenario():
         model = Model(mode)
-        runtime = create_runtime(tmp_path, compiler, model)
+        runtime = await create_runtime(tmp_path, compiler, model)
         prompts = []
 
         async def accept(request):
@@ -166,7 +166,7 @@ def test_session_patch_consent_covers_subsets_but_not_new_move_destinations(
 def test_no_handler_is_an_error_without_writes(tmp_path, compiler):
     async def scenario():
         model = Model("direct")
-        runtime = create_runtime(tmp_path, compiler, model)
+        runtime = await create_runtime(tmp_path, compiler, model)
         try:
             assert isinstance((await observe(runtime, "patch"))[-1], TurnCompleted)
             output = [i for i in model.requests[-1].items if isinstance(i, ToolResultItem)][-1]
@@ -182,7 +182,7 @@ def test_no_handler_is_an_error_without_writes(tmp_path, compiler):
 def test_cancel_while_waiting_for_patch_review_dismisses_owner(tmp_path, compiler, mode):
     async def scenario():
         model = Model(mode)
-        runtime = create_runtime(tmp_path, compiler, model)
+        runtime = await create_runtime(tmp_path, compiler, model)
         entered, finalized = asyncio.Event(), asyncio.Event()
 
         async def wait_for_host(request):

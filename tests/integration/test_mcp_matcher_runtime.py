@@ -52,7 +52,7 @@ def test_typed_identity_controls_discovery_and_actual_effect(
                         )
                     yield event
 
-        runtime, clients, model = make_runtime(
+        runtime, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             mode=mode,
@@ -100,7 +100,7 @@ def test_invalid_regex_fails_before_runtime_resources(tmp_path, monkeypatch, exp
     }
     requirements = {"plugins": {"package": rules}} if plugin else rules
     with pytest.raises(ValueError):
-        make_runtime(tmp_path, monkeypatch, requirements=requirements)
+        asyncio.run(make_runtime(tmp_path, monkeypatch, requirements=requirements))
     assert not (tmp_path / "history.db").exists()
 
 
@@ -139,7 +139,7 @@ def test_invalid_regex_fails_before_runtime_resources(tmp_path, monkeypatch, exp
 )
 def test_typed_denial_happens_before_any_client_or_helper(tmp_path, monkeypatch, identity, server):
     async def scenario():
-        runtime, clients, model = make_runtime(
+        runtime, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             servers=(server,),

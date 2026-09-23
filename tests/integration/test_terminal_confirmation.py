@@ -39,7 +39,7 @@ def test_confirmed_terminal_preserves_original_outcome_during_observer_cancel(
             async def aclose(self):
                 lifecycle.append("model closed")
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "terminal.db",
             model=Model(),
@@ -150,7 +150,7 @@ def test_cancelled_terminal_ack_failure_is_confirmed_without_cleanup_error(tmp_p
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "cancelled.db",
             home_path=tmp_path / "home",

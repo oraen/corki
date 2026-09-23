@@ -43,7 +43,7 @@ def test_selected_plugin_hint_uses_winning_server_source(tmp_path, monkeypatch, 
             async def aclose(self):
                 pass
 
-        runtime, clients, _ = setup_input_runtime(
+        runtime, clients, _ = await setup_input_runtime(
             tmp_path, monkeypatch, Model(), kind="plugin", mode=mode
         )
 
@@ -108,7 +108,7 @@ def test_provenance_refresh_reuses_transport_but_not_old_plugin_hint(tmp_path, m
             async def aclose(self):
                 pass
 
-        runtime, _, _ = setup_input_runtime(tmp_path, monkeypatch, Model(), kind="plugin")
+        runtime, _, _ = await setup_input_runtime(tmp_path, monkeypatch, Model(), kind="plugin")
 
         def factory(settings):
             client = PendingClient(settings)

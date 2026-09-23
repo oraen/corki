@@ -48,7 +48,7 @@ def test_personality_selection_is_frozen_before_cold_resume(
                 }
             ),
         )
-        source = make_runtime(tmp_path, Model(), configured=configured)
+        source = await make_runtime(tmp_path, Model(), configured=configured)
         try:
             await source._ensure_ready()
             turn = new_turn_id()
@@ -74,7 +74,7 @@ def test_personality_selection_is_frozen_before_cold_resume(
             await source.aclose()
 
         model = Model()
-        cold = make_runtime(
+        cold = await make_runtime(
             tmp_path,
             model,
             configured=replace(configured, personality="none", personality_enabled=not enabled),

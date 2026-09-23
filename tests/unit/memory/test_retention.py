@@ -106,6 +106,19 @@ def test_top_n_ranking_and_stable_return_order_are_separate(tmp_path, store):
     asyncio.run(scenario())
 
 
+def test_top_n_ranks_source_versions_at_microsecond_precision(tmp_path, store):
+    database, repository, now = store
+    older = now.replace(microsecond=100000).isoformat()
+    newer = now.replace(microsecond=100001).isoformat()
+    with sqlite3.connect(database) as connection:
+        # The thread-id tiebreaker favors z-old if the timestamps collapse.
+        seed(connection, tmp_path, "z-old", older)
+        seed(connection, tmp_path, "a-new", newer)
+
+    selected = asyncio.run(repository.load_consolidation_inputs(limit=1, max_unused_days=30))
+    assert tuple(row.thread_id for row in selected) == ("a-new",)
+
+
 def test_prune_is_bounded_preserves_selected_and_success_watermarks(tmp_path, store):
     database, repository, now = store
     cutoff = now - timedelta(days=30)

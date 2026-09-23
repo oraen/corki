@@ -124,8 +124,8 @@ def test_mcp_output_budget_comes_from_admitted_connection_and_survives_reopen(
         )
         database = tmp_path / "session.db"
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=database,
                 registry=ToolRegistry(),
@@ -133,7 +133,7 @@ def test_mcp_output_budget_comes_from_admitted_connection_and_survives_reopen(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             events = [e async for e in runtime.stream("read")]
@@ -159,7 +159,7 @@ def test_mcp_output_budget_comes_from_admitted_connection_and_survives_reopen(
                     assert "10000" in cell and "ignored" in cell and "false" in cell
         finally:
             await runtime.aclose()
-        cold = create(thread)
+        cold = await create(thread)
         try:
             assert isinstance([e async for e in cold.stream("continue")][-1], TurnCompleted)
             assert calls == [1] and len(requests) == 3
@@ -229,7 +229,7 @@ def test_remote_mcp_errors_resolve_to_code_mode_error_values(tmp_path, failure):
         registry = ToolRegistry()
         registry.register(MCPTool("docs", {"name": "read"}, Client()))
         database = tmp_path / "errors.db"
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode"
             ),

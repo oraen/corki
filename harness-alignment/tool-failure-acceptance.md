@@ -1,5 +1,30 @@
 # E2：工具故障完整分类核验
 
+## 2026-09-22：工具最终输入在副作用前通过持久化准入
+
+继续对照 Codex `hooks/src/schema.rs::PreToolUseHookSpecificOutputWire` 的
+`serde_json::Value` 改写输入，以及 `tools/src/function_call_error.rs` 的
+RespondToModel/Fatal 区分。Corki 另允许注册工具实现
+`ToolCallArgumentParser`，其 Python 返回值可在模型原始调用已经落账后
+替换执行参数。原 `ToolExecutor.execute` 对最终 JSON 输入只生成了文本，
+未在 handler 之前确认 UTF-8 可编码；畸形 Unicode 可让工具先产生副作用，
+随后结果归一化/持久化才报错误 Observation。两个单位反例分别通过自带
+解析器和执行前回调证明 handler 已运行，虽返回 error；真实 Runtime
+会将该错误作为下一 Step 的 Observation。
+
+现在最终输入 JSON 在调用 handler 前验证 UTF-8；freeform 校验使用改写后
+的输入，而非原始调用。解析器和回调的两个反例修复后 handler 零执行，
+另有 freeform 改写边界用例；真实 Runtime 中解析器坏值只产生唯一错误
+Observation、模型继续、无工具副作用。七个工具/Hook/恢复相关文件
+**150 passed**，Ruff 与格式检查通过。生产修改后非 CLI 主组
+**15348 passed、7 skipped / 808.90s**，单进程敏感组 **459 passed /
+61.94s**，两组退出 0，合计 **15807 passed、7 skipped**。七项跳过仍是
+六项缺少历史原生编译器、一项文件系统不接受非 UTF-8 文件名。
+
+此修复处理 Corki 动态 Python 工具的额外准入风险，不声称原生 Codex
+存在相同的 Python 解析器；外部操作已执行但结果未知的其他窗口仍不保证
+exactly-once。
+
 基准为固定Codex ddf04ad26789d040f9ef6a96736f76602e35a6cc。本项限定用户要求
 的普通调用路径，不引入原生namespace/tool-search或官方服务。
 

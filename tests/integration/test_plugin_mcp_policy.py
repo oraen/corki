@@ -159,7 +159,7 @@ def test_plugin_policy_filters_the_real_search_call_loop(
             tool_search_mode="disabled" if mode == "code_mode" else mode,
             tool_mode="code_mode_only" if mode == "code_mode" else "direct",
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             model=Model(),
             registry=ToolRegistry(),

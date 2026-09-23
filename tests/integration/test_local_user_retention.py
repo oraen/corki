@@ -142,11 +142,11 @@ def test_local_user_budget_and_tail_survive_runtime_and_cold_replay(tmp_path, ph
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             registry.register(Effect())
             adapter = OpenAICompatibleModel if wire == "chat" else OpenAIResponsesModel
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     model="fixture",
@@ -174,7 +174,7 @@ def test_local_user_budget_and_tail_survive_runtime_and_cold_replay(tmp_path, ph
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             for text in (OLDER, original):
                 events = [e async for e in runtime.stream(text)]
@@ -214,7 +214,7 @@ def test_local_user_budget_and_tail_survive_runtime_and_cold_replay(tmp_path, ph
             assert sum(isinstance(i, ToolResultItem) for i in stored) == 1
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [e async for e in runtime.stream("AFTER_REOPEN")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert len(compact_bodies) == 1 and len(effects) == 1
@@ -272,7 +272,7 @@ def test_small_window_keeps_current_input_and_both_ends_of_older_evidence(tmp_pa
 
         registry = ToolRegistry()
         registry.register(Effect())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

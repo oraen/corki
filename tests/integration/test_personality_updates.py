@@ -38,7 +38,7 @@ def test_personality_updates_are_persisted_and_not_repeated(tmp_path, custom_bas
             ),
         )
         model = Model()
-        runtime = make_runtime(tmp_path, model, configured=configured)
+        runtime = await make_runtime(tmp_path, model, configured=configured)
         try:
             assert isinstance([e async for e in runtime.stream("first")][-1], TurnCompleted)
             original = await runtime._repository.load_items(runtime.thread_id)

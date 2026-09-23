@@ -152,7 +152,7 @@ def test_collision_identity_and_raw_routes_survive_catalog_delivery(
         entry = cache.context(settings)
         if delivery == "pending_cache":
             entry.publish_if_newest(entry.begin_fetch(), CatalogSnapshot(tuple(definitions), None))
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 skills_enabled=False,

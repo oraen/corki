@@ -118,7 +118,9 @@ def test_normalized_media_cost_and_model_capability_projection_preserve_archive(
                 ],
             }
         )
-        assert estimate_item_tokens(item) > 1000
+        # An external image URL has only serialized-reference cost; unlike an
+        # inline base64 payload it does not receive the 1,844-token image cost.
+        assert estimate_item_tokens(item) < 1000
         media = MediaPreparation(ImagePolicy(supports_images=False), supports_audio=False)
         projected = await media.prepare_items((item,), for_model=True)
         assert all(p["type"] == "input_text" for p in projected[0].payload["content"])

@@ -156,7 +156,7 @@ def test_mcp_refresh_preserves_current_step_then_updates_search_and_history(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

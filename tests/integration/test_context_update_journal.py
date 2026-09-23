@@ -54,10 +54,10 @@ def test_runtime_appends_rule_updates_across_steps_turns_and_cold_reopen(tmp_pat
             async def aclose(self):
                 pass
 
-        def create(thread_id=None):
+        async def create(thread_id=None):
             registry = ToolRegistry()
             registry.register(ChangeRules())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
                 database_path=tmp_path / "sessions.db",
                 home_path=tmp_path / ".corki",
@@ -66,7 +66,7 @@ def test_runtime_appends_rule_updates_across_steps_turns_and_cold_reopen(tmp_pat
                 thread_id=thread_id,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [e async for e in runtime.stream("change rules and continue")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -76,7 +76,7 @@ def test_runtime_appends_rule_updates_across_steps_turns_and_cold_reopen(tmp_pat
             )
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [e async for e in runtime.stream("load changed rules on cold reopen")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             rules.unlink()
@@ -93,7 +93,7 @@ def test_runtime_appends_rule_updates_across_steps_turns_and_cold_reopen(tmp_pat
             assert "NEW RULE" in contexts[1].content
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [e async for e in runtime.stream("resume unchanged")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             visible = tuple(
@@ -118,7 +118,7 @@ def test_runtime_appends_rule_updates_across_steps_turns_and_cold_reopen(tmp_pat
             rules.write_text("RETURNED RULE", encoding="utf-8")
             # A fresh Runtime, not another Turn, discovers the returned file.
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [e async for e in runtime.stream("use returned rules")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             latest = [
@@ -157,8 +157,8 @@ def test_cold_checkpoint_restores_rendered_update_and_comparison_value(tmp_path)
             async def emit(self, event):
                 pass
 
-        def create(thread_id=None):
-            return LangGraphRuntime.create(
+        async def create(thread_id=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "sessions.db",
                 model=Model(),
@@ -166,14 +166,14 @@ def test_cold_checkpoint_restores_rendered_update_and_comparison_value(tmp_path)
                 thread_id=thread_id,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [e async for e in runtime.stream("first turn")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             rules.write_text("NEW RULE", encoding="utf-8")
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             await runtime._ensure_ready()
             turn = new_turn_id()
             user = UserMessageItem("prepared but not yet sampled", turn)
@@ -192,7 +192,7 @@ def test_cold_checkpoint_restores_rendered_update_and_comparison_value(tmp_path)
             prepared = await runtime._repository.load_items(thread)
             assert len(requests) == 1
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [e async for e in runtime.resume_pending()]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             visible = tuple(
@@ -274,10 +274,10 @@ def test_real_compaction_reinjects_current_snapshot_not_update_notices(tmp_path,
             model_max_retries=0,
         )
 
-        def create(thread_id=None):
+        async def create(thread_id=None):
             registry = ToolRegistry()
             registry.register(Tool())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "sessions.db",
                 home_path=tmp_path / ".corki",
@@ -286,7 +286,7 @@ def test_real_compaction_reinjects_current_snapshot_not_update_notices(tmp_path,
                 thread_id=thread_id,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             assert isinstance(
                 [e async for e in runtime.stream("establish rules")][-1], TurnCompleted
@@ -294,7 +294,7 @@ def test_real_compaction_reinjects_current_snapshot_not_update_notices(tmp_path,
             thread = runtime.thread_id
             await runtime.aclose()
             rules.write_text("NEW RULE", encoding="utf-8")
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [e async for e in runtime.stream("CURRENT INPUT MUST SURVIVE")]
             assert isinstance(events[-1], TurnFailed if fail_summary else TurnCompleted), events[-1]
             assert len(summaries) == 1 and len(calls) == 2
@@ -378,8 +378,8 @@ def test_context_updates_reach_real_provider_wire_without_rewriting_prefix(
             api_base="https://fixture.invalid/v1",
         )
 
-        def create(thread_id=None):
-            return LangGraphRuntime.create(
+        async def create(thread_id=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "sessions.db",
                 home_path=tmp_path / ".corki",
@@ -387,14 +387,14 @@ def test_context_updates_reach_real_provider_wire_without_rewriting_prefix(
                 thread_id=thread_id,
             )
 
-        runtime = create()
+        runtime = await create()
         rules = tmp_path / "AGENTS.md"
         try:
             for value in ("OLD RULE", "NEW RULE", "", ""):
                 if requests:
                     thread = runtime.thread_id
                     await runtime.aclose()
-                    runtime = create(thread)
+                    runtime = await create(thread)
                 if value:
                     rules.write_text(value, encoding="utf-8")
                 elif rules.exists():

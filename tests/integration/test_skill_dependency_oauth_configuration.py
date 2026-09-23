@@ -72,7 +72,7 @@ def test_installed_callback_port_is_not_lost_before_http_startup(tmp_path, monke
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path, execution_permissions=None, tool_search_mode="disabled"
             ),

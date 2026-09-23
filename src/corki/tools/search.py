@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 
-from corki.protocol.tools import ToolCall, ToolConcurrency, ToolResult, ToolSpec
+from corki.protocol.tools import ToolCall, ToolConcurrency, ToolResult, ToolSpec, same_tool_spec
 from corki.tools.base import ToolContext
 from corki.tools.bm25 import BM25Scorer
 from corki.tools.discovery import TOOL_SEARCH_NAME
@@ -20,15 +20,19 @@ def _tokens(text: str) -> list[str]:
 
 def _schema_text(schema: Mapping) -> list[str]:
     parts = [str(schema.get("description", ""))]
-    for name, child in sorted(schema.get("properties", {}).items()):
-        parts.append(name)
-        if isinstance(child, Mapping):
-            parts.extend(_schema_text(child))
+    properties = schema.get("properties")
+    if isinstance(properties, Mapping):
+        for name, child in sorted(properties.items(), key=lambda item: str(item[0])):
+            parts.append(str(name))
+            if isinstance(child, Mapping):
+                parts.extend(_schema_text(child))
     if isinstance(schema.get("items"), Mapping):
         parts.extend(_schema_text(schema["items"]))
-    for child in schema.get("anyOf", ()):
-        if isinstance(child, Mapping):
-            parts.extend(_schema_text(child))
+    alternatives = schema.get("anyOf")
+    if isinstance(alternatives, (list, tuple)):
+        for child in alternatives:
+            if isinstance(child, Mapping):
+                parts.extend(_schema_text(child))
     return parts
 
 
@@ -89,7 +93,10 @@ class ToolSearchIndex:
     def prepare(self, specs: tuple[ToolSpec, ...]) -> None:
         """Build a complete index before publishing; no search call is executed."""
         snapshot = self._snapshot
-        if specs != snapshot.specs:
+        if len(specs) != len(snapshot.specs) or any(
+            not same_tool_spec(current, cached)
+            for current, cached in zip(specs, snapshot.specs, strict=True)
+        ):
             owned_specs = deepcopy(specs)
             scorer = BM25Scorer(
                 (token_id(token) for token in _tokens(search_text(spec))) for spec in owned_specs

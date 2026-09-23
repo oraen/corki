@@ -54,7 +54,7 @@ def test_first_subagent_runtime_uses_cache_without_constructing_client(tmp_path,
                 pass
 
         monkeypatch.setattr("corki.mcp.manager.create_client", factory)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -116,7 +116,7 @@ class LazyClient(MCPClient):
         raise AssertionError(message)
 
 
-def setup_runtime(
+async def setup_runtime(
     tmp_path,
     monkeypatch,
     model,
@@ -143,7 +143,7 @@ def setup_runtime(
         return client
 
     monkeypatch.setattr("corki.mcp.manager.create_client", factory)
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -184,7 +184,9 @@ class EmptyModel:
 )
 def test_lazy_policy_uses_exact_host_source(tmp_path, monkeypatch, source, expected):
     async def scenario():
-        runtime, clients, _, _ = setup_runtime(tmp_path, monkeypatch, EmptyModel(), source=source)
+        runtime, clients, _, _ = await setup_runtime(
+            tmp_path, monkeypatch, EmptyModel(), source=source
+        )
         try:
             await runtime._ensure_ready()
             assert bool(clients) is expected
@@ -209,7 +211,7 @@ def test_cache_presence_alone_does_not_allow_lazy_startup(tmp_path, monkeypatch,
             if exclusion == "selected_plugin"
             else None
         )
-        runtime, clients, started, _ = setup_runtime(
+        runtime, clients, started, _ = await setup_runtime(
             tmp_path,
             monkeypatch,
             EmptyModel(),
@@ -254,7 +256,7 @@ def test_dormant_server_starts_at_exact_use_and_routes_result(tmp_path, monkeypa
             async def aclose(self):
                 pass
 
-        runtime, clients, started, _ = setup_runtime(tmp_path, monkeypatch, Model())
+        runtime, clients, started, _ = await setup_runtime(tmp_path, monkeypatch, Model())
         await runtime._ensure_ready()
         assert clients == []
 
@@ -285,7 +287,7 @@ def test_invalidated_cache_activates_dormant_server(tmp_path, monkeypatch, inval
     async def scenario():
         now = [0.0]
         cache = MCPToolCatalogCache(clock=lambda: now[0])
-        runtime, clients, started, entry = setup_runtime(
+        runtime, clients, started, entry = await setup_runtime(
             tmp_path, monkeypatch, EmptyModel(), cache=cache
         )
         try:
@@ -310,7 +312,7 @@ def test_invalidated_cache_activates_dormant_server(tmp_path, monkeypatch, inval
 
 def test_idle_cancel_preserves_dormant_but_close_joins_it_without_factory(tmp_path, monkeypatch):
     async def scenario():
-        runtime, clients, _, _ = setup_runtime(tmp_path, monkeypatch, EmptyModel())
+        runtime, clients, _, _ = await setup_runtime(tmp_path, monkeypatch, EmptyModel())
         await runtime._ensure_ready()
         generation = runtime._mcp_manager._preparation
         task = generation.tasks["lazy"]
@@ -326,7 +328,7 @@ def test_idle_cancel_preserves_dormant_but_close_joins_it_without_factory(tmp_pa
 def test_app_only_tools_are_hidden_in_cached_and_live_model_bindings(tmp_path, monkeypatch):
     async def scenario():
         definition = {"name": "lookup", "_meta": {"ui": {"visibility": ["app"]}}}
-        runtime, clients, _, _ = setup_runtime(
+        runtime, clients, _, _ = await setup_runtime(
             tmp_path, monkeypatch, EmptyModel(), definition=definition
         )
         try:
@@ -353,7 +355,7 @@ def test_app_only_tools_are_hidden_in_cached_and_live_model_bindings(tmp_path, m
 
 def test_app_only_name_still_participates_in_canonical_collision_resolution(tmp_path, monkeypatch):
     async def scenario():
-        runtime, clients, _, entry = setup_runtime(tmp_path, monkeypatch, EmptyModel())
+        runtime, clients, _, entry = await setup_runtime(tmp_path, monkeypatch, EmptyModel())
         definitions = ({"name": "a-b"}, {"name": "a_b", "_meta": {"ui": {"visibility": ["app"]}}})
         entry.publish_if_newest(entry.begin_fetch(), CatalogSnapshot(definitions, None))
         expected = next(
@@ -379,7 +381,7 @@ def test_app_only_name_still_participates_in_canonical_collision_resolution(tmp_
 
 def test_replacing_unused_dormant_server_does_not_instantiate_it(tmp_path, monkeypatch):
     async def scenario():
-        runtime, clients, _, _ = setup_runtime(tmp_path, monkeypatch, EmptyModel())
+        runtime, clients, _, _ = await setup_runtime(tmp_path, monkeypatch, EmptyModel())
         try:
             await runtime._ensure_ready()
             old = runtime._mcp_manager._preparation.tasks["lazy"]
@@ -395,7 +397,7 @@ def test_replacing_unused_dormant_server_does_not_instantiate_it(tmp_path, monke
 
 def test_cancelling_triggered_startup_closes_its_owned_client(tmp_path, monkeypatch):
     async def scenario():
-        runtime, clients, started, _ = setup_runtime(tmp_path, monkeypatch, EmptyModel())
+        runtime, clients, started, _ = await setup_runtime(tmp_path, monkeypatch, EmptyModel())
         await runtime._ensure_ready()
         call = asyncio.create_task(runtime._mcp_manager.call_tool("lazy", "lookup", {}))
         try:

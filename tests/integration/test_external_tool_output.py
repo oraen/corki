@@ -71,7 +71,7 @@ def test_external_result_fact_reaches_memory_policy_and_ledger(
         external, registry = External(), ToolRegistry()
         registry.register(external)
         database = tmp_path / "sessions.db"
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -141,7 +141,7 @@ def test_empty_tool_search_result_marks_thread(tmp_path):
                 pass
 
         database = tmp_path / "sessions.db"
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -211,7 +211,7 @@ def test_cold_resume_marks_cached_external_result_without_reexecuting(tmp_path):
 
         registry, tool = ToolRegistry(), Tool()
         registry.register(tool)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -283,7 +283,7 @@ def test_pollution_write_failure_warns_without_aborting_tool_or_turn(
             registry.register(MCPTool("fixture", {"name": "read"}, Client()))
         else:
             registry.register(tool)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

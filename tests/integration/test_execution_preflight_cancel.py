@@ -83,7 +83,7 @@ def test_turn_cancellation_reaps_preflight_without_model_spawn(tmp_path, monkeyp
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

@@ -38,7 +38,7 @@ def test_runtime_reset_preserves_history_and_revokes_old_claim(tmp_path, enabled
         home, root = tmp_path / "home", tmp_path / "custom-memory"
         database = tmp_path / "history.db"
         model = Main()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -113,7 +113,7 @@ def test_runtime_reset_preserves_history_and_revokes_old_claim(tmp_path, enabled
         finally:
             await runtime.aclose()
 
-        cold = LangGraphRuntime.create(
+        cold = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -185,7 +185,7 @@ def test_reset_while_consolidator_is_sampling_prevents_late_publication(
                 )
 
         root = tmp_path / "memories"
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, memories_enabled=True
             ),
@@ -221,7 +221,7 @@ def test_reset_while_consolidator_is_sampling_prevents_late_publication(
                             )
                         )
 
-                fresh = LangGraphRuntime.create(
+                fresh = await LangGraphRuntime.acreate(
                     settings=CorkiSettings(
                         working_directory=tmp_path, skills_enabled=False, memories_enabled=True
                     ),
@@ -283,7 +283,7 @@ def test_cancelled_reset_and_runtime_close_join_actual_file_removal(
         root.mkdir()
         target = root / "old"
         target.write_text("old")
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "history.db",
             home_path=tmp_path / "home",

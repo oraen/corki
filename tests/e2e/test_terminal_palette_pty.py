@@ -2,6 +2,7 @@
 
 import os
 import sys
+from io import StringIO
 
 import pexpect
 import pytest
@@ -60,19 +61,25 @@ asyncio.run(main())
             **os.environ,
             "TERM": "xterm-256color",
             "COLORTERM": "truecolor",
+            "PROMPT_TOOLKIT_COLOR_DEPTH": "DEPTH_24_BIT",
             "PROMPT_TOOLKIT_NO_CPR": "1",
         },
         encoding="utf-8",
         timeout=8,
         dimensions=(30, columns),
     )
+    output = StringIO()
+    child.logfile_read = output
     try:
         child.expect_exact("\x1b]10;?\x1b\\\x1b]11;?\x1b\\")
         child.delaybeforesend = 0
         # Open details in the same input batch as the response. The sampler
         # finishes asynchronously and must invalidate the already-open pager.
         child.send("\x1b]10;rgb:00/00/00\x07\x1b]11;rgb:ff/ff/ff\x07\x01")
-        child.expect("48;2;172;238;187")
+        try:
+            child.expect("48;2;172;238;187")
+        except pexpect.TIMEOUT:
+            pytest.fail(f"light details missing gutter style: {output.getvalue()[-6000:]!r}")
         child.expect("48;2;218;251;225")
         child.expect("visible")
         child.send("qd")

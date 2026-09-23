@@ -52,9 +52,9 @@ class Memory:
         pass
 
 
-def _runtime(tmp_path, *, generate, enabled=False, use=True, thread_id=None, expected=None):
+async def _runtime(tmp_path, *, generate, enabled=False, use=True, thread_id=None, expected=None):
     database = tmp_path / "history.db"
-    return LangGraphRuntime.create(
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -79,7 +79,7 @@ def test_initial_mode_tracks_generate_not_feature_or_recall_and_survives_reopen(
 ):
     async def scenario():
         expected = "enabled" if generate else "disabled"
-        runtime = _runtime(tmp_path, generate=generate, enabled=enabled, use=use)
+        runtime = await _runtime(tmp_path, generate=generate, enabled=enabled, use=use)
         try:
             for text in ("first", "second"):
                 events = [e async for e in runtime.stream(text)]
@@ -88,7 +88,7 @@ def test_initial_mode_tracks_generate_not_feature_or_recall_and_survives_reopen(
             history = await runtime._repository.load_items(runtime.thread_id)
         finally:
             await runtime.aclose()
-        cold = _runtime(
+        cold = await _runtime(
             tmp_path, generate=not generate, thread_id=runtime.thread_id, expected=expected
         )
         try:
@@ -110,7 +110,7 @@ def test_stored_mode_is_authoritative_when_runtime_config_changes(tmp_path, mode
         with sqlite3.connect(database) as db:
             db.execute("UPDATE threads SET memory_mode=?", (mode,))
         for generate in (False, True):
-            runtime = _runtime(tmp_path, generate=generate, thread_id=thread, expected=mode)
+            runtime = await _runtime(tmp_path, generate=generate, thread_id=thread, expected=mode)
             try:
                 assert isinstance([e async for e in runtime.stream("resume")][-1], TurnCompleted)
             finally:
@@ -121,7 +121,7 @@ def test_stored_mode_is_authoritative_when_runtime_config_changes(tmp_path, mode
 
 def test_disabled_creation_is_not_claimable_by_another_host_until_explicit_enable(tmp_path):
     async def scenario():
-        runtime = _runtime(tmp_path, generate=False)
+        runtime = await _runtime(tmp_path, generate=False)
         database = tmp_path / "history.db"
         memory = SQLiteMemoryRepository(database)
         try:
@@ -152,7 +152,7 @@ def test_disabled_creation_is_not_claimable_by_another_host_until_explicit_enabl
 
 def test_creation_commit_exposes_final_mode_before_runtime_can_patch_it(tmp_path, monkeypatch):
     async def scenario():
-        runtime = _runtime(tmp_path, generate=False)
+        runtime = await _runtime(tmp_path, generate=False)
         entered, release = asyncio.Event(), threading.Event()
         other = SQLiteSessionRepository(tmp_path / "history.db")
         loop = asyncio.get_running_loop()
@@ -229,7 +229,7 @@ def test_invalid_initial_mode_does_not_create_a_thread(tmp_path, mode):
 
 def test_custom_creation_adapter_cannot_silently_ignore_source_metadata(tmp_path, monkeypatch):
     async def scenario():
-        runtime = _runtime(tmp_path, generate=False)
+        runtime = await _runtime(tmp_path, generate=False)
         create = runtime._repository.create_thread
         calls = []
 

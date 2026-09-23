@@ -61,12 +61,12 @@ class Model:
         pass
 
 
-def runtime_for(root, compiler, model, *, name="parent", settings=None, **kwargs):
+async def runtime_for(root, compiler, model, *, name="parent", settings=None, **kwargs):
     if model.mode != "direct" and not CodeModeService.available():
         pytest.skip("install corki[code-mode]")
     home = kwargs.pop("home_path", root / "home")
     home.mkdir(exist_ok=True)
-    return LangGraphRuntime.create(
+    return await LangGraphRuntime.acreate(
         settings=settings
         or CorkiSettings(
             working_directory=root,
@@ -136,11 +136,11 @@ def test_initialized_relatives_share_saved_rules_but_not_consent(
 ):
     async def scenario():
         parent_model, child_model = Model(mode), Model(mode)
-        parent = runtime_for(tmp_path, compiler, parent_model)
+        parent = await runtime_for(tmp_path, compiler, parent_model)
         child = None
         try:
             await run(parent, parent_model)
-            child = runtime_for(
+            child = await runtime_for(
                 tmp_path,
                 compiler,
                 child_model,
@@ -204,12 +204,12 @@ def test_closing_relative_does_not_cancel_another_sessions_pending_approval(
 ):
     async def scenario():
         parent_model, child_model = Model(mode), Model(mode)
-        parent = runtime_for(tmp_path, compiler, parent_model)
+        parent = await runtime_for(tmp_path, compiler, parent_model)
         child, task = None, None
         entered, release = asyncio.Event(), asyncio.Event()
         try:
             await run(parent, parent_model)
-            child = runtime_for(
+            child = await runtime_for(
                 tmp_path,
                 compiler,
                 child_model,
@@ -276,14 +276,14 @@ def test_explicit_delegate_handle_survives_bad_user_rule_fallback(
         rules.mkdir(parents=True)
         (rules / "bad.rules").write_text("not valid rules !")
         parent_model, child_model = Model(mode), Model(mode)
-        parent = runtime_for(tmp_path, compiler, parent_model)
+        parent = await runtime_for(tmp_path, compiler, parent_model)
         child = None
         try:
             events = await run(parent, parent_model)
             assert any(
                 isinstance(e, WarningEvent) and "failed to parse" in e.message for e in events
             )
-            child = runtime_for(
+            child = await runtime_for(
                 tmp_path,
                 compiler,
                 child_model,
@@ -318,11 +318,11 @@ def test_explicit_delegate_handle_survives_bad_user_rule_fallback(
 def test_failed_save_does_not_publish_to_initialized_child(tmp_path, compiler, mode):
     async def scenario():
         parent_model, child_model = Model(mode), Model(mode)
-        parent = runtime_for(tmp_path, compiler, parent_model)
+        parent = await runtime_for(tmp_path, compiler, parent_model)
         child = None
         try:
             await run(parent, parent_model)
-            child = runtime_for(
+            child = await runtime_for(
                 tmp_path,
                 compiler,
                 child_model,
@@ -365,7 +365,7 @@ def test_failed_save_does_not_publish_to_initialized_child(tmp_path, compiler, m
 def test_cross_event_loop_live_inheritance_rejected_before_sampling(tmp_path, compiler, mode):
     async def capture():
         model = Model(mode)
-        parent = runtime_for(tmp_path, compiler, model)
+        parent = await runtime_for(tmp_path, compiler, model)
         try:
             with pytest.raises(RuntimeError, match="ready"):
                 live_policy(parent)
@@ -378,7 +378,7 @@ def test_cross_event_loop_live_inheritance_rejected_before_sampling(tmp_path, co
 
     async def scenario():
         model = Model(mode)
-        child = runtime_for(
+        child = await runtime_for(
             tmp_path,
             compiler,
             model,
@@ -402,11 +402,11 @@ def test_cross_event_loop_live_inheritance_rejected_before_sampling(tmp_path, co
 def test_concurrent_relatives_preserve_both_rule_updates(tmp_path, compiler, mode):
     async def scenario():
         parent_model, child_model = Model(mode), Model(mode)
-        parent = runtime_for(tmp_path, compiler, parent_model)
+        parent = await runtime_for(tmp_path, compiler, parent_model)
         child = None
         try:
             await run(parent, parent_model)
-            child = runtime_for(
+            child = await runtime_for(
                 tmp_path,
                 compiler,
                 child_model,
@@ -476,14 +476,14 @@ def test_concurrent_relatives_preserve_both_rule_updates(tmp_path, compiler, mod
 def test_live_handle_cannot_bypass_non_root_configured_host_boundary(tmp_path, compiler, invalid):
     async def scenario():
         model = Model("direct")
-        parent = runtime_for(tmp_path, compiler, model)
+        parent = await runtime_for(tmp_path, compiler, model)
         try:
             await run(parent, model)
             settings = parent._settings
             if invalid == "unconfigured":
                 settings = replace(settings, execution_permissions=None)
             with pytest.raises(ValueError, match="configured non-root host"):
-                runtime_for(
+                await runtime_for(
                     tmp_path,
                     compiler,
                     Model("direct"),
@@ -514,7 +514,7 @@ def test_incompatible_or_independent_children_do_not_receive_live_updates(
 ):
     async def scenario():
         parent_model, child_model = Model(mode), Model(mode)
-        parent = runtime_for(tmp_path, compiler, parent_model)
+        parent = await runtime_for(tmp_path, compiler, parent_model)
         child = None
         try:
             await run(parent, parent_model)
@@ -553,7 +553,7 @@ def test_incompatible_or_independent_children_do_not_receive_live_updates(
                         ),
                     ),
                 )
-            child = runtime_for(
+            child = await runtime_for(
                 tmp_path,
                 compiler,
                 child_model,

@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from corki import http_client
-from corki.cli.main import build_application, build_parser
+from corki.cli.main import build_application_async, build_parser
 from corki.context.history import active_history
 from corki.protocol.collaboration import CollaborationMode
 from corki.protocol.events import ContextCompacted, TurnCompleted
@@ -102,7 +102,7 @@ def test_cold_cli_resume_starts_default_with_resumed_model_and_effort(host, wire
 
     async def scenario():
         config(path, effort="low", wire=wire)
-        first = build_application()._runtime
+        first = (await build_application_async())._runtime
         try:
             await first.update_thread_settings(
                 collaboration_mode=CollaborationMode("plan", "large", "high", "Saved Plan rule")
@@ -112,7 +112,7 @@ def test_cold_cli_resume_starts_default_with_resumed_model_and_effort(host, wire
         finally:
             await first.aclose()
         config(path, current="beta", model="small", effort="low", wire=wire)
-        resumed = build_application(resume=str(first.thread_id))._runtime
+        resumed = (await build_application_async(resume=str(first.thread_id)))._runtime
         try:
             selected = resumed.thread_settings
             assert selected.collaboration_mode == "default"
@@ -139,7 +139,7 @@ def test_implicit_resume_preserves_personality_over_changed_host_default(host, p
 
     async def scenario():
         config(path)
-        first = build_application()._runtime
+        first = (await build_application_async())._runtime
         try:
             await first.update_thread_settings(personality=personality)
             assert isinstance([e async for e in first.stream("first")][-1], TurnCompleted)
@@ -156,7 +156,7 @@ def test_implicit_resume_preserves_personality_over_changed_host_default(host, p
             ),
             encoding="utf-8",
         )
-        cold = build_application(resume=str(first.thread_id))._runtime
+        cold = (await build_application_async(resume=str(first.thread_id)))._runtime
         try:
             assert cold.thread_settings.personality == personality
             assert isinstance([e async for e in cold.stream("second")][-1], TurnCompleted)
@@ -182,7 +182,7 @@ def test_implicit_resume_restores_group_before_transport_window_and_compaction(h
         path.write_text(
             path.read_text().replace("rotated", "before").replace("concise", "detailed")
         )
-        first = build_application()._runtime
+        first = (await build_application_async())._runtime
         try:
             assert isinstance([e async for e in first.stream("ORIGINAL_INPUT")][-1], TurnCompleted)
             original = await first._repository.load_items(first.thread_id)
@@ -192,7 +192,7 @@ def test_implicit_resume_restores_group_before_transport_window_and_compaction(h
         finally:
             await first.aclose()
         config(path, current="beta", model="small", effort="low", wire=wire)
-        app = build_application(resume=str(first.thread_id))
+        app = await build_application_async(resume=str(first.thread_id))
         cold = app._runtime
         try:
             assert (
@@ -252,7 +252,7 @@ def test_one_explicit_override_skips_entire_persisted_group(host, monkeypatch, o
 
     async def scenario():
         config(path)
-        first = build_application()._runtime
+        first = (await build_application_async())._runtime
         try:
             assert isinstance([e async for e in first.stream("first")][-1], TurnCompleted)
         finally:
@@ -274,7 +274,7 @@ def test_one_explicit_override_skips_entire_persisted_group(host, monkeypatch, o
             expected = ("large", "beta", "low")
         else:
             monkeypatch.setenv("CORKI_API_BASE", "https://explicit.invalid/v1")
-        cold = build_application(resume=str(first.thread_id), **kwargs)._runtime
+        cold = (await build_application_async(resume=str(first.thread_id), **kwargs))._runtime
         try:
             assert (
                 cold._settings.model,
@@ -301,7 +301,7 @@ def test_missing_saved_provider_fails_before_client_construction(host, monkeypat
 
     async def scenario():
         config(path)
-        first = build_application()._runtime
+        first = (await build_application_async())._runtime
         try:
             assert isinstance([e async for e in first.stream("first")][-1], TurnCompleted)
         finally:
@@ -313,7 +313,7 @@ def test_missing_saved_provider_fails_before_client_construction(host, monkeypat
             "corki.core.runtime._create_model", lambda *a: pytest.fail("created client")
         )
         with pytest.raises(ValueError, match="alpha"):
-            build_application(resume=str(first.thread_id))
+            (await build_application_async(resume=str(first.thread_id)))
         assert len(requests) == 1
 
     asyncio.run(scenario())
@@ -330,7 +330,7 @@ def test_legacy_database_without_model_metadata_uses_current_defaults(host):
         # not invent a past model selection for an existing thread.
         with sqlite3.connect(repository.path) as db:
             db.execute("DROP TABLE thread_model_settings")
-        cold = build_application(resume="legacy-thread")._runtime
+        cold = (await build_application_async(resume="legacy-thread"))._runtime
         try:
             assert isinstance([e async for e in cold.stream("legacy")][-1], TurnCompleted)
             assert requests[-1][1]["model"] == "small"
@@ -370,7 +370,7 @@ def test_saved_profile_identity_preserves_label_without_enabling_private_capabil
             'api_key="fixture-key"\n'
             'base_url="https://deployment.invalid/v1"\nreasoning_effort="high"\n'
         )
-        first = build_application()._runtime
+        first = (await build_application_async())._runtime
         try:
             assert isinstance([e async for e in first.stream("first")][-1], TurnCompleted)
             assert "reasoning_effort" not in requests[-1][1]
@@ -382,7 +382,7 @@ def test_saved_profile_identity_preserves_label_without_enabling_private_capabil
         path.write_text(
             path.read_text().replace('id="deployment"', 'name="beta"').replace('"high"', '"low"')
         )
-        cold = build_application(resume=str(first.thread_id))._runtime
+        cold = (await build_application_async(resume=str(first.thread_id)))._runtime
         try:
             assert isinstance([e async for e in cold.stream("second")][-1], TurnCompleted)
             assert "reasoning_effort" not in requests[-1][1]
@@ -407,7 +407,7 @@ def test_settings_write_failure_leaves_no_admitted_turn_and_retry_uses_same_defa
 
     async def scenario():
         config(path)
-        runtime = build_application()._runtime
+        runtime = (await build_application_async())._runtime
         write = runtime._repository._save_thread_model_settings
 
         def fail(*args):
@@ -437,14 +437,14 @@ def test_key_rotation_alone_preserves_saved_model_provider_and_effort(host, monk
 
     async def scenario():
         config(path)
-        first = build_application()._runtime
+        first = (await build_application_async())._runtime
         try:
             assert isinstance([e async for e in first.stream("first")][-1], TurnCompleted)
         finally:
             await first.aclose()
         config(path, current="beta", model="small", effort="low")
         monkeypatch.setenv("CORKI_API_KEY", "new-env-credential")
-        cold = build_application(resume=str(first.thread_id))._runtime
+        cold = (await build_application_async(resume=str(first.thread_id)))._runtime
         try:
             assert isinstance([e async for e in cold.stream("second")][-1], TurnCompleted)
             assert requests[-1][0] == "https://alpha.invalid/v1/responses"
@@ -462,7 +462,7 @@ def test_failed_explicit_resume_cannot_overwrite_previous_group(host, monkeypatc
 
     async def scenario():
         config(path)
-        first = build_application()._runtime
+        first = (await build_application_async())._runtime
         try:
             assert isinstance([e async for e in first.stream("first")][-1], TurnCompleted)
             original = await first._repository.load_items(first.thread_id)
@@ -470,7 +470,7 @@ def test_failed_explicit_resume_cannot_overwrite_previous_group(host, monkeypatc
         finally:
             await first.aclose()
         config(path, current="beta", model="small", effort="low")
-        cold = build_application(resume=str(first.thread_id), model="small")._runtime
+        cold = (await build_application_async(resume=str(first.thread_id), model="small"))._runtime
 
         def fail(*args):
             raise OSError("fixture settings commit failed")
@@ -494,7 +494,7 @@ def test_startup_settings_write_is_joined_before_cancel_or_close_returns(host, m
 
     async def scenario():
         config(path)
-        runtime = build_application()._runtime
+        runtime = (await build_application_async())._runtime
         entered, release = asyncio.Event(), threading.Event()
         loop = asyncio.get_running_loop()
         write = runtime._repository._save_thread_model_settings

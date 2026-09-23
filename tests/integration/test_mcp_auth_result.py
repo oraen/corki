@@ -132,8 +132,8 @@ def test_host_result_events_ledger_private_projection_and_cold_no_replay(
         )
         database = tmp_path / "history.db"
 
-        def create(model, thread=None):
-            return LangGraphRuntime.create(
+        async def create(model, thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 model=model,
                 registry=ToolRegistry(),
@@ -142,7 +142,7 @@ def test_host_result_events_ledger_private_projection_and_cold_no_replay(
                 thread_id=thread,
             )
 
-        runtime = create(Model())
+        runtime = await create(Model())
         try:
             events = [e async for e in runtime.stream("needle")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -182,7 +182,7 @@ def test_host_result_events_ledger_private_projection_and_cold_no_replay(
             async def aclose(self):
                 pass
 
-        cold = create(Cold(), runtime._thread_id)
+        cold = await create(Cold(), runtime._thread_id)
         try:
             events = [e async for e in cold.stream("continue")]
             assert isinstance(events[-1], TurnCompleted)

@@ -109,7 +109,7 @@ def test_cold_resume_old_call_retains_ledger_outcome_then_searches_new_identity(
         legacy_spec = ToolSpec(
             "mcp__docs__lookup", "needle", {}, exposure=ToolExposure.DEFERRED, source="docs"
         )
-        first = LangGraphRuntime.create(
+        first = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "history.db",
             home_path=tmp_path / "home",
@@ -157,7 +157,7 @@ def test_cold_resume_old_call_retains_ledger_outcome_then_searches_new_identity(
             before = await repo.load_items(first.thread_id)
         finally:
             await first.aclose()
-        second = LangGraphRuntime.create(
+        second = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

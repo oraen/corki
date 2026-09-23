@@ -53,10 +53,10 @@ def test_pending_turn_uses_current_host_policy_before_first_resumed_sample(
                 executions.append(call.id)
                 return ToolResult(call.id, call.name, "committed")
 
-        def create(text, model, thread=None):
+        async def create(text, model, thread=None):
             registry = ToolRegistry()
             registry.register(Tool())
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=settings(tmp_path),
                 model=model,
                 registry=registry,
@@ -77,7 +77,7 @@ def test_pending_turn_uses_current_host_policy_before_first_resumed_sample(
                 runtime._graph._context_builder._contributors += (UnavailableContributor(),)
             return runtime
 
-        source = create("OLD POLICY", Model(calls=after_tools is True))
+        source = await create("OLD POLICY", Model(calls=after_tools is True))
         try:
             await source._ensure_ready()
             turn = new_turn_id()
@@ -122,7 +122,7 @@ def test_pending_turn_uses_current_host_policy_before_first_resumed_sample(
         finally:
             await source.aclose()
         model = Model()
-        cold = create(policy_text, model, thread)
+        cold = await create(policy_text, model, thread)
         if crash_after_refresh:
             prepare = cold._graph._window_manager.prepare
             save_turn = cold._repository.save_turn
@@ -148,7 +148,7 @@ def test_pending_turn_uses_current_host_policy_before_first_resumed_sample(
                     # Lose in-memory pending writes as in the simulated process crash.
                     cold._pending_terminals.clear()
                     await cold.aclose()
-            cold = create(policy_text, model, thread)
+            cold = await create(policy_text, model, thread)
         try:
             assert isinstance([e async for e in cold.resume_pending()][-1], TurnCompleted)
             assert len(model.requests) == 1
@@ -176,8 +176,8 @@ def test_recovered_policy_obeys_window_and_compaction_budget(tmp_path, fits_afte
             async def emit(self, event):
                 pass
 
-        def create(policy, model, thread=None):
-            return LangGraphRuntime.create(
+        async def create(policy, model, thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings(tmp_path, model_context_window_override=12000),
                 model=model,
                 registry=ToolRegistry(),
@@ -193,7 +193,7 @@ def test_recovered_policy_obeys_window_and_compaction_budget(tmp_path, fits_afte
                 ),
             )
 
-        source = create("OLD POLICY", Model())
+        source = await create("OLD POLICY", Model())
         try:
             await source._ensure_ready()
             if fits_after_compaction:
@@ -231,7 +231,7 @@ def test_recovered_policy_obeys_window_and_compaction_budget(tmp_path, fits_afte
         # the frozen 12k window only after the old assistant history is compacted.
         model = Model()
         policy = "界" * (4000 if fits_after_compaction else 12000)
-        cold = create(policy, model, thread)
+        cold = await create(policy, model, thread)
         try:
             events = [event async for event in cold.resume_pending()]
             if fits_after_compaction:

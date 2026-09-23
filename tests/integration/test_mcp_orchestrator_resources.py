@@ -166,7 +166,7 @@ def test_legacy_orchestrator_setting_preserves_all_ordinary_mcp(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             model=Model(),
             registry=ToolRegistry(),

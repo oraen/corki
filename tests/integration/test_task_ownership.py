@@ -284,7 +284,7 @@ class OwnedModel:
 def test_realtime_parent_cancellation_closes_response_and_both_waiters(tmp_path: Path) -> None:
     async def scenario() -> None:
         model = OwnedModel(complete=False)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path),
             database_path=tmp_path / "cancel.db",
             model=model,
@@ -338,7 +338,7 @@ def test_model_completion_closes_response_without_reading_tail(
 ) -> None:
     async def scenario() -> None:
         model = OwnedModel(complete=True)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path),
             database_path=tmp_path / "completed.db",
             model=model,
@@ -377,7 +377,7 @@ def test_closing_consumer_joins_graph_and_response_under_backpressure(
 
     async def scenario() -> None:
         model = BurstModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, event_queue_size=1),
             database_path=tmp_path / "backpressure.db",
             model=model,
@@ -410,7 +410,7 @@ def test_closing_consumer_joins_graph_and_response_under_backpressure(
 @pytest.mark.parametrize("realtime", [False, True])
 def test_closing_at_turn_started_finalizes_durable_turn(tmp_path: Path, realtime: bool) -> None:
     async def scenario() -> None:
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path),
             database_path=tmp_path / "start-close.db",
             model=OwnedModel(complete=False),
@@ -501,7 +501,7 @@ def test_parallel_storage_failure_joins_siblings_before_turn_failure(
         registry.register(FastTool())
         registry.register(block)
         repository = FaultRepository(tmp_path / "parallel.db")
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path),
             database_path=repository.path,
             model=ParallelModel(streamed=streamed),

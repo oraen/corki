@@ -1,5 +1,78 @@
 # C3 请求预算复核
 
+## 2026-09-22：长元数据原图的尺寸预算
+
+Codex `context_manager/history.rs::estimate_original_image_bytes` 对 original
+内嵌图片完整解码后取得尺寸，结果以 32px patch 计费并做 32 项摘要缓存。
+Corki 只读前 512 KiB 图片头；合法 JPEG 的多个 APP 元数据段若把 SOF
+尺寸标记推迟到此界限之后，即使 `ImagePreparation` 接受且原样保留，
+预算仍退回 1844 tokens。本批构造 2048×2048、九个 60 KiB APP 段的
+有效 JPEG，修复前单位估算 1858（含正文/消息开销），低于预期的 4096
+patch tokens；有效图片准备链同时证实不是畸形历史。
+
+现在保留 512 KiB 快速扫描；仅未找到尺寸时按图片准备相同的解码校验
+读取完整尺寸，失败仍退回调整后图片预算。慢路径用 SHA-256 摘要作
+32 项有界缓存，不持有大 base64 URL。单位红/绿；真实 Runtime 将五份
+旧原图计入自动压缩阈值、产生摘要后继续采样，原始归档不改写。
+context 单元及媒体/预算集成 **630 passed / 13.44s**；Ruff 与三文件格式
+检查通过。生产修改后非 CLI 全范围独立收集 **15790 项**，敏感六文件
+**459 passed / 57.43s**，其余主组 **15324 passed、7 skipped /
+788.35s**；两组均退出 0，合计 **15783 passed、7 skipped**。
+七项跳过为六项缺历史原生编译器、一项文件系统不接受非 UTF-8 文件名。
+此处只对普通请求本地估算负责，不承诺供应商实际 tokenizer/图像计费
+完全相同，也不据此关闭整个 C3。
+
+## 2026-09-22：非内嵌图片引用不按 base64 图片负载计费
+
+Codex `context_manager/history.rs::image_data_url_estimate_adjustment` 只对
+`data:image/...;base64,` 图片负载用模态估算替换序列化字节；普通 URL/其它
+非内嵌引用保留序列化文本成本。Corki `context/tokens.py::_estimate_image_tokens`
+此前对所有 `ImageAttachment` 固定计约 1844 tokens，导致 16 个短的
+非 data 图片引用在真实 Runtime 中错误触发普通摘要。
+
+先增单元及真实 Runtime 红例：修复前分别得到 1858 tokens、额外
+`ContextCompacted`，两例失败；修复后仅合格内嵌 base64 图片使用原
+图片成本，其余引用按可见 URL 文本估算。`original` 的有效内嵌尺寸路径
+不变。扩大测试发现一条旧单测把外部 HTTPS 图片也断言为高成本，已修正
+其成本期望，原归档/媒体能力投影断言保留。相关 context 单元与媒体/预算
+集成 **529 passed / 12.98s**。首次扩大命令误含不存在的两个测试文件，
+pytest 零收集退出 5；更正文件后上述完整目标组退出 0。
+
+生产修复及前一轮新增 Hook 用例之后，非 CLI 完整范围重新按互斥文件分组：
+短期限敏感六文件单 worker **459 passed / 56.29s**；其余 unit/integration
+排除 CLI 与前六文件、4 workers **15274 passed、7 skipped / 733.24s**，
+两批实际退出 0。独立 `--collect-only` 得 **15740 项**，恰等于两批总数，
+合计 **15733 passed、7 skipped**。七项跳过为六项缺少历史编译器、一项
+文件系统拒绝非 UTF-8 文件名；不算通过。测试未触及外网或官方服务。
+估算仍是普通兼容模型的启发式，不保证供应商实际 tokenizer/计费一致。
+
+## 2026-09-22：剩余空间报告与硬窗口准入一致
+
+Codex `session/context_window.rs::context_window_token_status_with_config` 用同一
+`active_context_tokens` 计算剩余空间与完整窗口硬上限。Corki 因普通兼容模型的
+usage 可能低报可见大正文，已在 `window.prepare` 用完整请求本地估算作独立
+硬窗口准入；但 `_budget_status` 的 `get_context_remaining`/预算通知仍只用
+低 usage 计算硬上限，出现同一状态先报告“17900 tokens left”、随后立刻
+强制压缩的矛盾。
+
+新增真实 Runtime 反例：首个模型结果含约 10 万字符可见正文与
+`get_context_remaining` 调用，供应商 usage 报 100；工具 Observation 原报
+17900，下一请求仍因本地硬上限触发普通摘要。修复前 total 范围失败；
+现保留 provider usage 驱动的自动阈值及 body-after-prefix 基线，仅将
+完整本地估算纳入硬上限的剩余量/已到达判断。`total` 与
+`body_after_prefix` 两类真实模型→工具→摘要→最终请求均通过；低 usage
+但小正文仍沿原有正剩余量路径。相关预算/历史六文件 97 passed，
+扩大 context 单元与 context/token-budget 集成 **600 passed、28 skipped**
+（4 workers/loadfile/禁重启，20.92s）。跳过项尚未逐一归类，不计作通过。
+`-rs` 复核 28 项全为缺少显式原生编译器的 execution-permission-context
+条件测试；补传当前本机编译器后同范围 **628 passed、0 skipped、24.87s**
+（4 workers/loadfile/禁重启）。原 600 批次只作诊断，不作为最终覆盖。
+ruff/format/diff 通过。修复后的同范围非 CLI 全量实际退出 0：
+**15616 passed、7 skipped、569.03s**，8 workers/loadfile/禁重启；
+六项需已消失的历史编译器，一项当前文件系统拒绝非 UTF-8 文件名。
+此前 15614 是修复前基线，不能替代本批；其余 C3 精度/附件与 A–E
+开放项不因通过自动核销。
+
 ## A6/C8/E6 媒体预算取消所有权复核
 
 原生 tasks/mod.rs::abort_all_tasks 先 handle_task_abort，再清 pending approvals，

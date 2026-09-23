@@ -113,6 +113,19 @@ async def run(
             )
         return
     current = {command.key: command for command in commands}
+    source = runtime.session_source
+    agent_identity = {}
+    if (
+        source.kind == SessionSourceKind.SUBAGENT
+        and isinstance(source.value, SubAgentSource)
+        and source.value.variant == "thread_spawn"
+        and isinstance(source.value.value, ThreadSpawnSource)
+    ):
+        role = source.value.value.agent_role
+        agent_identity = {
+            "agent_id": str(thread),
+            "agent_type": role if role is not None else "default",
+        }
     if saved is None and not commands and not warnings:
         await repository.save_hook_batch(
             thread, turn, receipt_key, {"version": 1, "stopped": False}
@@ -133,15 +146,7 @@ async def run(
         }
         if payload["transcript_path"] is not None:
             payload["transcript_path"] = str(payload["transcript_path"])
-        source = runtime.session_source
-        if (
-            source.kind == SessionSourceKind.SUBAGENT
-            and isinstance(source.value, SubAgentSource)
-            and source.value.variant == "thread_spawn"
-            and isinstance(source.value.value, ThreadSpawnSource)
-        ):
-            role = source.value.value.agent_role
-            payload.update(agent_id=str(thread), agent_type=role if role is not None else "default")
+        payload.update(agent_identity)
         snapshot = {"version": 1, "payload": payload, "commands": [asdict(c) for c in commands]}
         await repository.save_hook_batch(thread, turn, prefix, snapshot)
         records = {}
@@ -172,17 +177,41 @@ async def run(
             raise ValueError("Invalid compaction hook payload")
         if payload.get("hook_event_name") != event or payload.get("turn_id") != str(turn):
             raise ValueError("Compaction hook identity mismatch")
+        if set(payload) != {
+            "session_id",
+            "turn_id",
+            "cwd",
+            "hook_event_name",
+            "model",
+            "trigger",
+            "transcript_path",
+            *agent_identity,
+        }:
+            raise ValueError("Compaction hook payload identity mismatch")
         session = str(await repository.load_thread_session_id(thread))
         # Early v1 snapshots used the owning thread ID instead of its session.
         # Accept that exact legacy identity without rewriting claimed requests.
         if payload.get("session_id") not in (session, str(thread)):
             raise ValueError("Compaction hook session identity mismatch")
+        if (
+            payload["model"] != model
+            or payload["cwd"] != str(settings.working_directory)
+            or payload["trigger"] != trigger
+            or {key: payload[key] for key in ("agent_id", "agent_type") if key in payload}
+            != agent_identity
+        ):
+            raise ValueError("Compaction hook payload identity mismatch")
+        transcript = await repository.materialize_transcript(thread)
+        if payload["transcript_path"] != (str(transcript) if transcript is not None else None):
+            raise ValueError("Compaction hook payload identity mismatch")
         commands = tuple(
             restore_command(
                 {**entry, "environment": tuple(tuple(pair) for pair in entry["environment"])}
             )
             for entry in snapshot["commands"]
         )
+        if len({command.key for command in commands}) != len(commands):
+            raise ValueError("Duplicate compaction hook command")
         if set(records) - {prefix + c.key for c in commands}:
             raise ValueError("Unexpected compaction hook execution")
         for command in commands:

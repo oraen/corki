@@ -33,7 +33,7 @@ def test_redundant_pending_prefix_is_saved_without_redundant_live_publication(
 ):
     async def scenario():
         parent_model, child_model = Model(mode), Model(mode)
-        parent = runtime_for(tmp_path, compiler, parent_model)
+        parent = await runtime_for(tmp_path, compiler, parent_model)
         child = None
         tasks = []
         gates = {name: asyncio.Event() for name in ("parent", "child")}
@@ -62,7 +62,7 @@ def test_redundant_pending_prefix_is_saved_without_redundant_live_publication(
         }[relation]
         try:
             await run(parent, parent_model)
-            child = runtime_for(
+            child = await runtime_for(
                 tmp_path,
                 compiler,
                 child_model,
@@ -261,7 +261,7 @@ def test_host_publication_uses_full_captured_policy_not_disk_or_model_filter(
                 approval_policy_json='"on-request"',
             ),
         )
-        runtime = runtime_for(tmp_path, compiler, model, settings=settings)
+        runtime = await runtime_for(tmp_path, compiler, model, settings=settings)
         try:
             if case == "managed_allow":
                 with pytest.raises(ValueError, match="not permitted in requirements.toml"):
@@ -325,7 +325,7 @@ def test_missing_native_publication_ack_preserves_only_current_approval(
 ):
     async def scenario():
         model = Model(mode)
-        runtime = runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, compiler, model)
         original = rule_writer.run_owned
         writes = []
 

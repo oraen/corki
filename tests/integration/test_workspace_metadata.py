@@ -119,7 +119,7 @@ def test_default_sdk_protects_own_metadata_without_explicit_policy(tmp_path, com
             (workspace / name).mkdir()
             (workspace / name / "config.toml").write_text("# original")
         model = Model(mode)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=workspace,
                 skills_enabled=False,

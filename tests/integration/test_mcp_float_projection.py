@@ -117,8 +117,8 @@ def test_priority_rounding_survives_runtime_and_cold_history(
             mcp_servers=(MCPServerSettings("docs", "http", url="https://fixture.invalid/mcp"),),
         )
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=database,
                 registry=ToolRegistry(),
@@ -126,7 +126,7 @@ def test_priority_rounding_survives_runtime_and_cold_history(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             events = [event async for event in runtime.stream("read")]
@@ -148,7 +148,7 @@ def test_priority_rounding_survives_runtime_and_cold_history(
                 )
         finally:
             await runtime.aclose()
-        runtime = create(thread)
+        runtime = await create(thread)
         try:
             events = [event async for event in runtime.stream("continue")]
             assert isinstance(events[-1], TurnCompleted), events[-1]

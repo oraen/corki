@@ -46,7 +46,7 @@ def test_steer_during_compaction_respects_continuation_and_survives_cold_history
             async def aclose(self):
                 pass
 
-        runtime = create_runtime(tmp_path, Model())
+        runtime = await create_runtime(tmp_path, Model())
         append = runtime._repository.append_items
 
         async def held_append(thread_id, items):
@@ -84,7 +84,7 @@ def test_steer_during_compaction_respects_continuation_and_survives_cold_history
                 )
                 thread = runtime.thread_id
                 await runtime.aclose()
-                cold = create_runtime(tmp_path, Model(), thread_id=thread)
+                cold = await create_runtime(tmp_path, Model(), thread_id=thread)
                 try:
                     events = [event async for event in cold.stream("after cancelled compact")]
                     assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -124,7 +124,7 @@ def test_steer_during_compaction_respects_continuation_and_survives_cold_history
             await asyncio.gather(task, return_exceptions=True)
             await runtime.aclose()
 
-        cold = create_runtime(tmp_path, Model(), thread_id=thread)
+        cold = await create_runtime(tmp_path, Model(), thread_id=thread)
         try:
             events = [event async for event in cold.stream("after reopening")]
             assert isinstance(events[-1], TurnCompleted), events[-1]

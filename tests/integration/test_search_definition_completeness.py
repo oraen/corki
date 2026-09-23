@@ -188,7 +188,7 @@ def test_large_search_hits_load_execute_and_survive_cold_history(tmp_path, wire,
                     supports_native_tool_search=wire == "native",
                 ),
             )
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "sessions.db",
                 registry=registry,
@@ -285,7 +285,7 @@ def test_large_discovery_uses_context_compaction_without_corrupting_archive(tmp_
     async def scenario():
         model, registry = Model(), ToolRegistry()
         registry.register(tool)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

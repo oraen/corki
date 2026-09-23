@@ -58,7 +58,7 @@ def test_token_budget_summarizes_without_clearing_environment(tmp_path, trigger,
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -153,7 +153,7 @@ def test_manual_summary_reaches_only_configured_ordinary_http(tmp_path, mode):
             client=client,
             capabilities=resolve_capabilities(base_url="https://fixture.invalid/v1", api_mode=mode),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, token_budget_enabled=True
             ),
@@ -214,8 +214,8 @@ def test_summary_request_survives_storage_failure_and_cold_runtime(
             async def aclose(self):
                 pass
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     skills_enabled=False,
@@ -228,7 +228,7 @@ def test_summary_request_survives_storage_failure_and_cold_runtime(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         original = runtime._repository.append_items
         failed = False
 
@@ -248,7 +248,7 @@ def test_summary_request_survives_storage_failure_and_cold_runtime(
             assert isinstance(events[-1], TurnFailed)
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [event async for event in runtime.stream("AFTER_FAILED_RESET")]
             assert isinstance(events[-1], TurnCompleted)
             assert len(requests) == (3 if after_commit else 4)
@@ -307,7 +307,7 @@ def test_remaining_tool_and_model_only_exposure(tmp_path, tool_mode, scope):
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -330,6 +330,68 @@ def test_remaining_tool_and_model_only_exposure(tmp_path, tool_mode, scope):
             assert len(outputs) == 1 and not outputs[0].is_error
             assert ("29000" if scope == "total" else "30000") in outputs[0].content
             assert ("tokens_left" in outputs[0].content) is (tool_mode == "code_mode_only")
+        finally:
+            await runtime.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("scope", ["total", "body_after_prefix"])
+def test_remaining_tool_respects_local_hard_window_when_usage_is_lower(tmp_path, scope):
+    from corki.protocol.items import ToolResultItem
+
+    async def scenario():
+        requests = []
+
+        class Model:
+            async def stream(self, request):
+                requests.append(request)
+                turn, step = request.items[-1].turn_id, new_step_id()
+                if len(requests) == 1:
+                    yield ModelCompleted(
+                        (
+                            AssistantMessageItem("x" * 100_000, turn, step),
+                            ToolCallItem(
+                                ToolCall(new_tool_call_id(), "get_context_remaining", {}),
+                                turn,
+                                step,
+                            ),
+                        ),
+                        ModelUsage(input_tokens=100, output_tokens=0),
+                    )
+                elif len(requests) == 2:
+                    assert request.tools == ()
+                    yield ModelCompleted((AssistantMessageItem("short summary", turn, step),))
+                else:
+                    yield ModelCompleted((AssistantMessageItem("done", turn, step),))
+
+            async def aclose(self):
+                pass
+
+        runtime = await LangGraphRuntime.acreate(
+            settings=CorkiSettings(
+                working_directory=tmp_path,
+                skills_enabled=False,
+                context_window_tokens=20_000,
+                auto_compact_tokens=18_000,
+                auto_compact_token_limit_scope=scope,
+                token_budget_enabled=True,
+            ),
+            database_path=tmp_path / "sessions.db",
+            registry=ToolRegistry(),
+            model=Model(),
+        )
+        try:
+            events = [event async for event in runtime.stream("inspect after a long reply")]
+            assert isinstance(events[-1], TurnCompleted), events[-1]
+            assert sum(isinstance(event, ContextCompacted) for event in events) == 1
+            assert len(requests) == 3
+            remaining = next(
+                item
+                for item in await runtime._repository.load_items(runtime.thread_id)
+                if isinstance(item, ToolResultItem) and item.tool_name == "get_context_remaining"
+            )
+            assert "You have 0 tokens left" in remaining.content, remaining.content
         finally:
             await runtime.aclose()
 

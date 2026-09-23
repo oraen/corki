@@ -3,7 +3,8 @@
 from dataclasses import dataclass
 from weakref import ReferenceType, ref
 
-from corki.protocol.tools import ToolSpec
+from corki.protocol.tools import ToolSpec, same_tool_spec
+from corki.protocol.wire_numbers import dumps_wire
 from corki.tools.registry import ToolRegistry
 from corki.tools.search import ToolSearchTool, search_text
 
@@ -11,7 +12,7 @@ from corki.tools.search import ToolSearchTool, search_text
 @dataclass(frozen=True)
 class _DynamicSearchInfo:
     text: str
-    output: dict
+    output_wire: str
     source: str | None
     source_description: str | None
 
@@ -21,7 +22,7 @@ class _DynamicSearchInfo:
         # search info. They may change without rebuilding the scoring engine.
         return cls(
             search_text(spec),
-            spec.as_response_tool(native_freeform=True),
+            dumps_wire(spec.as_response_tool(), sort_keys=True),
             spec.source,
             spec.source_description,
         )
@@ -83,7 +84,10 @@ class ToolSearchHandlerCache:
                 dynamic_specs.get(index, cached.handler._definitions[index])
                 for index in range(len(entries))
             )
-            if specs == cached.handler._definitions:
+            if all(
+                same_tool_spec(current, previous)
+                for current, previous in zip(specs, cached.handler._definitions, strict=True)
+            ):
                 return cached.handler
             # Rebind execution-only ToolSpec fields while retaining the exact
             # equivalent index. An old handler still owns its old definitions.

@@ -52,6 +52,7 @@ class InputOwner:
     def __init__(self, ui):
         self.ui = ui
         self._lock = asyncio.Lock()
+        self._approval_lock = asyncio.Lock()
         self._ordinary = asyncio.Event()
         self._ordinary.set()
         self._modals = 0
@@ -85,10 +86,24 @@ class InputOwner:
                         self._reader = None
 
     async def elicit(self, request):
-        return await self._modal(self.ui.read_elicitation, request)
+        # Keep approval arrival order while allowing the composer to keep typing
+        # until its idle deadline. Cancellation here owns no terminal reader.
+        async with self._approval_lock:
+            overlay = getattr(self.ui, "try_overlay_approval", None)
+            if overlay is not None:
+                result = overlay(request)
+                if result is not None:
+                    return await result
+            wait_idle = getattr(self.ui, "wait_for_approval_idle", None)
+            if wait_idle is not None:
+                await wait_idle()
+            return await self._modal(self.ui.read_elicitation, request)
 
     async def ask_user(self, request):
         return await self._modal(self.ui.read_user_input, request)
+
+    async def select_model(self, current):
+        return await self._modal(self.ui.read_model, current)
 
     async def _modal(self, read, request):
         self._modals += 1

@@ -105,7 +105,7 @@ def test_code_mode_only_mcp_omitted_nested_is_directly_callable(tmp_path, monkey
         server = MCPServerSettings.from_mapping(
             "fixture", {"url": "https://fixture.invalid/mcp", "omit_tools_from": ["code_mode"]}
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -202,7 +202,7 @@ def test_runtime_server_mask_matrix(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -309,7 +309,7 @@ def test_reconcile_changes_nested_and_search_surfaces_without_reconnecting(tmp_p
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -379,8 +379,8 @@ def test_cold_resume_uses_saved_spec_validation_for_changed_server_mask(
             async def aclose(self):
                 pass
 
-        def create(selected, thread=None):
-            return LangGraphRuntime.create(
+        async def create(selected, thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=selected,
                 registry=ToolRegistry(),
                 model=Model(),
@@ -388,7 +388,7 @@ def test_cold_resume_uses_saved_spec_validation_for_changed_server_mask(
                 thread_id=thread,
             )
 
-        old = create(settings)
+        old = await create(settings)
         await old._ensure_ready()
         thread, turn = old.thread_id, new_turn_id()
         user = UserMessageItem("once", turn)
@@ -405,7 +405,7 @@ def test_cold_resume_uses_saved_spec_validation_for_changed_server_mask(
             interrupt_before=["call_model"],
         )
         await old.aclose()
-        cold = create(
+        cold = await create(
             replace(
                 settings,
                 mcp_servers=(replace(server, omit_tools_from=("direct", "deferred", "code_mode")),),

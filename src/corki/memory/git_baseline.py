@@ -144,8 +144,12 @@ def _owned_metadata(root: Path) -> None:
     try:
         message = _git(root, "log", "-1", "--format=%B").strip()
         count = _git(root, "rev-list", "--count", "HEAD").strip()
-        if count == b"1" and message == (
-            b"Initialize Codex git baseline\n\nCo-authored-by: Codex <noreply@openai.com>"
+        identity = _git(root, "log", "-1", "--format=%an%x00%ae%x00%cn%x00%ce").strip()
+        if (
+            count == b"1"
+            and message
+            == (b"Initialize Codex git baseline\n\nCo-authored-by: Codex <noreply@openai.com>")
+            and identity == b"Codex\0noreply@openai.com\0Codex\0noreply@openai.com"
         ):
             return
     except RuntimeError:

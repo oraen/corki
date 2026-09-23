@@ -125,7 +125,7 @@ def test_never_policy_before_spawn_in_actual_runtime(
             raise OSError("fixture intercepted startup; command was not executed")
 
         monkeypatch.setattr(process, "_spawn", intercepted)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -214,7 +214,7 @@ def test_explicit_allow_cannot_bypass_managed_read_denial(tmp_path, mode, denied
                 ),
             )
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

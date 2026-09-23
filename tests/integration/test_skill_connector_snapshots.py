@@ -75,7 +75,7 @@ def test_local_skill_survives_same_named_connector_and_refresh(
         server = MCPServerSettings(
             "codex_apps" if apps else "ordinary", "http", url="https://fixture.invalid"
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 execution_permissions=None,

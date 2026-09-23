@@ -56,7 +56,7 @@ async def main():
     cwd = Path.cwd()
     settings = CorkiSettings(cwd, skills_enabled=False, plugins_enabled=False,
         model_max_retries=0, realtime_enabled=sys.argv[2] == 'true')
-    runtime = LangGraphRuntime.create(settings=settings, model=Model(),
+    runtime = await LangGraphRuntime.acreate(settings=settings, model=Model(),
         database_path=cwd / "sessions.db", home_path=cwd / "home")
     async for _ in runtime.stream("seed"):
         pass

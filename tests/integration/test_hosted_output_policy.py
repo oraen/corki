@@ -112,7 +112,7 @@ def test_hosted_raw_archive_and_model_projection_have_distinct_budgets(tmp_path,
                 }
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             database_path=tmp_path / "sessions.db",
             model=model,
@@ -193,7 +193,7 @@ def test_large_notification_cold_recovery_projects_before_context_budgeting(
                 pass
 
         model = Model()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 model="fixture",
                 working_directory=tmp_path,

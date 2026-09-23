@@ -124,8 +124,8 @@ def test_runtime_lifetime_across_turns_and_explicit_timeout(
             tool_mode="code_mode" if nested else "direct",
         )
 
-        def create(thread=None):
-            runtime = LangGraphRuntime.create(
+        async def create(thread=None):
+            runtime = await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "lifetime.db",
                 model=Model(),
@@ -147,7 +147,7 @@ def test_runtime_lifetime_across_turns_and_explicit_timeout(
             manager._enqueue_pty_input = counted_enqueue
             return runtime
 
-        runtime = create()
+        runtime = await create()
         seeded = []
         try:
             if preload:
@@ -177,7 +177,7 @@ def test_runtime_lifetime_across_turns_and_explicit_timeout(
         finally:
             await runtime.aclose()
         assert all(session.process.returncode is not None for session in seeded)
-        cold = create(runtime.thread_id)
+        cold = await create(runtime.thread_id)
         try:
             events = [e async for e in cold.stream("continue")]
             assert isinstance(events[-1], TurnCompleted), events[-1]

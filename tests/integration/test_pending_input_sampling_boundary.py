@@ -12,8 +12,8 @@ from corki.protocol.items import AssistantMessageItem, UserMessageItem, new_step
 from corki.tools import ToolRegistry
 
 
-def create_runtime(tmp_path, model):
-    return LangGraphRuntime.create(
+async def create_runtime(tmp_path, model):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path, skills_enabled=False, execution_permissions=None
         ),
@@ -39,7 +39,7 @@ def test_original_input_is_sampled_before_steer_queued_during_first_prepare(tmp_
             async def aclose(self):
                 pass
 
-        runtime = create_runtime(tmp_path, Model())
+        runtime = await create_runtime(tmp_path, Model())
         builder_type = type(runtime._graph._context_builder)
         build = builder_type.build
         first = True
@@ -142,7 +142,7 @@ def test_auto_compaction_resumes_model_before_draining_pending_input(tmp_path, f
 
         registry = ToolRegistry()
         registry.register(Effect())
-        runtime = compact_runtime(tmp_path, Model(), registry=registry)
+        runtime = await compact_runtime(tmp_path, Model(), registry=registry)
         try:
             events = [e async for e in runtime.stream("original", realtime=True)]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -177,7 +177,7 @@ def test_stop_preempts_sampling_with_queued_input_and_preserves_accepted_text(tm
             async def aclose(self):
                 pass
 
-        runtime = create_runtime(tmp_path, Model())
+        runtime = await create_runtime(tmp_path, Model())
 
         async def consume():
             return [e async for e in runtime.stream("original", realtime=True)]
@@ -240,7 +240,7 @@ def test_steer_waits_for_sampling_completion_instead_of_discarding_the_response(
             async def aclose(self):
                 pass
 
-        runtime = create_runtime(tmp_path, Model())
+        runtime = await create_runtime(tmp_path, Model())
 
         async def consume():
             events = []

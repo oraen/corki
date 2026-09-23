@@ -96,11 +96,11 @@ def test_context_uses_first_source_description_and_reordered_next_generation(
             async def aclose(self):
                 pass
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             owner = registry.create_owner(source=ToolSource.DYNAMIC)
             registry.replace_owned(owner, tools if thread is None else tuple(reversed(tools)))
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     tmp_path,
                     skills_enabled=False,
@@ -116,7 +116,7 @@ def test_context_uses_first_source_description_and_reordered_next_generation(
             )
             return runtime, registry, owner
 
-        runtime, registry, owner = create()
+        runtime, registry, owner = await create()
         try:
             first = [e async for e in runtime.stream("read first source")]
             assert isinstance(first[-1], TurnCompleted), first[-1]
@@ -125,7 +125,7 @@ def test_context_uses_first_source_description_and_reordered_next_generation(
             if transition == "cold":
                 thread = runtime.thread_id
                 await runtime.aclose()
-                runtime, registry, owner = create(thread)
+                runtime, registry, owner = await create(thread)
             else:
                 registry.replace_owned(owner, tuple(reversed(tools)))
             if transition == "compact":

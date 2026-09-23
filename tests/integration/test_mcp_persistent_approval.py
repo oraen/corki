@@ -236,7 +236,7 @@ def test_persistent_decision_and_write_failure_fallback(tmp_path, monkeypatch, m
                         for s in settings.mcp_servers
                     ),
                 )
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=settings,
                 model=Model(),
                 registry=ToolRegistry(),

@@ -388,7 +388,7 @@ def test_runtime_does_not_swallow_cancellation_from_unpublished_module_cleanup(
                 pass
 
         registry = ToolRegistry()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "runtime.db",
             home_path=home,
@@ -451,7 +451,7 @@ def test_runtime_owns_new_modules_when_registration_propagates_cancellation(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "runtime.db",
             home_path=home,
@@ -512,7 +512,7 @@ def test_runtime_closes_failed_initial_entrypoint_and_healthy_sibling(tmp_path, 
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "runtime.db",
             home_path=home,
@@ -544,7 +544,7 @@ def test_runtime_candidate_abort_joins_cleanup_after_repeated_cancel(tmp_path, m
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "runtime.db",
             home_path=home,

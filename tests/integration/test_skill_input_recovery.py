@@ -47,8 +47,8 @@ def test_cold_prepare_recovery_preserves_injected_skill_even_when_file_changes(
             async def emit(self, event):
                 pass
 
-        def create(thread_id=None):
-            return LangGraphRuntime.create(
+        async def create(thread_id=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "sessions.db",
                 home_path=tmp_path / ".corki",
@@ -57,7 +57,7 @@ def test_cold_prepare_recovery_preserves_injected_skill_even_when_file_changes(
                 thread_id=thread_id,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             await runtime._ensure_ready()
             thread, turn = runtime.thread_id, new_turn_id()
@@ -96,7 +96,7 @@ def test_cold_prepare_recovery_preserves_injected_skill_even_when_file_changes(
             assert not requests
             await runtime.aclose()
             path.write_text(header + "CHANGED WHILE CLOSED", encoding="utf-8")
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [e async for e in runtime.resume_pending()]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert len(requests) == 1
@@ -169,7 +169,7 @@ def test_selected_skill_wire_follows_user_and_omits_internal_input_identity(
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
         monkeypatch.setattr(http_client, "OwnedHTTPClient", lambda **kwargs: client)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 api_mode=api_mode,

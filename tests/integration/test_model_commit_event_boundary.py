@@ -8,7 +8,8 @@ from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted, ModelItemCompleted
 from corki.protocol.events import AssistantMessageCompleted, TurnCompleted, TurnFailed
-from corki.protocol.items import AssistantMessageItem, new_step_id
+from corki.protocol.items import AssistantMessageItem, ToolCallItem, ToolResultItem, new_step_id
+from corki.protocol.tools import ToolCall, ToolResult, ToolSpec
 from corki.tools import ToolRegistry
 
 
@@ -62,6 +63,95 @@ def test_item_completion_waits_for_successful_commit_ack(
             assert (saved is not None) is (after_commit and not streamed)
             partial = await repository.load_partial_step(runtime.thread_id, events[-1].turn_id, 0)
             assert partial == ((samples[0],) if after_commit and streamed else ())
+        finally:
+            await runtime.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_terminal_cannot_reorder_already_streamed_items(tmp_path):
+    async def scenario():
+        samples = []
+
+        class Model:
+            async def stream(self, request):
+                turn, step = request.items[-1].turn_id, new_step_id()
+                first = AssistantMessageItem("first", turn, step)
+                second = AssistantMessageItem("second", turn, step)
+                samples.extend((first, second))
+                yield ModelItemCompleted(first)
+                yield ModelItemCompleted(second)
+                yield ModelCompleted((second, first))
+
+            async def aclose(self):
+                pass
+
+        runtime = await LangGraphRuntime.acreate(
+            settings=CorkiSettings(tmp_path, skills_enabled=False, plugins_enabled=False),
+            model=Model(),
+            registry=ToolRegistry(),
+            database_path=tmp_path / "state.db",
+            home_path=tmp_path / "home",
+        )
+        try:
+            events = [event async for event in runtime.stream("check order")]
+            assert isinstance(events[-1], TurnFailed), events[-1]
+            assert "changed or omitted" in events[-1].error
+            assert not any(isinstance(event, TurnCompleted) for event in events)
+            turn = events[-1].turn_id
+            assert await runtime._repository.load_partial_step(runtime.thread_id, turn, 0) == tuple(
+                samples
+            )
+            assert await runtime._repository.load_model_step(runtime.thread_id, turn, 0) is None
+        finally:
+            await runtime.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_reordered_terminal_drains_streamed_tool_without_marking_model_success(tmp_path):
+    async def scenario():
+        effects = []
+
+        class Tool:
+            spec = ToolSpec("probe", "fixture", {"type": "object"})
+
+            async def execute(self, call, context):
+                effects.append(call.id)
+                return ToolResult(call.id, call.name, "performed")
+
+        class Model:
+            async def stream(self, request):
+                turn, step = request.items[-1].turn_id, new_step_id()
+                text = AssistantMessageItem("before tool", turn, step)
+                tool = ToolCallItem(ToolCall("reordered-call", "probe", {}), turn, step)
+                yield ModelItemCompleted(text)
+                yield ModelItemCompleted(tool)
+                yield ModelCompleted((tool, text))
+
+            async def aclose(self):
+                pass
+
+        registry = ToolRegistry()
+        registry.register(Tool())
+        runtime = await LangGraphRuntime.acreate(
+            settings=CorkiSettings(tmp_path, skills_enabled=False, plugins_enabled=False),
+            model=Model(),
+            registry=registry,
+            database_path=tmp_path / "state.db",
+            home_path=tmp_path / "home",
+        )
+        try:
+            events = [event async for event in runtime.stream("check tool order")]
+            assert isinstance(events[-1], TurnFailed), events[-1]
+            assert effects == ["reordered-call"]
+            items = await runtime._repository.load_items(runtime.thread_id)
+            results = [item for item in items if isinstance(item, ToolResultItem)]
+            assert len(results) == 1 and results[0].content == "performed"
+            assert (
+                await runtime._repository.load_model_step(runtime.thread_id, events[-1].turn_id, 0)
+                is None
+            )
         finally:
             await runtime.aclose()
 

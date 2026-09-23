@@ -72,6 +72,14 @@ service tier or an entire configuration snapshot. `Runtime.create(settings=...)`
 accepts an already-resolved explicit configuration; it does not implicitly replace
 that object from storage.
 
+In an async host, construct the runtime with
+`runtime = await LangGraphRuntime.acreate(settings=..., database_path=...)`.
+This waits for cleanup of newly owned resources if construction fails or is cancelled.
+The synchronous `LangGraphRuntime.create(...)` entry remains available outside a
+running event loop. Inside a running loop it rejects unowned construction before
+allocating resources; do not move it to another loop or bypass ownership to avoid
+the error. Successfully constructed runtimes still require `await runtime.aclose()`.
+
 The host API `await runtime.update_thread_settings(model="...", reasoning_effort="high")`
 commits defaults for future Turns without changing an active Turn or sampling a model.
 `runtime.thread_settings` returns the immutable committed selection. Omitted fields
@@ -126,8 +134,13 @@ Context body-prefix accumulation remains thread-owned across these Turn views.
 Already-admitted Code Mode calls retain their owner; a surviving cell's later new
 calls are admitted by the current worker, matching the native dispatch broker.
 
-Press `Ctrl+C` to leave the CLI. `Enter` submits a message and `Esc` followed
-by `Enter` inserts a newline. The built-in `/help`, `/status`, and `/clear`
+Press `Ctrl+C` to leave the CLI. `Enter` submits a message; `Shift+Enter` inserts
+a newline on terminals supporting CSI-u/Kitty or xterm modified-key reporting.
+`Alt+Enter`, `Ctrl+J`, or `Esc` followed immediately by `Enter` also insert a newline.
+Terminals that send exactly the same bytes for Enter and Shift+Enter cannot be
+distinguished by the CLI; use one of those alternatives or configure a terminal
+key mapping to send `ESC [ 13 ; 2 u`. Keyboard reporting is restored when the
+prompt finishes or is interrupted. The built-in `/help`, `/status`, and `/clear`
 commands are handled locally.
 
 Live text steering is enabled by default in the CLI. Use `/realtime off` (or

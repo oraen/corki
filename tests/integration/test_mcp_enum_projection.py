@@ -118,8 +118,8 @@ def test_enum_wire_forms_reach_observation_and_durable_result(
             mcp_servers=(MCPServerSettings("docs", "http", url="https://fixture.invalid/mcp"),),
         )
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=database,
                 registry=ToolRegistry(),
@@ -127,7 +127,7 @@ def test_enum_wire_forms_reach_observation_and_durable_result(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             events = [event async for event in runtime.stream("read")]
@@ -160,7 +160,7 @@ def test_enum_wire_forms_reach_observation_and_durable_result(
                 }
         finally:
             await runtime.aclose()
-        runtime = create(thread)
+        runtime = await create(thread)
         try:
             events = [event async for event in runtime.stream("continue")]
             assert isinstance(events[-1], TurnCompleted), events[-1]

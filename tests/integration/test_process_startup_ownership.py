@@ -146,15 +146,15 @@ def test_runtime_startup_and_background_failure_do_not_replay(
             tool_mode="code_mode" if nested else "direct",
         )
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "runtime.db",
                 model=Model(),
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         manager = runtime._process_manager
         execute_tasks = []
         execute = manager.execute
@@ -222,7 +222,7 @@ def test_runtime_startup_and_background_failure_do_not_replay(
                 child._transport.close()
             await runtime.aclose()
 
-        cold = create(runtime.thread_id)
+        cold = await create(runtime.thread_id)
         try:
             cold_events = [event async for event in cold.stream("continue")]
             assert isinstance(cold_events[-1], TurnCompleted)

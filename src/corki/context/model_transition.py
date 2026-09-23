@@ -34,7 +34,7 @@ def previous_model(history):
                 if value.get("comp_hash") is not None and not isinstance(value["comp_hash"], str):
                     return None
                 return value
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, RecursionError):
                 return None
     return None
 

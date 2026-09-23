@@ -75,6 +75,59 @@ def test_millisecond_age_idle_boundaries_and_order(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
+def test_submillisecond_source_order_precedes_scan_limit(tmp_path, monkeypatch):
+    async def scenario():
+        database = tmp_path / "sessions.db"
+        now = datetime(2030, 1, 20, 12, tzinfo=UTC)
+        monkeypatch.setattr("corki.memory.sqlite.time.time", lambda: now.timestamp())
+        monkeypatch.setattr("corki.memory.extraction.THREAD_SCAN_LIMIT", 1)
+        sources = (await seed(database, tmp_path), await seed(database, tmp_path))
+        older, newer = sorted(sources, key=str)
+        base = now - timedelta(hours=1)
+        set_version(database, older, base.replace(microsecond=100_000).isoformat())
+        set_version(database, newer, base.replace(microsecond=100_001).isoformat())
+
+        repository = SQLiteMemoryRepository(database)
+        claims = await claim(repository)
+        assert tuple(value.thread_id for value in claims) == (newer,)
+
+    asyncio.run(scenario())
+
+
+def test_submillisecond_age_boundary_does_not_admit_stale_source(tmp_path, monkeypatch):
+    async def scenario():
+        database = tmp_path / "sessions.db"
+        now = datetime(2030, 1, 20, 12, 0, 0, 500_500, tzinfo=UTC)
+        monkeypatch.setattr("corki.memory.sqlite.time.time", lambda: now.timestamp())
+        source = await seed(database, tmp_path)
+        cutoff = now - timedelta(days=10)
+        set_version(database, source, (cutoff - timedelta(microseconds=1)).isoformat())
+
+        repository = SQLiteMemoryRepository(database)
+        assert await claim(repository) == ()
+        set_version(database, source, cutoff.isoformat())
+        assert tuple(value.thread_id for value in await claim(repository)) == (source,)
+
+    asyncio.run(scenario())
+
+
+def test_submillisecond_idle_boundary_does_not_admit_active_source(tmp_path, monkeypatch):
+    async def scenario():
+        database = tmp_path / "sessions.db"
+        now = datetime(2030, 1, 20, 12, 0, 0, 500_500, tzinfo=UTC)
+        monkeypatch.setattr("corki.memory.sqlite.time.time", lambda: now.timestamp())
+        source = await seed(database, tmp_path)
+        cutoff = now - timedelta(hours=6)
+        set_version(database, source, (cutoff + timedelta(microseconds=1)).isoformat())
+
+        repository = SQLiteMemoryRepository(database)
+        assert await claim(repository, idle=6) == ()
+        set_version(database, source, cutoff.isoformat())
+        assert tuple(value.thread_id for value in await claim(repository, idle=6)) == (source,)
+
+    asyncio.run(scenario())
+
+
 def test_global_running_cap_is_shared_by_independent_repositories(tmp_path):
     async def scenario():
         database = tmp_path / "sessions.db"
@@ -183,6 +236,78 @@ def test_success_watermark_blocks_equal_or_older_sources_after_reopen(tmp_path, 
         assert not await claim(repository)
         set_version(database, source, (version - timedelta(seconds=1)).isoformat())
         assert not await claim(repository)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("prior", ["output", "no_output", "failed"])
+def test_submillisecond_source_advance_is_claimed(tmp_path, prior):
+    async def scenario():
+        database = tmp_path / "sessions.db"
+        source = await seed(database, tmp_path)
+        old = (datetime.now(UTC) - timedelta(hours=1)).replace(microsecond=100_000)
+        set_version(database, source, old.isoformat())
+        repository = SQLiteMemoryRepository(database)
+        (initial,) = await claim(repository)
+        if prior == "failed":
+            for attempt in range(3):
+                assert await repository.fail_extraction(
+                    initial, "fixture failure", retry_delay_seconds=3_600
+                )
+                if attempt < 2:
+                    with sqlite3.connect(database) as connection:
+                        connection.execute(
+                            "UPDATE memory_jobs SET retry_at=0 WHERE job_key=?", (str(source),)
+                        )
+                    (initial,) = await claim(repository)
+        else:
+            memory = (
+                StageOneMemory(source, tmp_path, initial.source_updated_at, "old", "old")
+                if prior == "output"
+                else None
+            )
+            assert await repository.complete_extraction(initial, memory)
+
+        advanced = (old + timedelta(microseconds=1)).isoformat()
+        set_version(database, source, advanced)
+        (fresh,) = await claim(SQLiteMemoryRepository(database))
+        assert fresh.thread_id == source
+        assert fresh.source_updated_at == advanced
+        assert fresh.ownership_token != initial.ownership_token
+
+    asyncio.run(scenario())
+
+
+def test_valid_source_replaces_unorderable_legacy_version(tmp_path):
+    async def scenario():
+        database = tmp_path / "sessions.db"
+        source = await seed(database, tmp_path)
+        version = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+        set_version(database, source, version)
+        repository = SQLiteMemoryRepository(database)
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                "INSERT INTO memory_stage1_outputs(thread_id, source_updated_at, cwd, "
+                "raw_memory, rollout_summary) VALUES (?, 'old-version', ?, 'old', 'old')",
+                (str(source), str(tmp_path)),
+            )
+            connection.execute(
+                "INSERT INTO memory_jobs(kind, job_key, status, source_updated_at, "
+                "retry_remaining, retry_at) VALUES ('memory_stage1', ?, 'failed', "
+                "'old-version', 0, ?)",
+                (str(source), datetime.now(UTC).timestamp() + 3_600),
+            )
+
+        (owned,) = await claim(repository)
+        assert owned.source_updated_at == version
+        assert await repository.complete_extraction(
+            owned, StageOneMemory(source, tmp_path, version, "fresh", "fresh")
+        )
+        with sqlite3.connect(database) as connection:
+            assert connection.execute(
+                "SELECT source_updated_at, raw_memory FROM memory_stage1_outputs WHERE thread_id=?",
+                (str(source),),
+            ).fetchone() == (version, "fresh")
 
     asyncio.run(scenario())
 

@@ -133,7 +133,7 @@ def test_resources_exist_before_readiness_and_only_named_use_starts_dormant_serv
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -218,7 +218,7 @@ def test_resource_registration_does_not_enable_absent_or_forbidden_servers(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

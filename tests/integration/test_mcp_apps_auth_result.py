@@ -149,8 +149,8 @@ def test_opaque_apps_result_is_durable_without_authorization_or_rpc_replay(
         )
         model = Model()
 
-        def create(thread_id=None):
-            runtime = LangGraphRuntime.create(
+        async def create(thread_id=None):
+            runtime = await LangGraphRuntime.acreate(
                 settings=settings,
                 model=model,
                 registry=ToolRegistry(),
@@ -166,7 +166,7 @@ def test_opaque_apps_result_is_durable_without_authorization_or_rpc_replay(
             runtime.set_mcp_elicitation_handler(host)
             return runtime
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [event async for event in runtime.stream("read mail")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -186,7 +186,7 @@ def test_opaque_apps_result_is_durable_without_authorization_or_rpc_replay(
             await runtime.aclose()
         assert all(client.is_closed for client in clients)
         count = len(requests)
-        cold = create(thread)
+        cold = await create(thread)
         try:
             assert [event async for event in cold.resume_pending()] == []
             assert await cold._repository.load_items(thread) == original

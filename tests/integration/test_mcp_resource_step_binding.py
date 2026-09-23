@@ -134,7 +134,7 @@ def test_refresh_after_sampling_keeps_old_resource_binding(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -196,7 +196,7 @@ def test_resource_binding_retains_pending_generation_but_freezes_aggregate_readi
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -274,7 +274,7 @@ def test_code_mode_resource_admitted_before_gate_retains_old_step(tmp_path, monk
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -324,7 +324,7 @@ def test_resource_generation_is_released_on_turn_failure_or_cancel(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -442,10 +442,10 @@ def test_background_resource_retains_old_generation_across_turn_but_not_restart(
             async def aclose(self):
                 pass
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             registry.register(Started())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 model=Model(),
                 registry=registry,
@@ -455,7 +455,7 @@ def test_background_resource_retains_old_generation_across_turn_but_not_restart(
                 mcp_tool_catalog_cache=MCPToolCatalogCache(),
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             first = [event async for event in runtime.stream("start background resource")]
             assert isinstance(first[-1], TurnCompleted), first[-1]
@@ -465,7 +465,7 @@ def test_background_resource_retains_old_generation_across_turn_but_not_restart(
                 thread = runtime.thread_id
                 await runtime.aclose()
                 assert servers.clients[0].is_closed
-                runtime = create(thread)
+                runtime = await create(thread)
             second = [event async for event in runtime.stream("observe background resource")]
             assert isinstance(second[-1], TurnCompleted), second[-1]
             assert servers.operations == [("ready-0", "resources/list")]

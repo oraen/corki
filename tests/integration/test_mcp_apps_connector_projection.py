@@ -129,8 +129,8 @@ def test_connector_projection_reaches_search_definition_and_raw_rpc(
         declaration = MCPServerSettings(server, "http", url="https://fixture.invalid")
         registry = ToolRegistry()
 
-        def make_runtime(model, thread_id=None):
-            return LangGraphRuntime.create(
+        async def make_runtime(model, thread_id=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     tmp_path,
                     skills_enabled=False,
@@ -149,7 +149,7 @@ def test_connector_projection_reaches_search_definition_and_raw_rpc(
             )
 
         model = Model()
-        runtime = make_runtime(model)
+        runtime = await make_runtime(model)
         try:
             events = [event async for event in runtime.stream("search invoices")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -176,7 +176,7 @@ def test_connector_projection_reaches_search_definition_and_raw_rpc(
             model = Model()
             model.calls = 3
             registry = ToolRegistry()
-            runtime = make_runtime(model, thread_id)
+            runtime = await make_runtime(model, thread_id)
             events = [event async for event in runtime.stream("call after cold restore")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert calls == [raw_name, raw_name, raw_name]

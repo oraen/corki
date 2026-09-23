@@ -76,10 +76,10 @@ class ApprovalModel:
         pass
 
 
-def create_runtime(tmp_path, compiler, model, *, thread_id=None, queue_size=256):
+async def create_runtime(tmp_path, compiler, model, *, thread_id=None, queue_size=256):
     if model.mode != "direct" and not CodeModeService.available():
         pytest.skip("install corki[code-mode]")
-    return LangGraphRuntime.create(
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -117,7 +117,7 @@ def test_host_cancel_ends_turn_while_decline_can_continue(tmp_path, compiler, mo
     async def scenario():
         target = tmp_path / "must-not-exist"
         model = ApprovalModel(mode, "mkdir " + shlex.quote(str(target)))
-        runtime = create_runtime(tmp_path, compiler, model)
+        runtime = await create_runtime(tmp_path, compiler, model)
         prompts = []
 
         async def respond(request):
@@ -178,7 +178,7 @@ def test_cancel_dismisses_parallel_reviews_and_stale_tokens_cannot_cancel_next_t
     async def scenario():
         target = tmp_path / "after-cancel"
         model = ApprovalModel(mode, "mkdir " + shlex.quote(str(target)), count=2)
-        runtime = create_runtime(tmp_path, compiler, model)
+        runtime = await create_runtime(tmp_path, compiler, model)
         prompts, dismissed = [], set()
 
         async def respond(request):
@@ -239,7 +239,7 @@ def test_approval_cancel_cold_resume_does_not_replay_pending_command(tmp_path, c
         target = tmp_path / "never-replayed"
         command = "mkdir " + shlex.quote(str(target))
         model = ApprovalModel(mode, command)
-        runtime = create_runtime(tmp_path, compiler, model)
+        runtime = await create_runtime(tmp_path, compiler, model)
         thread_id = runtime.thread_id
 
         async def respond(request):
@@ -253,7 +253,7 @@ def test_approval_cancel_cold_resume_does_not_replay_pending_command(tmp_path, c
         finally:
             await runtime.aclose()
         restored_model = ApprovalModel(mode, command)
-        restored = create_runtime(tmp_path, compiler, restored_model, thread_id=thread_id)
+        restored = await create_runtime(tmp_path, compiler, restored_model, thread_id=thread_id)
         try:
             async with asyncio.timeout(10):
                 assert [event async for event in restored.resume_pending()] == []
@@ -272,7 +272,7 @@ def test_host_approval_cancel_finishes_cleanup_with_paused_event_consumer(
     async def scenario():
         target = tmp_path / "paused-consumer-fixture"
         model = ApprovalModel("direct", "mkdir " + shlex.quote(str(target)))
-        runtime = create_runtime(tmp_path, compiler, model, queue_size=queue_size)
+        runtime = await create_runtime(tmp_path, compiler, model, queue_size=queue_size)
         entered, paused, released, dismissed = (asyncio.Event() for _ in range(4))
         prompts, events = [], []
 

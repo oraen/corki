@@ -131,7 +131,7 @@ class PluginContextContributor:
                     template_name="extensions/plugins/guidance",
                     role=PromptRole.DEVELOPER,
                     slot=PromptSlot.EXTENSIONS,
-                    order=49,
+                    order=-20,
                     phase=PromptPhase.WORLD_STATE,
                     content_kind="plugins.usage_instructions",
                     snapshot_state="plugins.available",

@@ -92,7 +92,7 @@ def test_numeric_overlay_selection_reaches_child_and_observation(
             json.dumps({"docs": {"command": "must-not-run", "env_vars": [token]}})
         )
         carrier = Carrier()
-        runtime = runtime_for(tmp_path, monkeypatch, carrier, mode)
+        runtime = await runtime_for(tmp_path, monkeypatch, carrier, mode)
         process = None
         try:
             await runtime._ensure_ready()

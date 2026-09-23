@@ -116,7 +116,7 @@ def test_initialize_instructions_drive_discovery_refresh_and_durable_history(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

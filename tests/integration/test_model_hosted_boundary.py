@@ -59,7 +59,7 @@ def test_model_contract_is_checked_before_memory_usage_feedback(tmp_path, kind):
 
         database = tmp_path / "usage.db"
         repository = SQLiteSessionRepository(database)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(tmp_path, skills_enabled=False),
             model=Model(),
             registry=ToolRegistry(),
@@ -107,7 +107,7 @@ def test_new_hosted_items_from_custom_model_cannot_commit_or_finish(tmp_path, st
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(tmp_path, skills_enabled=False),
             model=Model(),
             registry=ToolRegistry(),
@@ -162,7 +162,7 @@ def test_legacy_hosted_step_recovers_without_replaying_saved_work(tmp_path, comm
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(tmp_path, skills_enabled=False),
             model=Model(),
             registry=ToolRegistry(),

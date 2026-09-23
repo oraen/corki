@@ -52,7 +52,7 @@ def test_active_update_changes_next_step_not_admitted_tool_or_future_turn(
             collaboration_mode=collaboration_mode,
         )
         model = Model(calls=True, code_mode=mode == "code_mode")
-        runtime = make_runtime(tmp_path, model, registry=registry, configured=configured)
+        runtime = await make_runtime(tmp_path, model, registry=registry, configured=configured)
 
         async def consume():
             return [e async for e in runtime.stream("first")]
@@ -121,7 +121,7 @@ def test_active_model_switch_preserves_admitted_personality_after_thread_update(
     async def scenario():
         model = HeldModel()
         configured = replace(settings(tmp_path, step_model_switching=True), personality="friendly")
-        runtime = make_runtime(tmp_path, model, configured=configured)
+        runtime = await make_runtime(tmp_path, model, configured=configured)
         work = asyncio.create_task(collect(runtime))
         try:
             await asyncio.wait_for(model.entered.wait(), 5)
@@ -159,7 +159,7 @@ def test_sparse_updates_serialize_resolution_and_preserve_captured_request(tmp_p
             return await resolve_model_metadata(host, model)
 
         model = HeldModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path, step_model_switching=True),
             model=model,
             database_path=tmp_path / "sessions.db",
@@ -222,7 +222,7 @@ def test_publication_during_async_prepare_does_not_change_captured_step(tmp_path
     async def scenario():
         entered, release = asyncio.Event(), asyncio.Event()
         model = Model(calls=True)
-        runtime = make_runtime(
+        runtime = await make_runtime(
             tmp_path, model, configured=settings(tmp_path, step_model_switching=True)
         )
         refresh = runtime._graph._refresh_input_tools
@@ -274,7 +274,7 @@ def test_delayed_resolution_never_retargets_or_outlives_owned_work(tmp_path, act
                     raise OSError("resolver cleanup fixture")
 
         model = HeldModel(calls=False)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path, step_model_switching=True),
             model=model,
             database_path=tmp_path / "sessions.db",
@@ -345,7 +345,9 @@ def test_cold_checkpoint_restores_step_without_resampling_or_retargeting(tmp_pat
         registry = ToolRegistry()
         registry.register(Probe())
         first_model = Model(calls=True)
-        runtime = make_runtime(tmp_path, first_model, configured=configured, registry=registry)
+        runtime = await make_runtime(
+            tmp_path, first_model, configured=configured, registry=registry
+        )
         await runtime._ensure_ready()
         turn = new_turn_id()
         user = UserMessageItem("persisted", turn)
@@ -375,7 +377,7 @@ def test_cold_checkpoint_restores_step_without_resampling_or_retargeting(tmp_pat
         model = Model()
         registry = ToolRegistry()
         registry.register(Probe())
-        cold = make_runtime(
+        cold = await make_runtime(
             tmp_path,
             model,
             configured=replace(configured, model_contexts=()),
@@ -434,7 +436,7 @@ def test_retry_keeps_captured_step_after_successful_update(tmp_path):
                 pass
 
         model = Retrying()
-        runtime = make_runtime(
+        runtime = await make_runtime(
             tmp_path, model, configured=settings(tmp_path, step_model_switching=True)
         )
         work = asyncio.create_task(collect(runtime))
@@ -458,7 +460,7 @@ def test_retry_keeps_captured_step_after_successful_update(tmp_path):
 def test_successful_publication_does_not_force_another_sample(tmp_path):
     async def scenario():
         model = HeldModel(calls=False)
-        runtime = make_runtime(
+        runtime = await make_runtime(
             tmp_path, model, configured=settings(tmp_path, step_model_switching=True)
         )
         work = asyncio.create_task(collect(runtime))
@@ -499,7 +501,7 @@ def test_runtime_rejects_changes_to_admitted_model_authority(tmp_path, change):
             model_contexts=(large, replace(small, activation_authority=ModelAuthority(**change))),
         )
         model = HeldModel(calls=False)
-        runtime = make_runtime(tmp_path, model, configured=configured)
+        runtime = await make_runtime(tmp_path, model, configured=configured)
         work = asyncio.create_task(collect(runtime))
         try:
             await asyncio.wait_for(model.entered.wait(), 5)
@@ -520,7 +522,7 @@ def test_runtime_rejects_changes_to_admitted_model_authority(tmp_path, change):
 
 def test_feature_gate_does_not_start_a_turn(tmp_path):
     async def scenario():
-        runtime = make_runtime(tmp_path, Model())
+        runtime = await make_runtime(tmp_path, Model())
         try:
             result = await runtime.update_turn_settings("absent", model="small")
             assert result.status == "rejected" and "step_model_switching" in result.reason
@@ -538,7 +540,7 @@ def test_active_tier_alias_retains_selection_independent_of_fast_mode(
 ):
     async def scenario():
         model = HeldModel()
-        runtime = make_runtime(
+        runtime = await make_runtime(
             tmp_path,
             model,
             configured=settings(
@@ -576,7 +578,7 @@ def test_present_invalid_step_checkpoint_fails_before_sampling(tmp_path):
 
         configured = settings(tmp_path, step_model_switching=True)
         model = Model()
-        runtime = make_runtime(tmp_path, model, configured=configured)
+        runtime = await make_runtime(tmp_path, model, configured=configured)
         await runtime._ensure_ready()
         turn = new_turn_id()
         user = UserMessageItem("pending", turn)
@@ -664,7 +666,7 @@ def test_local_auto_compaction_keeps_initial_turn_model_after_step_activation(
                 pass
 
         model = Compacting()
-        runtime = make_runtime(
+        runtime = await make_runtime(
             tmp_path,
             model,
             configured=settings(
@@ -718,7 +720,7 @@ def test_skill_catalog_budget_keeps_thread_extension_model_after_activation(tmp_
             context_window_tokens=200000,
         )
         model = HeldModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path, step_model_switching=True),
             model=model,
             database_path=tmp_path / "sessions.db",
@@ -766,7 +768,7 @@ def test_close_cancels_turn_before_joining_slow_catalog_cleanup(tmp_path):
                 await release_cleanup.wait()
 
         model = HeldModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path, step_model_switching=True),
             model=model,
             database_path=tmp_path / "sessions.db",
@@ -807,7 +809,7 @@ def test_invalid_resolver_output_does_not_fall_back_to_static_catalog(tmp_path):
             return None
 
         model = HeldModel(calls=False)
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path, step_model_switching=True),
             model=model,
             database_path=tmp_path / "sessions.db",

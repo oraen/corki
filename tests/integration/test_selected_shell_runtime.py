@@ -76,8 +76,8 @@ def test_cold_checkpoint_preserves_prepared_step_shell(tmp_path, monkeypatch, mo
             async def emit(self, event):
                 pass
 
-        def create(thread_id=None):
-            return LangGraphRuntime.create(
+        async def create(thread_id=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "sessions.db",
                 model=Model(),
@@ -93,7 +93,7 @@ def test_cold_checkpoint_preserves_prepared_step_shell(tmp_path, monkeypatch, mo
                 else None,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [e async for e in runtime.stream("first turn")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -113,7 +113,7 @@ def test_cold_checkpoint_preserves_prepared_step_shell(tmp_path, monkeypatch, mo
             prepared = await runtime._repository.load_items(thread)
             await runtime.aclose()
             account[0] = "/bin/bash"
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [e async for e in runtime.resume_pending()]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             visible = tuple(
@@ -192,7 +192,7 @@ def test_runtime_context_and_nonlogin_exec_share_selected_shell(tmp_path, monkey
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode=mode
             ),
@@ -266,8 +266,8 @@ def test_per_call_shell_type_override_does_not_replace_session_selection(
             async def aclose(self):
                 pass
 
-        def create(thread_id=None):
-            return LangGraphRuntime.create(
+        async def create(thread_id=None):
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path, skills_enabled=False, tool_mode=mode
                 ),
@@ -276,7 +276,7 @@ def test_per_call_shell_type_override_does_not_replace_session_selection(
                 thread_id=thread_id,
             )
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [e async for e in runtime.stream("override then default")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -293,7 +293,7 @@ def test_per_call_shell_type_override_does_not_replace_session_selection(
             assert runtime._process_manager.shell.name == "zsh"
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             events = [e async for e in runtime.stream("new session reselects")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert runtime._process_manager.shell.name == "bash"
@@ -359,7 +359,7 @@ def test_runtime_login_config_gate_precedes_process_spawn(tmp_path, monkeypatch,
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -427,7 +427,7 @@ def test_selected_executable_disappearing_returns_observation_without_shell_swit
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

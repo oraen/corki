@@ -103,7 +103,7 @@ def test_prepare_gap_queues_old_cell_calls_and_notifications(
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),
@@ -183,7 +183,7 @@ def test_admitted_old_worker_keeps_its_own_turn_event_lifetime(tmp_path):
 
         registry = ToolRegistry()
         registry.register(Probe())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
             ),
@@ -265,10 +265,10 @@ def test_cold_checkpoint_at_tools_node_starts_worker_without_resampling(tmp_path
             working_directory=tmp_path, skills_enabled=False, tool_mode="code_mode_only"
         )
 
-        def create(thread=None):
+        async def create(thread=None):
             registry = ToolRegistry()
             registry.register(Probe())
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=tmp_path / "sessions.db",
                 registry=registry,
@@ -276,7 +276,7 @@ def test_cold_checkpoint_at_tools_node_starts_worker_without_resampling(tmp_path
                 thread_id=thread,
             )
 
-        first = create()
+        first = await create()
         try:
             await first._ensure_ready()
             thread, turn = first.thread_id, new_turn_id()
@@ -297,7 +297,7 @@ def test_cold_checkpoint_at_tools_node_starts_worker_without_resampling(tmp_path
             assert len(requests) == 1 and not executed
         finally:
             await first.aclose()
-        second = create(thread)
+        second = await create(thread)
         try:
 
             async def resume():

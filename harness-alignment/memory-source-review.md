@@ -1,5 +1,81 @@
 # D2/D3：记忆来源与启动边界复核
 
+## 2026-09-22：stage-one 候选窗口与扫描前排序精度
+
+继续对照 Codex `state/src/runtime/memories.rs::claim_stage1_jobs_for_startup`：
+先按来源模式及年龄/空闲窗口筛选，按来源更新时间降序截断扫描，再尝试
+claim。Corki 的时间字段保留 ISO 微秒，但 `memory/extraction.py` 仍在
+上述三处使用 SQLite `julianday`，会把相差 1 微秒的两个来源排成平局；
+扫描上限处可能留下旧来源，并可能把刚过年龄边界的来源纳入候选。
+两个真实 SQLite 反例先红后绿；另补空闲边界用例。
+
+阶段一候选现与阶段二共用精确 UTC 微秒时间键，年龄/空闲截止值也不再
+截断到毫秒；来源模式、5,000 项扫描上限、全局运行容量、租约与 owner
+fence 未变。这是 Corki ISO 微秒存储的内部精度一致性修复，不声称 Codex
+原生来源版本也保留微秒。memory 单测与两个相关集成文件 **372 passed**，
+新增空闲边界另测 **1 passed**，Ruff 和格式检查通过。生产修改后非 CLI
+主组 **15344 passed、7 skipped / 790.83s**，单进程敏感组 **459 passed /
+58.42s**，两组退出 0，合计 **15803 passed、7 skipped**。七项跳过仍是
+六项缺少历史原生编译器、一项文件系统不接受非 UTF-8 文件名。
+
+## 2026-09-22：phase-two Top-N 排序保留来源微秒精度
+
+继续对照 Codex `state/src/runtime/memories.rs::get_phase2_input_selection`
+的使用次数、最近使用/来源版本、来源版本、thread ID 排序。Corki
+`memory/sqlite.py::_load_consolidation_inputs` 原先用 `julianday` 转换 ISO
+时间；两个只差 1 微秒的有效来源版本会形成平局，Top-N 可能选中较旧
+线程。构造 ID 反向的两条真实 SQLite 输出，修复前 Top-1 选中旧版本。
+现在 SQLite 连接注册共用的精确 UTC 微秒排序键；phase-two 资格、排序和
+清理先后次序使用该键，兼容旧无时区 UTC 时间。筛选策略、成功水位、
+owner 和普通模型协议未变。memory 单测 **335 passed**，两个相关集成文件
+**35 passed**，Ruff 检查和格式检查通过。生产修改后非 CLI 全量主组
+**15341 passed、7 skipped / 825.60s**，单进程敏感组 **459 passed /
+62.85s**，两组退出 0，合计 **15800 passed、7 skipped**。七项跳过仍是
+六项缺少历史原生编译器、一项文件系统不接受非 UTF-8 文件名。
+
+## 2026-09-22：stage-one 准入保留来源版本精度
+
+Codex `state/src/runtime/memories.rs::try_claim_stage1_job` 对持久整数来源版本
+直接比较，防止已完成输出/成功水位遮蔽更新。Corki stage-one 完成写入已用
+Python datetime 精确比较，但 `memory/extraction.py::claim_extraction_jobs`
+的旧输出、成功水位和失败重试三处分支仍用 SQLite `julianday`；实查相差
+1 微秒的两个 ISO 时间戳在本机 `julianday` 相等。三个真实 SQLite 准入
+反例修复前均无新 claim，导致来源变更后可能漏提取。
+
+现在把完成与 claim 共用同一精确版本比较：有时区 ISO 与旧无时区 UTC
+格式均按真实时间排序；不可解析的旧版本不证明新来源已消费，有效新版本
+可替换该旧行。本批当时未改候选年龄/空闲窗口 SQL（后续已按上文修复）、
+5,000 项扫描上限、租约与
+owner fence 未变。旧 reset 夹具的 `old-version` 行曾使首次扩大测试
+24 项失败；补齐不可解析行的安全退化后重跑 **395 passed / 16.25s**。
+新增冷 Runtime/SQLite/真实后台记忆提取用例：旧成功输出后来源仅前进
+1 微秒，下一 Turn 再提取并更新 stage-one 输出。此修复不改变模型服务
+协议，也不声称 Codex 本身保存微秒来源版本。生产修改后非 CLI
+全范围独立收集 **15806 项**，主组 **15340 passed、7 skipped /
+732.23s**，敏感组六文件 **459 passed / 56.96s**，均退出 0，
+合计 **15799 passed、7 skipped**。七项跳过仍为六项缺历史原生
+编译器、一项文件系统不接受非 UTF-8 文件名，不计入通过。
+
+## 2026-09-22：旧 Git 基线身份与删除边界
+
+核对当前 `memory/git_baseline.py`：新提交早已使用 Corki 作者、提交者与标题；
+源码中的 Codex 联署字符串仅用于承认已存在的原生旧记忆基线，不会出现在
+新提交，也不涉及官方账户或网络服务。原生参考
+`git-utils/src/baseline.rs::commit_current_tree/codex_signature` 确认旧基线的
+提交正文、作者和提交者均有固定身份。
+
+实际安全缺口是 Corki 的 `_owned_metadata` 只检查一条提交及固定正文，
+未检查作者/提交者；一个正文碰巧相同的无关仓库会被当成内部基线，随后
+`reset` 可删除其 `.git` 历史。临时仓库反例修复前 1 failed、真实旧基线
+1 passed。现额外核对作者/提交者的名称和邮箱；四种分别伪造的身份均在
+删除前拒绝，旧 Codex 基线仍能无损进入 `prepare`，下一次 `reset` 生成
+Corki 身份提交。四个基线/Runtime/恢复文件 44 passed，ruff 与 format 通过。
+扩大所有 memory 单元与集成文件 **840 passed / 65.93s**（4 workers、loadfile、
+禁重启），随后同范围非 CLI 全量实际退出 0：**15614 passed、7 skipped、
+592.09s**（8 workers、loadfile、禁重启）；六项缺历史编译器、一项文件系统
+拒绝非 UTF-8 文件名，均未计入通过。
+该识别只为迁移已有本地数据；不重新启用任何 Codex 服务或认证。
+
 ## D3 合并选择、保留期与发布基线收敛
 
 当前源码对照完成：state/runtime/memories.rs 的 get_phase2_input_selection 在

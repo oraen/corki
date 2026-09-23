@@ -44,8 +44,8 @@ class ObservationModel:
         pass
 
 
-def _runtime(tmp_path, registry, model):
-    return LangGraphRuntime.create(
+async def _runtime(tmp_path, registry, model):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
         database_path=tmp_path / "sessions.db",
         registry=registry,
@@ -86,7 +86,7 @@ def test_dispatch_error_reaches_next_model_step_without_extra_execution(tmp_path
         registry = ToolRegistry()
         registry.register(Tool())
         model = Model(())
-        runtime = _runtime(tmp_path, registry, model)
+        runtime = await _runtime(tmp_path, registry, model)
         try:
             events = [event async for event in runtime.stream("observe failure")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -104,6 +104,38 @@ def test_dispatch_error_reaches_next_model_step_without_extra_execution(tmp_path
                 "handler": "handler fixture failed",
             }[failure]
             assert expected in results[0].content
+        finally:
+            await runtime.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_parser_invalid_unicode_is_observed_before_tool_side_effect(tmp_path):
+    async def scenario():
+        effects = []
+
+        class Tool:
+            spec = ToolSpec("probe", "parser boundary", {"type": "object"})
+
+            def parse_call_arguments(self, call):
+                return {"value": "\ud800"}
+
+            async def execute(self, call, context):
+                effects.append(call.id)
+                return ToolResult(call.id, call.name, "side effect")
+
+        registry = ToolRegistry()
+        registry.register(Tool())
+        model = ObservationModel(("probe",))
+        runtime = await _runtime(tmp_path, registry, model)
+        try:
+            events = [event async for event in runtime.stream("use the parsed tool")]
+            assert isinstance(events[-1], TurnCompleted), events[-1]
+            assert len(model.requests) == 2 and not effects
+            items = await runtime._repository.load_items(runtime.thread_id)
+            results = [item for item in items if isinstance(item, ToolResultItem)]
+            assert len(results) == 1 and results[0].is_error
+            assert "invalid Unicode" in results[0].content
         finally:
             await runtime.aclose()
 
@@ -152,7 +184,7 @@ def test_bad_result_becomes_durable_observation_and_model_can_continue(tmp_path,
         tool, registry = Tool(), ToolRegistry()
         registry.register(tool)
         model = ObservationModel((tool.spec.name,))
-        runtime = _runtime(tmp_path, registry, model)
+        runtime = await _runtime(tmp_path, registry, model)
         try:
             events = [event async for event in runtime.stream("use the tool")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -304,7 +336,7 @@ def test_explicit_fatal_error_stops_turn_and_joins_parallel_sibling(tmp_path):
         registry.register(Fatal())
         registry.register(Sibling())
         model = ObservationModel(("fatal", "sibling"))
-        runtime = _runtime(tmp_path, registry, model)
+        runtime = await _runtime(tmp_path, registry, model)
         try:
             async with asyncio.timeout(1):
                 events = [event async for event in runtime.stream("run both")]
@@ -367,7 +399,7 @@ def test_mcp_timeout_is_observation_but_user_cancel_is_control_flow(tmp_path, ca
             assert "timed out" in result.content and "unknown" in result.content
 
         model = ObservationModel((tool.spec.name,), check)
-        runtime = _runtime(tmp_path, registry, model)
+        runtime = await _runtime(tmp_path, registry, model)
         events = []
 
         async def consume():
@@ -433,7 +465,7 @@ def test_execution_cannot_replace_pending_cancellation_with_result(
         registry = ToolRegistry()
         registry.register(Tool())
         model = ObservationModel(("cancelled",))
-        runtime = _runtime(tmp_path, registry, model)
+        runtime = await _runtime(tmp_path, registry, model)
         events = []
         try:
             with pytest.raises(asyncio.CancelledError):

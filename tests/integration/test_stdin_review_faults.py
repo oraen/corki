@@ -19,7 +19,7 @@ from corki.protocol.events import TurnCancelled
 @asynccontextmanager
 async def terminal(root, compiler, mode, monkeypatch):
     model = Model(mode)
-    runtime = runtime_for(
+    runtime = await runtime_for(
         root, compiler, model, settings=settings_for(root, compiler, mode, monkeypatch)
     )
     prompts = []

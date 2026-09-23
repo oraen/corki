@@ -97,7 +97,7 @@ def test_nullable_content_is_normalized_before_model_and_durable_result(
                 pass
 
         database = tmp_path / "nullable.db"
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

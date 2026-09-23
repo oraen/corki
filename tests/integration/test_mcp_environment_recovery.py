@@ -34,7 +34,7 @@ def test_pending_call_rechecks_current_authority_without_resampling_or_replaying
             pass
 
     async def scenario():
-        first, clients, first_model = make_runtime(
+        first, clients, first_model = await make_runtime(
             tmp_path,
             monkeypatch,
             requirements=None,
@@ -91,7 +91,7 @@ def test_pending_call_rechecks_current_authority_without_resampling_or_replaying
 
         monkeypatch.setattr(ToolSearchTool, "execute", forbidden_search)
         model = FinalModel()
-        resumed = LangGraphRuntime.create(
+        resumed = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

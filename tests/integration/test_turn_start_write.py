@@ -33,8 +33,8 @@ class RecordingModel:
         pass
 
 
-def create_runtime(tmp_path, model, thread_id=None):
-    return LangGraphRuntime.create(
+async def create_runtime(tmp_path, model, thread_id=None):
+    return await LangGraphRuntime.acreate(
         settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
         database_path=tmp_path / "sessions.db",
         registry=ToolRegistry(),
@@ -52,7 +52,7 @@ def test_cancel_first_write_is_owned_joined_and_not_resumed(
     async def scenario():
         entered, release = threading.Event(), threading.Event()
         model = RecordingModel()
-        runtime = create_runtime(tmp_path, model)
+        runtime = await create_runtime(tmp_path, model)
         original = runtime._repository._save_turn
         writes, events = [], []
 
@@ -117,7 +117,7 @@ def test_cancel_first_write_is_owned_joined_and_not_resumed(
             thread_id = runtime.thread_id
             await runtime.aclose()
 
-            resumed = create_runtime(tmp_path, model, thread_id)
+            resumed = await create_runtime(tmp_path, model, thread_id)
             try:
                 assert [event async for event in resumed.resume_pending()] == []
                 history = await resumed._repository.load_items(thread_id)
@@ -147,7 +147,7 @@ def test_write_error_after_cancel_is_logged_without_replacing_cancel_terminal(
     async def scenario():
         entered, release = threading.Event(), threading.Event()
         model = RecordingModel()
-        runtime = create_runtime(tmp_path, model)
+        runtime = await create_runtime(tmp_path, model)
         original = runtime._repository._save_turn
         events = []
 
@@ -196,7 +196,7 @@ def test_first_turn_write_failure_uses_storage_terminal_without_sampling(
 ):
     async def scenario():
         model = RecordingModel()
-        runtime = create_runtime(tmp_path, model)
+        runtime = await create_runtime(tmp_path, model)
         original = runtime._repository._save_turn
 
         def fail(record):

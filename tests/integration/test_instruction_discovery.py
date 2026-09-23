@@ -27,7 +27,7 @@ async def run(tmp_path, settings):
         async def aclose(self):
             pass
 
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=settings,
         model=Model(),
         home_path=tmp_path / "home",

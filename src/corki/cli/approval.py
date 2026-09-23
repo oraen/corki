@@ -76,6 +76,7 @@ async def choose_approval(
         event.app.exit(result=actions[-1])
 
     @bindings.add(Keys.BracketedPaste)
+    @bindings.add("c-j")
     @bindings.add(Keys.Any)
     def ignore_text(event):
         # Decisions must not populate the composer or its persistent history.

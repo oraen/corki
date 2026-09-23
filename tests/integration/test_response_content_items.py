@@ -136,7 +136,7 @@ def test_mixed_done_items_survive_stream_and_replay_independently(tmp_path, trun
         )
         registry = ToolRegistry()
         registry.register(Tool())
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path, skills_enabled=False, model_max_retries=0
             ),
@@ -232,7 +232,7 @@ def test_steering_after_completed_message_without_tools_is_a_continuation(tmp_pa
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "sessions.db",
             model=Model(),

@@ -33,7 +33,7 @@ def test_terminal_storage_warning_preserves_task_result(tmp_path, model_fails, r
             async def aclose(self):
                 pass
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "warning.db",
             home_path=tmp_path / "home",

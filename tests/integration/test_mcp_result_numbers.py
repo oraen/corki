@@ -132,8 +132,8 @@ def test_exact_result_survives_runtime_ledger_and_restart(
             mcp_servers=(MCPServerSettings("docs", "http", url="https://fixture.invalid/mcp"),),
         )
 
-        def create(thread=None):
-            return LangGraphRuntime.create(
+        async def create(thread=None):
+            return await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=database,
                 registry=ToolRegistry(),
@@ -141,7 +141,7 @@ def test_exact_result_survives_runtime_ledger_and_restart(
                 thread_id=thread,
             )
 
-        runtime = create()
+        runtime = await create()
         thread = runtime.thread_id
         try:
             with caplog.at_level("INFO", logger="corki.mcp.inbound"):
@@ -167,7 +167,7 @@ def test_exact_result_survives_runtime_ledger_and_restart(
             assert dumps_wire(event["_meta"]["n"]) == canonical
         finally:
             await runtime.aclose()
-        runtime = create(thread)
+        runtime = await create(thread)
         try:
             events = [event async for event in runtime.stream("continue")]
             assert isinstance(events[-1], TurnCompleted), events[-1]

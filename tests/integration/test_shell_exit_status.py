@@ -148,8 +148,8 @@ os.kill(os.getpid(),{int(sent)})
         )
         database = tmp_path / "status.db"
 
-        def create(thread=None):
-            runtime = LangGraphRuntime.create(
+        async def create(thread=None):
+            runtime = await LangGraphRuntime.acreate(
                 settings=settings, database_path=database, model=Model(), thread_id=thread
             )
             manager = runtime._process_manager
@@ -163,7 +163,7 @@ os.kill(os.getpid(),{int(sent)})
             manager._start_session = capture
             return runtime
 
-        runtime = create()
+        runtime = await create()
         try:
             events = [e async for e in runtime.stream("run")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
@@ -181,7 +181,7 @@ os.kill(os.getpid(),{int(sent)})
             assert not result["is_error"] and not result.get("dispatch_error", False)
         finally:
             await runtime.aclose()
-        cold = create(runtime.thread_id)
+        cold = await create(runtime.thread_id)
         try:
             events = [e async for e in cold.stream("continue")]
             assert isinstance(events[-1], TurnCompleted), events[-1]

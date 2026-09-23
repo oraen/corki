@@ -32,7 +32,7 @@ def test_base_model_fallback_requires_different_instructions(
                 ),
             ),
         )
-        source = make_runtime(tmp_path, Model(), configured=configured)
+        source = await make_runtime(tmp_path, Model(), configured=configured)
         try:
             await source._ensure_ready()
             if accepted_turn:
@@ -41,7 +41,7 @@ def test_base_model_fallback_requires_different_instructions(
         finally:
             await source.aclose()
         model = Model()
-        cold = make_runtime(
+        cold = await make_runtime(
             tmp_path, model, configured=replace(configured, model="small"), thread=thread
         )
         try:
@@ -74,7 +74,7 @@ def test_legacy_base_origin_inferred_only_from_exact_current_catalog(
                 ModelContextInfo("small", 200_000, base_instructions="SMALL RULES"),
             ),
         )
-        source = make_runtime(tmp_path, Model(), configured=configured)
+        source = await make_runtime(tmp_path, Model(), configured=configured)
         try:
             await source._ensure_ready()
             thread = source.thread_id
@@ -87,7 +87,7 @@ def test_legacy_base_origin_inferred_only_from_exact_current_catalog(
         finally:
             await source.aclose()
         model = Model()
-        runtime = make_runtime(
+        runtime = await make_runtime(
             tmp_path, model, configured=replace(configured, model="small"), thread=thread
         )
         try:
@@ -140,7 +140,7 @@ def test_instruction_file_precedence_paths_and_frozen_runtime(tmp_path, absolute
         assert configured.base_instructions == "FILE RULES"
         instruction_file.write_text("CHANGED AFTER CONFIG LOAD", encoding="utf-8")
         model = Model()
-        runtime = make_runtime(tmp_path, model, configured=configured)
+        runtime = await make_runtime(tmp_path, model, configured=configured)
         try:
             assert isinstance([e async for e in runtime.stream("first")][-1], TurnCompleted)
             assert isinstance([e async for e in runtime.compact()][-1], TurnCompleted)
@@ -176,7 +176,7 @@ def test_explicit_instructions_override_catalog_and_history(tmp_path, resumed, o
         model = Model()
         thread = None
         if resumed:
-            source = make_runtime(
+            source = await make_runtime(
                 tmp_path, model, configured=replace(settings(tmp_path), model_contexts=catalog)
             )
             try:
@@ -194,7 +194,7 @@ def test_explicit_instructions_override_catalog_and_history(tmp_path, resumed, o
             skills_enabled=False,
             include_environment_context=False,
         )
-        runtime = make_runtime(tmp_path, model, configured=configured, thread=thread)
+        runtime = await make_runtime(tmp_path, model, configured=configured, thread=thread)
         try:
             assert isinstance([e async for e in runtime.stream("host")][-1], TurnCompleted)
             assert model.requests[-1].instructions == override
@@ -202,7 +202,7 @@ def test_explicit_instructions_override_catalog_and_history(tmp_path, resumed, o
             assert model.requests[-1].instructions == override
             thread = runtime.thread_id
             await runtime.aclose()
-            runtime = make_runtime(
+            runtime = await make_runtime(
                 tmp_path,
                 model,
                 configured=replace(settings(tmp_path), model_contexts=catalog),
@@ -230,7 +230,7 @@ def test_fork_custom_base_origin_and_explicit_override(tmp_path, external, targe
                 ModelContextInfo("small", 200_000, base_instructions="SMALL CATALOG"),
             ),
         )
-        source = make_runtime(tmp_path, Model(), configured=configured)
+        source = await make_runtime(tmp_path, Model(), configured=configured)
         try:
             # No prior model section: Custom provenance must not invent a switch.
             await source._ensure_ready()

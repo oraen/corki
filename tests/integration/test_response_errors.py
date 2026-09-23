@@ -82,7 +82,7 @@ def test_failed_code_controls_actual_runtime_retry_and_observation(tmp_path, cod
         registry = ToolRegistry()
         registry.register(Tool())
         repository = SQLiteSessionRepository(tmp_path / "sessions.db")
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -175,7 +175,7 @@ def test_pending_error_keeps_later_tool_items_and_owns_stream_until_terminal(tmp
         registry = ToolRegistry()
         registry.register(Tool())
         repository = SQLiteSessionRepository(tmp_path / "sessions.db")
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=repository.path,
             repository=repository,
@@ -255,7 +255,7 @@ def test_sse_rate_delay_reaches_runtime_retry_event(tmp_path, monkeypatch, messa
                 base_url="https://fixture.invalid/v1", api_mode="responses"
             ),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(working_directory=tmp_path, skills_enabled=False),
             database_path=tmp_path / "sessions.db",
             model=model,

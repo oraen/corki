@@ -91,8 +91,8 @@ class Model:
         pass
 
 
-def make_runtime(tmp_path, model, *, registry=None, configured=None, thread=None):
-    return LangGraphRuntime.create(
+async def make_runtime(tmp_path, model, *, registry=None, configured=None, thread=None):
+    return await LangGraphRuntime.acreate(
         settings=configured or settings(tmp_path),
         model=model,
         database_path=tmp_path / "sessions.db",
@@ -121,7 +121,7 @@ def test_thread_update_during_tool_keeps_old_turn_and_updates_next_turn(tmp_path
         registry = ToolRegistry()
         registry.register(Hold())
         model = Model(calls=True, code_mode=mode == "code_mode")
-        runtime = make_runtime(
+        runtime = await make_runtime(
             tmp_path, model, registry=registry, configured=settings(tmp_path, tool_mode=mode)
         )
 
@@ -200,7 +200,7 @@ def test_budget_tool_and_skill_catalog_use_admitted_window_after_update(tmp_path
                     yield ModelCompleted((AssistantMessageItem("done", turn, step),))
 
         model = BudgetModel()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path, token_budget_enabled=True),
             model=model,
             database_path=tmp_path / "s.db",
@@ -249,7 +249,7 @@ def test_real_checkpoint_keeps_pinned_model_metadata_and_checks_provider_owner(
             async def emit(self, event):
                 pass
 
-        runtime = make_runtime(tmp_path, Model())
+        runtime = await make_runtime(tmp_path, Model())
         await runtime._ensure_ready()
         turn = new_turn_id()
         user = UserMessageItem("prepared once", turn)
@@ -279,7 +279,7 @@ def test_real_checkpoint_keeps_pinned_model_metadata_and_checks_provider_owner(
             model_contexts=(ModelContextInfo("large", 3000), ModelContextInfo("small", 20000)),
         )
         model = Model()
-        cold = make_runtime(tmp_path, model, configured=current, thread=runtime.thread_id)
+        cold = await make_runtime(tmp_path, model, configured=current, thread=runtime.thread_id)
         try:
             if change_provider:
                 with pytest.raises(ValueError, match="different provider"):
@@ -305,7 +305,7 @@ def test_real_checkpoint_keeps_pinned_model_metadata_and_checks_provider_owner(
 @pytest.mark.parametrize("action", ["cancel", "close", "fail"])
 def test_settings_commit_is_atomic_with_publication_and_lifecycle(tmp_path, monkeypatch, action):
     async def scenario():
-        runtime = make_runtime(tmp_path, Model())
+        runtime = await make_runtime(tmp_path, Model())
         await runtime._ensure_ready()
         before = runtime.thread_settings
         entered, release = asyncio.Event(), threading.Event()
@@ -364,7 +364,7 @@ def test_settings_commit_is_atomic_with_publication_and_lifecycle(tmp_path, monk
 def test_manual_compaction_uses_next_turn_settings_without_overwriting_defaults(tmp_path):
     async def scenario():
         model = Model()
-        runtime = make_runtime(tmp_path, model)
+        runtime = await make_runtime(tmp_path, model)
         try:
             assert isinstance([e async for e in runtime.stream("first")][-1], TurnCompleted)
             selected = await runtime.update_thread_settings(model="small", reasoning_effort="high")
@@ -385,7 +385,7 @@ def test_manual_compaction_uses_next_turn_settings_without_overwriting_defaults(
 def test_settings_only_sparse_updates_clear_effort_and_default_tier_without_sampling(tmp_path):
     async def scenario():
         model = Model()
-        runtime = make_runtime(tmp_path, model)
+        runtime = await make_runtime(tmp_path, model)
         try:
             first = await runtime.update_thread_settings(model="small")
             assert (
@@ -426,7 +426,7 @@ def test_settings_only_sparse_updates_clear_effort_and_default_tier_without_samp
 )
 def test_invalid_settings_do_not_replace_defaults_or_admitted_graph(tmp_path, patch):
     async def scenario():
-        runtime = make_runtime(tmp_path, Model())
+        runtime = await make_runtime(tmp_path, Model())
         try:
             await runtime.update_thread_settings()
             before = runtime.thread_settings
@@ -444,7 +444,7 @@ def test_invalid_settings_do_not_replace_defaults_or_admitted_graph(tmp_path, pa
 def test_first_turn_record_preserves_settings_before_any_checkpoint(tmp_path, monkeypatch):
     async def scenario():
         model = Model()
-        runtime = make_runtime(tmp_path, model)
+        runtime = await make_runtime(tmp_path, model)
         await runtime._ensure_ready()
         save = runtime._repository.save_turn
 
@@ -470,7 +470,7 @@ def test_first_turn_record_preserves_settings_before_any_checkpoint(tmp_path, mo
             runtime._pending_terminals.clear()
             await runtime.aclose()
         cold_model = Model()
-        cold = make_runtime(
+        cold = await make_runtime(
             tmp_path,
             cold_model,
             thread=runtime.thread_id,
@@ -505,7 +505,7 @@ def test_model_update_preserves_body_prefix_and_next_growth_triggers_compaction(
                 )
 
         model = UsageModel()
-        runtime = make_runtime(
+        runtime = await make_runtime(
             tmp_path,
             model,
             configured=replace(
@@ -573,7 +573,7 @@ def test_actual_provider_requests_follow_committed_thread_settings(
             "OwnedHTTPClient",
             lambda *a, **kw: client(*a, **kw, transport=httpx.MockTransport(respond)),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings(
                 tmp_path,
                 api_mode=mode,
@@ -614,7 +614,7 @@ def test_actual_provider_requests_follow_committed_thread_settings(
 
 def test_concurrent_sparse_updates_merge_against_last_committed_defaults(tmp_path, monkeypatch):
     async def scenario():
-        runtime = make_runtime(tmp_path, Model())
+        runtime = await make_runtime(tmp_path, Model())
         await runtime._ensure_ready()
         entered, release = asyncio.Event(), asyncio.Event()
         save = runtime._repository.save_thread_model_settings
@@ -707,7 +707,7 @@ def test_code_mode_cell_retains_admitted_call_but_new_calls_use_current_worker(t
         registry = ToolRegistry()
         registry.register(Hold())
         model = CellModel()
-        runtime = make_runtime(
+        runtime = await make_runtime(
             tmp_path, model, registry=registry, configured=settings(tmp_path, tool_mode="code_mode")
         )
         try:

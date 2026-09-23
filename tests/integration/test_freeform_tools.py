@@ -116,7 +116,7 @@ def test_raw_tool_round_trip_and_durable_replay(tmp_path, monkeypatch, mode, sou
         registry = ToolRegistry()
         registry.register(RawTool())
         repository = SQLiteSessionRepository(tmp_path / "sessions.db")
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -148,7 +148,7 @@ def test_raw_tool_round_trip_and_durable_replay(tmp_path, monkeypatch, mode, sou
             client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
             fresh_registry = ToolRegistry()
             fresh_registry.register(RawTool())
-            runtime = LangGraphRuntime.create(
+            runtime = await LangGraphRuntime.acreate(
                 settings=settings,
                 database_path=repository.path,
                 registry=fresh_registry,

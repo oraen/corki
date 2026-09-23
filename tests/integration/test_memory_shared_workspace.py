@@ -53,7 +53,7 @@ def test_consolidation_tools_write_shared_root_before_completion(tmp_path, fail)
                     raise ValueError("injected worker failure after successful write")
                 yield ModelCompleted((AssistantMessageItem("done", turn, step),))
 
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,
@@ -161,7 +161,7 @@ def test_managed_deny_on_actual_memory_root_cannot_be_bypassed_by_copy(tmp_path)
                 ),
             )
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
                 skills_enabled=False,

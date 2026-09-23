@@ -17,6 +17,7 @@ from corki.media.audio import UNSUPPORTED_INPUT
 from corki.models.backoff import backoff, retry_limit
 from corki.models.base import ModelError, ModelErrorKind
 from corki.models.capabilities import ProviderCapabilities, StructuredOutputProtocol
+from corki.models.error_safety import sanitized_model_error
 from corki.models.freeform import compatible_arguments, compatible_call
 from corki.models.http_stream import model_http_stream
 from corki.models.item_metadata import annotate_response_input, capture_response_identity
@@ -151,33 +152,31 @@ class OpenAIResponsesModel:
                         yield event
                 return
             except ModelError as exc:
+                safe_error = sanitized_model_error(exc, self._api_key)
                 if (
                     request.harness_managed_retries
                     or emitted_data
                     or not exc.retryable
                     or attempt >= self._max_retries
                 ):
-                    raise
+                    if safe_error is exc:
+                        raise
+                    raise safe_error from None
                 attempt += 1
                 delay = exc.retry_after_seconds
                 if delay is None:
                     delay = backoff(self._retry_base_seconds, attempt - 1)
-                yield ModelRetrying(attempt, self._max_retries, delay, str(exc))
+                yield ModelRetrying(attempt, self._max_retries, delay, str(safe_error))
                 await asyncio.sleep(delay)
 
     def _build_payload(self, request: ModelRequest) -> dict[str, Any]:
         request_tool_aliases(request)
-        native_namespaces = False
-
-        native_freeform = False
         tools = group_tool_definitions(
             [
                 tool
                 for tool in request.tools
                 if tool.exposure in {ToolExposure.DIRECT, ToolExposure.DIRECT_MODEL_ONLY}
             ],
-            native_freeform=native_freeform,
-            native_namespaces=native_namespaces,
         )
         payload: dict[str, Any] = {
             "model": request.model,
@@ -185,8 +184,6 @@ class OpenAIResponsesModel:
             "input": [
                 _to_response_message(
                     item,
-                    native_freeform=native_freeform,
-                    native_namespaces=native_namespaces,
                     audio_enabled=self._capabilities.supports_audio_input,
                 )
                 for item in context_message_groups((*request.context_items, *request.items))
@@ -277,6 +274,10 @@ class OpenAIResponsesModel:
                         raise _protocol_error("native custom tool protocol is not supported")
                     if event_type.startswith("response.tool_search_"):
                         raise _protocol_error("native tool search protocol is not supported")
+                    if event_type.startswith(
+                        ("response.compaction", "response.context_compaction")
+                    ):
+                        raise _protocol_error("dedicated compaction protocol is not supported")
                     if event_type.startswith(
                         ("response.web_search_call", "response.function_call_output")
                     ):
@@ -569,9 +570,6 @@ def _to_response_input(item: ConversationItem, **options) -> dict[str, Any]:
 def _response_input_content(
     item: ConversationItem,
     *,
-    native_search: bool = False,
-    native_freeform: bool = False,
-    native_namespaces: bool = False,
     audio_enabled: bool = False,
 ) -> dict[str, Any]:
     if isinstance(item, HostedToolItem):
@@ -631,7 +629,7 @@ def _response_input_content(
         return {
             "type": "function_call",
             "call_id": str(item.call.id),
-            **response_call_name(item.call.name, native_namespaces=native_namespaces),
+            **response_call_name(item.call.name),
             "arguments": compatible_arguments(item.call),
         }
     if isinstance(item, ToolResultItem):
@@ -717,6 +715,12 @@ def _finish_function_call(buffer: _FunctionBuffer) -> ToolCall:
 
 
 def _reject_native_tool_item(item) -> None:
+    if isinstance(item, dict) and item.get("type") in {
+        "compaction",
+        "compaction_trigger",
+        "context_compaction",
+    }:
+        raise _protocol_error("dedicated compaction output is not supported")
     if (
         isinstance(item, dict)
         and item.get("type") == "function_call"

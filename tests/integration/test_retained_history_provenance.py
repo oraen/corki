@@ -58,7 +58,7 @@ def test_ordinary_summary_preserves_source_text_after_cold_reopen(
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
 
-        def create(thread=None, *, media=supported, old_v2=True):
+        async def create(thread=None, *, media=supported, old_v2=True):
             caps = replace(
                 resolve_capabilities(
                     base_url="https://fixture.invalid/v1",
@@ -68,7 +68,7 @@ def test_ordinary_summary_preserves_source_text_after_cold_reopen(
                 supports_remote_compaction=True,
                 supports_audio_input=media,
             )
-            return LangGraphRuntime.create(
+            return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
                     model="fixture",
@@ -94,7 +94,7 @@ def test_ordinary_summary_preserves_source_text_after_cold_reopen(
                 thread_id=thread,
             )
 
-        runtime = create(old_v2=False)
+        runtime = await create(old_v2=False)
         try:
             await runtime._ensure_ready()
             source = UserMessageItem(
@@ -121,7 +121,7 @@ def test_ordinary_summary_preserves_source_text_after_cold_reopen(
             thread = runtime.thread_id
             before = await runtime._repository.load_items(thread)
             await runtime.aclose()
-            runtime = create(thread)
+            runtime = await create(thread)
             if not automatic:
                 assert isinstance([e async for e in runtime.compact()][-1], TurnCompleted)
             assert isinstance([e async for e in runtime.stream("current")][-1], TurnCompleted)
@@ -182,7 +182,7 @@ def test_ordinary_summary_preserves_source_text_after_cold_reopen(
             # or invent a new original contribution after cold recovery.
             for iteration in range(2):
                 await runtime.aclose()
-                runtime = create(thread, media=True, old_v2=bool(iteration))
+                runtime = await create(thread, media=True, old_v2=bool(iteration))
                 assert isinstance([e async for e in runtime.compact()][-1], TurnCompleted)
                 assert isinstance(
                     [e async for e in runtime.stream(f"cold next {iteration}")][-1], TurnCompleted

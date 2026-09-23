@@ -1,6 +1,68 @@
 # 上下文来源、快照与普通传输（C1/C2）
 
-当前全量证据：74939实际退出0（92002f），15490 passed、1文件系统限制跳过，
+## 2026-09-22：world-state 默认 section 枚举与 realtime 结束过渡
+
+固定 Codex `session/world_state.rs` 与 `context/world_state/{mod,realtime}.rs`
+逐项核对当前默认/配置路径，而不是把源码目录里所有 section 都当默认缺失：
+Model、AgentsMd、Permissions/CompactPermissions、Collaboration、Environment、
+ContextWindowGuidance、PluginsInstructions、Tools 与宿主扩展分别对应 Corki
+的 model.instructions、project.agents、permissions/approved_command_prefixes、
+mode、environment、context_window_guidance、插件指导、deferred_tools 与
+extension.world_state；各项细节仍按 C1/C2 专项证据验收。Codex 的 Apps
+是用户排除的官方连接器产品路径；Persistent effort、MultiAgent 模式/
+usage hint、DeferredExecutor 多环境指令是条件路径，范围选择见
+`persistent-mode-decision.md`，不冒称当前已实现。Realtime 在两者均有
+活跃路径，因此需要具体核对，不能归入这些条件分支。
+
+Codex `RealtimeState::render_diff` 在 active→inactive 发专用结束片段；
+Corki 的 `RealtimeContextContributor` 只在活跃时贡献 start，下一普通 Turn
+原来由 `world_state._removal` 发通用 section 删除通知，缺少实时输入已结束的
+明确语义。新增真实 Runtime/SQLite：实时 Turn→普通 Turn→关闭冷恢复→
+普通 Turn→再次实时 Turn。修复前第二个请求没有专用 end（1 failed）；
+现在只对 `realtime.active` 的撤销发本地 `realtime/end` 开发者片段，
+其 `snapshot_content=""` 阻止冷开及后续普通 Turn 重发；再次进入时 start
+正常出现。提示文本仅描述 Corki 自己的实时文字输入，不复制 Codex 的语音
+转录专属说明，也不改变实时输入/取消所有权。
+
+完整 unit/context 目录与实时、上下文更新/角色、默认 world-state、输入边界及
+Turn 准入六个集成文件 **464 passed / 6.37s**，4 workers/loadfile/禁重启，
+实际退出 0。此生产修改后，非 CLI 完整范围按互斥文件分组刷新：短期限
+敏感六文件单 worker **459 passed / 55.89s**；其余 unit/integration 排除
+CLI 与前六文件、4 workers **15279 passed、7 skipped / 738.24s**，两批
+实际退出 0。独立收集 **15745 项**，合计 **15738 passed、7 skipped**；
+七项跳过仍是六项缺历史编译器、一项文件系统限制。上节 15737 是修复前
+基线，已被替代；
+不因单个过渡修复宣称 C2 或全部实时行为完成。
+
+## 2026-09-22：其余旧 typed 快照的过深 JSON 冷恢复降级
+
+Codex `context/world_state/mod.rs::render_diff` 对无法反序列化的旧 section
+快照统一降为 `Unknown`，不把旧比较元数据当执行授权。Corki 已对环境/
+deferred 目录、模型指令及 personality 等路径补过此边界，但权限比较
+`permissions._decode`、旧模型切换标记 `model_transition.previous_model` 和
+扩展 section 的 `render_section` 仍漏接 Python `RecursionError`。
+
+新增真实 Runtime/SQLite 冷恢复四组合：完整/精简权限、旧模型标记、
+扩展 world-state。原行写入 16000 层旧 JSON 后关闭重开；修复前四例
+均 `TurnFailed`，异常为 JSON 解码递归深度耗尽。现在只在旧比较快照
+解析边界捕获该异常，按原有 Unknown/无旧模型身份路径刷新当前来源；
+不改变权限编译器、审批、当前模型选择或扩展 renderer 的执行错误分类。
+四例均转绿，旧 SQLite 前缀不变，权限两条路径连做两个 Turn 不重复
+刷新，完整权限旧可见正文仍在请求，扩展 renderer 收到 `Unknown`。
+
+连同完整 unit/context、权限、环境、模型快照及扩展 Runtime/wire 等关联
+文件 **529 passed / 10.63s**，4 workers/loadfile/禁重启，实际退出 0；
+修改文件 Ruff/format/diff 检查通过。生产修复后的非 CLI 完整范围已按
+互斥文件分组刷新：短期限敏感六文件单 worker **459 passed / 55.16s**，
+其余 unit/integration 排除 CLI 和前六文件、4 workers **15278 passed、
+7 skipped / 732.12s**；两批实际退出 0。独立收集 **15744 项**，与
+合计 **15737 passed、7 skipped** 一致；六项跳过缺历史编译器、一项
+文件系统不接受非 UTF-8 文件名。上一轮 15733 是修复前基线，已被替代。
+这组只证明具体旧快照损坏边界，不把任意执行账本损坏或所有第三方
+扩展渲染失败统一吞为 Unknown。
+
+历史全量证据（已由验收索引中较新全量替代）：74939实际退出0（92002f），
+15490 passed、1文件系统限制跳过，
 547.32秒；完整日志full-regression-74939.txt。包含下述近期模型与环境/目录修复，
 各批次“生产后全量待刷新”为当时记录，已由本轮替代；其它未核验行为仍开放。
 

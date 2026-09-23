@@ -87,7 +87,7 @@ def test_runtime_applies_higher_managed_policy_before_effective_empty_check(
         managed = compose_mcp_requirements(
             [MCPRequirementsLayer("higher-system", 'allowed_approval_policies=["on-request"]')]
         )
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path, compiler, model, settings=settings, mcp_requirements=managed
         )
         try:
@@ -118,7 +118,7 @@ def test_required_interactive_policy_reaches_real_approval_owner(tmp_path, compi
                 requirements=(layer(["on-request"]),),
             ),
         )
-        runtime = runtime_for(tmp_path, compiler, model, settings=settings)
+        runtime = await runtime_for(tmp_path, compiler, model, settings=settings)
         target = tmp_path / "approved-write"
         prompts = []
 
@@ -165,7 +165,7 @@ def test_only_internal_guardian_replaces_parent_approval_constraint(
         )
         parent, _ = await resolve_execution_permissions(requested)
         model = Model(mode)
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path,
             compiler,
             model,
@@ -234,7 +234,7 @@ def test_managed_default_controls_tools_context_and_startup_warning(
             [MCPRequirementsLayer("organization", 'allowed_approval_policies=["never"]')]
         )
         model = Model(mode)
-        runtime = runtime_for(
+        runtime = await runtime_for(
             tmp_path, compiler, model, settings=settings, mcp_requirements=managed
         )
         try:
@@ -343,7 +343,7 @@ def test_invalid_managed_approval_stops_before_model(tmp_path, compiler, allowed
                     compiler, tmp_path, '{"type":"read-only"}', requirements=(layer(allowed),)
                 ),
             )
-            runtime_for(tmp_path, compiler, model, settings=settings)
+            (await runtime_for(tmp_path, compiler, model, settings=settings))
         assert not model.requests
 
     asyncio.run(scenario())

@@ -31,7 +31,7 @@ class FinalModel:
         pass
 
 
-def make_runtime(
+async def make_runtime(
     tmp_path,
     monkeypatch,
     *,
@@ -51,7 +51,7 @@ def make_runtime(
 
     monkeypatch.setattr("corki.mcp.manager.create_client", factory)
     actual_model = model or FinalModel()
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -88,7 +88,7 @@ def test_denied_server_never_constructs_transport_or_header_helper(
             http_headers_helper="must-not-run",
             required=required,
         )
-        runtime, clients, model = make_runtime(
+        runtime, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             requirements={"mcp_servers": rules},
@@ -109,7 +109,7 @@ def test_denied_server_never_constructs_transport_or_header_helper(
 @pytest.mark.parametrize("mode", ["direct", "native", "compatible", "code_mode"])
 def test_allowed_identity_reaches_real_tool_loop_and_closes_client(tmp_path, monkeypatch, mode):
     async def scenario():
-        runtime, clients, model = make_runtime(
+        runtime, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             mode=mode,
@@ -155,7 +155,7 @@ def test_changed_identity_after_exposure_is_denied_before_effect(
                         update((replacement,))
                     yield event
 
-        runtime, clients, model = make_runtime(
+        runtime, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             mode=mode,
@@ -193,7 +193,7 @@ def test_plugin_policy_uses_raw_identity_not_ambiguous_route(
     )
 
     async def scenario():
-        runtime, clients, model = make_runtime(
+        runtime, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             plugins=(plugin,),
@@ -222,7 +222,7 @@ def test_host_input_mutation_cannot_widen_authority(tmp_path, monkeypatch):
     async def scenario():
         identity = {"url": "https://original.invalid"}
         rules = {"mcp_servers": {"docs": {"identity": identity}}}
-        runtime, clients, _ = make_runtime(
+        runtime, clients, _ = await make_runtime(
             tmp_path,
             monkeypatch,
             requirements=rules,
@@ -259,7 +259,7 @@ def test_invalid_authority_fails_before_plugin_or_database_startup(
     monkeypatch.setattr("corki.core.runtime.SQLiteSessionRepository", forbidden)
     monkeypatch.setattr("corki.core.runtime.PluginManager.discover_and_load", forbidden)
     with pytest.raises(ValueError):
-        make_runtime(tmp_path, monkeypatch, requirements=requirements)
+        asyncio.run(make_runtime(tmp_path, monkeypatch, requirements=requirements))
     assert not (tmp_path / "history.db").exists()
 
 
@@ -268,7 +268,7 @@ def test_admitted_call_keeps_exact_connection_while_new_admission_is_denied(tmp_
         original = MCPServerSettings(
             "docs", "http", url="https://allowed.invalid", default_tools_approval_mode="prompt"
         )
-        runtime, clients, model = make_runtime(
+        runtime, clients, model = await make_runtime(
             tmp_path,
             monkeypatch,
             servers=(original,),
@@ -319,7 +319,7 @@ def test_failed_publication_keeps_generation_then_retries_restriction(
 ):
     async def scenario():
         original = MCPServerSettings("docs", "http", url="https://allowed.invalid")
-        runtime, clients, _ = make_runtime(
+        runtime, clients, _ = await make_runtime(
             tmp_path,
             monkeypatch,
             servers=(original,),

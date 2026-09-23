@@ -74,7 +74,7 @@ def test_archive_replays_as_plain_data_without_mutation(tmp_path, monkeypatch, m
             "OwnedHTTPClient",
             lambda *a, **kw: client_type(*a, **kw, transport=httpx.MockTransport(respond)),
         )
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
                 api_mode=mode,
