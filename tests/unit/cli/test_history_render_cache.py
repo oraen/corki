@@ -5,6 +5,7 @@ from io import StringIO
 
 from prompt_toolkit.data_structures import Point, Size
 from prompt_toolkit.formatted_text import to_formatted_text
+from prompt_toolkit.formatted_text.utils import split_lines
 from rich.console import Console
 
 from corki.cli.terminal import TerminalUI
@@ -13,7 +14,7 @@ from corki.config import CorkiSettings
 
 def test_navigation_reuses_parsed_rows_and_refreshes_changed_history(tmp_path, monkeypatch):
     async def scenario():
-        import corki.cli.history_view as module
+        import corki.cli.history_rows as module
 
         ui = TerminalUI(
             CorkiSettings(tmp_path),
@@ -23,18 +24,12 @@ def test_navigation_reuses_parsed_rows_and_refreshes_changed_history(tmp_path, m
         ui.show_assistant_message("\n\n".join(f"**line {i}**" for i in range(100)))
         view = ui._history_view
         original, parsed = module.ANSI, []
-        split, split_calls = module.split_lines, []
-
-        def split_rows(fragments):
-            split_calls.append(True)
-            return split(fragments)
 
         def parse(text):
             parsed.append(text)
             return original(text)
 
         monkeypatch.setattr(module, "ANSI", parse)
-        monkeypatch.setattr(module, "split_lines", split_rows)
         first = view.control.create_content(80, 10)
         for row in (0, 3, 10, 45):
             view.row = row
@@ -43,9 +38,17 @@ def test_navigation_reuses_parsed_rows_and_refreshes_changed_history(tmp_path, m
             assert content.line_count == first.line_count
             assert content.get_line(row) is first.get_line(row)
         assert len(parsed) == 1
-        assert len(split_calls) == 1
-        assert to_formatted_text(view.text()) == to_formatted_text(original(view.content))
-        assert any(style for style, _, *_ in view.formatted)
+        expected = list(
+            split_lines(
+                to_formatted_text(
+                    original(ui._transcript.render(80, include_reasoning=True, expand_tools=True))
+                )
+            )
+        )
+        assert ["".join(p[1] for p in row) for row in view.lines] == [
+            "".join(p[1] for p in row) for row in expected
+        ]
+        assert any(style for style, _, *_ in view.text())
         assert len(parsed) == 1
         ui.show_notice("new tail")
         second = view.control.create_content(80, 10)
@@ -59,6 +62,9 @@ def test_navigation_reuses_parsed_rows_and_refreshes_changed_history(tmp_path, m
         )
         monkeypatch.setattr(ui._session.app.output, "get_size", lambda: Size(rows=10, columns=40))
         view.control.create_content(40, 10)
-        assert len(parsed) == len(split_calls) == 3
+        assert len(parsed) == 3
+        stores = tuple(view._stores)
+        view.close()
+        assert all(store.closed for store in stores)
 
     asyncio.run(scenario())

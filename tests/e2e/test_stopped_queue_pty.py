@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 import pexpect
 import pytest
@@ -95,20 +96,31 @@ def test_stop_restores_queue_until_user_submits_again(
     )
     try:
         child.expect("Ask Corki to do anything")
-        child.send("initial\r")
+        child.send("initial")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect_exact("WAITING_FOR_STOP")
         if pending_steers:
             for _ in range(2):
-                child.send("pending steer\r")
+                child.send("pending steer")
+                time.sleep(0.15)
+                child.send("\r")
                 child.expect("Ask Corki to do anything")
         for message in ("queued one", "queued two"):
             child.send(message + ("\x1b[Z" if shift_tab else "") + "\t")
             child.expect_exact("Queued for the next turn.")
         if pending_steers:
             # Enter must not replace active work or consume the existing queue.
-            child.send("/compact\r")
+            child.send("/compact")
+            time.sleep(0.15)
+            child.send("\r")
             child.expect_exact("disabled while")
-        child.sendcontrol("c") if keyboard else child.send("/stop\r")
+        if keyboard:
+            child.sendcontrol("c")
+        else:
+            child.send("/stop")
+            time.sleep(0.15)
+            child.send("\r")
         child.expect_exact("QUEUE_RESTORED")
         child.expect_exact("queued two")
         child.send("\r")

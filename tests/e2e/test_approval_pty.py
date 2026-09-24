@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 import pexpect
 import pytest
@@ -148,7 +149,9 @@ def test_full_approval_details_can_be_read_without_deciding(tmp_path, columns, c
         child.send("\r")
         child.expect("DECISION=decline")
         child.expect("Ask Corki to do anything")
-        child.send("ordinary followup\r")
+        child.send("ordinary followup")
+        time.sleep(0.15)  # Deliberate Enter, outside the raw-paste suppression window.
+        child.send("\r")
         child.expect("COMPOSER_RESTORED")
         child.expect(pexpect.EOF)
         child.close()
@@ -195,7 +198,9 @@ def test_execution_scope_is_a_single_keyboard_decision(tmp_path, columns, scope,
         child.send(keys[input_method])
         child.expect("DECISION=accept")
         child.expect("Ask Corki to do anything")
-        child.send("ordinary followup\r")
+        child.send("ordinary followup")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect("COMPOSER_RESTORED")
         child.expect(pexpect.EOF)
         child.close()
@@ -243,7 +248,9 @@ def test_real_terminal_approval_is_explicit_and_restores_composer(
         child.send(keys)
         child.expect("DECISION=" + decision)
         child.expect("Ask Corki to do anything")
-        child.send("ordinary\x1b]11;rgb:ffff/ffff/ffff\x07 followup\r")
+        child.send("ordinary\x1b]11;rgb:ffff/ffff/ffff\x07 followup")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect("COMPOSER_RESTORED")
         child.expect(pexpect.EOF)
         child.close()
@@ -292,7 +299,9 @@ def test_real_terminal_concurrent_approvals_preserve_draft_and_decision_identity
             assert child.expect(["SECOND_REQUEST", "ALL_DECISIONS_SETTLED"]) == 1
         if second != "queued_cancel":
             child.expect("ALL_DECISIONS_SETTLED")
-        child.send(" followup\r")
+        child.send(" followup")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect("DRAFT_AND_HISTORY_RESTORED")
         child.expect(pexpect.EOF)
         child.close()
@@ -346,7 +355,9 @@ def test_resize_waits_for_explicit_modal_decision(tmp_path, columns, keys, decis
         # The pending resize is not lost when the modal releases terminal ownership.
         child.expect("OLD_TRANSCRIPT")
         child.expect("Ask Corki to do anything")
-        child.send("ordinary followup\r")
+        child.send("ordinary followup")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect("COMPOSER_RESTORED")
         child.expect(pexpect.EOF)
         child.close()

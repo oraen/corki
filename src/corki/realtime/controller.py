@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from corki.protocol.ids import ItemId, TurnId
 from corki.protocol.input_mentions import validate_mentions
 from corki.protocol.items import UserMessageItem
+from corki.protocol.tools import validate_image_attachments
 
 
 class RealtimeTurnClosedError(RuntimeError):
@@ -95,18 +96,26 @@ class RealtimeController:
         while not self._queue.empty():
             self._queue.get_nowait()
 
-    async def steer(self, text: str, *, mentions=()) -> None:
+    async def steer(self, text: str, *, mentions=(), attachments=(), image_positions=()) -> None:
         if not self.active or not self._accepting:
             raise RealtimeTurnClosedError("no realtime turn is accepting input (turn closed)")
         mentions = validate_mentions(mentions)
-        text = text.strip()
-        if not text and not mentions:
+        attachments = validate_image_attachments(attachments)
+        if not image_positions:
+            text = text.strip()
+        if not text and not mentions and not attachments:
             raise ValueError("realtime input must not be empty")
         if self._accepted >= self._max_inputs:
             raise RuntimeError("realtime input limit reached for this turn")
-        self._accepted += 1
         assert self._turn_id is not None
-        item = UserMessageItem(text, self._turn_id, mentions=mentions)
+        item = UserMessageItem(
+            text,
+            self._turn_id,
+            mentions=mentions,
+            attachments=attachments,
+            image_positions=image_positions,
+        )
+        self._accepted += 1
         self._unrecorded[item.id] = item
         self._queue.put_nowait(RealtimeInput(text, item))
 

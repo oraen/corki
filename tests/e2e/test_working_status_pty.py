@@ -29,6 +29,15 @@ def wait_for_running_clock(child, output, width):
                 )
                 assert row < composer
                 assert screen.buffer[row][line.index("Working")].bold
+                status_row = next(
+                    index
+                    for index, text in enumerate(screen.display)
+                    if "gpt-5" in text and " · " in text
+                )
+                assert status_row > composer
+                status = screen.display[status_row]
+                assert screen.buffer[status_row][status.index("gpt-5")].fg == "f6e2b7"
+                assert screen.buffer[status_row][status.index(" · ") + 3].fg == "abdfa7"
                 return screen
     pytest.fail("Working clock did not advance above the composer without model output")
 
@@ -151,9 +160,10 @@ def test_quiet_model_shows_working_then_restores_idle_toolbar(tmp_path, width):
         timeout=10,
         dimensions=(24, width),
         env={
-            **os.environ,
+            **{key: value for key, value in os.environ.items() if key != "NO_COLOR"},
             "CORKI_HOME": str(tmp_path / "home"),
             "TERM": "xterm-256color",
+            "PROMPT_TOOLKIT_COLOR_DEPTH": "DEPTH_24_BIT",
             "PROMPT_TOOLKIT_NO_CPR": "1",
             "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
         },
@@ -162,16 +172,20 @@ def test_quiet_model_shows_working_then_restores_idle_toolbar(tmp_path, width):
     child.logfile_read = output
     try:
         child.expect("Ask Corki to do anything")
-        child.send("first\r")
+        child.send("first")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect("Working")
         assert "QUIET_MODEL_ANSWER" not in output.getvalue()
         wait_for_running_clock(child, output, width)
         child.send("go")
         child.expect_exact("QUIET_MODEL_ANSWER")
         child.expect_exact("TURN_SETTLED")
+        child.expect_exact("go")
         screen = pyte.Screen(width, 24)
         pyte.Stream(screen).feed(output.getvalue())
         assert "Working" not in "\n".join(screen.display)
+        assert sum("› go" in line for line in screen.display) == 1
         child.sendcontrol("c")
         child.expect("Ask Corki to do anything")
         child.sendcontrol("d")
@@ -194,9 +208,10 @@ def test_slow_tool_status_is_visible_and_clears_before_next_input(tmp_path, widt
         timeout=15,
         dimensions=(24, width),
         env={
-            **os.environ,
+            **{key: value for key, value in os.environ.items() if key != "NO_COLOR"},
             "CORKI_HOME": str(tmp_path / "home"),
             "TERM": "xterm-256color",
+            "PROMPT_TOOLKIT_COLOR_DEPTH": "DEPTH_24_BIT",
             "PROMPT_TOOLKIT_NO_CPR": "1",
             "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
         },
@@ -205,7 +220,9 @@ def test_slow_tool_status_is_visible_and_clears_before_next_input(tmp_path, widt
     child.logfile_read = output
     try:
         child.expect("Ask Corki to do anything")
-        child.send("first\r")
+        child.send("first")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect("Running slow_tool")
         wait_for_running_clock(child, output, width)
         screen = pyte.Screen(width, 24)

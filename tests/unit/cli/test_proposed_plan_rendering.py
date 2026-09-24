@@ -135,9 +135,16 @@ def test_live_plan_history_tracks_commits_without_draining_queue(tmp_path):
             assert ui._plan_stream is stream
             assert stream.queued_lines == 2 - committed
             assert ui._transcript.calls == saved
-        ui._history_view.text()
-        assert ("committed row" in ui._history_view.content) is (committed >= 1)
-        assert ("hidden row" in ui._history_view.content) is (committed == 2)
+        from prompt_toolkit import ANSI
+        from prompt_toolkit.formatted_text import to_formatted_text
+
+        width = ui._session.app.output.get_size().columns
+        committed_text = ui._transcript.render(width, include_reasoning=True, expand_tools=True)
+        expected = "".join(p[1] for p in to_formatted_text(ANSI(committed_text)))
+        expected += "".join(p[1] for p in ui._plan_tail_fragments())
+        assert "".join(p[1] for p in ui._history_view.text()) == expected
+        assert stream.queued_lines == 2 - committed and ui._transcript.calls == saved
+    ui._history_view.close()
     ui.end_proposed_plan()
 
 

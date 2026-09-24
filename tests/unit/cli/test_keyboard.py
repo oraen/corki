@@ -35,6 +35,7 @@ def test_shift_enter_edits_multiline_without_submitting(tmp_path, monkeypatch, s
                     while ui._session.default_buffer.text != "first\nsecond":
                         assert not task.done(), "modified Enter submitted the composer"
                         await asyncio.sleep(0)
+                    await asyncio.sleep(0.15)  # deliberate Enter after the paste window
                     pipe.send_text("\r")
                     assert await task == "first\nsecond"
             finally:

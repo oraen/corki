@@ -187,7 +187,7 @@ def test_executor_owns_ordered_content_snapshot_after_handler_returns(tmp_path: 
 
 
 @pytest.mark.parametrize("invalid_arguments", [False, True])
-def test_error_original_is_preserved_and_model_and_display_obey_budget(tmp_path, invalid_arguments):
+def test_error_display_preserves_original_while_model_obeys_budget(tmp_path, invalid_arguments):
     class Tool:
         spec = ToolSpec("broken", "fixture", {"type": "object"}, output_char_budget=80)
 
@@ -230,9 +230,56 @@ def test_error_original_is_preserved_and_model_and_display_obey_budget(tmp_path,
             TruncationPolicy(),
         )
         assert len(visible.content) <= 80
-        assert len(result.display_content) <= 80
+        assert result.display_content == result.content
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("display", [None, "", "explicit " * 1000])
+def test_display_source_is_complete_and_preserves_explicit_overrides(tmp_path, display):
+    content = "original " * 1000
+
+    class Tool:
+        spec = ToolSpec("fixture", "fixture", {}, output_char_budget=80)
+
+        async def execute(self, call, context):
+            return ToolResult(call.id, call.name, content, display_content=display)
+
+    async def scenario():
+        registry = ToolRegistry()
+        registry.register(Tool())
+        return await ToolExecutor(registry, output_char_budget=80).execute(
+            ToolCall(new_tool_call_id(), "fixture", {}), ToolContext(tmp_path)
+        )
+
+    result = asyncio.run(scenario())
+    assert not result.is_error
+    assert result.content == content
+    assert result.display_content == (content if display is None else display)
+    assert result.legacy_output_char_budget == 80
+
+
+def test_explicit_display_counts_toward_raw_transport_limit(tmp_path, monkeypatch):
+    import corki.tools.executor as executor_module
+
+    monkeypatch.setattr(executor_module, "MAX_RAW_TOOL_RESULT_BYTES", 256)
+
+    class Tool:
+        spec = ToolSpec("fixture", "fixture", {})
+
+        async def execute(self, call, context):
+            return ToolResult(call.id, call.name, "small", display_content="x" * 257)
+
+    async def scenario():
+        registry = ToolRegistry()
+        registry.register(Tool())
+        return await ToolExecutor(registry, output_char_budget=80).execute(
+            ToolCall(new_tool_call_id(), "fixture", {}), ToolContext(tmp_path)
+        )
+
+    result = asyncio.run(scenario())
+    assert result.is_error and result.dispatch_error
+    assert "raw transport byte limit" in result.content
 
 
 def test_normalized_result_does_not_share_mutable_plan_or_attachment_list(tmp_path):

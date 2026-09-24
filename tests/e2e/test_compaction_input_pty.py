@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 import pexpect
 import pytest
@@ -92,14 +93,20 @@ def test_compaction_composer_queue_and_stop(tmp_path, width, outcome, realtime):
     )
     try:
         child.expect("Ask Corki to do anything")
-        child.send("/compact\r")
+        child.send("/compact")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect_exact("COMPACT_WAITING")
-        child.send("after one\r")
+        child.send("after one")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect_exact("Queued for the next turn.")
         child.send("after two\t")
         child.expect_exact("Queued for the next turn.")
         if outcome == "cancel":
-            child.send("/stop\r")
+            child.send("/stop")
+            time.sleep(0.15)
+            child.send("\r")
             child.expect_exact("COMPACT_INPUT_RESTORED")
             child.expect_exact("after two")
             child.send("\r")

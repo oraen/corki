@@ -262,10 +262,19 @@ class ToolCall:
 
 @dataclass(frozen=True, slots=True)
 class ImageAttachment:
-    """An image returned by a tool and eligible for multimodal model input."""
+    """A user or tool image eligible for multimodal model input."""
 
     data_url: str
     detail: str = "high"
+
+
+def validate_image_attachments(attachments) -> tuple[ImageAttachment, ...]:
+    if not isinstance(attachments, (tuple, list)) or any(
+        not isinstance(image, ImageAttachment) or not isinstance(image.data_url, str)
+        for image in attachments
+    ):
+        raise ValueError("attachments must be a sequence of ImageAttachment values")
+    return tuple(attachments)
 
 
 @dataclass(frozen=True, slots=True)

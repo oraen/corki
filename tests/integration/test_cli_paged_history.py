@@ -156,9 +156,9 @@ def test_cli_loads_older_pages_preserving_live_output_position_and_empty_failure
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("clear_first", [False, True])
+@pytest.mark.parametrize("clear_first,finish_late", [(False, False), (True, False), (False, True)])
 def test_closing_pager_joins_read_and_does_not_apply_cancelled_page(
-    tmp_path, monkeypatch, clear_first
+    tmp_path, monkeypatch, clear_first, finish_late
 ):
     async def scenario():
         class Model:
@@ -195,10 +195,35 @@ def test_closing_pager_joins_read_and_does_not_apply_cancelled_page(
             return await original(thread_id, **kwargs)
 
         monkeypatch.setattr(runtime._repository, "load_display_items_page", held)
+        created = []
+        if finish_late:
+            import corki.cli.history_view as module
+            from corki.cli.history_rows import HistoryRows
+
+            def track_store(**kwargs):
+                store = HistoryRows(**kwargs)
+                created.append(store)
+                return store
+
+            monkeypatch.setattr(module, "HistoryRows", track_store)
+            ui._history_view.open()
         pager.request_older()
         closing = None
         try:
             await asyncio.wait_for(entered.wait(), 5)
+            if finish_late:
+                task = pager.task
+                ui._history_view.close()
+                release.set()
+                await asyncio.wait_for(task, 5)
+                assert len(pager.items) == 120 and pager.task is None
+                assert not ui._history_view.active and not ui._history_view._stores
+                assert created and all(store.closed for store in created)
+                ui._history_view.open()
+                assert "entry 0" in "".join(text for _, text in ui._history_view.text())
+                ui._history_view.close()
+                assert all(store.closed for store in created)
+                return
             if clear_first:
                 ui.clear()
                 ui.show_notice("NEW_DISPLAY")

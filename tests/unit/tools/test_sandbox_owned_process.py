@@ -10,7 +10,7 @@ from corki.execution.owned_process import run_owned
 from corki.tools.builtin.process import ProcessManager
 
 
-@pytest.mark.parametrize("failure", ["output", "timeout", "exit", "cancel"])
+@pytest.mark.parametrize("failure", ["output", "timeout", "exit", "cancel", "consumer"])
 def test_helper_failure_and_cancel_reap_the_owned_process(tmp_path, monkeypatch, failure):
     async def scenario():
         spawned = []
@@ -29,7 +29,12 @@ def test_helper_failure_and_cancel_reap_the_owned_process(tmp_path, monkeypatch,
             "timeout": "import time; time.sleep(60)",
             "exit": "raise SystemExit(7)",
             "cancel": "import time; time.sleep(60)",
+            "consumer": "import sys,time; print('ready', flush=True); time.sleep(60)",
         }[failure]
+
+        def consume(chunk):
+            raise ValueError("consumer failed")
+
         task = asyncio.create_task(
             run_owned(
                 [sys.executable, "-I", "-c", script],
@@ -37,6 +42,7 @@ def test_helper_failure_and_cancel_reap_the_owned_process(tmp_path, monkeypatch,
                 cwd=tmp_path,
                 output_limit=100,
                 timeout=0.1 if failure == "timeout" else 5,
+                output_consumer=consume if failure == "consumer" else None,
             )
         )
         await ready.wait()
@@ -53,6 +59,28 @@ def test_helper_failure_and_cancel_reap_the_owned_process(tmp_path, monkeypatch,
         ]
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("limit", [20000, 19999])
+def test_consumed_output_retains_total_limit_without_buffering(tmp_path, limit):
+    chunks = []
+
+    async def run():
+        return await run_owned(
+            [sys.executable, "-I", "-c", "import sys; sys.stdout.write('x'*20000)"],
+            b"",
+            cwd=tmp_path,
+            output_limit=limit,
+            output_consumer=chunks.append,
+        )
+
+    if limit == 20000:
+        assert asyncio.run(run()) == b""
+        assert b"".join(chunks) == b"x" * 20000
+    else:
+        with pytest.raises(ValueError, match="output exceeds"):
+            asyncio.run(run())
+    assert all(len(chunk) <= 8192 for chunk in chunks)
 
 
 def test_preflight_cancel_retains_preparation_cleanup_failure(tmp_path, monkeypatch):

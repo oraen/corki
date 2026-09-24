@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 from io import StringIO
 
 import pexpect
@@ -65,8 +66,12 @@ async def main():
         source = ui._transcript.render(100)
         assert source.count("HEAD_SENTINEL") == source.count("TAIL_SENTINEL") == 1
         assert r"\x1b[2J" in source
-        assert "characters omitted" in source
+        assert "lines (ctrl+t to expand)" in source
         assert "TOOL_ROW_150" not in source
+        expanded = ui._transcript.render(100, expand_tools=True)
+        assert all(f"TOOL_ROW_{index:03}" in expanded for index in range(300))
+        assert expanded.count("HEAD_SENTINEL") == expanded.count("TAIL_SENTINEL") == 1
+        assert chr(27) + "[2J" not in expanded
         assert source.count("LONG_RESULT_ACK") == source.count("FOLLOWUP_OK") == 1
         assert list(ui._session.history.get_strings()) == ["first", "follow"]
     finally:
@@ -97,7 +102,9 @@ def test_long_tool_output_keeps_history_and_next_input_usable(tmp_path, width):
     child.logfile_read = output
     try:
         child.expect("Ask Corki to do anything")
-        child.send("first\r")
+        child.send("first")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect_exact("LONG_RESULT_ACK")
         child.expect_exact("TURN_SETTLED")
         child.expect("Ask Corki to do anything")

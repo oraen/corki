@@ -2,6 +2,9 @@
 
 import asyncio
 import sqlite3
+import threading
+
+import pytest
 
 from corki.protocol.ids import new_thread_id, new_turn_id
 from corki.protocol.items import UserMessageItem
@@ -37,3 +40,75 @@ def test_archive_migration_and_reopening_preserve_history_and_collection(tmp_pat
         assert await store.list_threads(archived=True) == ()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["read", "list", "archive", "unarchive", "missing"])
+def test_archive_store_closes_connections_on_success_and_failure(tmp_path, monkeypatch, operation):
+    async def scenario():
+        database = tmp_path / "history.db"
+        repository = SQLiteSessionRepository(database)
+        thread = new_thread_id()
+        try:
+            await repository.create_thread(thread, tmp_path)
+            await repository.append_items(thread, (UserMessageItem("history", new_turn_id()),))
+        finally:
+            await repository.close()
+        store = SQLiteThreadArchiveStore(database)
+        if operation == "unarchive":
+            await store.archive(thread)
+        connections = []
+
+        def connect():
+            connection = sqlite3.connect(database, check_same_thread=False)
+            connection.row_factory = sqlite3.Row
+            connections.append(connection)
+            return connection
+
+        monkeypatch.setattr(store, "_connect", connect)
+        if operation == "missing":
+            with pytest.raises(LookupError):
+                await store.read(new_thread_id())
+        elif operation == "list":
+            await store.list_threads()
+        else:
+            await getattr(store, operation)(thread)
+        assert connections
+        for connection in connections:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                connection.execute("SELECT 1")
+
+    asyncio.run(scenario())
+
+
+def test_cancelled_archive_metadata_read_joins_worker(tmp_path, monkeypatch):
+    async def scenario():
+        store = SQLiteThreadArchiveStore(tmp_path / "history.db")
+        entered, released = asyncio.Event(), threading.Event()
+        loop = asyncio.get_running_loop()
+
+        def read(_):
+            loop.call_soon_threadsafe(entered.set)
+            assert released.wait(3)
+
+        monkeypatch.setattr(store, "_read", read)
+        task = asyncio.create_task(store.read(new_thread_id()))
+        try:
+            await asyncio.wait_for(entered.wait(), 3)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+            released.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        finally:
+            released.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_missing_session_database_is_not_recreated_by_read(tmp_path):
+    path = tmp_path / "missing.db"
+    with pytest.raises(sqlite3.OperationalError):
+        asyncio.run(SQLiteThreadArchiveStore(path).read(new_thread_id()))
+    assert not path.exists()

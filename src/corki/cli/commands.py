@@ -17,6 +17,7 @@ class CommandAction(Enum):
     MODEL_PICK = auto()
     CYCLE_MODE = auto()
     CLEAR = auto()
+    COPY = auto()
     REALTIME_ON = auto()
     REALTIME_OFF = auto()
     MCP_REFRESH = auto()
@@ -86,6 +87,7 @@ class CommandDispatcher:
                     "  /help    show this help\n"
                     "  /status  show the current session configuration\n"
                     "  /clear   clear the terminal and redraw the header\n"
+                    "  /copy    copy the last response, code block, or quote\n"
                     "  /model [name]  show or change the session model\n"
                     "  /plan [prompt]  enter Plan mode, optionally planning a request\n"
                     "  /compact summarize history in a standalone turn\n"
@@ -112,6 +114,11 @@ class CommandDispatcher:
 
         if command == "/clear":
             return CommandResult(handled=True, action=CommandAction.CLEAR)
+
+        if parts and parts[0].lower() == "/copy":
+            if len(parts) != 1:
+                return CommandResult(handled=True, output="Usage: /copy")
+            return CommandResult(handled=True, action=CommandAction.COPY)
 
         if command == "/compact":
             return CommandResult(handled=True, action=CommandAction.COMPACT)

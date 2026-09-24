@@ -18,10 +18,12 @@ from prompt_toolkit import ANSI, HTML, PromptSession
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import AnyFormattedText, to_formatted_text
-from prompt_toolkit.history import DummyHistory, FileHistory
+from prompt_toolkit.history import DummyHistory
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import ConditionalContainer, HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.patch_stdout import patch_stdout
 from rich import box
 from rich.cells import cell_len, set_cell_size
@@ -38,18 +40,35 @@ from corki.cli.command_completion import (
     bind_command_navigation,
     complete_command,
 )
+from corki.cli.composer_paste import ComposerPaste
+from corki.cli.composer_validation import ComposerValidator
 from corki.cli.display_text import visible_terminal_text
+from corki.cli.draft_history import DraftEntry, DraftHistory, ExpandedFileHistory
 from corki.cli.elicitation import collect_elicitation
 from corki.cli.history import replay_history
 from corki.cli.history_view import HistoryView
 from corki.cli.hook_activity import HookActivity
 from corki.cli.hook_output import hook_output_text
-from corki.cli.input_owner import CycleModeInput, QueuedInput
+from corki.cli.inline_images import ImageDraft
+from corki.cli.input_owner import (
+    BacktrackInput,
+    CycleModeInput,
+    DraftText,
+    ImageInput,
+    QueuedInput,
+    input_attachments,
+    input_draft,
+    input_preview,
+    submission_text,
+)
 from corki.cli.keyboard import enhanced_keyboard
 from corki.cli.markdown import AssistantBlock
+from corki.cli.notifications import TerminalNotifications
 from corki.cli.pending_input import pending_input_lines
 from corki.cli.plan_stream import PlanStreamUI
 from corki.cli.proposed_plan import ProposedPlanBlock
+from corki.cli.reference_completion import accept_reference
+from corki.cli.session_status import session_status, status_color_depth
 from corki.cli.stream_animation import ChunkingPolicy
 from corki.cli.stream_commit import commit_delta
 from corki.cli.stream_markdown import StreamMarkdown
@@ -57,9 +76,10 @@ from corki.cli.stream_table import TableStreamSource
 from corki.cli.terminal_console import TerminalConsole
 from corki.cli.terminal_palette import TerminalPalette
 from corki.cli.terminal_responses import frame_terminal_responses
+from corki.cli.terminal_title import project_title
 from corki.cli.transcript import Transcript, remember_display
 from corki.cli.user_input import collect_user_input
-from corki.cli.working_status import WorkingStatus
+from corki.cli.working_status import WorkingStatus, format_work_summary
 from corki.cli.wrapping import wrap_plan_text
 from corki.config import CorkiSettings
 
@@ -99,19 +119,163 @@ class TerminalUI(PlanStreamUI):
         self._hook_timer: asyncio.TimerHandle | None = None
         self._mcp_loading = False
         self._model_menu = None
+        self._inline_images = ImageDraft()
+        self._draft_history = DraftHistory()
+        self._image_tracking = False
+        self._image_revision = 0
+        self._image_syncing = False
+        self._paste_anchor = None
+        self._paste_task = None
+        self._image_notice = ""
+        self._backtrack_primed = False
+        self._backtrack_has_target = False
+
+        @self._bindings.add(
+            "escape",
+            filter=Condition(
+                lambda: (
+                    not self._turn_active
+                    and not self._history_view.active
+                    and not self._transcript.modal_depth
+                    and not self._session.default_buffer.text
+                    and not self._inline_images.elements
+                    and self._session.default_buffer.complete_state is None
+                )
+            ),
+        )
+        def backtrack(event):
+            if self._backtrack_primed:
+                self._backtrack_primed = False
+                event.app.exit(result=BacktrackInput())
+            else:
+                self._backtrack_primed = True
+            event.app.invalidate()
+
+        for key, direction in (("up", -1), ("c-p", -1), ("down", 1), ("c-n", 1)):
+
+            @self._bindings.add(
+                key,
+                filter=Condition(
+                    lambda: (
+                        not self._history_view.active
+                        and self._session.layout.current_buffer is self._session.default_buffer
+                        and self._session.default_buffer.complete_state is None
+                    )
+                ),
+            )
+            def recall_draft(event, direction=direction):
+                buffer = event.current_buffer
+                if not self._draft_history.should_navigate(buffer.text, buffer.cursor_position):
+                    if direction < 0:
+                        buffer.cursor_up()
+                    else:
+                        buffer.cursor_down()
+                    return
+                if self._paste_task is not None and not self._paste_task.done():
+                    return
+                entry = self._draft_history.move(direction, DraftEntry.capture(self._inline_images))
+                if entry is not None:
+                    self._image_revision += 1
+                    self._inline_images.restore(
+                        entry.text, entry.images, entry.positions, entry.pastes, entry.bindings
+                    )
+                    self._set_image_document(len(entry.text))
+
+        @self._bindings.add(
+            Keys.BracketedPaste, filter=Condition(lambda: not self._history_view.active)
+        )
+        def paste_text(event):
+            from corki.cli.display_text import sanitize_user_text
+            from corki.cli.image_clipboard import normalize_pasted_path
+
+            text = sanitize_user_text(event.data.replace("\r\n", "\n").replace("\r", "\n"))
+            buffer = event.current_buffer
+            start = buffer.cursor_position
+            if len(text) > 1000:
+                cursor = self._inline_images.paste(text, start, start)
+                self._image_revision += 1
+                self._set_image_document(cursor)
+                return
+            buffer.insert_text(text)
+            # Keep text in the draft until decoding succeeds. Cancellation must not lose it.
+            path = normalize_pasted_path(text) if 1 < len(text) <= 1000 else None
+            # Codex probes image dimensions before accepting a pasted path.
+            # Preflight existence before spawning our decoder: plain words must not swallow the
+            # following Enter while a doomed decoder process is starting.
+            if path is not None:
+                try:
+                    if not (self._settings.working_directory / path).is_file():
+                        path = None
+                except OSError:
+                    path = None
+            if (
+                path is not None
+                and getattr(event, "decode_paths", True)
+                and self._settings.supports_image_input
+                and len(self._images) < 8
+                and (self._paste_task is None or self._paste_task.done())
+            ):
+                self._paste_task = event.app.create_background_task(
+                    self._paste_image_path(path, text, start, self._image_revision)
+                )
+
+        @self._bindings.add(
+            "c-_",
+            filter=Condition(lambda: not self._history_view.active),
+        )
+        @self._bindings.add("c-x", "c-u", filter=Condition(lambda: not self._history_view.active))
+        def undo_image_edit(event):
+            cursor = self._inline_images.undo()
+            if cursor is not None:
+                if self._paste_anchor is not None:
+                    self._paste_anchor = min(self._paste_anchor, len(self._inline_images.text))
+                self._set_image_document(cursor)
+
+        @self._bindings.add("c-v", filter=Condition(lambda: not self._history_view.active))
+        @self._bindings.add("escape", "v", filter=Condition(lambda: not self._history_view.active))
+        def paste_image(event):
+            if self._paste_task is None or self._paste_task.done():
+                self._paste_anchor = event.current_buffer.cursor_position
+                self._paste_task = event.app.create_background_task(self._paste_image())
+
+        @self._bindings.add(
+            "c-d",
+            filter=Condition(
+                lambda: (
+                    bool(self._images)
+                    and not self._session.default_buffer.text
+                    and not self._history_view.active
+                )
+            ),
+        )
+        def keep_image_draft(event):
+            # An image-only composer is not empty: EOF must not silently discard it.
+            pass
 
         @self._bindings.add(
             "c-c",
             filter=Condition(
-                lambda: not self._history_view.active and bool(self._session.default_buffer.text)
+                lambda: (
+                    not self._history_view.active
+                    and (
+                        bool(self._session.default_buffer.text)
+                        or bool(self._images)
+                        or (self._paste_task is not None and not self._paste_task.done())
+                    )
+                )
             ),
         )
         def clear_composer_draft(event):
             # Codex consumes Ctrl+C on nonempty composer input before interrupt/quit.
             # Keep the cleared draft recoverable through input history, not model history.
             event.current_buffer.append_to_history()
+            self._draft_history.record(DraftEntry.capture(self._inline_images))
             event.current_buffer.reset()
             self._draft = ""
+            self._inline_images.clear()
+            self._image_notice = ""
+            if self._paste_task is not None:
+                self._paste_task.cancel()
 
         @self._bindings.add("c-t")
         async def toggle_reasoning_history(event):
@@ -119,13 +283,43 @@ class TerminalUI(PlanStreamUI):
 
         @self._bindings.add("escape", "up")
         def edit_queued_input(event):
+            if self._paste_task is not None and not self._paste_task.done():
+                return
             if self._queue_editor is not None:
                 message = self._queue_editor()
                 if message is not None:
-                    event.current_buffer.document = Document(message, len(message))
+                    text = submission_text(message)
+                    restored = ImageDraft()
+                    restored.restore(
+                        text, input_attachments(message), getattr(message, "image_positions", ())
+                    )
+                    snapshot = input_draft(message)
+                    if snapshot is not None:
+                        restored.restore(
+                            snapshot.text,
+                            snapshot.images,
+                            snapshot.positions,
+                            snapshot.pastes,
+                            snapshot.bindings,
+                        )
+                    if self._inline_images.elements:
+                        restored.append("\n")
+                        restored.append(
+                            self._inline_images.text,
+                            self._inline_images.images,
+                            self._inline_images.positions,
+                            self._inline_images.pastes,
+                            self._inline_images.bindings,
+                        )
+                    self._inline_images = restored
+                    self._set_image_document(len(self._inline_images.text), event.current_buffer)
 
         @self._bindings.add("tab")
         def queue_submission(event):
+            if self._paste_task is not None and not self._paste_task.done():
+                return
+            if self._complete_reference(event):
+                return
             if complete_command(event.current_buffer, trailing_space=True):
                 return
             self._queue_submission = True
@@ -133,7 +327,13 @@ class TerminalUI(PlanStreamUI):
 
         @self._bindings.add("enter")
         def submit_composer(event):
+            if self._paste_task is not None and not self._paste_task.done():
+                return
+            if self._complete_reference(event):
+                return
             complete_command(event.current_buffer)
+            # A rejected Tab validation must not turn a later Enter into queue admission.
+            self._queue_submission = False
             event.current_buffer.validate_and_handle()
 
         @self._bindings.add(
@@ -146,11 +346,38 @@ class TerminalUI(PlanStreamUI):
             event.app.exit(result="")
 
         self._session: PromptSession[str] = PromptSession(
-            history=FileHistory(str(history_file)),
+            color_depth=status_color_depth(),
+            erase_when_done=True,
+            history=ExpandedFileHistory(
+                str(history_file),
+                lambda text: (
+                    self._inline_images.expanded()[0] if text == self._inline_images.text else text
+                ),
+            ),
             multiline=True,
-            completer=CommandCompleter(),
+            validator=ComposerValidator(lambda: self._inline_images),
+            validate_while_typing=False,
+            completer=CommandCompleter(settings.working_directory),
             complete_while_typing=True,
         )
+        accept = self._session.default_buffer.accept_handler
+
+        def accept_composer(buffer):
+            # Only validated user submissions belong in scrollback. A cancelled
+            # realtime reader, mode switch, or empty Enter is transient UI.
+            self._session.app.erase_when_done = not bool(buffer.text.strip() or self._images)
+            self._draft_history.record(DraftEntry.capture(self._inline_images))
+            return accept(buffer)
+
+        self._session.default_buffer.accept_handler = accept_composer
+        # Rich draft undo owns text, attachments, pastes and bindings together.
+        # Do not also retain prompt-toolkit's unbounded text-only undo snapshots.
+        # This affects this composer only, not buffers owned by modal dialogs.
+        self._session.default_buffer.save_to_undo_stack = lambda clear_redo_stack=True: None
+        self._session.default_buffer.on_text_changed += self._sync_image_text
+        self._session.default_buffer.on_cursor_position_changed += self._snap_image_cursor
+        self._composer_paste = ComposerPaste(self, paste_text)
+        self._image_cursor = 0
         # Once the terminal has decoded Escape, don't hold the popup open for
         # the default one-second multi-key binding timeout. Alt+Enter delivered
         # as a chord still uses the existing newline binding.
@@ -189,6 +416,24 @@ class TerminalUI(PlanStreamUI):
             buffer.cancel_completion()
             self._session.completer.dismissed_text = buffer.text
 
+        @self._bindings.add(
+            "escape",
+            filter=Condition(
+                lambda: (
+                    self._turn_active
+                    and not self._history_view.active
+                    and not self._transcript.modal_depth
+                    and self._session.default_buffer.complete_state is None
+                )
+            ),
+        )
+        def interrupt_work(event):
+            # Use the existing input-owner cancellation path; never spawn a
+            # detached cancellation task. Keep Alt+Enter/Alt+Up chords intact
+            # by deliberately not making this binding eager.
+            self._draft = event.current_buffer.text
+            event.app.exit(exception=KeyboardInterrupt())
+
         def clear_completion_dismissal(buffer):
             completer = self._session.completer
             if buffer.text != completer.dismissed_text:
@@ -199,6 +444,20 @@ class TerminalUI(PlanStreamUI):
         self._table_source: TableStreamSource | None = None
         self._stream_markdown: StreamMarkdown | None = None
         self._tail_cache = None
+        # Style the buffer window itself so wrapped rows and empty trailing
+        # cells share the surface, without tinting completion menus/toolbars.
+        self._session.layout.current_window.style = self._composer_style
+        self._session.layout.current_window.height = lambda: Dimension(
+            min=(
+                8
+                if not self._session.app.is_done
+                and self._session.default_buffer.complete_state is not None
+                else 1
+            )
+        )
+        composer_visible = Condition(
+            lambda: not self._session.app.is_done and not self._history_view.active
+        )
         self._session.layout.container = HSplit(
             [
                 ConditionalContainer(
@@ -235,10 +494,33 @@ class TerminalUI(PlanStreamUI):
                         )
                     ),
                 ),
+                ConditionalContainer(Window(height=1), composer_visible),
+                ConditionalContainer(
+                    Window(
+                        FormattedTextControl(self._image_fragments),
+                        dont_extend_height=True,
+                        wrap_lines=True,
+                    ),
+                    Condition(
+                        lambda: (
+                            bool(self._images or self._image_notice)
+                            and not self._session.app.is_done
+                            and not self._history_view.active
+                        )
+                    ),
+                ),
+                ConditionalContainer(
+                    Window(height=1, style=self._composer_style), composer_visible
+                ),
                 self._session.layout.container,
                 ConditionalContainer(
-                    Window(FormattedTextControl(self._toolbar), height=1),
-                    Condition(lambda: not self._session.app.is_done and not self._turn_active),
+                    Window(height=1, style=self._composer_style), composer_visible
+                ),
+                ConditionalContainer(
+                    Window(FormattedTextControl(self._session_status), height=1),
+                    Condition(
+                        lambda: not self._session.app.is_done and not self._history_view.active
+                    ),
                 ),
             ]
         )
@@ -252,6 +534,9 @@ class TerminalUI(PlanStreamUI):
         self._terminal_palette.attach(self._session.app)
         self._terminal_palette.attach(self._form_session.app)
         self._form_bindings = self._build_key_bindings()
+        self._notifications = TerminalNotifications(
+            self._session.app.output, settings, interactive=self._console.is_terminal
+        )
 
         @self._form_bindings.add("c-c")
         def cancel_form(event):
@@ -259,6 +544,162 @@ class TerminalUI(PlanStreamUI):
                 event.current_buffer.text = ""
             else:
                 event.app.exit(exception=EOFError())
+
+    @property
+    def _images(self):
+        return list(self._inline_images.images)
+
+    def _set_image_document(self, cursor, buffer=None):
+        self._image_syncing = True
+        try:
+            target = self._session.default_buffer if buffer is None else buffer
+            target.document = Document(self._inline_images.text, cursor)
+            self._image_cursor = cursor
+        finally:
+            self._image_syncing = False
+
+    def _sync_image_text(self, buffer):
+        if not self._image_tracking or self._image_syncing:
+            return
+        self._backtrack_primed = False
+        self._image_revision += 1
+        self._session.completer.reset_reference_error()
+        old = self._inline_images.text
+        cursor = self._inline_images.sync(buffer.text, buffer.cursor_position)
+        if self._paste_anchor is not None:
+            new = self._inline_images.text
+            prefix = 0
+            while prefix < min(len(old), len(new)) and old[prefix] == new[prefix]:
+                prefix += 1
+            suffix = 0
+            while (
+                suffix < min(len(old), len(new)) - prefix and old[-1 - suffix] == new[-1 - suffix]
+            ):
+                suffix += 1
+            if self._paste_anchor > prefix:
+                self._paste_anchor = (
+                    self._paste_anchor + len(new) - len(old)
+                    if self._paste_anchor >= len(old) - suffix
+                    else prefix
+                )
+        if buffer.text != self._inline_images.text or buffer.cursor_position != cursor:
+            self._set_image_document(cursor)
+
+    def _snap_image_cursor(self, buffer):
+        if not self._image_tracking or self._image_syncing:
+            return
+        cursor = buffer.cursor_position
+        for element in self._inline_images.elements:
+            if element.start < cursor < element.end:
+                cursor = element.end if cursor > self._image_cursor else element.start
+                break
+        self._image_cursor = cursor
+        if cursor != buffer.cursor_position:
+            buffer.cursor_position = cursor
+
+    def _complete_reference(self, event):
+        def selected_file(path, inserted, start):
+            if (
+                Path(path).suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+                and self._settings.supports_image_input
+                and len(self._images) < 8
+            ):
+                self._paste_task = event.app.create_background_task(
+                    self._paste_image_path(Path(path), inserted, start, self._image_revision)
+                )
+
+        return accept_reference(event.current_buffer, self._inline_images, on_file=selected_file)
+
+    async def _paste_image_path(self, path, text, start, revision):
+        from corki.cli.image_clipboard import read_path_image
+
+        self._image_notice = "Reading pasted image…"
+        self._session.app.invalidate()
+        try:
+            attachment = await read_path_image(path, self._settings.working_directory)
+            buffer = self._session.default_buffer
+            if revision != self._image_revision or buffer.text[start : start + len(text)] != text:
+                return  # An edited/replaced draft must never receive a stale attachment.
+            if (
+                sum(len(image.data_url) for image in self._images) + len(attachment.data_url)
+                > 44_000_000
+            ):
+                return
+            cursor = buffer.cursor_position
+            end = start + len(text)
+            cursor = cursor - len(text) if cursor >= end else min(cursor, start)
+            buffer.document = Document(buffer.text[:start] + buffer.text[end:], cursor)
+            cursor = self._inline_images.attach(attachment, start, buffer.cursor_position)
+            self._set_image_document(cursor)
+            end = self._inline_images.elements[-1].end
+            buffer.document = Document(
+                buffer.text[:end] + " " + buffer.text[end:],
+                cursor + 1 if cursor >= end else cursor,
+            )
+        except (OSError, ValueError, TimeoutError):
+            pass  # Codex retains the original paste when it isn't a readable image.
+        finally:
+            self._image_notice = ""
+            self._session.app.invalidate()
+
+    async def _paste_image(self):
+        from corki.cli.image_clipboard import read_clipboard_image
+
+        if not self._settings.supports_image_input:
+            self._image_notice = "This provider has image input disabled."
+            self._session.app.invalidate()
+            return
+        if len(self._images) >= 8:
+            self._image_notice = "At most 8 images per message; remove an image first."
+            self._session.app.invalidate()
+            return
+        self._image_notice = "Reading clipboard image…"
+        self._session.app.invalidate()
+        try:
+            attachment = await read_clipboard_image(self._settings.working_directory)
+            if (
+                sum(len(image.data_url) for image in self._images) + len(attachment.data_url)
+                > 44_000_000
+            ):
+                raise ValueError("Attached images exceed the message size limit.")
+            buffer = self._session.default_buffer
+            position = (
+                self._paste_anchor if self._paste_anchor is not None else buffer.cursor_position
+            )
+            cursor = self._inline_images.attach(attachment, position, buffer.cursor_position)
+            self._set_image_document(cursor)
+            self._image_notice = ""
+        except asyncio.CancelledError:
+            self._image_notice = ""
+            raise
+        except (OSError, ValueError, TimeoutError):
+            self._image_notice = (
+                "Could not paste image: clipboard empty/unavailable, image too large, or timed out."
+            )
+        finally:
+            self._paste_anchor = None
+            self._session.app.invalidate()
+
+    def _image_fragments(self):
+        text = ""
+        if self._images:
+            text = f"{len(self._images)} image(s) · Backspace/Delete removes an image marker"
+        if self._image_notice:
+            text += ("\n" if text else "") + self._image_notice
+        return [("fg:ansicyan", text)]
+
+    def _composer_style(self) -> str:
+        if self._session.app.is_done:
+            return ""
+        # Codex style.rs::user_message_bg_rgb: lift dark backgrounds by 12%,
+        # darken light backgrounds by 4%. Reuse the existing bounded OSC probe.
+        background = self._terminal_palette.background
+        if background is None:
+            return ""
+        light = self._terminal_palette.light
+        top, alpha = (0, 0.04) if light else (255, 0.12)
+        rgb = [int(channel * (1 - alpha) + top * alpha + 0.5) for channel in background]
+        return "bg:#" + "".join(f"{channel:02x}" for channel in rgb)
 
     @staticmethod
     def _build_key_bindings() -> KeyBindings:
@@ -271,6 +712,38 @@ class TerminalUI(PlanStreamUI):
         """
 
         bindings = KeyBindings()
+
+        @bindings.add("c-a")
+        @bindings.add("home")
+        def line_start(event):
+            buffer = event.current_buffer
+            buffer.cursor_position += buffer.document.get_start_of_line_position()
+
+        @bindings.add("c-e")
+        @bindings.add("end")
+        def line_end(event):
+            buffer = event.current_buffer
+            buffer.cursor_position += buffer.document.get_end_of_line_position()
+
+        @bindings.add("c-b")
+        def move_left(event):
+            event.current_buffer.cursor_left()
+
+        @bindings.add("c-f")
+        def move_right(event):
+            event.current_buffer.cursor_right()
+
+        @bindings.add("c-left")
+        @bindings.add("escape", "b")
+        def word_left(event):
+            buffer = event.current_buffer
+            buffer.cursor_position += buffer.document.find_start_of_previous_word() or 0
+
+        @bindings.add("c-right")
+        @bindings.add("escape", "f")
+        def word_right(event):
+            buffer = event.current_buffer
+            buffer.cursor_position += buffer.document.find_next_word_ending() or 0
 
         @bindings.add("enter")
         def submit(event) -> None:  # type: ignore[no-untyped-def]
@@ -317,33 +790,94 @@ class TerminalUI(PlanStreamUI):
 
         scope = getattr(self, "_input_scope", None)
         if scope is not None and not self._input_raw:
-            scope.enter_context(self._session.app.input.raw_mode())
+            from corki.cli.terminal_input_mode import between_readers_mode
+
+            scope.enter_context(between_readers_mode(self._session.app.input))
             self._input_raw = True
         self._queue_submission = False
         self._mode_cycle_requested = False
         self._session.completer.dismissed_text = None
+        self._session.app.erase_when_done = True
+        self._image_tracking = False
+        if not self._draft_history.loaded:
+            async for _ in self._session.history.load():
+                pass
+            for text in self._session.history.get_strings()[-128:]:
+                self._draft_history.record(DraftEntry(text))
+            self._draft_history.loaded = True
+        self._draft_history.reset_navigation()
+        if not self._inline_images.elements and self._inline_images.text != self._draft:
+            self._inline_images.clear(self._draft)
+
+        def track_images():
+            self._image_tracking = True
+            self._image_cursor = self._session.default_buffer.cursor_position
+
         with patch_stdout(raw=True), enhanced_keyboard(self._session.app):
             try:
                 message = await self._session.prompt_async(
                     HTML("<ansicyan><b>›</b></ansicyan> "),
-                    placeholder=HTML(
-                        '<style fg="ansibrightblack">Ask Corki to do anything</style>'
+                    placeholder=lambda: (
+                        []
+                        if self._images
+                        else HTML('<style fg="ansibrightblack">Ask Corki to do anything</style>')
                     ),
                     key_bindings=self._bindings,
                     default=self._draft,
+                    pre_run=track_images,
                 )
             except asyncio.CancelledError:
+                if burst := getattr(self, "_composer_paste", None):
+                    burst.finish()
                 self._draft = self._session.default_buffer.text
                 raise
             finally:
+                if burst := getattr(self, "_composer_paste", None):
+                    burst.finish()
+                self._image_tracking = False
                 self._history_view.close()
+                self._paste_task = None  # prompt application has joined its owned background tasks
             if self._mode_cycle_requested:
                 return CycleModeInput()
+            if isinstance(message, BacktrackInput):
+                return message
             self._draft = ""
             if message.strip():
                 # PromptSession already echoed it; retain only the replay source here.
                 self._transcript.calls.append((TerminalUI._show_submitted_input, (message,), {}))
-            return QueuedInput(message) if self._queue_submission else message
+            # Slash commands leave attachments in the draft, not on a command string.
+            snapshot = DraftEntry.capture(self._inline_images)
+            if self._inline_images.text == message:
+                message, images, positions = self._inline_images.expanded()
+            else:
+                images, positions = tuple(self._images), self._inline_images.positions
+            value = message
+            command_text = message
+            for number, start in sorted(enumerate(positions, 1), key=lambda p: p[1], reverse=True):
+                command_text = (
+                    command_text[:start] + command_text[start + len(f"[Image #{number}]") :]
+                )
+            if self._images and not command_text.lstrip().startswith("/"):
+                value = ImageInput(
+                    message, images, positions, snapshot, self._inline_images.mentions
+                )
+                self._inline_images.clear()
+                self.show_notice(f"[Attached {len(value.attachments)} image(s)]")
+            elif self._images:
+                value = command_text
+                self._inline_images.restore("", self._images)
+                self._draft = self._inline_images.text
+            else:
+                if snapshot.pastes or snapshot.bindings:
+                    value = DraftText(message, snapshot)
+                self._inline_images.clear()
+            if (
+                not self._queue_submission
+                and (command_text.strip() or isinstance(value, ImageInput))
+                and not command_text.lstrip().startswith("/")
+            ):
+                self._backtrack_has_target = True
+            return QueuedInput(value) if self._queue_submission else value
 
     @contextmanager
     def input_mode(self):
@@ -351,6 +885,15 @@ class TerminalUI(PlanStreamUI):
         # readers. Restoring cooked mode in those gaps converts queued CR to LF.
         # Acquire on first read, so startup/history loading retain signal handling.
         with ExitStack() as scope:
+            scope.enter_context(project_title(self._console, self._settings.working_directory))
+            scope.enter_context(
+                self._notifications.reporting(
+                    (
+                        frame_terminal_responses(self._session.app.input),
+                        frame_terminal_responses(self._form_session.app.input),
+                    )
+                )
+            )
             self._input_scope, self._input_raw = scope, False
             try:
                 yield
@@ -360,6 +903,8 @@ class TerminalUI(PlanStreamUI):
 
     @remember_display
     def _show_submitted_input(self, message: str) -> None:
+        if not self._transcript.replaying:
+            self._backtrack_has_target = True
         self._console.print(Text.assemble(("› ", "cyan bold"), visible_terminal_text(message)))
 
     def replay_history(self, items) -> None:
@@ -437,51 +982,86 @@ class TerminalUI(PlanStreamUI):
         finally:
             self._transcript.modal_depth -= 1
 
+    async def read_backtrack(self, prompts, *, history=None):
+        from corki.cli.backtrack_picker import choose_prompt
+
+        if not prompts:
+            self.show_notice("No previous message to edit.")
+            return None
+        self._transcript.modal_depth += 1
+        try:
+            with patch_stdout(raw=True):
+                return await choose_prompt(
+                    prompts if history is None else history,
+                    prompts,
+                    input=self._form_session.app.input,
+                    output=self._form_session.app.output,
+                )
+        finally:
+            self._transcript.modal_depth -= 1
+
     async def read_model(self, current):
         from corki.cli.menu_overlay import MenuOverlayHost
-        from corki.cli.model_picker import ModelSelection, choose_model
+        from corki.cli.model_picker import choose_model_and_effort
 
         self._transcript.modal_depth += 1
         overlay_host = MenuOverlayHost(self._form_session)
         self._model_menu = overlay_host
         try:
-            # Bundled context metadata is not evidence that a provider offers a model.
-            models = tuple(info.model for info in (self._settings.model_contexts or ()))
             with patch_stdout(raw=True):
-                model = await choose_model(
-                    self._form_session, current.model, models, overlay_host=overlay_host
+                return await choose_model_and_effort(
+                    self._form_session, self._settings, current, overlay_host=overlay_host
                 )
-                if model is None:
-                    return None
-                info = self._settings.model_context_info(model)
-                levels = info.supported_reasoning_levels
-                if not levels:
-                    return ModelSelection(model)
-                effort = info.reasoning_effort_for_model_switch(current.reasoning_effort)
-                effort = await choose_model(
-                    self._form_session,
-                    effort,
-                    levels,
-                    title="Select reasoning effort",
-                    subtitle=model,
-                    allow_custom=False,
-                    overlay_host=overlay_host,
-                )
-                if effort in {"max", "ultra"}:
-                    confirmation = await choose_model(
-                        self._form_session,
-                        "Cancel",
-                        ("Cancel", f"Use {effort}"),
-                        title="Confirm reasoning effort",
-                        subtitle="May increase time and token usage.",
-                        allow_custom=False,
-                        overlay_host=overlay_host,
-                    )
-                    if confirmation != f"Use {effort}":
-                        return None
-                return ModelSelection(model, effort) if effort is not None else None
         finally:
             overlay_host.close()
+            self._model_menu = None
+            self._transcript.modal_depth -= 1
+
+    async def read_copy(self, _request):
+        from corki.cli.clipboard import copy_choices, write_clipboard
+        from corki.cli.menu_overlay import MenuOverlayHost
+        from corki.cli.model_picker import choose_model
+
+        text = next(
+            (
+                args[0]
+                for method, args, kwargs in reversed(self._transcript.calls)
+                if method.__name__ in {"show_assistant_message", "show_proposed_plan"}
+                and not kwargs.get("is_error", False)
+                and args[0].strip()
+            ),
+            None,
+        )
+        if text is None:
+            self.show_notice("No agent response to copy.")
+            return
+        choices = copy_choices(text)
+        self._transcript.modal_depth += 1
+        host = MenuOverlayHost(self._form_session)
+        self._model_menu = host
+        try:
+            with patch_stdout(raw=True):
+                selected = await choose_model(
+                    self._form_session,
+                    "Whole response",
+                    tuple(choices),
+                    title="Copy from response",
+                    subtitle="Choose text to copy",
+                    allow_custom=False,
+                    overlay_host=host,
+                )
+            if selected is None:
+                return
+            try:
+                notice = await write_clipboard(
+                    choices[selected], console=self._console, cwd=self._settings.working_directory
+                )
+            except (OSError, ValueError):
+                self.show_notice("Copy failed: clipboard unavailable or response too large.")
+            else:
+                self.show_notice(notice)
+        finally:
+            host.close()
             self._model_menu = None
             self._transcript.modal_depth -= 1
 
@@ -492,6 +1072,9 @@ class TerminalUI(PlanStreamUI):
             self._settings, model=snapshot.model, reasoning_effort=snapshot.reasoning_effort
         )
         self._session.app.invalidate()
+
+    def notify(self, kind, identity):
+        self._notifications.notify(kind, identity)
 
     def set_mcp_loading(self, loading: bool) -> None:
         """Update transient discovery activity without replacing turn status/history."""
@@ -532,6 +1115,29 @@ class TerminalUI(PlanStreamUI):
             and self._session.default_buffer.complete_state is None
         )
 
+    def _session_status(self) -> AnyFormattedText:
+        error = self._session.completer.reference_error_for(self._session.default_buffer.document)
+        if error:
+            return [("fg:ansiyellow", "  " + error)]
+        if (
+            self._backtrack_primed
+            and self._backtrack_has_target
+            and not self._turn_active
+            and not self._session.default_buffer.text
+            and not self._inline_images.elements
+        ):
+            return [("fg:ansibrightblack", "  esc again to edit previous message")]
+        effort = self._settings.reasoning_effort
+        if effort is None:
+            effort = self._settings.model_context_info(self._settings.model).default_reasoning_level
+        return session_status(
+            self._settings.model,
+            self._settings.working_directory,
+            self._session.app.output.get_size().columns,
+            light=self._terminal_palette.light,
+            reasoning_effort=effort if effort and effort != "none" else "default",
+        )
+
     def _toolbar(self) -> AnyFormattedText:
         if self._turn_active:
             return self._working_fragments()
@@ -549,6 +1155,9 @@ class TerminalUI(PlanStreamUI):
 
     def _working_fragments(self):
         detail = self._hook_activity.summary
+        exploration = getattr(self, "_exploration", None)
+        if not detail and exploration is not None and exploration.active:
+            detail = "Exploring"
         if not detail and self._active_tools:
             detail = (
                 f"Running {next(iter(self._active_tools.values()))}"
@@ -560,7 +1169,6 @@ class TerminalUI(PlanStreamUI):
         return self._working_status.fragments(
             max(0, self._session.app.output.get_size().columns),
             detail=detail,
-            has_draft=bool(self._session.default_buffer.text),
         )
 
     def _toolbar_content(self) -> AnyFormattedText:
@@ -639,15 +1247,48 @@ class TerminalUI(PlanStreamUI):
         self._history_view.loader = loader
 
     def set_pending_inputs(self, messages: tuple[str, ...]) -> None:
-        self._pending_inputs = tuple(messages)
+        self._pending_inputs = tuple(input_preview(message) for message in messages)
         self._session.app.invalidate()
 
     def set_queue_editor(self, editor) -> None:
         self._queue_editor = editor
 
+    def set_reference_loader(self, loader) -> None:
+        self._session.completer.references = loader
+
     def restore_queued_inputs(self, messages: tuple[str, ...]) -> None:
         """Restore after the owned reader has joined, without submitting or writing history."""
-        self._draft = "\n".join((*messages, *((self._draft,) if self._draft else ())))
+        restored = ImageDraft()
+        for message in messages:
+            if restored.text:
+                restored.append("\n")
+            snapshot = input_draft(message)
+            if snapshot is not None:
+                restored.append(
+                    snapshot.text,
+                    snapshot.images,
+                    snapshot.positions,
+                    snapshot.pastes,
+                    snapshot.bindings,
+                )
+            else:
+                restored.append(
+                    submission_text(message),
+                    input_attachments(message),
+                    getattr(message, "image_positions", ()),
+                )
+        if self._draft:
+            if restored.text:
+                restored.append("\n")
+            restored.append(
+                self._draft,
+                self._inline_images.images,
+                self._inline_images.positions,
+                self._inline_images.pastes,
+                self._inline_images.bindings,
+            )
+        self._inline_images = restored
+        self._draft = restored.text
 
     def _pending_input_fragments(self):
         width = self._session.app.output.get_size().columns
@@ -657,6 +1298,14 @@ class TerminalUI(PlanStreamUI):
                 self._pending_inputs, width, edit_enabled=self._queue_editor is not None
             )
         ]
+
+    def show_work_summary(self) -> None:
+        self.show_work_duration(self._working_status.elapsed)
+
+    @remember_display
+    def show_work_duration(self, seconds: float | None) -> None:
+        # Store duration, not a prewrapped rule: history/reflow uses its new width.
+        self._console.print(Text(format_work_summary(seconds, self._console.width), style="dim"))
 
     @remember_display
     def show_assistant_message(self, message: str, *, is_error: bool = False) -> None:
@@ -934,28 +1583,182 @@ class TerminalUI(PlanStreamUI):
             return
         self._console.print("\n")
 
+    def flush_exploration(self):
+        group = getattr(self, "_exploration", None)
+        if group is not None and group.calls:
+            self._exploration = None
+            self.show_exploration(tuple(group.calls.values()))
+
+    @remember_display
+    def show_exploration(self, calls):
+        from corki.cli.tool_activity import summary_calls
+
+        self._exploration = None
+        if getattr(self._transcript, "expand_tools", False):
+            return
+        active = any(not c.finished or c.session_id is not None for c in calls)
+        failed = any(c.failed for c in calls)
+        self._console.print(
+            Text("• " + ("Exploring" if active else "Explored"), style="red" if failed else "bold")
+        )
+        rows = summary_calls(call.activities for call in calls)
+        for index, row in enumerate(rows[:32]):
+            detail = Text(visible_terminal_text(row.detail))
+            detail.truncate(max(1, self._console.width - 10), overflow="ellipsis")
+            self._console.print(
+                Text.assemble(
+                    ("  └ " if index == 0 else "    ", "dim"),
+                    (row.kind + " ", "cyan"),
+                    detail,
+                )
+            )
+        if len(rows) > 32:
+            self._console.print("    … (ctrl+t to expand)", style="dim")
+        for call in calls:
+            if call.session_id is not None:
+                self._console.print(Text(f"    Process running with session ID {call.session_id}"))
+            if call.failed:
+                code = f" (exit {call.exit_code})" if call.exit_code is not None else ""
+                self._console.print(Text("    Command failed" + code, style="red"))
+                self.show_tool_output.__wrapped__(self, call.output)
+
+    @remember_display
+    def show_identified_tool_started(self, call_id, name, arguments_preview):
+        from corki.cli.tool_activity import Exploration, classify
+
+        if getattr(self._transcript, "expand_tools", False):
+            self.show_tool_started.__wrapped__(self, name, arguments_preview)
+            return
+        activities = classify(name, arguments_preview)
+        group = getattr(self, "_exploration", None)
+        if not activities or (group is not None and len(group.calls) >= 64):
+            self.flush_exploration()
+            group = None
+        if activities:
+            if group is None:
+                group = self._exploration = Exploration()
+            group.add(call_id, activities)
+            if session := getattr(self, "_session", None):
+                session.app.invalidate()
+        else:
+            self.show_tool_started.__wrapped__(self, name, arguments_preview)
+
+    @remember_display
+    def show_identified_tool_completed(
+        self, call_id, name, *, is_error, exit_code=None, session_id=None
+    ):
+        group = getattr(self, "_exploration", None)
+        if group is not None and group.complete(call_id, is_error, exit_code, session_id):
+            if session_id is not None or (
+                not group.active and any(c.failed for c in group.calls.values())
+            ):
+                self.flush_exploration()
+            if session := getattr(self, "_session", None):
+                session.app.invalidate()
+        else:
+            self.flush_exploration()
+            self.show_tool_completed.__wrapped__(
+                self, name, is_error=is_error or exit_code not in (None, 0)
+            )
+
     @remember_display
     def show_tool_started(self, name: str, arguments_preview: str) -> None:
         """Render a compact tool-call header; detailed output follows separately."""
 
+        from corki.cli.tool_activity import classify, summary_calls
+
+        expanded = getattr(getattr(self, "_transcript", None), "expand_tools", False)
+        activities = classify(name, arguments_preview) if not expanded else ()
+        if activities:
+            self._console.print(Text("• Exploring", style="bold"))
+            rows = []
+            for index, activity in enumerate(summary_calls((activities,))):
+                rows.extend(
+                    Text.assemble(
+                        ("  └ " if index == 0 else "    ", "dim"),
+                        (activity.kind + " ", "cyan"),
+                        visible_terminal_text(activity.detail),
+                    ).wrap(self._console, max(1, self._console.width), overflow="fold")
+                )
+            if len(rows) > 5:
+                marker = Text(f"    … +{len(rows) - 4} lines (ctrl+t to expand)", style="dim")
+                marker.truncate(max(1, self._console.width), overflow="ellipsis")
+                rows = [*rows[:4], marker]
+            self._console.print(Text("\n").join(rows))
+            return
+
         name = visible_terminal_text(name)
         preview = visible_terminal_text(arguments_preview.replace("\n", " "))
-        if len(preview) > 180:
+        expanded = getattr(getattr(self, "_transcript", None), "expand_tools", False)
+        if len(preview) > 180 and not expanded:
             preview = preview[:177] + "..."
-        self._console.print(Text.assemble(("• ", "cyan"), (name, "bold"), (f" {preview}", "dim")))
+        header = Text.assemble(("• ", "cyan"), (name, "bold"), (f" {preview}", "dim"))
+        rows = header.wrap(self._console, max(1, self._console.width), overflow="fold")
+        if len(rows) > 2 and not expanded:
+            rows = rows[:2]
+            rows[-1].truncate(max(1, self._console.width - 1), overflow="ellipsis")
+        self._console.print(Text("\n").join(rows))
 
     @remember_display
     def show_tool_output(self, output: str) -> None:
         """Display bounded evidence returned by a tool."""
 
         if output:
+            expanded = getattr(getattr(self, "_transcript", None), "expand_tools", False)
+            rows = Text(visible_terminal_text(output).removesuffix("\n")).wrap(
+                self._console, max(1, self._console.width), overflow="fold", no_wrap=False
+            )
+            if not expanded and len(rows) > 5:
+                marker = Text(f"… +{len(rows) - 4} lines (ctrl+t to expand)")
+                marker.truncate(max(1, self._console.width), overflow="ellipsis")
+                rows = [*rows[:2], marker, *rows[-2:]]
             self._console.print(
-                visible_terminal_text(output),
+                Text("\n").join(rows),
                 style="dim",
                 markup=False,
                 highlight=False,
-                end="" if output.endswith("\n") else "\n",
+                end="\n",
             )
+
+    @remember_display
+    def show_tool_output_chunk(self, call_id: str, output: str, *, finished=False) -> None:
+        """Cap streamed output across chunks, with bounded per-call preview state."""
+        group = getattr(self, "_exploration", None)
+        if group is not None and group.output(call_id, output):
+            return
+        self.flush_exploration()
+        if getattr(self._transcript, "expand_tools", False):
+            if output:
+                self.show_tool_output.__wrapped__(self, output)
+            return
+        states = getattr(self, "_tool_previews", None)
+        if states is None:
+            states = self._tool_previews = {}
+        count, tail = states.get(call_id, (0, []))
+        for row in (
+            Text(visible_terminal_text(output).removesuffix("\n")).wrap(
+                self._console, max(1, self._console.width), overflow="fold", no_wrap=False
+            )
+            if output
+            else ()
+        ):
+            if count < 2:
+                self._console.print(row, style="dim")
+            else:
+                tail.append(row)
+                tail = tail[-3:]
+            count += 1
+        if finished:
+            if count > 5:
+                marker = Text(f"… +{count - 4} lines (ctrl+t to expand)", style="dim")
+                marker.truncate(max(1, self._console.width), overflow="ellipsis")
+                self._console.print(marker)
+                tail = tail[-2:]
+            for row in tail:
+                self._console.print(row, style="dim")
+            states.pop(call_id, None)
+        else:
+            states[call_id] = (count, tail)
 
     @remember_display
     def show_tool_completed(self, name: str, *, is_error: bool) -> None:
@@ -1047,5 +1850,8 @@ class TerminalUI(PlanStreamUI):
     def show_goodbye(self) -> None:
         """Leave a concise, deterministic shutdown message."""
 
+        self._draft_history.clear()
         self.clear_hooks()
+        self._inline_images.clear()
+        self._image_notice = ""
         self._console.print("\n[dim]Session ended.[/dim]")

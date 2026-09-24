@@ -1,5 +1,221 @@
 # CLI 交互对齐审计
 
+## 2026-09-23：图片与正文的位置关系
+
+本节取代下节的独立附件行和开头 Backspace 删除最后一张方案。
+核对 Codex `chat_composer/attachment_state.rs::attach_image`、
+`chatwidget/input_submission.rs` 和 `protocol/src/models.rs`：编辑器在光标处
+插入原子 `[Image #N]` 元素；实际模型请求仍先发送编号图片块，再发送含占位符
+的完整正文，并非将正文物理拆成 text/image/text。
+
+Corki 改为跟踪真实标记的位置和附件身份，不将手输的同名文字识别为附件。
+光标跳过标记，Backspace/Delete 原子删除，删除后仅重排真实标记的编号。
+撤销同时恢复正文与附件，最多 64 条、累计 100 万文本字符及 4400 万字符
+唯一图片 data URL；提交/清空/退出释放草稿撤销引用。粘贴进行中继续输入时
+保留原插入锚点，读取期间禁止提交和取回队列，避免异步操作错配。
+普通提交、实时 steer、排队/取回、未消费输入返回及会话持久化携带位置元数据。
+按 Python Unicode 字符偏移保存，中文和前后空白不改写；不照搬 Rust UTF-8
+字节偏移。模型内容采用同号 `<image name=[Image #N]>` 包装，不虚构文件路径。
+文本压缩保留原正文并清除失效附件位置，不把图片包装标签混入用户文字。
+
+验证：CLI/realtime/context/models/storage 单测、图片发送/准备/steering 集成及
+40/100 列图片 PTY 合计 1758 passed，0 skipped；4 条既有 forkpty 警告。
+含粘贴期间中文输入、原子删除/撤销、伪标记、编号顺序、两种模型协议请求、
+执行中追加图片及冷恢复位置断言。未访问用户系统剪贴板或真实模型服务。
+
+## 2026-09-23：Ctrl+V 图片输入全链路
+
+参考 Codex `chatwidget/interaction.rs` 的 Ctrl+V 图片分支、`clipboard_paste.rs`
+文件优先/像素回退/PNG 编码和 composer `attachment_state.rs` 的附件独立管理。
+Corki 采用本地受管 Python/Pillow helper；macOS 先读 Finder 文件 URL，
+再读取剪贴板像素。5 秒总超时、进程组回收、单图 20 MiB/3200 万像素限制，
+最多 8 张，消息附件 data URL 总长度限制 4400 万字符。失败只显示安全提示。
+不落临时图片文件：使用现有 ImageAttachment 数据合同与媒体校验/编码流程，
+持久化不依赖临时路径，不新增官方服务或依赖包。远程 SSH 不读取服务器剪贴板。
+
+Ctrl+V 后显示 [Image #N]，支持无文字提交、重复粘贴、光标在开头 Backspace
+删除最后一张。读取期间阻止 Enter/Tab 提前提交；Ctrl+C 清草稿及图片，
+模态抢占/任务结束会取消并等待读取子任务，已有附件随未提交草稿保留。
+Slash 命令保留待发附件。普通提交、实时 steer、Tab 排队、关口关闭转下轮、
+未消费输入返回及队列编辑传递同一附件对象，而不是丢掉附件的字符串。
+会话关掉再打开仍从持久化用户内容中恢复图片；底层禁用图像时不允许粘贴。
+本地 CLI 采用独立附件行而非 Codex 的行内原子占位符；不声称 UI 内部实现完全一致。
+
+验证：CLI/realtime/models/image/owned-process 单测、图片持久化和 steering 集成，
+40/100 列图片/队列/审批覆盖 PTY 联合最终 1217 passed，0 skipped。
+测试不读取或修改用户系统剪贴板；另用独立 NSPasteboard 验证真实 macOS
+Finder URL 桥接（中文/空格路径），并修正必须使用原生 NSArray 的细节。
+helper 以 Python -I 启动，避免工作目录同名模块劫持；实际截图粘贴仍需用户体验确认。
+
+## 2026-09-23：/model 分层选择交互
+
+参考 Codex `chatwidget/model_popups.rs` 的模型/普通等级/高级等级分层，
+当前值与默认值分开标记；新模型初始高亮自己的默认等级，不沿用旧模型等级。
+模型页保留供应商配置列表及自定义输入，不把 bundled metadata 当可用模型目录。
+等级页采用编号选择、方向键、Enter 确认，移除无意义的 Filter 输入框；
+附通用等级说明（当前元数据没有描述字段，不伪造供应商描述）。Max/Ultra
+只在 More reasoning… 子页选择；单一普通等级直接采用。
+Esc 逐级返回，Ctrl+C/Ctrl+D 取消整个选择；只有最后接受才返回设置变更。
+菜单使用瞬态擦除、窄屏单行截断和可视范围滚动。共享会话的只读状态、
+擦除策略、文本监听在退出/取消/审批覆盖时恢复，保留已有输入所有权机制。
+不复制官方 Auto 模型、账号套餐提示及账户服务入口。
+CLI 全量及模型/审批覆盖/copy PTY 共 783 passed，0 skipped。
+补充高级页 Esc 返回 PTY 4 passed；菜单快捷键/会话恢复/流程专项 15 passed。
+
+## 2026-09-23：底栏模型名附带推理等级
+
+参考 Codex `status_surfaces.rs::model_with_reasoning_display_name` 与
+`status_controls.rs::status_line_reasoning_effort_label`，显示模型名和选中等级；
+未选时使用模型元数据默认等级，无默认值或 none 显示 default。
+复用已有设置快照刷新，不更改请求参数或新增官方账户逻辑。
+保留黄色模型/等级、绿色路径；短路径让出可用宽度，避免还有空间却截断等级。
+等级指会话选择，不声称每个第三方供应商都接受对应请求参数。
+
+## 2026-09-23：输入区域背景与留白
+
+参考 Codex `chat_composer.rs` 的整块背景和 `style.rs::user_message_bg_rgb`：
+输入框上方一行无背景间距，上下各一行背景内边距；仅 buffer Window 铺底，
+覆盖中文、显式换行、自动折行与行尾空白，不染色底栏和补全菜单。
+复用现有终端色探测：深色向白色混合 12%，浅色向黑色混合 4%；
+未知背景不猜测，NO_COLOR 继续由现有输出策略处理。仅补全打开时预留
+菜单高度，避免普通输入框因原默认 8 行保留空间变得过厚。
+新增深/浅色 × 40/100 列真实 PTY 测试，逐格验证背景、间距与多行提交。
+
+## 2026-09-23：修正完成分隔线的显示条件
+
+本节取代下节“每次成功完成都显示”的策略。重新参考 Codex
+`chatwidget/replay.rs::prepare_assistant_message`、`turn_runtime.rs` 和
+`history_cell/separators.rs`：纯聊天/思考不算工作；工具完成后挂起分隔线，
+下一段回答开始前输出无耗时横线并消费标记，完成时不重复追加。
+只有仍有未分隔的工作时，完成阶段才输出完成线；整数秒 > 60 才带
+Worked for，60 秒及以下仅横线。计划更新、询问用户不计为实际工具工作。
+流式正文、整段正文及 TurnCompleted 兜底答案使用相同条件。
+沿用现有暂停感知计时与回放宽度适配，无新增后台任务。
+边界：未移植 Codex 的 runtime_metrics 独立统计行，Corki 当前无对应的
+完整指标事件；不伪造服务端计时或推理/WebSocket 统计。
+验证：CLI 全量单测及 40/100 列三轮 composer PTY 756 passed；随后补充
+流式正文路径，分隔线专项 78 passed。Ruff 与 git diff --check 通过。
+
+## 2026-09-23：完成耗时分隔线
+
+参考 Codex `history_cell/separators.rs` 的淡色横线及宽度处理、
+`chatwidget/turn_runtime.rs` 的完成阶段输出。用户要求回答结束后显示，
+Corki 每次成功 TurnCompleted 输出一次 Worked for；不照搬该版本 Codex
+仅工作活动且超过 60 秒显示耗时文字的条件。失败/中断不冒充完成。
+使用已有 WorkingStatus 暂停感知的单调耗时，无新增计时任务；显示历史
+记录秒数，重放按当前宽度生成横线。极窄屏省略 Worked for，优先保留时长。
+当前无协议 duration 字段，使用本次运行 UI 计时，不声称冷恢复累计耗时。
+
+CLI 714 passed，完成/Working/copy PTY 8 passed。首次回归更新了原本只含
+两条回答的历史断言（现在多一条耗时）；一项 Escape 时序测试重跑通过。
+PTY 过滤 pyte 不支持的输入协议开关，防止模拟器将 CSI <u 误绘为字母 u；
+保留屏幕行宽、三轮仅一条完成线/输入框及正文保留断言。Ruff/diff 检查通过。
+
+## 2026-09-23：回答结束后的重复占位输入框
+
+新增真实 Runtime/PTY 三轮测试，在 40/100 列均复现两个
+`Ask Corki to do anything`。根因：实时 composer 在回合结束时被取消，
+PromptSession 默认以 done 状态将未提交的输入框写进 scrollback。
+改为 composer 默认 erase_when_done=True；仅在 Buffer 的验证通过接收回调
+中为非空真实提交关闭擦除，每次 read_message 重置。取消、模式切换、空 Enter
+不留下占位/草稿副本；提交消息仍只显示一次，草稿继续由原取消处理保存。
+没有新增 reader、后台任务或定时器，也没有通过清空正文来掩盖残影。
+专项三轮 PTY 同时检查屏幕及 scrollback 仅一个占位框；Working PTY 追加
+取消旧 reader 后恢复草稿只显示一份的断言。
+最终 CLI 单测及 composer/Working/copy/修饰 Enter/历史/执行/审批 PTY 联合
+738 passed、0 skipped，84.28 秒；70 条既有 forkpty 弃用警告，无测试失败。
+
+## 2026-09-23：底栏颜色改为 Codex 默认主题色
+
+不再使用 ANSI yellow/green。核对 Codex `render/highlight.rs` 的 Mocha/Latte
+默认主题、`status_line_style.rs` 的 85% 饱和度整数算法，并通过 agent-reach
+读取 catppuccin/palette 与 catppuccin/bat 的原始 type/string 色值。
+深色最终模型 #f6e2b7、路径 #abdfa7；浅色 #d59030、#489a36。
+复用现有 TerminalPalette 背景探测，不新增查询或定时器。
+iTerm composer 使用 RGB 色深，仍优先遵守 NO_COLOR 和显式色深设置。
+CLI 单测和 Working PTY 684 passed；PTY 按实际终端字符验证 RGB 色值。
+
+## 2026-09-23：底栏模型/目录与 reasoning effort 核查
+
+参考 Codex `bottom_pane/status_line_style.rs`、`chatwidget/status_surfaces.rs`：
+独立的模型与目录状态行，使用 ` · ` 分隔。Codex 按主题决定模型色，
+Corki 按本次用户明确要求使用黄色模型名、绿色目录。底栏在工作中保留，
+模型切换时读最新 settings；家目录缩写为 ~，窄屏按单元格裁剪并保留路径尾部。
+原 Working 计时和模式/历史提示不被替换。遵循 NO_COLOR，不强制覆盖终端偏好。
+
+reasoning_effort 不是空壳：Responses 适配器生成 reasoning.effort；
+Chat Completions 适配器仅在 supports_reasoning_effort 为真时生成该字段。
+默认通用 Chat Completions capability 为 false，不能宣称对所有供应商生效。
+请求级覆盖、显式清空、不支持时省略均有单测；模型/effort 成对切换有 PTY 测试。
+因此未触发用户“没有用途则删除”的条件，本轮不删除功能或配置。
+
+首轮 759 passed / 1 failed：copy PTY 把回答后的活动 composer 当成回合完成，
+现改为显式 TURN_SETTLED 信号后验证空闲 /copy；运行中本地命令路由仍单独覆盖。
+底栏 PTY 追加屏幕位置及实际黄/绿字符色断言，测试显式移除继承的 NO_COLOR。
+最终联合回归 760 passed、0 skipped，20.12 秒；Ruff 与 diff 检查通过。
+
+## 2026-09-23：用户明确追加 /copy
+
+参考 Codex `chatwidget/interaction.rs::show_copy_picker`、
+`slash_dispatch.rs` 和 `clipboard_copy.rs`：提供最近已完成回答的全文、
+代码块及引用选择面板。补全、帮助和空闲/运行中命令分派均已接入；
+命令不发给模型，工具输出、错误提示、reasoning 不作为复制源。
+复用 InputOwner 模态与审批覆盖机制；取消/失败释放面板、输入锁和暂停状态。
+
+macOS 使用 pbcopy，Windows 使用固定 PowerShell 命令，内容走 UTF-8 stdin，
+没有 shell 插值；子进程复用 run_owned 的超时、取消和 join 机制。
+SSH 优先 OSC 52；其他平台或原生后端失败时可回退到终端协议，tmux 包装透传。
+OSC 52 无确认回执，只提示已发送请求，不声称系统剪贴板已更新。
+与 Codex 的差异：全文复制 Markdown 原文，不提供额外 HTML MIME；
+Linux 当前使用终端协议而非持有原生剪贴板后台进程。
+
+联合回归 687 passed、0 skipped（CLI 单测、owned helper、copy PTY、
+model/approval PTY）；剪贴板外部写入全部替换为测试后端，没有改用户剪贴板。
+
+## 2026-09-23：项目标题、工具预览、Ctrl 光标移动
+
+逐项参考本地 Codex：
+
+- `terminal_title.rs` 与 `chatwidget/status_surfaces.rs`：默认标题包含
+  activity/thread-name/project-name。本轮按用户要求只设置项目目录名，
+  TTY 才写 OSC 0；过滤控制/格式字符，折叠空白，最多 240 字符；生命周期
+  finally 清空标题，不声称恢复无法可靠读取的原始 shell 标题。
+- `exec_cell/render.rs`：TOOL_CALL_MAX_LINES=5，先按屏幕宽度折行，保留
+  头尾并提示省略。Corki 工具标题限制两行、输出预览限制五行；流式数据按
+  call_id 共用预算，只额外保留三行尾部，完成/中断时冲刷并删除该状态。
+  Ctrl+T 完整历史单独启用 expand_tools，普通重绘继续使用紧凑预览；
+  重放不会修改运行中的预览状态，也不修改模型工具结果或持久化内容。
+  与 Codex 的差异：Corki 当前是追加式输出，尾部在调用结束/中断时提交，
+  没有引入原地重绘的执行卡片。
+- `keymap.rs` Editor 默认映射：明确绑定 Ctrl+A/E 行首/尾、Ctrl+B/F
+  左右字符、Ctrl+左右及 Alt+B/F 按词移动；覆盖多行草稿及 CSI-u Ctrl+A。
+
+验证：CLI 单测首轮 654 passed；专项追加并发工具正常/取消回收检查后
+15 passed；Working/执行生命周期/历史/修饰 Enter/启动取消 PTY 50 passed。
+标题另加真实 PTY OSC 设置/清空断言。Ruff 和 diff whitespace 检查通过。
+
+## 2026-09-23：Esc 中断 Working
+
+参照 Codex `bottom_pane/mod.rs::should_interrupt_running_task`：仅在工作进行中、
+没有模态/补全/历史视图时中断；保留草稿，Esc 不退出整个应用。
+Corki 通过现有 InputOwner → InputInterrupted → cancel_active → consumer join
+流程实现，不创建脱离所有者的取消任务。非 eager 绑定保留 Alt+Enter/Alt+Up；
+历史和补全仍优先消耗 Esc，空闲 Esc 不退出。Working 提示改为 `esc to interrupt`。
+
+回收边界必须与后台会话所有权区分：Codex
+`unified_exec/process_manager.rs` 在首次等待前 store_process，明确保留已登记
+的后台进程；Corki 当前 ProcessManager 同样如此。本轮不修改这一核心语义。
+旧 PTY 中“中断后立即杀进程”的断言与当前实现不符，Ctrl+C 和 Esc 均能复现；
+改为检查受管理会话仍有所有者，并在应用退出后检查 PID 消失。
+同时检查 reader、Working 刷新句柄、审批 pending、realtime tasks 在对应
+生命周期边界清空，覆盖后续 Turn、冷启动历史、终端模式恢复。
+
+验证：CLI 全单测及 execution lifecycle / Working / modified Enter / history /
+startup cancel PTY 联合 **691 passed、0 skipped**（82.80 秒，4 workers/loadfile）；
+Ruff check、format check 与 git diff --check 通过。PTY 测试产生 62 条 Python
+forkpty 多线程弃用警告，无测试失败。本轮没有做长期内存压力测试，不把
+所有权和退出检查表述为对所有泄漏的绝对保证。
+
 ## 2026-09-23：Working 状态、布局与耗时
 
 用户再次明确要求参考 Codex 的执行页面，改善不显眼且无计时的 Working。

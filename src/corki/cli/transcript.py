@@ -18,7 +18,20 @@ def remember_display(method):
     @wraps(method)
     def render(ui, *args, **kwargs):
         source = getattr(ui, "_transcript", None)
-        if source is not None and not source.replaying:
+        if (
+            source is not None
+            and not source.replaying
+            and method.__name__
+            not in {
+                "show_identified_tool_started",
+                "show_identified_tool_completed",
+                "show_tool_output_chunk",
+                "show_exploration",
+            }
+            and (flush := getattr(ui, "flush_exploration", None)) is not None
+        ):
+            flush()
+        if source is not None and not source.replaying and method.__name__ != "show_exploration":
             source.calls.append((method, deepcopy(args), deepcopy(kwargs)))
         view = getattr(ui, "_history_view", None)
         if view is not None:
@@ -35,6 +48,7 @@ class Transcript:
         self.calls = []
         self.replaying = False
         self.include_reasoning = False
+        self.expand_tools = False
         self._modal_depth = 0
         self.repair_pending = False
         self.stream_reflowed = False
@@ -162,9 +176,11 @@ class Transcript:
                 app.output.flush()
                 self.repair_pending = False
 
-    def render(self, width, *, include_reasoning=False):
+    def render(self, width, *, include_reasoning=False, expand_tools=False, output=None):
         """Render source afresh; never append replay output to the source itself."""
-        output = StringIO()
+        own_output = output is None
+        if own_output:
+            output = StringIO()
         original = self.ui._console
         plan = getattr(self.ui, "_plan_stream", None)
         plan_start = (
@@ -204,6 +220,11 @@ class Transcript:
         )
         self.replaying = True
         self.include_reasoning = include_reasoning
+        self.expand_tools = expand_tools
+        original_previews = getattr(self.ui, "_tool_previews", {})
+        self.ui._tool_previews = {}
+        original_exploration = getattr(self.ui, "_exploration", None)
+        self.ui._exploration = None
         try:
             for index, (method, args, kwargs) in enumerate(self.calls):
                 if plan_start is not None and index >= plan_start:
@@ -238,11 +259,23 @@ class Transcript:
                             )
                             self.ui._console.print()
                     continue
+                if method.__name__ not in {
+                    "show_identified_tool_started",
+                    "show_identified_tool_completed",
+                    "show_tool_output_chunk",
+                    "show_exploration",
+                } and (flush := getattr(self.ui, "flush_exploration", None)):
+                    flush()
                 method(self.ui, *args, **kwargs)
+            if not expand_tools and (flush := getattr(self.ui, "flush_exploration", None)):
+                flush()
         finally:
             self.ui._console = original
             self.replaying = False
             self.include_reasoning = False
+            self.expand_tools = False
+            self.ui._tool_previews = original_previews
+            self.ui._exploration = original_exploration
             for name in (
                 "_assistant_pending",
                 "_assistant_started",
@@ -260,7 +293,7 @@ class Transcript:
                     setattr(self.ui, name, stream_state[name])
                 elif hasattr(self.ui, name):
                     delattr(self.ui, name)
-        return output.getvalue()
+        return output.getvalue() if own_output else None
 
     async def watch(self):
         """Debounce width/height changes without taking input away from a modal."""

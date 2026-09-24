@@ -35,15 +35,22 @@ def retained_user_messages(
         if not isinstance(item, UserMessageItem) or item.id in excluded_ids:
             continue
         text = (
-            "\n".join(p.text for p in item.content_items if isinstance(p, TextContent) and p.text)
-            if item.content_items
-            else item.content
+            item.content
+            if item.image_positions
+            else (
+                "\n".join(
+                    p.text for p in item.content_items if isinstance(p, TextContent) and p.text
+                )
+                if item.content_items
+                else item.content
+            )
         )
         item = replace(
             item,
             content=text,
             content_items=(),
             attachments=(),
+            image_positions=(),
             content_item_kinds=("user.text",) if item.content_item_kinds is not None else None,
         )
         cost = (len(text.encode("utf-8")) + 3) // 4

@@ -13,6 +13,24 @@ class CustomBuildHook(BuildHookInterface):
         if self.target_name != "wheel":
             return
         root = Path(self.root)
+        search_tag = None
+        if version == "standard":
+            search = root / "src/corki/_native/file_search"
+            if search.exists():
+                search_api = runpy.run_path(str(root / "native/file_search/artifact.py"))
+                search_manifest = search_api["verify"](root, search)
+                search_tag = search_manifest["wheel_platform"]
+                for name in (
+                    "corki-file-search",
+                    "manifest.json",
+                    "THIRD_PARTY.txt",
+                    "RUST_COPYRIGHT.html",
+                ):
+                    build_data["force_include"][str(search / name)] = (
+                        f"corki/_native/file_search/{name}"
+                    )
+                build_data["pure_python"] = False
+                build_data["tag"] = "py3-none-" + search_tag
         api = runpy.run_path(str(root / "src/corki/execution/bundled.py"))
         if configured is None:
             if version != "standard":
@@ -40,4 +58,6 @@ class CustomBuildHook(BuildHookInterface):
             }
         )
         build_data["pure_python"] = False
-        build_data["tag"] = "py3-none-" + manifest["wheel_platform"]
+        tag = search_tag or manifest["wheel_platform"]
+        api["verify_binary_platform"](binary, tag)
+        build_data["tag"] = "py3-none-" + tag

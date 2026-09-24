@@ -189,6 +189,8 @@ class ToolCallCompleted:
     mcp_result_json: str | None = None
     mcp_error: str | None = None
     patch_delta_json: str | None = None
+    exit_code: int | None = None
+    session_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

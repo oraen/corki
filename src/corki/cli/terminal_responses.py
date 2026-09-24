@@ -40,6 +40,7 @@ class TerminalResponseParser:
         self.escape = False
         self.colors = {}
         self.color_listeners = set()
+        self.focus_listeners = set()
 
     def _clear(self):
         self.pending = ""
@@ -70,7 +71,11 @@ class TerminalResponseParser:
                     self.overflow = True
                 if "@" <= char <= "~":
                     if not self.overflow:
-                        self.parser.feed(decode_key(self.pending))
+                        if self.pending in {"\x1b[I", "\x1b[O"}:
+                            for listener in tuple(self.focus_listeners):
+                                listener(self.pending == "\x1b[I")
+                        else:
+                            self.parser.feed(decode_key(self.pending))
                     self._clear()
                 continue
             if self.osc:

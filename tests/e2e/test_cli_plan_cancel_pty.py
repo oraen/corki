@@ -99,14 +99,14 @@ def test_ctrl_c_during_plan_commit_preserves_state_and_input(tmp_path, width, co
             child.send("\x1b[1;1R")
 
     try:
-        expect("shift+tab to cycle")
+        expect("Ask Corki to do anything")
         child.send("\x1b[200~/plan Review Foo\nKeepCase\x1b[201~\r")
         expect("WRITE_HELD")
         child.sendcontrol("c")
         expect("SIGNAL_PENDING_COMMIT")
         (tmp_path / "release-commit").write_text("release")
         expect("CANCEL_STATE_VERIFIED")
-        expect("Default mode" if commit == "fail" else "Plan mode")
+        expect("Ask Corki to do anything")
         child.sendcontrol("d")
         expect("CANCEL_PTY_OK")
         child.expect(pexpect.EOF)

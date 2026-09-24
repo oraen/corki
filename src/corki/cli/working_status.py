@@ -17,6 +17,22 @@ def format_elapsed(seconds):
     return f"{hours}h {minutes:02}m {seconds:02}s"
 
 
+def format_work_summary(seconds, width):
+    """A one-row Codex-style rule, retaining elapsed time on narrow terminals."""
+    width = max(0, width)
+    if seconds is None or int(seconds) <= 60:
+        return "─" * width
+    duration = format_elapsed(seconds)
+    label = f"─ Worked for {duration} ─"
+    if cell_len(label) > width:
+        label = f"─ {duration} ─"
+    if cell_len(label) > width:
+        label = duration
+    if cell_len(label) > width:
+        return set_cell_size(label, width)
+    return label + "─" * (width - cell_len(label))
+
+
 class WorkingStatus:
     def __init__(self, invalidate, *, animated=True):
         self.invalidate = invalidate
@@ -61,12 +77,12 @@ class WorkingStatus:
                 return
             self.timer = loop.call_later(0.25 if self.animated else 1.0, self._refresh)
 
-    def fragments(self, width, *, detail=None, has_draft=False):
+    def fragments(self, width, *, detail=None):
         elapsed = self.elapsed
         indicator = "◐◓◑◒"[int(elapsed * 4) % 4] if self.animated else "•"
         header = f" {indicator} Working"
         duration = f" ({format_elapsed(elapsed)})"
-        hint = " · ctrl+c clears draft" if has_draft else " · ctrl+c to interrupt"
+        hint = " · esc to interrupt"
         if cell_len(header + duration + hint) > width:
             hint = ""
         # Preserve time before spending narrow-terminal width on the label.

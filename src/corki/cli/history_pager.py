@@ -134,6 +134,10 @@ class HistoryPager:
                 self.ui.show_notice(f"Could not load older history: {error}")
         finally:
             self.task = None
+            # A read may finish after Esc closed the viewport. Keep the loaded
+            # canonical page, but never resurrect hidden render-cache files.
+            if not self.ui._history_view.active:
+                self.ui._history_view._release_rows()
             self.ui._session.app.invalidate()
 
     def _replace_history(self):
@@ -173,13 +177,12 @@ class HistoryPager:
         candidate = copy(view)
         candidate.ui = shadow
         candidate.text()
+        if candidate.render_error:
+            raise ValueError("history display unavailable (storage or size limit)")
         transcript.calls[self.start : end] = replacement
         self.segment = replacement
-        view.content, view.formatted, view.lines = (
-            candidate.content,
-            candidate.formatted,
-            candidate.lines,
-        )
+        view.lines = candidate.lines
+        view.render_error = False
         view.rows, view.row, view.cache_key = candidate.rows, candidate.row, candidate.cache_key
         if not follow_bottom:
             view.row = min(view.rows - 1, max(0, old_row + view.rows - old_rows))

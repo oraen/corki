@@ -126,6 +126,9 @@ class CorkiSettings:
     mcp_tool_call_elicitation: bool = True
     # CLI live text input; not a provider Realtime API capability.
     realtime_enabled: bool = True
+    notifications: bool | tuple[str, ...] = True
+    notification_method: str = "auto"
+    notification_condition: str = "unfocused"
     max_realtime_inputs: int = 16
     # Long-term memories are feature-gated like Codex's MemoryTool.  The
     # Source eligibility, automatic background work and recall are independent.
@@ -423,6 +426,7 @@ class CorkiSettings:
             plugins = document.get("plugins", {})
             mcp = document.get("mcp", {})
             realtime = document.get("realtime", {})
+            tui = document.get("tui", {})
             memories = document.get("memories", {})
             memory = document.get("memory", {})  # pre-0.2 compatibility
             models = document.get("models", {})
@@ -445,6 +449,7 @@ class CorkiSettings:
                     plugins,
                     mcp,
                     realtime,
+                    tui,
                     memories,
                     memory,
                     models,
@@ -641,6 +646,11 @@ class CorkiSettings:
                 mcp_approval_policy=mcp.get("approval_policy", defaults.mcp_approval_policy),
                 mcp_tool_call_elicitation=features.get("tool_call_mcp_elicitation", True),
                 realtime_enabled=realtime.get("enabled", defaults.realtime_enabled),
+                notifications=tui.get("notifications", defaults.notifications),
+                notification_method=tui.get("notification_method", defaults.notification_method),
+                notification_condition=tui.get(
+                    "notification_condition", defaults.notification_condition
+                ),
                 max_realtime_inputs=realtime.get(
                     "max_inputs_per_turn", defaults.max_realtime_inputs
                 ),
@@ -968,6 +978,16 @@ class CorkiSettings:
             raise ValueError("skills.max_context_tokens must be a positive integer")
         if not isinstance(self.realtime_enabled, bool):
             raise ValueError("realtime.enabled must be true or false")
+        if not isinstance(self.notifications, bool):
+            if not isinstance(self.notifications, (list, tuple)) or any(
+                not isinstance(kind, str) for kind in self.notifications
+            ):
+                raise ValueError("tui.notifications must be a boolean or event-name array")
+            object.__setattr__(self, "notifications", tuple(self.notifications))
+        if self.notification_method not in ("auto", "osc9", "bel"):
+            raise ValueError("tui.notification_method must be auto, osc9 or bel")
+        if self.notification_condition not in ("always", "unfocused"):
+            raise ValueError("tui.notification_condition must be always or unfocused")
         if not isinstance(self.model_unbounded_connection_retries, bool):
             raise ValueError("provider.unbounded_connection_retries must be true or false")
         memory_booleans = {

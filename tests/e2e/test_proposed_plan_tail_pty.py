@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 import pexpect
 import pytest
@@ -90,7 +91,9 @@ def test_plan_tail_visible_before_completion_and_removed_on_cancel(
     )
     try:
         child.expect("Ask Corki to do anything")
-        child.send("start\r")
+        child.send("start")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect_exact("alpha")
         assert "Proposed Plan" in child.before
         assert "PARTIAL" not in child.before
@@ -109,7 +112,12 @@ def test_plan_tail_visible_before_completion_and_removed_on_cancel(
             child.expect_exact("\x1b[?1049l")
             child.expect_exact("retained draft")
             child.sendcontrol("u")
-        child.sendcontrol("c") if keyboard else child.send("/stop\r")
+        if keyboard:
+            child.sendcontrol("c")
+        else:
+            child.send("/stop")
+            time.sleep(0.15)
+            child.send("\r")
         child.expect_exact("PLAN_PREVIEW_CLEARED")
         child.expect("Ask Corki to do anything")
         child.sendcontrol("d")

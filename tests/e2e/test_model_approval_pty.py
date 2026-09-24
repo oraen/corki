@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 from pathlib import Path
 
 import pexpect
@@ -113,9 +114,14 @@ def test_model_menu_does_not_accept_later_execution_approval(tmp_path, width, me
     )
     try:
         child.expect("Ask Corki to do anything")
-        child.send("execute\r")
+        child.send("execute")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect("WAITING_FOR_INPUT")
-        child.send("draft" if menu_action == "typing" else "/model\r")
+        child.send("draft" if menu_action == "typing" else "/model")
+        if menu_action != "typing":
+            time.sleep(0.15)
+            child.send("\r")
         if menu_action == "overlay":
             child.expect("Select model")
             child.send("Local/Chosen")

@@ -435,6 +435,12 @@ def test_terminal_ordinary_draft_survives_preemption():
                 return "submitted"
 
         ui = TerminalUI.__new__(TerminalUI)
+        from corki.cli.draft_history import DraftHistory
+        from corki.cli.inline_images import ImageDraft
+
+        ui._draft_history = DraftHistory()
+        ui._draft_history.loaded = True
+        ui._inline_images = ImageDraft()
         ui._transcript = Transcript(ui)
         ui._session, ui._draft, ui._bindings = Session(), "", None
         closed_views = []

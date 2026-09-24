@@ -1,7 +1,7 @@
 """Transactional active/archive collections for the canonical SQLite history."""
 
-import asyncio
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 from corki.protocol.ids import ThreadId
@@ -17,16 +17,16 @@ class SQLiteThreadArchiveStore:
         self._path = database_path.resolve()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._path, timeout=10)
+        connection = sqlite3.connect(self._path.as_uri() + "?mode=rw", uri=True, timeout=10)
         connection.row_factory = sqlite3.Row
         return connection
 
     async def read(self, thread_id: ThreadId) -> ThreadRecord:
         """Read archived or active metadata without claiming write ownership."""
-        return await asyncio.to_thread(self._read, thread_id)
+        return await _joined_write(self._read, thread_id)
 
     def _read(self, thread_id: ThreadId) -> ThreadRecord:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             return self._record(connection, thread_id)
 
     @staticmethod
@@ -53,7 +53,7 @@ class SQLiteThreadArchiveStore:
         """List one bounded history collection without moving or deleting its rows."""
         if not 0 <= limit <= 1000:
             raise ValueError("thread list limit must be between 0 and 1000")
-        return await asyncio.to_thread(self._list, archived, cwd, limit)
+        return await _joined_write(self._list, archived, cwd, limit)
 
     def _list(self, archived: bool, cwd: Path | None, limit: int) -> tuple[ThreadRecord, ...]:
         query = "SELECT id FROM threads WHERE archived_at IS " + (
@@ -65,7 +65,7 @@ class SQLiteThreadArchiveStore:
             parameters.append(str(cwd.resolve()))
         query += " ORDER BY julianday(updated_at) DESC, id LIMIT ?"
         parameters.append(limit)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             connection.execute("BEGIN")
             rows = connection.execute(query, parameters).fetchall()
             return tuple(self._record(connection, ThreadId(row["id"])) for row in rows)
@@ -87,7 +87,7 @@ class SQLiteThreadArchiveStore:
             await writer.aclose()
 
     def _write(self, thread_id: ThreadId, archived: bool) -> ThreadRecord:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             record = self._record(connection, thread_id)
             if archived:

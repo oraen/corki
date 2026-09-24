@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 from io import StringIO
 
 import pexpect
@@ -110,7 +111,9 @@ def test_failed_connection_keeps_cli_usable_for_next_turn(tmp_path, width, mode)
     child.logfile_read = output
     try:
         child.expect("Ask Corki to do anything")
-        child.send("first\r")
+        child.send("first")
+        time.sleep(0.15)
+        child.send("\r")
         if mode in {"retry", "draft_retry"}:
             child.expect("Reconnecting")
         if mode == "draft_retry":
@@ -136,7 +139,9 @@ def test_failed_connection_keeps_cli_usable_for_next_turn(tmp_path, width, mode)
             child.send("\r")
         else:
             child.expect("Ask Corki to do anything")
-            child.send("second\r")
+            child.send("second")
+            time.sleep(0.15)
+            child.send("\r")
         child.expect("FOLLOWUP_ANSWER")
         child.expect("TURN_SETTLED")
         child.expect("Ask Corki to do anything")

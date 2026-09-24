@@ -1,6 +1,7 @@
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 import pexpect
@@ -60,7 +61,9 @@ def test_corki_command_local_status_restores_composer_and_exits(
         child.expect("Directory:")
         child.expect("Corki home:")
         child.expect("Ask Corki to do anything")
-        child.send("/mcp\r")
+        child.send("/mcp")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect_exact("No MCP tools currently available.")
         child.expect("Ask Corki to do anything")
         child.sendcontrol(exit_key)

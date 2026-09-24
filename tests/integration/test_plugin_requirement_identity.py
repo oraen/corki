@@ -20,7 +20,9 @@ from corki.tools import ToolRegistry
 
 
 @pytest.mark.parametrize("agent", [False, True], ids=["legacy", "agent"])
-@pytest.mark.parametrize("selection", ["skill_path", "skill_link", "plugin_path", "plugin_link"])
+@pytest.mark.parametrize(
+    "selection", ["skill_path", "skill_link", "plugin_path", "plugin_link", "plugin_composer"]
+)
 def test_only_selected_installation_blocks_sampling(tmp_path, monkeypatch, agent, selection):
     async def scenario():
         home = tmp_path / "home"
@@ -131,6 +133,33 @@ def test_only_selected_installation_blocks_sampling(tmp_path, monkeypatch, agent
                 ),
             )
         )
+
+        if selection == "plugin_composer":
+            from prompt_toolkit.buffer import Buffer, CompletionState
+            from prompt_toolkit.completion import CompleteEvent
+            from prompt_toolkit.document import Document
+
+            from corki.cli.command_completion import CommandCompleter
+            from corki.cli.draft_history import DraftEntry
+            from corki.cli.inline_images import ImageDraft
+            from corki.cli.input_owner import DraftText, input_image_kwargs
+            from corki.cli.reference_completion import accept_reference
+
+            completer = CommandCompleter()
+            completer.references = runtime.input_reference_catalog
+            document = Document("@second")
+            rows = [row async for row in completer.get_completions_async(document, CompleteEvent())]
+            assert len(rows) == 1
+            buffer = Buffer(document=document)
+            draft = ImageDraft()
+            draft.clear(document.text)
+            buffer.on_text_changed += lambda b: draft.sync(b.text, b.cursor_position)
+            buffer.start_completion = lambda **kwargs: None
+            buffer.complete_state = CompletionState(document, rows, 0)
+            assert accept_reference(buffer, draft)
+            submitted = DraftText(draft.text, DraftEntry.capture(draft))
+            text, mentions = str(submitted), input_image_kwargs(submitted)["mentions"]
+            assert mentions[0].path == "plugin://fixture@second"
 
         async def consume():
             return [event async for event in runtime.stream(text, mentions=mentions)]

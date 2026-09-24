@@ -3,6 +3,7 @@
 import asyncio
 import os
 import signal
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
@@ -35,6 +36,8 @@ async def run_owned(
     output_limit: int,
     timeout: float = 30.0,
     env: dict[str, str] | None = None,
+    accepted_exit_codes: tuple[int, ...] = (0,),
+    output_consumer: Callable[[bytes], None] | None = None,
 ) -> bytes:
     """Join the exact spawned child on every exit; never retry a command."""
     if len(data) > 8_000_000:
@@ -70,13 +73,18 @@ async def run_owned(
 
             writer = asyncio.create_task(write(), name="corki-sandbox-helper-input")
             output = bytearray()
-            while chunk := await process.stdout.read(min(8192, output_limit + 1 - len(output))):
-                output.extend(chunk)
-                if len(output) > output_limit:
+            received = 0
+            while chunk := await process.stdout.read(min(8192, output_limit + 1 - received)):
+                received += len(chunk)
+                if received > output_limit:
                     raise ValueError("sandbox helper output exceeds its limit")
+                if output_consumer is None:
+                    output.extend(chunk)
+                else:
+                    output_consumer(chunk)
             await writer
             status = await process.wait()
-            if status:
+            if status not in accepted_exit_codes:
                 raise ValueError(f"sandbox helper exited with status {status}")
             return bytes(output)
     except TimeoutError:

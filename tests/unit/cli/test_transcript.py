@@ -61,4 +61,7 @@ def test_completed_text_replaces_stream_source_in_real_renderer(delta, tmp_path)
     assert source.count("Authoritative final text") == 1
     assert "second fragment" not in source
     assert source.count("Second final text") == 1
-    assert len(ui._transcript.calls) == 2
+    assert [method.__name__ for method, _, _ in ui._transcript.calls] == [
+        "show_assistant_message",
+        "show_assistant_message",
+    ]

@@ -158,7 +158,7 @@ def test_resize_replays_old_plan_and_preserves_composer_draft(tmp_path):
         child.expect_exact("    □    Validate")
         child.expect_exact(STEP_URL)
         child.expect_exact("Verify all remaining outputs carefully before finishing")
-        child.sendline("")
+        child.send("\r")
         child.expect_exact("FIXTURE_CLOSED")
         child.expect(pexpect.EOF)
         child.close()

@@ -94,7 +94,7 @@ def test_completed_plan_resize_keeps_composer_draft(
         child.setwinsize(30, target_width)
         child.expect_exact("• Proposed Plan")
         child.expect_exact("changing ownership.")
-        child.sendline("")
+        child.send("\r")
         child.expect_exact("CLOSED_PLAN")
         child.expect(pexpect.EOF)
         child.close()

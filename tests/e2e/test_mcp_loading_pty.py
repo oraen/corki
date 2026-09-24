@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 import pexpect
 import pytest
@@ -62,13 +63,19 @@ def test_mcp_loading_keeps_input_available(tmp_path, width, outcome):
     )
     try:
         child.expect("Ask Corki to do anything")
-        child.send("/mcp\r")
+        child.send("/mcp")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect_exact("Loading MCP tools")
-        child.send("draft while loading\r")
+        child.send("draft while loading")
+        time.sleep(0.15)
+        child.send("\r")
         if outcome != "cancel":
             child.expect_exact("No MCP tools" if outcome == "success" else "discovery failed")
         child.expect("Ask Corki to do anything")
-        child.send("followup\r")
+        child.send("followup")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect_exact("LOADING_CLEANED")
         child.expect(pexpect.EOF)
         child.close()

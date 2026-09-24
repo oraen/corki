@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 from io import StringIO
 
 import pexpect
@@ -58,7 +59,7 @@ asyncio.run(main())
         ["-c", program],
         cwd=tmp_path,
         env={
-            **os.environ,
+            **{key: value for key, value in os.environ.items() if key != "NO_COLOR"},
             "TERM": "xterm-256color",
             "COLORTERM": "truecolor",
             "PROMPT_TOOLKIT_COLOR_DEPTH": "DEPTH_24_BIT",
@@ -116,7 +117,9 @@ def test_real_startup_probe_is_bounded_and_does_not_repeat(tmp_path, response):
         child.send(reply)
         # No input is submitted while the optional probe times out/completes.
         assert child.expect(["PALETTE=", pexpect.TIMEOUT], timeout=0.2) == 1
-        child.send(" followup\r")
+        child.send(" followup")
+        time.sleep(0.15)
+        child.send("\r")
         expected = {
             "light": "((0, 0, 0), (255, 255, 255), True)",
             "dark": "((0, 0, 0), (0, 0, 0), False)",
@@ -124,7 +127,9 @@ def test_real_startup_probe_is_bounded_and_does_not_repeat(tmp_path, response):
         child.expect_exact("PALETTE=" + expected)
         child.expect("Ask Corki to do anything")
         assert child.expect_exact([query, pexpect.TIMEOUT], timeout=0.2) == 1
-        child.send("second\r")
+        child.send("second")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect("INPUT_AND_HISTORY_PRESERVED")
         child.expect(pexpect.EOF)
         child.close()

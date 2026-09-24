@@ -43,7 +43,10 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument(
         "thread_id",
         nargs="?",
-        help="thread id for `corki resume`; defaults to the latest in this directory",
+        help="thread id; omit to open the local session picker",
+    )
+    resume.add_argument(
+        "--last", action="store_true", help="resume the latest thread in this directory"
     )
     # Preserve model overrides after the existing resume command, too.
     for flag in ("--model", "--provider", "--reasoning-effort"):
@@ -62,10 +65,16 @@ def build_application(
     model: str | None = None,
     provider: str | None = None,
     reasoning_effort: str | None = None,
+    fork_from_thread_id=None,
+    fork_before_user_message=None,
+    working_directory: Path | None = None,
     _construction: list | None = None,
 ) -> CorkiApplication:
     """Construct production dependencies at the outermost application boundary."""
 
+    directory = (working_directory or Path.cwd()).resolve()
+    if not directory.is_dir():
+        raise ValueError("Working directory is unavailable.")
     # Capture once before ensure_exists/SQLite. Runtime receives this exact policy,
     # not a second read that could fail after the CLI has already allocated state.
     requirements = load_mcp_requirements()
@@ -75,7 +84,6 @@ def build_application(
     repository = SQLiteSessionRepository(database_path)
     if _construction is not None:
         _construction.append(repository.close)
-    directory = Path.cwd().resolve()
     thread_id = repository.resolve_thread(resume, directory) if resume else None
     settings = CorkiSettings.for_directory(
         directory,
@@ -93,6 +101,8 @@ def build_application(
         database_path=database_path,
         repository=repository,
         thread_id=thread_id,
+        fork_from_thread_id=fork_from_thread_id,
+        fork_before_user_message=fork_before_user_message,
         session_source=SessionSource.from_startup_arg("cli"),
         home_path=paths.home,
         compatibility_home=Path.home(),
@@ -102,7 +112,29 @@ def build_application(
     if _construction is not None:
         # The fully constructed Runtime now owns all its component lifetimes.
         _construction[:] = [runtime.aclose]
-    return CorkiApplication(settings, paths, runtime, ui)
+    application = CorkiApplication(settings, paths, runtime, ui)
+
+    async def branch(source, index, prompt):
+        from corki.cli.backtrack import prompt_input
+
+        target = await build_application_async(
+            model=ui._settings.model,
+            provider=provider,
+            reasoning_effort=ui._settings.reasoning_effort,
+            fork_from_thread_id=source,
+            fork_before_user_message=index,
+            working_directory=ui._settings.working_directory,
+        )
+        try:
+            await target._runtime.load_display_snapshot()  # publish before handing off ownership
+            target._ui.restore_queued_inputs((prompt_input(prompt),))
+            return target
+        except BaseException:
+            await target._runtime.aclose()
+            raise
+
+    application._branch_factory = branch
+    return application
 
 
 async def build_application_async(**kwargs) -> CorkiApplication:
@@ -137,16 +169,57 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"MCP login failed ({type(exc).__name__}).", file=sys.stderr)
             return 1
     resume = arguments.resume
+    pick_session = False
     if arguments.command == "resume":
+        if arguments.thread_id and arguments.last:
+            parser.error("use either THREAD_ID or --last")
+        pick_session = not arguments.thread_id and not arguments.last
         resume = arguments.thread_id or "latest"
 
     async def run():
         try:
+            selected_resume = resume
+            directory_options = {}
+            interactive = sys.stdin.isatty() and sys.stdout.isatty()
+            if pick_session or (selected_resume is not None and interactive):
+                if not interactive:
+                    parser.error(
+                        "session picker requires a terminal; use resume --last or THREAD_ID"
+                    )
+                from corki.cli.session_catalog import SessionCatalog
+                from corki.cli.session_picker import choose_session
+
+                paths = CorkiPaths.discover()
+                paths.ensure_exists()
+                database = paths.sessions_dir / "corki.db"
+                repository = SQLiteSessionRepository(database)
+                try:
+                    if not pick_session:
+                        selected_resume = str(
+                            repository.resolve_thread(selected_resume, Path.cwd())
+                        )
+                finally:
+                    await repository.close()
+                catalog = SessionCatalog(database)
+                if pick_session:
+                    selected_resume = await choose_session(catalog, Path.cwd().resolve())
+                if selected_resume is None:
+                    return 0
+                from corki.cli.resume_directory import choose_resume_directory
+
+                record = await catalog.archive_store.read(selected_resume)
+                directory = await choose_resume_directory(
+                    Path.cwd(), record.cwd, config_file=paths.config_file
+                )
+                if directory is None:
+                    return 0
+                directory_options["working_directory"] = directory
             application = await build_application_async(
-                resume=resume,
+                resume=selected_resume,
                 model=arguments.model,
                 provider=arguments.provider,
                 reasoning_effort=arguments.reasoning_effort,
+                **directory_options,
             )
         except ValueError as exc:
             parser.error(str(exc))
@@ -159,6 +232,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        return await application.run()
+        while True:
+            try:
+                result = await application.run()
+            except BaseException:
+                if application.next_application is not None:
+                    await application.next_application._runtime.aclose()
+                raise
+            if application.next_application is None:
+                return result
+            application = application.next_application
 
     return asyncio.run(run())

@@ -103,6 +103,7 @@ from corki.protocol.events import (
 )
 from corki.protocol.execution_identity import ExecutionIdentity
 from corki.protocol.ids import SessionId, ThreadId, TurnId, new_thread_id, new_turn_id
+from corki.protocol.input_images import validate_image_positions
 from corki.protocol.input_mentions import InputMention, validate_mentions
 from corki.protocol.items import ConversationItem, HostedToolItem, TurnAbortedItem, UserMessageItem
 from corki.protocol.memory import ThreadMemoryMode
@@ -116,6 +117,7 @@ from corki.protocol.settings import (
 )
 from corki.protocol.terminals import BackgroundTerminalInfo
 from corki.protocol.tool_exposure import ToolNamespacePolicy
+from corki.protocol.tools import validate_image_attachments
 from corki.realtime import RealtimeController
 from corki.realtime.context import RealtimeContextContributor
 from corki.sessions import TurnRecord, TurnStatus
@@ -196,7 +198,13 @@ class AgentRuntime(Protocol):
     ) -> None: ...
 
     async def stream(
-        self, message: str, *, realtime: bool = False, mentions: tuple[InputMention, ...] = ()
+        self,
+        message: str,
+        *,
+        realtime: bool = False,
+        mentions: tuple[InputMention, ...] = (),
+        attachments=(),
+        image_positions=(),
     ) -> AsyncIterator[RuntimeEvent]: ...
 
     async def resume_pending(self) -> AsyncIterator[RuntimeEvent]: ...
@@ -207,7 +215,14 @@ class AgentRuntime(Protocol):
 
     async def compact(self) -> AsyncIterator[RuntimeEvent]: ...
 
-    async def steer(self, message: str, *, mentions: tuple[InputMention, ...] = ()) -> None: ...
+    async def steer(
+        self,
+        message: str,
+        *,
+        mentions: tuple[InputMention, ...] = (),
+        attachments=(),
+        image_positions=(),
+    ) -> None: ...
 
     def take_unsubmitted_inputs(self) -> tuple[UserMessageItem, ...]: ...
 
@@ -1215,13 +1230,27 @@ class LangGraphRuntime:
         return self._process_manager.approvals.rules.capture(permissions.exec_policy_snapshot)
 
     async def stream(
-        self, message: str, *, realtime: bool = False, mentions: tuple[InputMention, ...] = ()
+        self,
+        message: str,
+        *,
+        realtime: bool = False,
+        mentions: tuple[InputMention, ...] = (),
+        attachments=(),
+        image_positions=(),
     ) -> AsyncIterator[RuntimeEvent]:
         if not isinstance(message, str):
             raise TypeError("message must be a string; use compact() for manual compaction")
         mentions = validate_mentions(mentions)
+        attachments = validate_image_attachments(attachments)
+        image_positions = validate_image_positions(message, image_positions, len(attachments))
         async with aclosing(
-            self._start_turn(message, realtime=realtime, mentions=mentions)
+            self._start_turn(
+                message,
+                realtime=realtime,
+                mentions=mentions,
+                attachments=attachments,
+                image_positions=image_positions,
+            )
         ) as events:
             async for event in events:
                 yield event
@@ -1334,7 +1363,13 @@ class LangGraphRuntime:
                 yield event
 
     async def _start_turn(
-        self, message: str | None, *, realtime: bool = False, mentions=()
+        self,
+        message: str | None,
+        *,
+        realtime: bool = False,
+        mentions=(),
+        attachments=(),
+        image_positions=(),
     ) -> AsyncIterator[RuntimeEvent]:
         operation = "compact" if message is None else "normal"
         pending_warning = None
@@ -1367,7 +1402,13 @@ class LangGraphRuntime:
                 self._admit_model_settings(self.thread_settings)
                 turn_id = new_turn_id()
                 user_item = (
-                    UserMessageItem(message, turn_id, mentions=mentions)
+                    UserMessageItem(
+                        message,
+                        turn_id,
+                        mentions=mentions,
+                        attachments=attachments,
+                        image_positions=image_positions,
+                    )
                     if message is not None
                     else None
                 )
@@ -1399,10 +1440,19 @@ class LangGraphRuntime:
             async for event in events:
                 yield event
 
-    async def steer(self, message: str, *, mentions: tuple[InputMention, ...] = ()) -> None:
+    async def steer(
+        self,
+        message: str,
+        *,
+        mentions: tuple[InputMention, ...] = (),
+        attachments=(),
+        image_positions=(),
+    ) -> None:
         """Queue an additional user message for the currently streaming turn."""
 
-        await self._realtime.steer(message, mentions=mentions)
+        await self._realtime.steer(
+            message, mentions=mentions, attachments=attachments, image_positions=image_positions
+        )
 
     def take_unsubmitted_inputs(self) -> tuple[UserMessageItem, ...]:
         """Transfer uncommitted input even when the host missed the terminal event.
@@ -2516,6 +2566,19 @@ class LangGraphRuntime:
         )
         self._sync_tool_search()
         self._sync_code_mode_tools()
+
+    async def input_reference_catalog(self):
+        """Local composer metadata; never fetch a provider/official service catalog."""
+        from corki.skills.io import run_skill_io
+
+        service = self._skill_service
+        if service is not None:
+            snapshot = await run_skill_io(service.snapshot, self._settings.working_directory)
+            skills = tuple(s for s in snapshot.skills if snapshot.is_enabled(s))
+        else:
+            skills = ()
+        plugins = tuple(p.manifest for p in self._plugin_manager.plugins)
+        return skills, plugins
 
     async def _refresh_input_tools(self, state) -> dict:
         # Local skill resolution must not depend on the official Apps catalog.

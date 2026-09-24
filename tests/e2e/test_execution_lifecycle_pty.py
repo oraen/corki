@@ -5,6 +5,7 @@ import signal
 import sys
 import time
 from contextlib import suppress
+from io import StringIO
 from pathlib import Path
 
 import pexpect
@@ -57,6 +58,16 @@ async def main():
     class App(CorkiApplication):
         async def _consume_turn(self, message):
             await super()._consume_turn(message)
+            if message == "wait":
+                assert not self._ui._working_status.active
+                assert self._ui._working_status.timer is None
+                assert self._input._reader is None
+                assert not self._runtime._process_manager.approvals.router._pending
+                if sys.argv[2] == "long":
+                    # Like Codex, interrupting observation does not destroy a
+                    # published terminal session. It stays explicitly owned
+                    # until terminal cleanup or runtime shutdown.
+                    assert self._runtime._process_manager._sessions
             print("TURN_SETTLED=" + message, flush=True)
     settings = CorkiSettings(cwd, skills_enabled=False, plugins_enabled=False,
         execution_permissions=ExecutionPermissions(
@@ -73,6 +84,12 @@ async def main():
     assert not runtime._process_manager._sessions
     assert not runtime._process_manager.approvals.router._pending
     assert not ui._transcript.modal_depth
+    assert not ui._working_status.active
+    assert ui._working_status.timer is None
+    assert app._input._reader is None
+    assert not [task for task in asyncio.all_tasks()
+                if task is not asyncio.current_task()
+                and task.get_name().startswith("corki-realtime-")]
     interruptions = [args for method, args, _ in ui._transcript.calls
                      if method.__name__ == "show_notice" and args == ("Turn interrupted.",)]
     assert len(interruptions) == 1 + (sys.argv[2] != "accept"), interruptions
@@ -126,7 +143,8 @@ asyncio.run(main())
 
 @pytest.mark.parametrize("width", [40, 100])
 @pytest.mark.parametrize("decision", ["accept", "cancel", "long"])
-def test_execution_approval_cancel_followup_and_exit(tmp_path, width, decision):
+@pytest.mark.parametrize("interrupt_key", ["\x03", "\x1b"])
+def test_execution_approval_cancel_followup_and_exit(tmp_path, width, decision, interrupt_key):
     compiler = os.environ.get("CORKI_TEST_SANDBOX_COMPILER")
     if sys.platform != "darwin" or not compiler or not Path(compiler).is_file():
         pytest.skip("requires explicit native compiler and macOS")
@@ -148,13 +166,18 @@ def test_execution_approval_cancel_followup_and_exit(tmp_path, width, decision):
         },
     )
     initial_modes = termios.tcgetattr(child.child_fd)
+    captured = StringIO()
+    child.logfile_read = captured
     try:
+        child.expect_exact(f"\x1b]0;{tmp_path.name}\x07")
         child.expect("Ask Corki to do anything")
-        child.send("execute\r")
+        child.send("execute")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect("Yes, proceed once")
         assert not (tmp_path / "approved-operation").exists()
         assert child.expect(["TURN_SETTLED=", pexpect.TIMEOUT], timeout=0.2) == 1
-        child.send("\x03" if decision == "cancel" else "y")
+        child.send(interrupt_key if decision == "cancel" else "y")
         if decision == "long":
             # exec_command may buffer output until its yield deadline. Observe the
             # actual child startup, not a command string echoed in approval UI.
@@ -163,19 +186,26 @@ def test_execution_approval_cancel_followup_and_exit(tmp_path, width, decision):
                 time.sleep(0.01)
             tool_pid = int((tmp_path / "tool-pid").read_text())
             os.kill(tool_pid, 0)
-            child.sendcontrol("c")
+            child.send(interrupt_key)
         child.expect("TURN_SETTLED=execute" if decision == "accept" else "Turn interrupted")
         assert (tmp_path / "approved-operation").exists() == (decision != "cancel")
         child.expect("Ask Corki to do anything")
-        if decision == "long":
-            with pytest.raises(ProcessLookupError):
-                os.kill(tool_pid, 0)
-        child.send("wait\r")
-        child.expect("WAITING_FOR_INTERRUPT")
-        child.sendcontrol("c")
+        child.send("wait")
+        # Cancellation can still be replacing the busy reader. Wait until the
+        # new reader has processed the text before the explicit Enter pause.
+        child.expect_exact("wait")
+        time.sleep(0.15)
+        child.send("\r")
+        try:
+            child.expect("WAITING_FOR_INTERRUPT")
+        except (pexpect.TIMEOUT, pexpect.EOF):
+            pytest.fail(f"followup after approval did not start: {captured.getvalue()[-5000:]!r}")
+        child.send(interrupt_key)
         child.expect("Turn interrupted")
         child.expect("Ask Corki to do anything")
-        child.send("followup\r")
+        child.send("followup")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect("TURN_SETTLED=followup")
         child.expect("Ask Corki to do anything")
         child.sendcontrol("t")
@@ -184,6 +214,7 @@ def test_execution_approval_cancel_followup_and_exit(tmp_path, width, decision):
         child.sendcontrol("c")
         child.expect_exact("\x1b[?1049l")
         child.sendcontrol("d")
+        child.expect_exact("\x1b]0;\x07")
         child.expect("LIFECYCLE_VERIFIED")
         child.expect(pexpect.EOF)
         restored_modes = termios.tcgetattr(child.child_fd)
@@ -191,6 +222,9 @@ def test_execution_approval_cancel_followup_and_exit(tmp_path, width, decision):
         assert restored_modes[3] & termios.ICANON == initial_modes[3] & termios.ICANON
         child.close()
         assert child.exitstatus == 0
+        if decision == "long":
+            with pytest.raises(ProcessLookupError):
+                os.kill(tool_pid, 0)
     finally:
         if decision == "long" and (pid_file := tmp_path / "tool-pid").exists():
             # A failed assertion may force-close the host before its normal
@@ -218,7 +252,9 @@ def test_execution_approval_cancel_followup_and_exit(tmp_path, width, decision):
     try:
         cold.expect("Followup complete")
         cold.expect("Ask Corki to do anything")
-        cold.send("/status\r")
+        cold.send("/status")
+        time.sleep(0.15)
+        cold.send("\r")
         cold.expect("Directory:")
         cold.expect("Ask Corki to do anything")
         cold.sendcontrol("d")

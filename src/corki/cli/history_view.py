@@ -1,15 +1,19 @@
 """Read-only transcript viewport sharing the composer's input application."""
 
 from contextlib import contextmanager
+from weakref import WeakSet
 
-from prompt_toolkit import ANSI
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.filters import Condition
-from prompt_toolkit.formatted_text import to_formatted_text
-from prompt_toolkit.formatted_text.utils import split_lines
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import ConditionalContainer, HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl, UIContent, UIControl
+
+from corki.cli.history_rows import HistoryRows
+
+MAX_HISTORY_CACHE_BYTES = 512 * 1024 * 1024
+MAX_DEFERRED_OUTPUT_CHARS = 1_000_000
+MAX_DEFERRED_OUTPUT_CHUNKS = 4096
 
 
 class HistoryControl(UIControl):
@@ -42,10 +46,12 @@ class HistoryView:
         self.previous_focus = None
         self.previous_screen_modes = None
         self.cache_key = None
-        self.content = ""
-        self.formatted = []
+        self.render_error = False
         self.lines = [[]]
+        self._stores = WeakSet()
         self.deferred_output = []
+        self._deferred_chars = 0
+        self._deferred_overflow = False
         self.loader = None
         self.control = HistoryControl(self)
         self.window = Window(self.control, wrap_lines=False)
@@ -141,15 +147,54 @@ class HistoryView:
             tuple(plan_tail),
         )
         if key != self.cache_key:
+            self.render_error = False
             follow_bottom = self.row >= self.rows - 1
-            self.content = self.ui._transcript.render(width, include_reasoning=True)
-            self.formatted = to_formatted_text(ANSI(self.content))
-            self.formatted.extend(plan_tail)
-            self.lines = list(split_lines(self.formatted))
+            store = None
+            try:
+                remaining = MAX_HISTORY_CACHE_BYTES - sum(s._size for s in self._stores)
+                store = HistoryRows(max_bytes=max(0, remaining))
+                self.ui._transcript.render(
+                    width, include_reasoning=True, expand_tools=True, output=store
+                )
+                for fragment in plan_tail:
+                    store.append(fragment)
+                store.finish()
+            except (OSError, ValueError):
+                self.render_error = True
+                if store is not None:
+                    store.close()
+                self.lines = [
+                    [
+                        (
+                            "fg:ansired",
+                            "History display unavailable (storage or size limit). Esc to return.",
+                        )
+                    ]
+                ]
+            else:
+                self._stores.add(store)
+                self.lines = store
             self.rows = len(self.lines)
             self.row = self.rows - 1 if follow_bottom else min(self.row, self.rows - 1)
             self.cache_key = key
-        return self.formatted
+        return self._fragments(self.lines)
+
+    @staticmethod
+    def _fragments(lines):
+        for index in range(len(lines)):
+            if index:
+                yield ("", "\n")
+            yield from lines[index]
+
+    def _release_rows(self):
+        # UIContent frames retain their own immutable store until released. The
+        # Window keeps at most eight frames; closing the viewport closes all of
+        # them immediately, including frames still referenced by the renderer.
+        for store in tuple(self._stores):
+            store.close()
+        self._stores.clear()
+        self.lines = [[]]
+        self.cache_key = None
 
     @contextmanager
     def capture_output(self):
@@ -163,8 +208,21 @@ class HistoryView:
                 yield
         finally:
             text = captured.get()
-            if text:
-                self.deferred_output.append(text)
+            if text and not self._deferred_overflow:
+                if (
+                    self._deferred_chars + len(text) > MAX_DEFERRED_OUTPUT_CHARS
+                    or len(self.deferred_output) >= MAX_DEFERRED_OUTPUT_CHUNKS
+                ):
+                    # This is a main-screen replay optimization, not history.
+                    # Once full, rebuild the screen from canonical source after
+                    # closing instead of retaining/dropping arbitrary fragments.
+                    self.deferred_output.clear()
+                    self._deferred_chars = 0
+                    self._deferred_overflow = True
+                    self.ui._transcript.repair_pending = True
+                else:
+                    self.deferred_output.append(text)
+                    self._deferred_chars += len(text)
             self.ui._session.app.invalidate()
 
     def open(self):
@@ -173,31 +231,56 @@ class HistoryView:
         self.text()
         app = self.ui._session.app
         self.previous_screen_modes = (app.full_screen, app.renderer.full_screen)
+        self.previous_focus = self.ui._session.layout.current_control
         # Erase the inline frame before saving the main terminal buffer. A fresh
         # renderer baseline is required for each screen, not just a layout swap.
-        app.renderer.erase()
-        app.full_screen = app.renderer.full_screen = True
-        self.previous_focus = self.ui._session.layout.current_control
-        self.active = True
-        self.row = self.rows - 1
-        self.ui._session.layout.focus(self.control)
+        try:
+            app.renderer.erase()
+            app.full_screen = app.renderer.full_screen = True
+            self.active = True
+            self.row = self.rows - 1
+            self.ui._session.layout.focus(self.control)
+        except BaseException:
+            self._restore_and_release()
+            raise
         self.ui._session.app.invalidate()
+
+    def _restore_and_release(self):
+        app = self.ui._session.app
+        if self.previous_screen_modes is not None:
+            app.full_screen, app.renderer.full_screen = self.previous_screen_modes
+        self.active = False
+        try:
+            if self.previous_focus is not None:
+                self.ui._session.layout.focus(self.previous_focus)
+        finally:
+            self.deferred_output.clear()
+            self._deferred_chars = 0
+            self._deferred_overflow = False
+            self._release_rows()
+            self.previous_focus = None
+            self.previous_screen_modes = None
 
     def close(self):
         if not self.active:
+            self._release_rows()
             return
         app = self.ui._session.app
         # erase/reset also leaves the alternate screen. read_message's finally
         # calls this after cancellation, including approval preemption.
-        app.renderer.erase()
-        app.full_screen, app.renderer.full_screen = self.previous_screen_modes
-        self.active = False
-        self.ui._session.layout.focus(self.previous_focus)
-        if self.deferred_output:
-            app.output.enable_autowrap()
-            app.output.write_raw("".join(self.deferred_output))
-            app.output.flush()
-            self.deferred_output.clear()
+        try:
+            app.renderer.erase()
+            app.full_screen, app.renderer.full_screen = self.previous_screen_modes
+            self.active = False
+            if self.deferred_output:
+                app.output.enable_autowrap()
+                app.output.write_raw("".join(self.deferred_output))
+                app.output.flush()
+        finally:
+            # These are derived viewport caches, not canonical history. Release
+            # them even if writing to a disconnected terminal fails. Reopening
+            # regenerates at the current width from the retained transcript.
+            self._restore_and_release()
         if app.is_running and not app.is_done:
             app._request_absolute_cursor_position()
         self.ui._session.app.invalidate()

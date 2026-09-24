@@ -118,8 +118,11 @@ import sys
 from pathlib import Path
 from corki.cli.terminal import TerminalUI
 from corki.config import CorkiSettings
+import corki.cli.history_view as history_view
 
 async def main():
+    if sys.argv[1] == "overflow":
+        history_view.MAX_DEFERRED_OUTPUT_CHARS = 1
     cwd = Path.cwd()
     ui = TerminalUI(CorkiSettings(cwd), cwd / "input-history")
     async def produce():
@@ -130,11 +133,23 @@ async def main():
         answer = "LIVE_ANSWER" + ("\n\n" if sys.argv[1] == "stream" else "")
         await ui.append_assistant_delta_live(answer)
         await ui.complete_assistant_message(answer)
+        if sys.argv[1] == "overflow":
+            assert ui._history_view._deferred_overflow
+            assert not ui._history_view.deferred_output
+            assert ui._transcript.repair_pending
         ui._transcript.repair_pending = True
         await ui._transcript.repair()
         assert ui._session.app.renderer._in_alternate_screen
     producer = asyncio.create_task(produce())
-    assert await ui.read_message() == "retained draft"
+    # Application.run owns this watcher in production; this focused fixture
+    # runs TerminalUI directly, so mirror its startup and joined shutdown.
+    watcher = asyncio.create_task(ui.watch_resize()) if sys.argv[1] == "overflow" else None
+    try:
+        assert await ui.read_message() == "retained draft"
+    finally:
+        if watcher is not None:
+            watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
     await producer
     assert not ui._history_view.deferred_output
     assert not ui._session.app.renderer._in_alternate_screen
@@ -218,7 +233,7 @@ def test_history_resize_keeps_tail_and_manual_top_without_losing_draft(tmp_path,
 
 
 @pytest.mark.parametrize("width", [40, 100])
-@pytest.mark.parametrize("mode", ["stream", "short"])
+@pytest.mark.parametrize("mode", ["stream", "short", "overflow"])
 def test_live_output_does_not_leave_history_screen_until_close(tmp_path, width, mode):
     child = pexpect.spawn(
         sys.executable,
@@ -238,6 +253,10 @@ def test_live_output_does_not_leave_history_screen_until_close(tmp_path, width, 
         assert child.expect(["\x1b\\[\\?1049l", pexpect.TIMEOUT], timeout=0.2) == 1
         child.send("q")
         child.expect_exact("\x1b[?1049l")
+        if mode == "overflow":
+            # The bounded replay queue asks the existing resize watcher to
+            # rebuild canonical output after the inline composer is restored.
+            child.expect_exact("\x1b[3J\x1b[2J\x1b[H")
         child.expect("retained draft")
         assert child.before.count("LIVE_NOTICE") == 1
         assert child.before.count("LIVE_ANSWER") == 1

@@ -2,16 +2,92 @@
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from corki.cli.draft_history import DraftEntry
+from corki.protocol.input_images import validate_image_positions
+from corki.protocol.input_mentions import InputMention, validate_mentions
+from corki.protocol.tools import ImageAttachment
 
 _LOG = logging.getLogger(__name__)
+
+
+class DraftText(str):
+    """Model-facing text plus local-only composer metadata for queue restoration."""
+
+    def __new__(cls, text, draft):
+        value = super().__new__(cls, text)
+        value.draft = draft
+        value.mentions = tuple(dict.fromkeys(b[2] for b in draft.bindings))
+        return value
+
+
+def input_draft(value):
+    if isinstance(value, QueuedInput):
+        value = value.text
+    return getattr(value, "draft", None)
+
+
+@dataclass(frozen=True, slots=True)
+class ImageInput:
+    text: str
+    attachments: tuple[ImageAttachment, ...] = field(repr=False)
+    image_positions: tuple[int, ...] = ()
+    draft: DraftEntry | None = field(default=None, repr=False, compare=False)
+    mentions: tuple[InputMention, ...] = ()
+
+    def __post_init__(self):
+        object.__setattr__(self, "attachments", tuple(self.attachments))
+        object.__setattr__(self, "mentions", validate_mentions(self.mentions))
+        object.__setattr__(
+            self,
+            "image_positions",
+            validate_image_positions(self.text, self.image_positions, len(self.attachments)),
+        )
+
+
+def input_image_kwargs(value):
+    if isinstance(value, QueuedInput):
+        value = value.text
+    result = {}
+    if mentions := getattr(value, "mentions", ()):
+        result["mentions"] = mentions
+    if isinstance(value, ImageInput):
+        if value.attachments:
+            result["attachments"] = value.attachments
+        if value.image_positions:
+            result["image_positions"] = value.image_positions
+    return result
+
+
+def input_attachments(value):
+    if isinstance(value, QueuedInput):
+        value = value.text
+    return value.attachments if isinstance(value, ImageInput) else ()
+
+
+def submission_value(value):
+    if isinstance(value, QueuedInput):
+        value = value.text
+    if isinstance(value, (ImageInput, DraftText)):
+        return value
+    text = submission_text(value)
+    attachments = input_attachments(value)
+    return ImageInput(text, attachments) if attachments else text
+
+
+def input_preview(value):
+    draft = input_draft(value)
+    text = draft.text if draft is not None else submission_text(value)
+    images = input_attachments(value)
+    return text + (f" [Images: {len(images)}]" if images else "")
 
 
 @dataclass(frozen=True, slots=True)
 class QueuedInput:
     """An explicit next-turn submission, not steering or model-facing metadata."""
 
-    text: str
+    text: str | ImageInput
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,10 +95,19 @@ class CycleModeInput:
     """Composer control, never a user message or a queued submission."""
 
 
+@dataclass(frozen=True, slots=True)
+class BacktrackInput:
+    """Request source-preserving prompt editing; never model-facing text."""
+
+
 def submission_text(value: str | QueuedInput | CycleModeInput) -> str:
     if isinstance(value, CycleModeInput):
         return ""
-    return (value.text if isinstance(value, QueuedInput) else value).strip()
+    if isinstance(value, QueuedInput):
+        value = value.text
+    if isinstance(value, DraftText):
+        return str(value)
+    return value.text if isinstance(value, ImageInput) else value.strip()
 
 
 class InputInterrupted(Exception):
@@ -104,6 +189,9 @@ class InputOwner:
 
     async def select_model(self, current):
         return await self._modal(self.ui.read_model, current)
+
+    async def copy_response(self):
+        return await self._modal(self.ui.read_copy, None)
 
     async def _modal(self, read, request):
         self._modals += 1

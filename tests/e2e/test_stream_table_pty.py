@@ -2,9 +2,12 @@
 
 import os
 import sys
+import time
+from io import StringIO
 
 import pexpect
 import pytest
+from rich.text import Text
 
 PROGRAM = r"""
 import asyncio
@@ -93,9 +96,13 @@ def test_mutable_table_uses_active_composer(tmp_path, width, wrapped):
             "CORKI_TEST_TABLE_WRAPPED": "1" if wrapped else "0",
         },
     )
+    captured = StringIO()
+    child.logfile_read = captured
     try:
         child.expect("Ask Corki to do anything")
-        child.send("start\r")
+        child.send("start")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect_exact("alpha")
         prefix = child.before
         # The first live table draw must follow its durable prefix. Do not
@@ -104,12 +111,30 @@ def test_mutable_table_uses_active_composer(tmp_path, width, wrapped):
         assert "REASONING_BEFORE_BODY" not in prefix
         assert "`code" not in prefix
         assert "PARTIAL" not in child.before
+        child.expect_exact("TABLE_GATED")
         child.sendcontrol("t")
         child.expect_exact("REASONING_BEFORE_BODY")
         child.sendcontrol("t")
+        child.expect_exact("\x1b[?1049l")
         child.setwinsize(30, 100 if width == 40 else 40)
-        child.send("continue\r")
-        child.expect_exact("TABLE_TURN_FINISHED")
+        for character in "continue":
+            child.send(character)
+            # A real terminal drains redraws while the user types. Leaving the
+            # PTY unread can fill its output buffer during resize, block the
+            # event loop, and turn separately sent keys into one paste burst.
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline:
+                try:
+                    child.read_nonblocking(65536, timeout=0.05)
+                except pexpect.TIMEOUT:
+                    break
+        time.sleep(0.15)
+        child.send("\r")
+        try:
+            child.expect_exact("TABLE_TURN_FINISHED")
+        except (pexpect.TIMEOUT, pexpect.EOF):
+            rendered = Text.from_ansi(captured.getvalue()).plain
+            pytest.fail(f"table did not settle: {rendered[-7000:]!r}")
         child.expect("Ask Corki to do anything")
         child.sendcontrol("d")
         child.expect_exact("TABLE_STREAM_VERIFIED")

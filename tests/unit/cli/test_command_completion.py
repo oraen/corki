@@ -40,7 +40,9 @@ def test_candidate_navigation_preserves_draft(tmp_path, monkeypatch, key, comman
                     while buffer.text != command + " " and not task.done():
                         await asyncio.sleep(0)
                     assert not task.done()
-                    pipe.send_text("argument\r")
+                    pipe.send_text("argument")
+                    await asyncio.sleep(0.15)
+                    pipe.send_text("\r")
                     assert await task == command + " argument"
             finally:
                 task.cancel()
@@ -104,7 +106,9 @@ def test_completion_keeps_editing_and_multiline_available(tmp_path, monkeypatch,
                             await asyncio.sleep(0)
                         assert not task.done()
                         assert buffer.text == "/sta\n"
-                        pipe.send_text("argument\r")
+                        pipe.send_text("argument")
+                        await asyncio.sleep(0.15)
+                        pipe.send_text("\r")
                         assert await task == "/sta\nargument"
                     else:
                         pipe.send_text("\x1b")

@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 import pexpect
 import pytest
@@ -80,13 +81,17 @@ def test_cancel_retains_unclosed_unicode_tail(tmp_path, width, kind):
     )
     try:
         child.expect("Ask Corki to do anything")
-        child.send("start\r")
+        child.send("start")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect("DELTA_READY")
         child.sendcontrol("c")
         child.expect("TAIL_RECEIVED")
         child.expect("Turn interrupted")
         child.expect("Ask Corki to do anything")
-        child.send("followup\r")
+        child.send("followup")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect("TURN_SETTLED")
         child.expect("Ask Corki to do anything")
         child.sendcontrol("d")

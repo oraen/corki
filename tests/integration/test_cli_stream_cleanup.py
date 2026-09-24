@@ -209,7 +209,9 @@ def test_interleaved_tool_does_not_split_authoritative_assistant_source(tmp_path
                 yield ModelItemCompleted(call)
                 await finished.wait()
                 yield ModelTextDelta("Closing line", message.id)
-                yield ModelCompleted((message, call))
+                # Completed items preserve the order of the committed tool
+                # event; the trailing message completes after that event.
+                yield ModelCompleted((call, message))
 
             async def aclose(self):
                 pass
@@ -341,8 +343,8 @@ def test_actual_tool_cancellation_marks_display_unconfirmed_once(tmp_path):
                 pass
 
         class UI(TerminalUI):
-            def show_tool_started(self, name, arguments_preview):
-                super().show_tool_started(name, arguments_preview)
+            def show_identified_tool_started(self, call_id, name, arguments_preview):
+                super().show_identified_tool_started(call_id, name, arguments_preview)
                 displayed.set()
 
         settings = CorkiSettings(

@@ -10,11 +10,12 @@ from prompt_toolkit.input.defaults import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.cells import cell_len
 
-from corki.cli.model_picker import choose_model
+from corki.cli.model_picker import BACK, choose_model
 
 
 @pytest.mark.parametrize("width,height", [(40, 12), (80, 20)])
-def test_long_model_menu_fits_and_scrolls_selected_item(width, height):
+@pytest.mark.parametrize("compact", [False, True])
+def test_long_model_menu_fits_and_scrolls_selected_item(width, height, compact):
     class Output(DummyOutput):
         def get_size(self):
             return Size(rows=height, columns=width)
@@ -24,7 +25,7 @@ def test_long_model_menu_fits_and_scrolls_selected_item(width, height):
         session = PromptSession(input=pipe, output=Output(), history=DummyHistory())
 
         async def scenario():
-            task = asyncio.create_task(choose_model(session, models[0], models))
+            task = asyncio.create_task(choose_model(session, models[0], models, compact=compact))
             try:
                 async with asyncio.timeout(3):
                     while not session.app.is_running:
@@ -36,9 +37,10 @@ def test_long_model_menu_fits_and_scrolls_selected_item(width, height):
                         text = fragment_list_to_text(to_formatted_text(session.message))
                         assert all(cell_len(line) <= width for line in text.splitlines())
                         assert len(text.splitlines()) <= height - 1
-                        assert f"› 供应商/模型-{index}-" in text
+                        prefix = f"{index + 1}. " if compact else ""
+                        assert f"› {prefix}供应商/模型-{index}-" in text
                         assert "Enter confirm" in text and "Esc cancel" in text
-                        if width == 40 and index == 0:
+                        if width == 40 and index == 0 and not compact:
                             snapshot = Path(__file__).with_name("snapshots") / "model_picker_40.txt"
                             assert text.rstrip() == snapshot.read_text().rstrip()
                     pipe.send_text("\r")
@@ -104,6 +106,41 @@ def test_invalid_custom_model_shows_error_and_can_be_corrected():
                     pipe.send_text("\r")
                     assert await task == "Valid/Model"
                     assert list(session.history.get_strings()) == []
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+        asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("keys,expected", [("2", "high"), ("\x1b", BACK), ("\x03", None)])
+def test_effort_list_shortcuts_back_and_session_cleanup(keys, expected):
+    with create_pipe_input() as pipe:
+        session = PromptSession(input=pipe, output=DummyOutput(), history=DummyHistory())
+        read_only = session.default_buffer.read_only
+        erase = session.app.erase_when_done
+
+        async def scenario():
+            task = asyncio.create_task(
+                choose_model(
+                    session,
+                    "low",
+                    ("low", "high"),
+                    compact=True,
+                    allow_custom=False,
+                    back=True,
+                )
+            )
+            try:
+                async with asyncio.timeout(3):
+                    while not session.app.is_running and not task.done():
+                        await asyncio.sleep(0)
+                    pipe.send_text(keys)
+                    assert await task == expected
+                    assert session.default_buffer.read_only is read_only
+                    assert session.app.erase_when_done == erase
+                    assert not session.default_buffer.text
+                    assert not list(session.history.get_strings())
             finally:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)

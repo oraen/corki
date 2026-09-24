@@ -37,6 +37,49 @@ def request_call(request, name, value):
     return ModelCompleted((ToolCallItem(call, request.items[-1].turn_id, new_step_id()),))
 
 
+def test_notification_display_keeps_complete_bounded_history(tmp_path):
+    async def scenario():
+        text = "start-" + "中文" * 3000 + "-end"
+
+        class Model:
+            calls = 0
+
+            async def stream(self, request):
+                self.calls += 1
+                if self.calls == 1:
+                    yield request_call(request, "exec", "notify(" + json.dumps(text) + ");")
+                else:
+                    yield ModelCompleted(
+                        (AssistantMessageItem("done", request.items[-1].turn_id, new_step_id()),)
+                    )
+
+            async def aclose(self):
+                pass
+
+        runtime = await LangGraphRuntime.acreate(
+            settings=CorkiSettings(
+                tmp_path, skills_enabled=False, plugins_enabled=False, tool_mode="code_mode_only"
+            ),
+            database_path=tmp_path / "sessions.db",
+            home_path=tmp_path / "home",
+            model=Model(),
+        )
+        try:
+            events = [event async for event in runtime.stream("run")]
+            assert isinstance(events[-1], TurnCompleted)
+            assert any(
+                isinstance(event, ToolOutputDelta) and event.delta == text for event in events
+            )
+            snapshot = await runtime.load_display_snapshot()
+            assert any(
+                isinstance(item, ToolResultItem) and item.content == text for item in snapshot.items
+            )
+        finally:
+            await runtime.aclose()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("mode", ["code_mode", "code_mode_only"])
 @pytest.mark.parametrize("namespace_context", [False, True])
 @pytest.mark.parametrize(

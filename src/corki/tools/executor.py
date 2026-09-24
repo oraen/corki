@@ -192,7 +192,6 @@ class ToolExecutor:
             for item in parsed_plan:
                 _text(item.step, "plan.step")
             plan = tuple(item.as_dict() for item in parsed_plan)
-        output_budget = spec.output_char_budget or self._output_char_budget
         parts = result.content_items
         if parts:
             if len(parts) > 8192:
@@ -239,6 +238,8 @@ class ToolExecutor:
             else len(part.data_url.encode("utf-8"))
             for part in (*parts, *attachments)
         )
+        if result.display_content is not None and result.display_content != result.content:
+            raw_bytes += len(result.display_content.encode("utf-8"))
         if raw_bytes > MAX_RAW_TOOL_RESULT_BYTES:
             raise ValueError("tool result exceeds the raw transport byte limit")
         content = content_text(parts) if result.content_items else result.content
@@ -254,9 +255,10 @@ class ToolExecutor:
             # consume this validated original, not the UI's bounded preview.
             content=content,
             is_error=result.is_error,
-            display_content=truncate_text(
-                result.display_content if result.display_content is not None else result.content,
-                min(output_budget, 4_000),
+            # Keep the bounded original presentation source for expanded history.
+            # The terminal owns line previews; model projection owns model budgets.
+            display_content=(
+                result.display_content if result.display_content is not None else result.content
             ),
             attachments=tuple(attachments),
             state_update=ToolStateUpdate(
@@ -280,7 +282,6 @@ class ToolExecutor:
 
     def error(self, call: ToolCall, message: str, *, spec: ToolSpec | None = None) -> ToolResult:
         """Build a normalized failure without invoking a registered handler."""
-        budget = (spec.output_char_budget if spec is not None else None) or self._output_char_budget
         message = message.encode("utf-8", errors="replace").decode("utf-8")
         if len(message.encode("utf-8")) > MAX_RAW_TOOL_RESULT_BYTES:
             message = truncate_output_text(
@@ -290,7 +291,7 @@ class ToolExecutor:
             call_id=call.id,
             tool_name=call.name,
             content=message,
-            display_content=truncate_text(message, min(budget, 4_000)),
+            display_content=message,
             is_error=True,
             dispatch_error=True,
             legacy_output_char_budget=spec.output_char_budget if spec is not None else None,

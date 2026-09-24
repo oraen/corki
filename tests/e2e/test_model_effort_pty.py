@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 import pexpect
 import pytest
@@ -71,27 +72,41 @@ def test_model_effort_confirmation_is_atomic(tmp_path, width, effort):
     try:
         child.expect("Ask Corki to do anything")
         # Cancel at the second stage: even the chosen model must remain unpublished.
-        child.send("/model\r")
+        child.send("/model")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect_exact("Select model")
         child.send("new\r")
-        child.expect_exact("Select reasoning effort")
+        child.expect_exact("Select Reasoning Level for new")
+        child.send("\x1b")
+        child.expect_exact("Select model")
         child.send("\x1b")
         child.expect("Ask Corki to do anything")
-        child.send("/model\r")
+        child.send("/model")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect_exact("Select model")
         child.send("new\r")
-        child.expect_exact("Select reasoning effort")
-        child.send(effort + "\r")
+        child.expect_exact("Select Reasoning Level for new")
+        child.send("2" if effort == "high" else "3")
         if effort == "max":
-            child.expect_exact("Confirm reasoning effort")
-            child.send("\x1b[B\r")
+            child.expect_exact("Advanced Reasoning")
+            child.send("\x1b")
+            child.expect_exact("Select Reasoning Level for new")
+            child.send("3")
+            child.expect_exact("Advanced Reasoning")
+            child.send("\r")
         child.expect_exact("Model: new.")
         child.expect("Ask Corki to do anything")
-        child.send("/status\r")
+        child.send("/status")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect_exact("Reasoning:")
         child.expect_exact(effort)
         child.expect("Ask Corki to do anything")
-        child.send("hello\r")
+        child.send("hello")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect_exact("DONE")
         child.expect_exact("TURN_SETTLED")
         child.expect("Ask Corki to do anything")

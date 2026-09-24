@@ -35,6 +35,7 @@ from corki.core.step_settings import StepSettingsState
 from corki.core.step_shell import step_shell
 from corki.core.step_tools import StepToolState
 from corki.core.stop_hooks import StopDecision, StopHooks
+from corki.core.tool_display import shell_display_status
 from corki.core.tool_readiness import StepToolReadiness
 from corki.core.turn_diff import TurnDiffTracker
 from corki.evaluation import EvaluationDecision, evaluate_model_step
@@ -889,7 +890,7 @@ class CorkiGraph:
             item = ToolResultItem(call_id, "exec", text, state["turn_id"], input_kind="freeform")
             await self._repository.append_items(state["thread_id"], (item,))
             await CellEventSink(runtime.context.events, inactive).emit(
-                ToolOutputDelta(state["thread_id"], state["turn_id"], call_id, text[:4000])
+                ToolOutputDelta(state["thread_id"], state["turn_id"], call_id, text)
             )
 
         propagation = self._code_mode.activate(
@@ -1671,6 +1672,7 @@ class CorkiGraph:
                     mcp_result_json=result.mcp_result_json,
                     mcp_error=result.mcp_error,
                     patch_delta_json=result.patch_delta_json,
+                    **shell_display_status(call.name, result),
                 )
             )
         permissions = self._turn_settings.execution_permissions
@@ -1709,6 +1711,7 @@ class CorkiGraph:
             fallback_token_limit_override=result.fallback_token_limit_override,
             legacy_output_char_budget=result.legacy_output_char_budget,
             is_tool_search_output=result.is_tool_search_output,
+            **shell_display_status(call.name, result),
         )
         return item
 

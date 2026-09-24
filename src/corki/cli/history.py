@@ -23,6 +23,19 @@ def _visible_items(items):
 
 
 def replay_history(ui, history):
+    flush = getattr(ui, "flush_exploration", None)
+    if flush is None:
+        return _replay_history(ui, history)
+    live = getattr(ui, "_exploration", None)
+    ui._exploration = None
+    try:
+        _replay_history(ui, history)
+        flush()
+    finally:
+        ui._exploration = live
+
+
+def _replay_history(ui, history):
     items = tuple(_visible_items(history.items if isinstance(history, DisplayHistory) else history))
     terminals = (
         {turn.id: turn for turn in history.turns} if isinstance(history, DisplayHistory) else {}
@@ -118,16 +131,39 @@ def _replay_items(ui, items, *, collaboration_mode="default"):
                 ui.append_reasoning_delta(summary)
                 ui.end_reasoning()
         elif isinstance(item, ToolCallItem):
-            ui.show_tool_started(
-                item.call.name, item.call.raw_arguments or dumps_wire(item.call.arguments)
-            )
+            arguments = item.call.raw_arguments or dumps_wire(item.call.arguments)
+            identified = getattr(ui, "show_identified_tool_started", None)
+            if identified is not None:
+                identified(item.call.id, item.call.name, arguments)
+            else:
+                ui.show_tool_started(item.call.name, arguments)
         elif isinstance(item, ToolResultItem):
-            output = (
-                item.display_content if item.display_content is not None else item.content[:4000]
-            )
-            if output:
+            if (
+                item.tool_name in {"exec_command", "write_stdin"}
+                and item.exit_code is None
+                and item.session_id is None
+                and (flush := getattr(ui, "flush_exploration", None)) is not None
+            ):
+                # Legacy entries have no authoritative process status. Keep their
+                # observation visible rather than hiding an unknown exit outcome.
+                flush()
+            output = item.display_content if item.display_content is not None else item.content
+            preview = getattr(ui, "show_tool_output_chunk", None)
+            if preview is not None:
+                preview(item.call_id, output, finished=True)
+            elif output:
                 ui.show_tool_output(output)
-            ui.show_tool_completed(item.tool_name, is_error=item.is_error)
+            identified = getattr(ui, "show_identified_tool_completed", None)
+            if identified is not None:
+                identified(
+                    item.call_id,
+                    item.tool_name,
+                    is_error=item.is_error,
+                    exit_code=item.exit_code,
+                    session_id=item.session_id,
+                )
+            else:
+                ui.show_tool_completed(item.tool_name, is_error=item.is_error)
             if item.state_update.plan is not None:
                 ui.show_plan(item.state_update.plan, explanation=item.state_update.plan_explanation)
         elif isinstance(item, TurnAbortedItem):

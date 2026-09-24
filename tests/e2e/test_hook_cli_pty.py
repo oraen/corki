@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 import pexpect
 import pytest
@@ -133,7 +134,9 @@ def test_hook_activity_completion_and_cancel_in_real_terminal(
     try:
         if entry == "fresh":
             expect_rendered("Ask Corki to do anything")
-            child.sendline("finish")
+            child.send("finish")
+            time.sleep(0.15)
+            child.send("\r")
         expect_rendered("ANSWER_READY")
         expect_rendered("HOOK_CHECKING")
         if mode == "cancel":
@@ -145,7 +148,7 @@ def test_hook_activity_completion_and_cancel_in_real_terminal(
                 assert "\x1b[1;31m•\x1b[0m " in child.before
                 expect_rendered("CHECK_AGAIN")
         expect_rendered("TURN_RETURNED")
-        expect_rendered("shift+tab to cycle")
+        expect_rendered("Ask Corki to do anything")
         child.sendcontrol("d")
         expect_rendered("RESULT_OK")
         child.expect(pexpect.EOF)

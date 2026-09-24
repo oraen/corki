@@ -10,3 +10,4 @@ build/
 dist/
 # Host-platform development compiler; build/install it from the pinned bridge.
 src/corki/_native/sandbox/
+src/corki/_native/file_search/

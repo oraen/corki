@@ -48,7 +48,7 @@ def test_approval_overlays_idle_menu_and_restores_selection(tmp_path, monkeypatc
                     while not ui._form_session.app.is_running:
                         await asyncio.sleep(0)
                     pipe.send_text("Local/\x1b[B")
-                    while "› Local/Next" not in rendered():
+                    while "› 2. Local/Next" not in rendered():
                         await asyncio.sleep(0)
                     pending = asyncio.create_task(owner.elicit(object()))
                     await shown.wait()
@@ -71,7 +71,7 @@ def test_approval_overlays_idle_menu_and_restores_selection(tmp_path, monkeypatc
                     while "Select model" not in rendered() or not ui._form_session.app.is_running:
                         await asyncio.sleep(0)
                     assert ui._form_session.default_buffer.text == "Local/"
-                    assert "› Local/Next" in rendered()
+                    assert "› 2. Local/Next" in rendered()
                     pipe.send_text("\r")
                     assert (await menu).model == "Local/Next"
                     assert not ui._transcript.modal_depth

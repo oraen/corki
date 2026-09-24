@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 from io import StringIO
 
 import pexpect
@@ -94,7 +95,9 @@ def test_tool_result_does_not_consume_draft(tmp_path, width, outcome):
     child.logfile_read = terminal_output
     try:
         child.expect("Ask Corki to do anything")
-        child.send("start\r")
+        child.send("start")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect("fixture_tool")
         child.send("draft")
         child.expect("TOOL_LINE")

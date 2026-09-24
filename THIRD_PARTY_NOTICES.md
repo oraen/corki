@@ -591,3 +591,17 @@ inform the Turn-owned state adapter in `src/corki/core/turn_diff.py`. Its native
 renderer in `native/sandbox/src/patch_diff.rs` includes the pinned tracker source
 directly. Corki's ledger reconstruction, call-ID deduplication and bounded helper
 transport are integration code, not a claim that native Codex persists TurnDiff.
+
+## Local CLI file candidate search
+
+`native/file_search` uses `ignore` 0.4.25 and `nucleo-matcher` 0.3.1 at commit
+`4253de9faabb4e5c6d81d946a5e35a90f87347ee`, matching the local Codex file-search
+dependency versions. The local JSON transport, bounded candidate storage and
+Python CLI adapter are Corki implementation code; this does not import account,
+cloud or model tool-search services.
+
+The locked build collects dependency license/copyright texts into the generated
+bundle's `THIRD_PARTY.txt` and the matching compiler distribution's standard
+library notices into `RUST_COPYRIGHT.html`. Both files are checksummed and included
+beside the executable in platform wheels. Source, build instructions and exact
+transitive dependency versions are under `native/file_search`.

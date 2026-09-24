@@ -69,11 +69,22 @@ class UserMessageItem:
     retained_from_id: ItemId | None = None
     content_item_kinds: tuple[str, ...] | None = None
     mentions: tuple[InputMention, ...] = ()
+    image_positions: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
+        from corki.protocol.input_images import labelled_image_content, validate_image_positions
+
         object.__setattr__(self, "mentions", validate_mentions(self.mentions))
         object.__setattr__(self, "attachments", tuple(self.attachments))
         object.__setattr__(self, "content_items", tuple(self.content_items))
+        positions = validate_image_positions(
+            self.content, self.image_positions, len(self.attachments) if self.attachments else None
+        )
+        object.__setattr__(self, "image_positions", positions)
+        if positions and self.attachments and not self.content_items:
+            object.__setattr__(
+                self, "content_items", labelled_image_content(self.content, self.attachments)
+            )
         if self.content_item_kinds is not None:
             if not isinstance(self.content_item_kinds, (tuple, list)) or any(
                 not isinstance(kind, str) for kind in self.content_item_kinds
@@ -213,6 +224,9 @@ class ToolResultItem:
     is_tool_search_output: bool | None = None
     # Request/checkpoint copies only; original conversation entries remain raw.
     model_output_projected: bool = False
+    # Display metadata, separate from the tool-level error flag and model output.
+    exit_code: int | None = None
+    session_id: int | None = None
 
     def __post_init__(self) -> None:
         # MsgPack checkpoints decode sequences as lists. Restore the canonical
@@ -228,6 +242,9 @@ class ToolResultItem:
             raise ValueError("tool output classification must be a boolean")
         if type(self.model_output_projected) is not bool:
             raise ValueError("model_output_projected must be a boolean")
+        for value in (self.exit_code, self.session_id):
+            if value is not None and type(value) is not int:
+                raise ValueError("shell display status must be an integer")
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,6 +438,8 @@ def item_to_payload(item: ConversationItem) -> dict[str, Any]:
     if isinstance(item, ToolResultItem) and item.state_update.plan_explanation is None:
         payload["state_update"].pop("plan_explanation")
     if isinstance(item, UserMessageItem):
+        if not item.image_positions:
+            payload.pop("image_positions")
         if not item.mentions:
             payload.pop("mentions")
         if item.content_item_kinds is None:
@@ -436,6 +455,8 @@ def item_to_payload(item: ConversationItem) -> dict[str, Any]:
             "fallback_token_limit_override",
             "legacy_output_char_budget",
             "is_tool_search_output",
+            "exit_code",
+            "session_id",
         ):
             if payload[key] is None:
                 payload.pop(key)

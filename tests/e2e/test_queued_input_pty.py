@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 from pathlib import Path
 
 import pexpect
@@ -112,14 +113,20 @@ def test_tab_queue_and_enter_steering_use_distinct_turns(tmp_path, width, edit):
     )
     try:
         child.expect("Ask Corki to do anything")
-        child.send("initial\r")
+        child.send("initial")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect_exact("MODEL_WAITING")
-        child.send("/model\r")
+        child.send("/model")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect_exact("Select model")
         child.send("Discard/Model")
         child.send("\x1b")
         child.expect("Ask Corki to do anything")
-        child.send("/model\r")
+        child.send("/model")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect_exact("Select model")
         child.send("Invalid Model\r")
         child.expect_exact("Model names cannot contain")
@@ -133,7 +140,9 @@ def test_tab_queue_and_enter_steering_use_distinct_turns(tmp_path, width, edit):
             ("/missing", "Unknown command: /missing"),
             ("/clear", "unavailable while"),
         ):
-            child.send(command + "\r")
+            child.send(command)
+            time.sleep(0.15)
+            child.send("\r")
             child.expect_exact(feedback)
             child.expect("Ask Corki to do anything")
         child.send("queued one\t")
@@ -151,7 +160,9 @@ def test_tab_queue_and_enter_steering_use_distinct_turns(tmp_path, width, edit):
             child.send(" edited\t")
             child.expect_exact("Queued for the next turn.")
             child.expect_exact("↳ queued two edited")
-        child.send("steer now\r")
+        child.send("steer now")
+        time.sleep(0.15)
+        child.send("\r")
         child.expect_exact("ALL_REQUESTS_SAMPLED")
         child.expect_exact("ALL_TURNS_FINISHED")
         child.expect("Ask Corki to do anything")

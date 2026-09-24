@@ -943,7 +943,9 @@ def test_late_steering_submission_is_kept_for_next_turn(tmp_path: Path, queued) 
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("command", ["/help", "/status", "/missing", "/clear", "/mcp refresh"])
+@pytest.mark.parametrize(
+    "command", ["/help", "/status", "/missing", "/clear", "/mcp refresh", "/copy"]
+)
 def test_local_commands_are_not_sent_as_live_model_input(tmp_path, command):
     async def scenario():
         started, release = asyncio.Event(), asyncio.Event()
@@ -969,6 +971,10 @@ def test_local_commands_are_not_sent_as_live_model_input(tmp_path, command):
         class UI(FakeUI):
             reads = 0
 
+            async def read_copy(self, request):
+                self.events.append(("copy", ""))
+                self.show_notice("Copied to clipboard.")
+
             async def read_message(self):
                 self.reads += 1
                 if self.reads == 1:
@@ -988,6 +994,8 @@ def test_local_commands_are_not_sent_as_live_model_input(tmp_path, command):
         if command == "/clear":
             assert ("clear", "") not in ui.events
             assert any("unavailable" in text for _, text in ui.events)
+        elif command == "/copy":
+            assert ("copy", "") in ui.events
         else:
             assert ("notice", app._commands.dispatch(command).output) in ui.events
         assert any(kind == "notice" and text for kind, text in ui.events)

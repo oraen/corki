@@ -48,7 +48,9 @@ async def main():
             print("TOOL_EXECUTED", flush=True)
             await asyncio.to_thread(input)
             yield ModelTextDelta("Closing line", message.id)
-            yield ModelCompleted((message, call))
+            # item.done order is the authoritative completed-item prefix even
+            # while the assistant's text deltas are still being displayed.
+            yield ModelCompleted((call, message))
         async def aclose(self):
             self.closed = True
     cwd = Path.cwd()
@@ -61,11 +63,11 @@ async def main():
     app = CorkiApplication(settings, CorkiPaths.from_home(cwd / "home"), runtime, ui)
     try:
         await app._consume_events(runtime.stream("Run"))
-        assert model.calls == 2 and tool.calls == 1
+        assert model.calls == 2 and tool.calls == 1, (model.calls, tool.calls)
         for width in (40, 100):
             source = ui._transcript.render(width)
-            assert source.count("Opening line") == source.count("Closing line") == 1
-            assert source.count("during_answer") == source.count("TOOL_EVIDENCE") == 1
+            assert source.count("Opening line") == source.count("Closing line") == 1, repr(source)
+            assert source.count("during_answer") == source.count("TOOL_EVIDENCE") == 1, repr(source)
             assert source.index("Closing line") < source.index("during_answer")
     finally:
         await runtime.aclose()
@@ -99,7 +101,10 @@ def test_interleaved_tool_waits_for_authoritative_body_on_terminal(tmp_path, wid
         assert "during_answer" not in before and "TOOL_EVIDENCE" not in before
         assert "unfinished" not in before
         child.sendline("")
-        child.expect_exact("INTERLEAVED_CLOSED")
+        try:
+            child.expect_exact("INTERLEAVED_CLOSED")
+        except pexpect.EOF:
+            pytest.fail(f"interleaved runtime failed: {child.before!r}")
         after = child.before
         assert "\x1b[3J" not in after and "\x1b[2J" not in after
         for text in ("Opening line", "unfinished Closing line", "during_answer", "TOOL_EVIDENCE"):

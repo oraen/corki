@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 import pexpect
 import pytest
@@ -126,14 +127,14 @@ def test_typed_plan_publication_and_inline_submission(tmp_path, width, mode):
 
     try:
         expect_rendered("READY_INPUT_1")
-        expect_rendered("shift+tab to cycle")
+        expect_rendered("Ask Corki to do anything")
         if mode.startswith("cycle"):
             child.send("\x1b[200~Review Foo\nKeepCase\x1b[201~\x1b[Z")
         else:
-            child.sendline("/plan")
+            child.send("/plan")
+            time.sleep(0.15)
+            child.send("\r")
         expect_rendered("READY_INPUT_2")
-        if mode != "fail":
-            expect_rendered("Plan mode")
         if mode.startswith("cycle"):
             child.send("\x1b[Z")
         else:
