@@ -1,0 +1,18 @@
+[package]
+name = "corki-mcp-url"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+url = "=2.5.8"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"

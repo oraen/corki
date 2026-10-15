@@ -1,0 +1,209 @@
+'use strict';
+const $ = s => document.querySelector(s);
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const providerIconDomains = [
+ ['deepseek',['deepseek.com']],
+ ['qwen',['dashscope.aliyuncs.com','dashscope-intl.aliyuncs.com','dashscope-us.aliyuncs.com','qwen.ai']],
+ ['kimi',['moonshot.cn','moonshot.ai','kimi.com']],
+ ['openai',['openai.com']],
+ ['claude',['anthropic.com','claude.ai','claude.com']],
+ ['gemini',['generativelanguage.googleapis.com','gemini.google.com']],
+ ['glm',['bigmodel.cn','z.ai']],
+ ['minimax',['minimax.cn','minimax.io']],
+ ['xai',['x.ai']],
+ ['mistral',['mistral.ai']]
+];
+function providerIconId(baseUrl){
+ let host;
+ try{host=new URL(baseUrl).hostname.toLowerCase().replace(/\.$/,'');}catch{return '';}
+ return providerIconDomains.find(([,domains])=>domains.some(domain=>host===domain||host.endsWith('.'+domain)))?.[0]||'';
+}
+function providerCardIcon(provider,model=false){
+ const name=providerIconId(provider.base_url);
+ if(name)return `<span class="${model?'model-card-icon':'provider-logo'} has-brand-icon"><img src="/provider-icons/${name}.png" alt="" width="28" height="28"></span>`;
+ return model?`<span class="model-card-icon">${icon('models')}</span>`:`<span class="provider-logo ${provider.id.includes('codex')?'dark':''}">${esc(provider.id.slice(0,1).toUpperCase())}</span>`;
+}
+const paths = {
+ overview:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',
+ providers:'M4 4h16v6H4z M4 14h16v6H4z M8 7h.01 M8 17h.01',
+ models:'M12 3 3 8l9 5 9-5-9-5z M3 12l9 5 9-5 M3 16l9 5 9-5',
+ skills:'m13 2-9 12h7l-1 8 10-12h-7l1-8z',
+ knowledge:'M4 4h6a3 3 0 0 1 3 3v14a4 4 0 0 0-4-2H4z M13 7a3 3 0 0 1 3-3h5v15h-4a4 4 0 0 0-4 2',
+ tools:'M14 6a5 5 0 0 0-6 6L3 17a3 3 0 0 0 4 4l5-5a5 5 0 0 0 6-6l-4 3-3-3 3-4z',
+ chat:'M4 5h16v12H8l-4 3V5z M8 9h8 M8 13h5',
+ memories:'M9 4a3 3 0 0 0-5 3 4 4 0 0 0-1 7 4 4 0 0 0 6 6V4z M15 4a3 3 0 0 1 5 3 4 4 0 0 1 1 7 4 4 0 0 1-6 6V4z M5 10h4 M15 15h4',
+ logs:'M4 3h16v18H4z M8 8h8 M8 12h8 M8 16h4',
+ search:'m21 21-5-5 M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',
+ save:'M5 3h13l3 3v15H3V3h2zm2 0v7h10V3M7 21v-7h10v7',plus:'M12 5v14 M5 12h14',arrow:'M5 12h14 m-5-5 5 5-5 5', info:'M12 11v6 M12 7h.01 M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0',
+ clock:'M12 7v5l3 2 M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0',check:'m5 12 4 4L19 6'
+};
+const icon = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${paths[name] || paths.models}"/></svg>`;
+paths.config=paths.logs;
+paths.developer='m8 6-6 6 6 6 M16 6l6 6-6 6 M14 3l-4 18';
+paths.user='M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M4 21v-2a8 8 0 0 1 16 0v2';
+paths.eye='M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0';
+paths.eyeOff='m3 3 18 18 M10.5 5.1 12 5c6.5 0 10 7 10 7a19 19 0 0 1-3.2 4 M6.2 6.2A21 21 0 0 0 2 12s3.5 7 10 7a12 12 0 0 0 5-1 M10 10a3 3 0 0 0 4 4';
+const routes = {overview:['主页','HOME'],guide:['使用指引','GUIDE'],models:['模型管理','MODELS'],skills:['Skills','CAPABILITIES'],knowledge:['知识库','KNOWLEDGE'],tools:['工具','TOOLS'],chat:['简单对话','CHAT'],memories:['记忆管理','MEMORY'],logs:['运行日志','LOGS'],config:['配置文件','CONFIGURATION']};
+const developerRoutes=['memories','logs','config'];
+let developerExpanded=false;
+let selectedProvider='', selectedModel='';
+let state, route = 'overview', query = '', filter = 'all', busy = false, submitAction;
+let activeModelTest = null;
+const fmt = n => new Intl.NumberFormat('zh-CN',{notation:Number(n)>99999?'compact':'standard',maximumFractionDigits:1}).format(n||0);
+const when = window.CorkiDateTime;
+const size = n => n<1024 ? `${n} B` : `${(n/1024).toFixed(1)} KB`;
+const badge = (v, color='') => `<span class="badge ${color}">${esc(v)}</span>`;
+const status = v => ({completed:['已完成','green'],failed:['失败','red'],running:['运行中','purple'],cancelled:['已取消','orange'],interrupted:['已中断','orange'],aborted:['已中止','orange'],succeeded:['已完成','green']})[v] || [v||'暂无运行',''];
+const statusBadge = v => badge(...status(v));
+const button = (text, action, attrs='', primary=false) => `<button class="button ${primary?'primary':''}" data-action="${action}" ${attrs}>${primary?icon(action==='model-save'?'save':'plus'):''}${text}</button>`;
+const textButton = (text, action, attrs='') => `<button class="text-button" data-action="${action}" ${attrs}>${text}</button>`;
+const attr = (id,provider) => `data-id="${esc(id)}" ${provider?`data-provider="${esc(provider)}"`:''}`;
+const empty = (title='暂无内容',desc='暂无已配置项目。') => `<div class="empty">${icon(route)}<h3>${title}</h3><p>${desc}</p></div>`;
+const notice = text => `<div class="notice">${icon('info')}<span>${text}</span></div>`;
+const match = item => JSON.stringify(item).toLowerCase().includes(query.toLowerCase());
+function toast(text){$('#toast').textContent=text;$('#toast').classList.add('visible');clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').classList.remove('visible'),4500);}
+async function api(path,body){const response=await fetch('/api/'+path,body?{method:'POST',headers:{'Content-Type':'application/json','X-Corki-Manager':'1'},body:JSON.stringify(body)}:{cache:'no-store'});const data=await response.json();if(!response.ok)throw new Error(data.error||'请求失败');return data;}
+async function load(quiet=false){if(busy)return;busy=true;$('#refresh').disabled=true;try{state=await api('snapshot');render();if(!quiet)toast('工作空间已更新');}catch(e){if(!state)$('#main').innerHTML=empty('暂时无法读取工作空间',esc(e.message))+button('重试','refresh');else toast(e.message);}finally{busy=false;$('#refresh').disabled=false;}}
+function models(){return state.providers.flatMap(p=>Object.entries(p.models).map(([id,m])=>({id,provider:p.id,...m}))).sort((a,b)=>a.id.localeCompare(b.id)||a.provider.localeCompare(b.provider));}
+function toolbar(count,tabs='',action=''){return `<div class="toolbar"><label class="search">${icon('search')}<input id="search" placeholder="搜索名称、描述…" value="${esc(query)}" aria-label="搜索当前列表"></label>${tabs}<span class="count">共 ${count} 项</span>${action}</div>`;}
+function tabs(values){return `<div class="filters">${values.map(([id,name])=>`<button data-action="filter" data-id="${id}" class="${filter===id?'active':''}">${name}</button>`).join('')}</div>`;}
+function table(headers,rows){return `<div class="panel table-wrap"><table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>${rows.length?'':empty('没有匹配的记录','试试其他关键词，或添加新的内容。')}</div>`;}
+function overview(){const allModels=models(),current=allModels.find(m=>m.id===state.default.model&&m.provider===state.default.provider),total=state.totals;const stats=[['模型供应商',state.providers.length,'providers',`${allModels.length} 个模型已配置`],['已启用 Skills',state.files.filter(f=>f.kind==='skills'&&f.enabled).length,'skills','按本地启停配置统计'],['累计会话',total.sessions||0,'clock','来自 Corki 会话数据库'],['累计 Tokens',fmt((total.input||0)+(total.output||0)),'models',`${fmt(total.cached)} 输入 tokens 命中缓存`]];const max=Math.max(...state.usage.map(u=>u.input+u.output),1);return `<div class="stats">${stats.map(([title,value,i,note])=>`<div class="stat"><div class="stat-top">${title}<span class="stat-icon">${icon(i)}</span></div><div class="stat-number">${esc(value)}</div><div class="stat-note">${note}</div></div>`).join('')}</div><div class="dashboard-grid"><section class="panel"><div class="panel-head"><div><h2>模型用量</h2><p>最近 ${state.usage.length} 个有记录的日期 · 输入与输出总量</p></div>${badge('实际调用记录')}</div><div class="chart-top"><span class="chart-total">${fmt(state.usage.reduce((n,u)=>n+u.input+u.output,0))} <span class="subtle">tokens</span></span><span class="chart-legend"><span><i class="dot"></i>总用量</span></span></div>${state.usage.length?`<div class="chart">${state.usage.map(u=>`<div class="chart-col"><div class="chart-bar" style="height:${Math.max(2,(u.input+u.output)/max*90)}%" title="${esc(u.day)} · ${fmt(u.input+u.output)} tokens"></div><label>${esc(u.day)}</label></div>`).join('')}</div>`:empty('还没有调用记录','开始一次 Corki 会话后，用量会显示在这里。')}</section><section class="panel"><div class="panel-head"><h2>默认模型</h2>${badge('配置默认值','purple')}</div><div class="current-model"><div class="provider-logo dark">✳</div><div><div class="model-name">${esc(state.default.model||'尚未设置')}</div><div class="subtle">${esc(state.default.provider||'请选择供应商与模型')}</div></div></div><dl class="model-attributes"><div><dt>上下文窗口</dt><dd>${current?.context_window?fmt(current.context_window)+' tokens':'模型默认'}</dd></div><div><dt>推理等级</dt><dd>${esc(current?.reasoning_effort||'模型默认')}</dd></div></dl><div class="panel-bottom"><span>${state.gateway?'● 本地网关端口可达':'○ 本地网关未连接'}</span><a class="text-button" href="#models">切换模型 →</a></div></section></div>${quickToolsCards()}<section class="panel"><div class="panel-head" style="padding-bottom:20px"><div><h2>最近会话</h2></div><a class="text-button" href="#logs">查看全部 →</a></div><div class="table-wrap"><table><thead><tr><th>会话 / 工作目录</th><th>模型</th><th>状态</th><th>最近更新</th></tr></thead><tbody>${sessionRows(state.sessions.slice(0,5))}</tbody></table>${state.sessions.length?'':empty('暂无会话记录','在 Corki 中开始一个任务即可。')}</div></section>`;}
+function sessionRows(rows){return rows.map(s=>`<tr><td><span class="row-title">${esc(s.preview||s.cwd.split('/').pop()||'未命名会话')}</span><span class="row-sub">${esc(s.cwd)}</span></td><td>${esc(s.model||'—')}</td><td>${statusBadge(s.status)}</td><td class="subtle">${when(s.updated_at)}</td></tr>`).join('');}
+function providersPage(){const rows=state.providers.filter(match);return toolbar(rows.length,'',`<div class="provider-toolbar-actions">${button('添加供应商','new','',true)}${button('快速添加','quick-add')}</div>`)+`<div class="provider-grid">${rows.map(p=>`<article class="provider-card ${p.id===state.default.provider?'is-default':''}"><div class="provider-card-heading">${providerCardIcon(p)}<a class="provider-card-name" href="#models/${encodeURIComponent(p.id)}" title="${esc(p.id)}">${esc(p.id)}</a>${p.id===state.default.provider?'<span class="card-default-tag">默认</span>':''}</div><div class="provider-card-body"><div class="provider-card-url mono" title="${esc(p.base_url)}">${esc(p.base_url)}</div><div class="provider-card-meta"><span>${Object.keys(p.models).length} 个模型</span>${badge(p.api_mode==='responses'?'Responses':'Chat Completions')}</div></div><div class="provider-card-footer"><div class="actions">${p.id!==state.default.provider?`<button class="text-button" data-action="provider-default" data-id="${esc(p.id)}" ${Object.keys(p.models).length?'':'disabled title="请先添加模型"'}>设为默认</button>`:''}${textButton('连接设置','edit',attr(p.id))}${textButton('删除','delete',attr(p.id))}</div></div></article>`).join('')}</div>${rows.length?'':empty()}`;}
+function modelKind(){return route==='models'?(selectedProvider?'models':'providers'):route;}
+function modelLink(p,m=''){return '#models/'+encodeURIComponent(p)+(m?'/'+encodeURIComponent(m):'');}
+function modelReasoningOptions(model){
+ const levels=Array.isArray(model?.supported_reasoning_levels)?model.supported_reasoning_levels.map(p=>p.effort):['none','minimal','low','medium','high','xhigh','max','ultra'];
+ return [['','模型默认'],...levels.map(v=>[v,v])];
+}
+function modelsPage(){
+ if(!selectedProvider)return providersPage();
+ const p=state.providers.find(p=>p.id===selectedProvider);
+ if(!p)return empty('供应商不存在','请返回模型管理。')+'<a class="button" href="#models">返回</a>';
+ const back='';
+ if(selectedModel){
+  const m=p.models[selectedModel];
+  if(!m)return back+empty('模型不存在');
+  return back+`<section class="panel config-panel"><div class="model-config-heading"><h2>${esc(selectedModel)}</h2>${button('保存配置','model-save','',true)}</div><p>${esc(p.id)} · 模型配置</p><div class="field-grid">${field('context_window','上下文窗口（tokens）',m.context_window||262144,'number')}${select('reasoning_effort','默认推理等级',modelReasoningOptions(m),m.reasoning_effort||'')}</div>${descriptionField(m.description)}</section>`;
+ }
+ const rows=models().filter(m=>m.provider===p.id&&match(m));
+ return back+toolbar(rows.length,'',button('添加模型','new','',true))+`<div class="model-grid">${rows.map(m=>{const current=m.id===state.default.model&&p.id===state.default.provider;return `<article class="model-card ${current?'is-default':''}"><div class="model-card-heading">${providerCardIcon(p,true)}<a class="model-card-name" href="${modelLink(p.id,m.id)}" title="${esc(m.id)}">${esc(m.id)}</a>${current?'<span class="card-default-tag">默认</span>':''}</div><p class="model-card-description" title="${esc(m.description||'')}">${esc(m.description||'暂无描述')}</p><div class="model-card-footer">${textButton('模型测试','model-test',attr(m.id,p.id))}${current?'':textButton('设为默认','default',attr(m.id,p.id))}${textButton('删除','delete',attr(m.id,p.id))}</div></article>`;}).join('')}</div>`+(rows.length?'':empty('尚未配置模型','添加此供应商下的第一个模型。'));
+
+}
+function configPage(){return '<div id="config-workspace"></div>'; }
+function filesPage(){let rows=state.files.filter(f=>f.kind===route&&match(f));if(filter==='enabled')rows=rows.filter(f=>f.enabled);if(filter==='editable')rows=rows.filter(f=>f.writable);const action=route==='memories'?'':button(route==='skills'?'创建 Skill':'添加文档','new','',true);let note=route==='knowledge'?'未启用自动检索与索引。':route==='memories'?'':'共享技能只读。';return toolbar(rows.length,tabs([['all','全部'],[route==='skills'?'enabled':'editable',route==='skills'?'已启用':'可编辑']]),action)+(note?notice(note):'')+`<div class="cards">${rows.map(f=>`<article class="panel entity-card"><div class="entity-head"><span class="resource-icon">${icon(route)}</span>${route==='skills'?badge(f.source||'用户'): ''}${route==='skills'?`<button class="toggle ${f.enabled?'on':''}" role="switch" aria-checked="${f.enabled}" aria-label="${esc(f.name)} 启用状态" data-action="toggle" data-id="${f.id}"></button>`:badge(f.writable?'可编辑':'只读')}</div><div class="entity-body"><div class="entity-title">${esc(f.name)}</div><div class="entity-desc">${esc(f.description||'暂无描述')}</div></div><div class="entity-footer"><span class="subtle">${size(f.bytes)} · ${when(f.updated)}</span><div class="actions">${textButton('查看'+(f.writable?' / 编辑':''),'file',attr(f.id))}${route==='knowledge'?textButton('删除','delete',attr(f.id)):''}</div></div></article>`).join('')}</div>${rows.length?'':empty(route==='knowledge'?'暂无知识文档':'暂无匹配的资源',route==='knowledge'?'':'资源会从 Corki 的本地目录中读取。')}`;}
+
+function logsPage(){const rows=(filter==='tools'?state.executions:state.sessions).filter(match);return toolbar(rows.length,tabs([['all','会话记录'],['tools','工具调用']]),`<span class="badge green">每 15 秒自动刷新</span>`)+(filter==='tools'?table(['工具','状态','开始时间','调用 ID','操作'],rows.map(r=>`<tr><td><span class="table-title"><span class="mini-icon">${icon('tools')}</span>${esc(r.tool_name)}</span></td><td>${statusBadge(r.status)}</td><td>${when(r.started_at)}</td><td class="mono">${esc(r.call_id.slice(0,20))}…</td><td>${textButton('查看输出','execution',attr(r.call_id))}</td></tr>`)):table(['会话 / 工作目录','模型','状态','最近更新'],rows.map(s=>sessionRows([s]))))+`<p style="margin-top:15px;font-size:10px">最近 40 个会话 / 80 次调用 · 状态来自历史记录</p>`;}
+function renderNav(){
+ const link=id=>`<a href="#${id}" class="${id===route||(id==='overview'&&route==='guide')?'active':''}" ${id===route?'aria-current="page"':''}>${icon(id)}<span>${routes[id][0]}</span></a>`;
+ $('#nav').innerHTML=Object.keys(routes).filter(id=>id!=='guide'&&!developerRoutes.includes(id)).map(link).join('')+`<div class="nav-group"><button type="button" class="nav-group-toggle ${developerRoutes.includes(route)?'has-active':''}" aria-expanded="${developerExpanded}" aria-controls="developer-nav">${icon('developer')}<span>开发者</span><svg class="nav-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></button><div id="developer-nav" class="nav-submenu" ${developerExpanded?'':'hidden'}>${developerRoutes.map(link).join('')}</div></div>`;
+}
+function renderBreadcrumbs(){
+ const nested=route==='models'&&selectedProvider;
+ const items=route==='guide'?[['工作空间',''],['主页','#overview'],['使用指引','#guide']]:[['工作空间',''],[routes[route][0],'#'+route]];
+ if(nested)items.push([selectedProvider,modelLink(selectedProvider)]);
+ if(nested&&selectedModel)items.push([selectedModel,modelLink(selectedProvider,selectedModel)]);
+ const back=nested||route==='guide'?`<a class="header-back" href="${route==='guide'?'#overview':selectedModel?modelLink(selectedProvider):'#models'}" aria-label="返回上一级" title="返回上一级"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg><span>返回</span></a>`:`<button class="header-back" type="button" disabled aria-label="返回上一级"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg><span>返回</span></button>`;
+ $('#header-navigation').innerHTML=back+`<div class="breadcrumbs" role="navigation" aria-label="当前位置">${items.map(([label,href],i)=>`${i?'<span class="crumb-separator" aria-hidden="true">/</span>':''}${i===0?`<span class="crumb-root">${esc(label)}</span>`:i===items.length-1?`<strong id="crumb" aria-current="page" title="${esc(label)}">${esc(label)}</strong>`:`<a href="${href}" title="${esc(label)}">${esc(label)}</a>`}`).join('')}</div>`;
+}
+function render(){if(!state)return;window.CorkiConfig.unmount();window.CorkiSimpleChat.unmount();document.body.classList.toggle('chat-route',route==='chat');renderBreadcrumbs();renderNav();const views={overview,guide:guidePage,skills:skillsPage,knowledge:knowledgePage,models:modelsPage,tools:toolsPage,chat:()=>'<div id="simple-chat-workspace"></div>',logs:logsPage,config:configPage};$('#main').innerHTML=(state.errors.length?notice(state.errors.map(esc).join(' ')):'')+(views[route]||filesPage)();if(route==='config')window.CorkiConfig.mount($('#config-workspace'),{api,toast,reloadSnapshot:()=>load(true)});if(route==='chat')window.CorkiSimpleChat.mount($('#simple-chat-workspace'),{providers:state.providers,defaultModel:state.default,toast});}
+function navigate(){const parts=location.hash.slice(1).split('/');route=parts[0] in routes?parts[0]:'overview';if(developerRoutes.includes(route))developerExpanded=true;try{selectedProvider=decodeURIComponent(parts[1]||'');selectedModel=decodeURIComponent(parts[2]||'');}catch{selectedProvider='';selectedModel='';}query='';filter='all';document.body.classList.remove('open-nav');render();}
+function descriptionField(value=''){return `<label class="field model-description-field"><span>模型描述</span><textarea name="description" rows="3" maxlength="500" placeholder="简要介绍模型的用途或特点">${esc(value)}</textarea></label>`;}
+function field(name,label,value='',type='text',hint='',disabled=false,placeholder=''){return `<label class="field"><span>${label}</span><input name="${name}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}" ${disabled?'disabled':''} ${name==='api_key'?'autocomplete="new-password"':'autocomplete="off"'} ${type==='number'?'min="1024" max="10000000"':''}><small>${hint}</small></label>`;}
+function select(name,label,options,value,disabled=false){return `<label class="field"><span>${label}</span><select name="${name}" ${disabled?'disabled':''}>${options.map(o=>`<option value="${esc(o[0])}" ${o[0]===value?'selected':''}>${esc(o[1])}</option>`).join('')}</select></label>`;}
+function providerSelect(value,disabled=false){const options=state.providers.map(p=>p.id);return `<div class="field protocol-field provider-select-field"><span id="provider-select-label">所属供应商</span><input type="hidden" name="provider" value="${esc(value)}"><button type="button" class="select-trigger" aria-labelledby="provider-select-label provider-select-value" aria-haspopup="listbox" aria-expanded="false" aria-controls="provider-select-options" ${disabled?'disabled':''}><span id="provider-select-value" class="select-current">${esc(value)}</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m7 10 5 5 5-5"/></svg></button><div id="provider-select-options" class="select-menu" role="listbox" aria-labelledby="provider-select-label" hidden>${options.map(id=>`<button type="button" role="option" tabindex="-1" data-value="${esc(id)}" aria-selected="${id===value}"><span><strong>${esc(id)}</strong></span>${icon('check')}</button>`).join('')}</div></div>`;}
+function protocolSelect(value){
+ const options=[['responses','Responses','OpenAI Responses API'],['chat_completions','Chat Completions','OpenAI 兼容聊天接口']];
+ return `<div class="field protocol-field"><span id="protocol-label">接口协议</span><input type="hidden" name="api_mode" value="${esc(value)}"><button type="button" class="select-trigger" aria-labelledby="protocol-label protocol-value" aria-haspopup="listbox" aria-expanded="false" aria-controls="protocol-options"><span id="protocol-value" class="select-current">${options.find(o=>o[0]===value)?.[1]||'选择协议'}</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m7 10 5 5 5-5"/></svg></button><div id="protocol-options" class="select-menu" role="listbox" aria-labelledby="protocol-label" hidden>${options.map(([id,title,detail])=>`<button type="button" role="option" tabindex="-1" data-value="${id}" aria-selected="${id===value}"><span><strong>${title}</strong><small>${detail}</small></span>${icon('check')}</button>`).join('')}</div></div>`;
+}
+function bindCustomSelect(root){
+ const trigger=root.querySelector('.select-trigger'),menu=root.querySelector('.select-menu'),input=root.querySelector('input'),options=[...menu.querySelectorAll('[role=option]')];
+ const close=(focus=false)=>{menu.hidden=true;trigger.setAttribute('aria-expanded','false');if(focus)trigger.focus();};
+ const open=()=>{menu.hidden=false;trigger.setAttribute('aria-expanded','true');(options.find(o=>o.dataset.value===input.value)||options[0]).focus();};
+ trigger.onclick=()=>menu.hidden?open():close();
+ options.forEach(option=>option.onclick=()=>{input.value=option.dataset.value;root.querySelector('.select-current').textContent=option.querySelector('strong').textContent;options.forEach(o=>o.setAttribute('aria-selected',String(o===option)));input.dispatchEvent(new Event('change',{bubbles:true}));close(true);});
+ root.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&!menu.hidden){e.preventDefault();e.stopPropagation();close(true);}
+  else if(['ArrowDown','ArrowUp','Home','End'].includes(e.key)){e.preventDefault();if(menu.hidden){open();return;}let i=options.indexOf(document.activeElement);i=e.key==='Home'?0:e.key==='End'?options.length-1:(i+(e.key==='ArrowDown'?1:-1)+options.length)%options.length;options[i].focus();}
+  else if(e.key==='Enter'||e.key===' '){e.preventDefault();if(menu.hidden)open();else if(options.includes(document.activeElement))document.activeElement.click();else close();}
+  else if(e.key==='Tab')close();
+ });
+ root.addEventListener('focusout',e=>{if(!root.contains(e.relatedTarget))close();});
+ const outside=e=>{if(!root.contains(e.target))close();};
+ document.addEventListener('pointerdown',outside);
+ $('#editor').addEventListener('close',()=>document.removeEventListener('pointerdown',outside),{once:true});
+}
+function keyField(saved){return `<div class="field"><label for="provider-key">API Key</label><div class="secret-control"><input id="provider-key" name="api_key" type="password" value="${saved?'********':''}" data-saved="${!!saved}" data-changed="false" autocomplete="new-password" spellcheck="false" placeholder="填写供应商的访问密钥"><button type="button" class="secret-toggle" aria-label="显示 API Key" aria-pressed="false" title="显示 API Key">${icon('eye')}</button></div></div>`;}
+function bindKeyField(id){
+ const input=$('#provider-key'),toggle=$('.secret-toggle');let loaded=false,request=0;
+ input.addEventListener('focus',()=>{if(input.dataset.saved==='true'&&!loaded&&input.dataset.changed!=='true')input.select();});
+ input.addEventListener('beforeinput',()=>{if(input.dataset.saved==='true'&&!loaded&&input.dataset.changed!=='true')input.value='';});
+ input.addEventListener('input',()=>{input.dataset.changed='true';request++;});
+ toggle.addEventListener('click',async()=>{
+  const ticket=++request;toggle.disabled=true;
+  try{
+   if(input.type==='password'&&input.dataset.saved==='true'&&!loaded&&input.dataset.changed!=='true'){
+    const result=await api('provider-key?id='+encodeURIComponent(id));
+    if(!input.isConnected||ticket!==request||!$('#editor').open)return;
+    input.value=result.api_key;loaded=true;
+   }
+   input.type=input.type==='password'?'text':'password';
+   const visible=input.type==='text';toggle.innerHTML=icon(visible?'eyeOff':'eye');toggle.title=visible?'隐藏 API Key':'显示 API Key';toggle.setAttribute('aria-label',toggle.title);toggle.setAttribute('aria-pressed',String(visible));
+  }catch{if(input.isConnected)$('#form-error').textContent='密钥读取失败，请重试';}
+  finally{toggle.disabled=false;}
+ });
+}
+function showDialog(title,content,callback,note='更改会保存到本地'){resetSkillDialog();$('#save').textContent='保存更改';$('#cancel-dialog').textContent='取消';submitAction=callback;$('#dialog-title').textContent=title;$('#fields').innerHTML=content;$('#form-note').textContent=note;$('#form-error').textContent='';$('#save').hidden=!callback;$('#save').disabled=false;$('#editor').showModal();}
+function renderModelTestMessages(){const list=$('#model-test-messages');if(!list)return;const items=activeModelTest?.messages||[];list.innerHTML=items.length?items.map(item=>`<article class="test-message ${item.role==='assistant'?'assistant':'user'} ${item.error?'failed':''}"><span class="test-message-avatar">${icon(item.role==='assistant'?'models':'user')}</span><div class="test-message-body">${item.streaming?'<div class="test-message-label"><span class="stream-indicator"><i></i>正在生成</span></div>':''}<div class="test-message-text">${item.content?esc(item.content):item.streaming?'<span class="test-cursor"></span>':item.error?'':'<span class="test-empty-reply">模型没有返回文本</span>'}</div></div></article>`).join(''):`<div class="model-test-welcome"><span class="model-test-orbit">${icon('models')}</span><h3>准备好测试模型了吗？</h3><p>发送一条消息，直接查看模型的实时回复。</p><div class="test-suggestions"><button type="button" data-test-prompt="请用一句话介绍你自己。">介绍一下自己 <span>↗</span></button><button type="button" data-test-prompt="请用三点说明你最擅长的事情。">你擅长什么 <span>↗</span></button></div></div>`;list.scrollTop=list.scrollHeight;}
+function openModelTest(model,provider){const profile=state.providers.find(item=>item.id===provider);if(!profile||!Object.hasOwn(profile.models,model))return toast('模型配置已变化，请刷新后重试');const dialog=$('#model-test-dialog');activeModelTest={model,provider,messages:[],controller:null,busy:false};$('#model-test-title').textContent=model;$('#model-test-provider').textContent=provider;$('#model-test-state').textContent='就绪';$('#model-test-state').className='model-test-state';$('#model-test-input').value='';$('#model-test-input').disabled=false;$('#model-test-send').disabled=false;renderModelTestMessages();dialog.showModal();requestAnimationFrame(()=>$('#model-test-input').focus());}
+function closeModelTest(){if(activeModelTest?.controller)activeModelTest.controller.abort();activeModelTest=null;$('#model-test-dialog').close();}
+function setModelTestBusy(value){if(!activeModelTest)return;activeModelTest.busy=value;$('#model-test-send').disabled=value;$('#model-test-input').disabled=value;if(value){$('#model-test-state').textContent='正在连接模型…';$('#model-test-state').className='model-test-state working';}else if($('#model-test-state').classList.contains('working')){$('#model-test-state').textContent='就绪';$('#model-test-state').className='model-test-state';}}
+async function sendModelTest(){const input=$('#model-test-input');const content=input.value.trim();if(!content||!activeModelTest||activeModelTest.busy)return;const target=activeModelTest;target.messages.push({role:'user',content},{role:'assistant',content:'',streaming:true});input.value='';input.style.height='auto';renderModelTestMessages();setModelTestBusy(true);target.controller=new AbortController();try{const history=target.messages.slice(0,-1).filter(item=>!item.error&&item.content.trim()).slice(-20).map(({role,content})=>({role,content}));const response=await fetch('/api/model-test',{method:'POST',headers:{'Content-Type':'application/json','X-Corki-Manager':'1'},body:JSON.stringify({provider:target.provider,model:target.model,messages:history}),signal:target.controller.signal});if(!response.ok){let message='模型请求失败';try{message=(await response.json()).error||message;}catch{}throw new Error(message);}if(!response.body)throw new Error('当前浏览器不支持流式读取');const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='',eventName='';const handleEvent=raw=>{let data='';for(const line of raw.split(/\r?\n/)){if(line.startsWith('event:'))eventName=line.slice(6).trim();else if(line.startsWith('data:'))data+=line.slice(5).trim();}if(!data)return;const payload=JSON.parse(data);const reply=target.messages.at(-1);if(eventName==='delta'){reply.content+=payload.text||'';renderModelTestMessages();$('#model-test-state').textContent='正在接收回复';}else if(eventName==='error')throw new Error(payload.message||'模型请求失败');else if(eventName==='done'){reply.streaming=false;$('#model-test-state').textContent='回复完成';$('#model-test-state').className='model-test-state';}};while(true){const {value,done}=await reader.read();buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});let boundary;while((boundary=buffer.indexOf('\n\n'))>=0){const raw=buffer.slice(0,boundary);buffer=buffer.slice(boundary+2);handleEvent(raw);}if(done)break;}if(buffer.trim())handleEvent(buffer);const finalReply=target.messages.at(-1);if(finalReply)finalReply.streaming=false;renderModelTestMessages();}catch(error){const reply=target.messages.at(-1);if(reply?.streaming){reply.streaming=false;reply.error=true;reply.content=error.name==='AbortError'?'本次测试已取消':error.message;renderModelTestMessages();}if(error.name!=='AbortError'){$('#model-test-state').textContent='请求失败';$('#model-test-state').className='model-test-state failed';}}finally{if(activeModelTest===target){target.controller=null;setModelTestBusy(false);$('#model-test-input').focus();}}}
+async function mutate(data){const result=await api('mutate',{revision:state.revision,...data});toast(result.message);await load(true);}
+function editEntity(id,provider){
+ if(route==='tools')return editMcp(id);
+ const kind=modelKind();provider=provider||selectedProvider;
+ const isNew=!id,snapRevision=state.revision;let fields='',original;
+ if(kind==='providers'){
+  original=state.providers.find(p=>p.id===id);
+  fields=field('id','供应商名称',id,'text','',false,isNew?'例如 openai、deepseek':'')+field('base_url','API 地址',original?.base_url||'','url')+protocolSelect(original?.api_mode||'responses')+keyField(original?.has_key);
+ }else if(kind==='models'){
+  if(!state.providers.length)return toast('请先添加供应商');
+  original=models().find(m=>m.id===id&&m.provider===provider);
+  fields=providerSelect(provider||state.providers[0].id,!isNew)+field('id','模型名称',id,'text','填写上游 API 使用的模型 ID。',!isNew)+`<div class="field-grid">${field('context_window','上下文窗口（tokens）',original?.context_window||262144,'number')}${select('reasoning_effort','默认推理等级',modelReasoningOptions(original),original?.reasoning_effort||'')}</div>`+descriptionField(original?.description)+notice('这里只保存模型配置，不验证账号是否有该模型权限。请以供应商公布的模型能力为准。');
+ }else{
+  original=state.tools.find(t=>t.id===id);
+  fields=field('id','MCP 名称',id,'text','名称创建后不可更改。',!isNew)+select('transport','传输方式',[['http','HTTP'],['stdio','标准输入输出（stdio）']],original?.transport||'http',!isNew)+field('url','HTTP 地址',original?.url||'','url')+field('command','启动命令',original?.command||'','text','stdio 连接填写可执行命令；已有参数和认证设置将保留。');
+ }
+ showDialog(isNew?'添加'+(kind==='providers'?'供应商':kind==='models'?'模型':routes[kind][0]):'编辑'+(kind==='providers'?'供应商':kind==='models'?'模型':routes[kind][0]),fields,async form=>{
+  const values=Object.fromEntries(form),key=$('#provider-key');
+  if(key&&key.dataset.changed!=='true')delete values.api_key;
+  const destination=kind==='models'?(isNew?values.provider:provider):provider||values.provider;
+  await mutate({kind,action:'save',id:id||values.id,provider:destination,values,revision:snapRevision});
+  if(kind==='models'&&isNew&&destination!==selectedProvider)location.hash=modelLink(destination);
+ },kind==='providers'&&!isNew?'':'更改会保存到本地');
+ if(kind==='providers'){
+  bindKeyField(id);bindCustomSelect($('.protocol-field'));
+  if(!isNew)$('#provider-key').closest('.field').querySelector('small').textContent='';
+ }else if(kind==='models')bindCustomSelect($('.provider-select-field'));
+}
+async function editFile(id){if(!id&&route==='knowledge')return createKnowledge();const kind=route;let file;if(id)file=await api('file?id='+encodeURIComponent(id));const template=kind==='skills'?'---\nname: my-skill\ndescription: 说明此技能适用的任务。\n---\n\n# 工作步骤\n\n':'# 新文档\n\n';let content=(id?'':field('name','文件名'))+`<label class="field"><span>${file&&!file.writable?'只读内容':'文档内容'}</span><textarea name="content" spellcheck="false" ${file&&!file.writable?'readonly':''}>${esc(file?.content??template)}</textarea></label>`+(file?`<p class="mono" style="overflow-wrap:anywhere">${esc(file.path)}</p>`:'');showDialog(file?.name||('新建'+routes[kind][0]),content,file&&!file.writable?null:async form=>{await mutate({kind,action:id?'save':'create',id,name:form.get('name'),content:form.get('content'),revision:file?.revision});},kind==='knowledge'?'仅保存文档，不自动接入 Agent':file?.group==='public'?'修改公共技能会影响共用它的 Agent；原文件会备份':'保存前检测版本，原文件会备份');}
+async function action(target){const name=target.dataset.action,id=target.dataset.id,provider=target.dataset.provider;try{
+if(name==='quick-guide'){location.hash='#guide';return;}if(name==='quick-setup')return openQuickSetup();if(name==='quick-add')return openQuickAdd();if(name==='quick-launch')return openQuickLaunch();
+if(name==='provider-default'){const p=state.providers.find(p=>p.id===id);const model=p&&(Object.hasOwn(p.models,state.default.model)?state.default.model:Object.keys(p.models)[0]);if(!model)return toast('请先为该供应商添加模型');target.disabled=true;return await mutate({kind:'models',action:'default',id:model,provider:id});}
+if(name==='model-test')return openModelTest(id,provider);if(name==='model-save'){const values={description:$('#main [name=description]').value,context_window:Number($('#main [name=context_window]').value),reasoning_effort:$('#main [name=reasoning_effort]').value};return await mutate({kind:'models',action:'save',id:selectedModel,provider:selectedProvider,values});}
+if(name.startsWith('custom-'))return await customToolAction(name,id);if(name==='mcp-test')return testMcp(id);if(name==='skill-import')return importSkills();if(name==='skill-view')return viewSkill(id);if(name==='refresh')return load();if(name==='filter'){filter=id;return render();}if(name==='new'||name==='edit')return await (['models','tools'].includes(route)?editEntity(id,provider):editFile());if(name==='file')return await editFile(id);if(name==='execution'){const data=await api('execution?id='+encodeURIComponent(id));return showDialog(data.tool_name+' · 执行输出',`<pre class="output">${esc(data.content)}</pre>`,null,'输出已做凭据脱敏');}if(name==='toggle'){const item=(['skills','knowledge'].includes(route)?state.files:state.tools).find(f=>f.id===id);if(!item)throw Error('项目不存在，请刷新页面');target.disabled=true;return await mutate({kind:route,action:'toggle',id,values:{enabled:!item.enabled},...(route==='knowledge'?{knowledge_revision:state.knowledge_revision}:{})});}if(name==='default'){return showDialog('切换默认模型',`<p>将默认模型设为 <strong>${esc(id)}</strong>（${esc(provider)}）。已有会话保持当前模型，新会话使用此默认值。</p>`,async()=>mutate({kind:'models',action:'default',id,provider}));}if(name==='delete'){const kind=modelKind();let revision=state.revision;if(kind==='knowledge')revision=state.files.find(f=>f.id===id).revision;showDialog('确认删除',`<p>确定删除 <strong>${esc(kind==='knowledge'?state.files.find(f=>f.id===id).name:id)}</strong>？${kind==='providers'?'该供应商下的模型配置也会删除。':''}${kind==='knowledge'?'文档将移入本机回收目录。':'更改前会保留配置备份。'}</p>`,async()=>{await mutate({kind,action:'delete',id,provider,revision});if(kind==='models'&&selectedModel)location.hash=modelLink(selectedProvider);});}}catch(e){toast(e.message);target.disabled=false;}}
+$('#main').addEventListener('click',e=>{const target=e.target.closest('[data-action]');if(target)action(target);});
+$('#main').addEventListener('input',e=>{if(e.target.id==='search'){const pos=e.target.selectionStart;query=e.target.value;render();$('#search').focus();$('#search').setSelectionRange(pos,pos);}});
+$('#edit-form').addEventListener('submit',async e=>{e.preventDefault();if(!submitAction)return;$('#save').disabled=true;$('#form-error').textContent='';try{await submitAction(new FormData(e.target));$('#editor').close();}catch(error){$('#form-error').textContent=error.message;}finally{$('#save').disabled=false;}});
+$('#close-dialog').onclick=$('#cancel-dialog').onclick=()=>$('#editor').close();
+$('#editor').addEventListener('close',()=>{if(!$('#editor').open){resetSkillDialog();const key=$('#provider-key');if(key){key.value='';key.type='password';}}});
+$('#model-test-close').onclick=closeModelTest;$('#model-test-dialog').addEventListener('close',()=>{if(activeModelTest?.controller)activeModelTest.controller.abort();activeModelTest=null;});
+$('#model-test-send').onclick=sendModelTest;
+$('#model-test-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();sendModelTest();}});
+$('#model-test-input').addEventListener('input',e=>{e.target.style.height='auto';e.target.style.height=Math.min(e.target.scrollHeight,150)+'px';});
+$('#model-test-messages').addEventListener('click',e=>{const prompt=e.target.closest('[data-test-prompt]');if(prompt){$('#model-test-input').value=prompt.dataset.testPrompt;$('#model-test-input').dispatchEvent(new Event('input'));$('#model-test-input').focus();}});
+$('#refresh').onclick=()=>load();$('#menu').onclick=()=>document.body.classList.toggle('open-nav');$('#scrim').onclick=()=>document.body.classList.remove('open-nav');
+$('#nav').addEventListener('click',e=>{if(e.target.closest('.nav-group-toggle')){developerExpanded=!developerExpanded;renderNav();$('#nav .nav-group-toggle').focus();return;}const link=e.target.closest('a');if(link?.getAttribute('href')==='#config'&&route==='config'){e.preventDefault();window.CorkiConfig.reloadLatest().catch(error=>window.CorkiConfig.error(error));}});
+window.addEventListener('hashchange',navigate);navigate();load(true);setInterval(()=>{if(route==='logs'&&!$('#editor').open&&!document.hidden)load(true);},15000);

@@ -1,0 +1,764 @@
+{
+  "verified_at": "2026-10-14",
+  "base": {},
+  "providers": [
+    {
+      "id": "deepseek",
+      "label": "DeepSeek",
+      "base_url": "https://api.deepseek.com",
+      "api_mode": "chat_completions",
+      "sources": [
+        "https://api-docs.deepseek.com/quick_start/pricing",
+        "https://api-docs.deepseek.com/guides/thinking_mode/"
+      ],
+      "models": {
+        "deepseek-flash": {
+          "generation": "V4.1",
+          "description": "快速响应，适合日常问答、编程与工具调用",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "minimal"
+            },
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            },
+            {
+              "effort": "xhigh"
+            },
+            {
+              "effort": "max"
+            },
+            {
+              "effort": "ultra"
+            }
+          ],
+          "reasoning_effort": "medium"
+        },
+        "deepseek-v4-pro": {
+          "generation": "V4",
+          "description": "适合复杂推理、深入分析与多步骤编程任务",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "minimal"
+            },
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            },
+            {
+              "effort": "xhigh"
+            },
+            {
+              "effort": "max"
+            },
+            {
+              "effort": "ultra"
+            }
+          ],
+          "reasoning_effort": "medium"
+        }
+      },
+      "catalog_note": "当前通用 API 仅提供这两代模型；旧模型别名不计为独立一代。"
+    },
+    {
+      "id": "qwen",
+      "label": "Qwen",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_mode": "chat_completions",
+      "sources": [
+        "https://help.aliyun.com/zh/model-studio/text-generation-model",
+        "https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope",
+        "https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions"
+      ],
+      "models": {
+        "qwen3.8-flash": {
+          "generation": "3.8 系列",
+          "description": "低延迟通用模型，适合日常问答与高频任务",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "none"
+            },
+            {
+              "effort": "minimal"
+            },
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            },
+            {
+              "effort": "xhigh"
+            },
+            {
+              "effort": "max"
+            }
+          ],
+          "reasoning_effort": "medium"
+        },
+        "qwen3.8-max": {
+          "generation": "3.8 系列",
+          "description": "适合复杂推理、代码与长文档分析",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "none"
+            },
+            {
+              "effort": "minimal"
+            },
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            },
+            {
+              "effort": "xhigh"
+            },
+            {
+              "effort": "max"
+            }
+          ],
+          "reasoning_effort": "medium"
+        },
+        "qwen3.7-plus": {
+          "generation": "3.7 系列",
+          "description": "兼顾效果与成本，适合通用任务与工具调用",
+          "context_window": 262144,
+          "supported_reasoning_levels": [],
+          "reasoning_effort": null
+        },
+        "qwen3.7-max": {
+          "generation": "3.7 系列",
+          "description": "适合需要深入理解与推理的复杂任务",
+          "context_window": 262144,
+          "supported_reasoning_levels": [],
+          "reasoning_effort": null
+        },
+        "qwen3.7-flash": {
+          "generation": "3.7 系列",
+          "description": "适合快速问答、摘要与轻量自动化",
+          "context_window": 262144,
+          "supported_reasoning_levels": [],
+          "reasoning_effort": null
+        },
+        "qwen3.6-plus": {
+          "generation": "3.6 系列",
+          "description": "通用推理与编程模型，适合多步骤任务",
+          "context_window": 262144,
+          "supported_reasoning_levels": [],
+          "reasoning_effort": null
+        },
+        "qwen3.6-flash": {
+          "generation": "3.6 系列",
+          "description": "轻量快速，适合日常文本处理",
+          "context_window": 262144,
+          "supported_reasoning_levels": [],
+          "reasoning_effort": null
+        }
+      },
+      "key_hint": "使用北京地域的 API Key"
+    },
+    {
+      "id": "kimi",
+      "label": "Kimi",
+      "base_url": "https://api.moonshot.cn/v1",
+      "api_mode": "chat_completions",
+      "sources": [
+        "https://platform.kimi.com/docs/api/models-overview"
+      ],
+      "models": {
+        "kimi-k3": {
+          "generation": "K3 系列",
+          "description": "适合长上下文分析、复杂推理与工具协作",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "high"
+            },
+            {
+              "effort": "max"
+            }
+          ],
+          "default_reasoning_level": "max",
+          "reasoning_effort": null
+        },
+        "kimi-k2.7-code": {
+          "generation": "K2.7 系列",
+          "description": "面向代码开发、持续推理与工程任务",
+          "context_window": 262144,
+          "supported_reasoning_levels": [],
+          "reasoning_effort": null
+        },
+        "kimi-k2.6": {
+          "generation": "K2.6 系列",
+          "description": "支持文本、视觉理解与工具调用",
+          "context_window": 262144,
+          "supported_reasoning_levels": [],
+          "reasoning_effort": null
+        }
+      }
+    },
+    {
+      "id": "openai",
+      "label": "OpenAI",
+      "base_url": "https://api.openai.com/v1",
+      "api_mode": "responses",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/all",
+        "https://developers.openai.com/api/docs/guides/latest-model",
+        "https://developers.openai.com/api/docs/guides/deployment-checklist"
+      ],
+      "models": {
+        "gpt-6.1-sol": {
+          "generation": "6.1 系列",
+          "description": "适合复杂编程、推理与长流程工具任务",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            },
+            {
+              "effort": "xhigh"
+            },
+            {
+              "effort": "max"
+            }
+          ],
+          "reasoning_effort": "medium"
+        },
+        "gpt-6-astra": {
+          "generation": "6 系列",
+          "description": "面向高难度推理、研究与复杂开发任务",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            },
+            {
+              "effort": "xhigh"
+            },
+            {
+              "effort": "max"
+            }
+          ],
+          "reasoning_effort": "medium"
+        },
+        "gpt-6-sol": {
+          "generation": "6 系列",
+          "description": "兼顾通用推理、编程能力与响应效率",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "none"
+            },
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            },
+            {
+              "effort": "xhigh"
+            },
+            {
+              "effort": "max"
+            }
+          ],
+          "reasoning_effort": "medium"
+        },
+        "gpt-6-luna": {
+          "generation": "6 系列",
+          "description": "快速轻量，适合日常任务与高频调用",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "none"
+            },
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            },
+            {
+              "effort": "xhigh"
+            },
+            {
+              "effort": "max"
+            }
+          ],
+          "reasoning_effort": "medium"
+        },
+        "gpt-5.6-sol": {
+          "generation": "5.6 系列",
+          "description": "适合通用编程、分析与多步骤任务",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "none"
+            },
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            },
+            {
+              "effort": "xhigh"
+            },
+            {
+              "effort": "max"
+            }
+          ],
+          "reasoning_effort": "medium"
+        },
+        "gpt-5.6-terra": {
+          "generation": "5.6 系列",
+          "description": "均衡通用模型，适合日常开发与内容处理",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "none"
+            },
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            },
+            {
+              "effort": "xhigh"
+            },
+            {
+              "effort": "max"
+            }
+          ],
+          "reasoning_effort": "medium"
+        },
+        "gpt-5.6-luna": {
+          "generation": "5.6 系列",
+          "description": "适合轻量问答、摘要与批量处理",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "none"
+            },
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            },
+            {
+              "effort": "xhigh"
+            },
+            {
+              "effort": "max"
+            }
+          ],
+          "reasoning_effort": "medium"
+        }
+      },
+      "key_hint": "使用 OpenAI API Key"
+    },
+    {
+      "id": "claude",
+      "label": "Claude",
+      "base_url": "https://api.anthropic.com/v1",
+      "api_mode": "chat_completions",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk"
+      ],
+      "models": {
+        "claude-sonnet-5-5": {
+          "generation": "5.5 系列",
+          "description": "兼顾代码、推理与交互速度的通用模型",
+          "context_window": 262144,
+          "supported_reasoning_levels": [],
+          "reasoning_effort": null
+        },
+        "claude-opus-5-5": {
+          "generation": "5.5 系列",
+          "description": "适合复杂工程、深入分析与长流程任务",
+          "context_window": 262144,
+          "supported_reasoning_levels": [],
+          "reasoning_effort": null
+        },
+        "claude-haiku-5-5": {
+          "generation": "5.5 系列",
+          "description": "适合快速问答、分类与轻量工具任务",
+          "context_window": 262144,
+          "supported_reasoning_levels": [],
+          "reasoning_effort": null
+        },
+        "claude-fable-5-1": {
+          "generation": "5.1 系列",
+          "description": "适合复杂推理与多步骤工作流",
+          "context_window": 262144,
+          "supported_reasoning_levels": [],
+          "reasoning_effort": null
+        },
+        "claude-opus-5": {
+          "generation": "5 系列",
+          "description": "适合复杂编程、文档理解与深入分析",
+          "context_window": 262144,
+          "supported_reasoning_levels": [],
+          "reasoning_effort": null
+        }
+      },
+      "key_hint": "使用工作空间 API Key",
+      "catalog_note": "使用官方 Chat Completions 兼容接口；不等同于原生 Messages 的全部能力。"
+    },
+    {
+      "id": "gemini",
+      "label": "Google Gemini",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "api_mode": "chat_completions",
+      "sources": [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "https://ai.google.dev/gemini-api/docs/openai"
+      ],
+      "models": {
+        "gemini-4-argon": {
+          "generation": "4 系列",
+          "description": "适合复杂推理、长上下文分析与多模态任务",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "minimal"
+            },
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            }
+          ],
+          "reasoning_effort": "medium"
+        },
+        "gemini-3.8-flash": {
+          "generation": "3.8 系列",
+          "description": "快速通用模型，适合交互式问答与工具任务",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "minimal"
+            },
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            }
+          ],
+          "reasoning_effort": "medium"
+        },
+        "gemini-3.6-flash": {
+          "generation": "3.6 系列",
+          "description": "适合日常文本、视觉理解与低延迟调用",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "minimal"
+            },
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            }
+          ],
+          "reasoning_effort": "medium"
+        }
+      },
+      "key_hint": "使用 Google AI Studio API Key"
+    },
+    {
+      "id": "glm",
+      "label": "GLM",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "api_mode": "chat_completions",
+      "sources": [
+        "https://docs.bigmodel.cn/cn/guide/start/model-overview",
+        "https://docs.bigmodel.cn/cn/guide/capabilities/thinking"
+      ],
+      "models": {
+        "glm-5.3": {
+          "generation": "5.3 系列",
+          "description": "适合长文档理解、复杂编程与工具任务",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "high"
+            },
+            {
+              "effort": "max"
+            }
+          ],
+          "default_reasoning_level": "max",
+          "reasoning_effort": null
+        },
+        "glm-5.2": {
+          "generation": "5.2 系列",
+          "description": "适合通用推理、长上下文与代码分析",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "none"
+            },
+            {
+              "effort": "minimal"
+            },
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            },
+            {
+              "effort": "xhigh"
+            },
+            {
+              "effort": "max"
+            }
+          ],
+          "default_reasoning_level": "max",
+          "reasoning_effort": "medium"
+        },
+        "glm-5.1": {
+          "generation": "5.1 系列",
+          "description": "适合日常开发、内容理解与多步骤任务",
+          "context_window": 262144,
+          "supported_reasoning_levels": [],
+          "reasoning_effort": null
+        }
+      },
+      "key_hint": "使用通用 API Key，非 Coding Plan 专用接口"
+    },
+    {
+      "id": "minimax",
+      "label": "MiniMax",
+      "base_url": "https://api.minimax.cn/v1",
+      "api_mode": "chat_completions",
+      "sources": [
+        "https://platform.minimax.cn/docs/guides/models-intro",
+        "https://platform.minimax.cn/docs/api-reference/text-openai-api"
+      ],
+      "models": {
+        "MiniMax-M3": {
+          "generation": "M3 系列",
+          "description": "适合复杂编程、长上下文与智能体任务",
+          "context_window": 262144,
+          "supported_reasoning_levels": [],
+          "reasoning_effort": null
+        },
+        "MiniMax-M2.7": {
+          "generation": "M2.7 系列",
+          "description": "适合软件开发、工具调用与多步骤任务",
+          "context_window": 262144,
+          "available_before": "2026-10-19",
+          "supported_reasoning_levels": [],
+          "reasoning_effort": null
+        },
+        "MiniMax-M2.5": {
+          "generation": "M2.5 系列",
+          "description": "适合代码生成、日常问答与自动化任务",
+          "context_window": 262144,
+          "available_before": "2026-10-19",
+          "supported_reasoning_levels": [],
+          "reasoning_effort": null
+        }
+      },
+      "key_hint": "使用国内平台的通用 API Key",
+      "catalog_note": "M3.1 Flash Preview 仅限特定套餐，未纳入通用 API 模板；M2.7/M2.5 于 2026-10-19 停止新用户接入，届时自动隐藏。"
+    },
+    {
+      "id": "xai",
+      "label": "xAI · Grok",
+      "base_url": "https://api.x.ai/v1",
+      "api_mode": "chat_completions",
+      "sources": [
+        "https://docs.x.ai/developers/models/grok-4.7",
+        "https://docs.x.ai/developers/models/grok-4.6",
+        "https://docs.x.ai/developers/models/grok-4.5",
+        "https://docs.x.ai/developers/model-capabilities/legacy/chat-completions",
+        "https://docs.x.ai/developers/model-capabilities/text/reasoning"
+      ],
+      "models": {
+        "grok-4.7": {
+          "generation": "4.7 系列",
+          "description": "适合复杂推理、代码开发与工具协作",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            },
+            {
+              "effort": "xhigh"
+            }
+          ],
+          "reasoning_effort": "medium"
+        },
+        "grok-4.6": {
+          "generation": "4.6 系列",
+          "description": "适合通用分析、编程与长文档处理",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            },
+            {
+              "effort": "xhigh"
+            }
+          ],
+          "reasoning_effort": "medium"
+        },
+        "grok-4.5": {
+          "generation": "4.5 系列",
+          "description": "适合日常问答、内容理解与工具任务",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "low"
+            },
+            {
+              "effort": "medium"
+            },
+            {
+              "effort": "high"
+            }
+          ],
+          "reasoning_effort": "medium"
+        }
+      }
+    },
+    {
+      "id": "mistral",
+      "label": "Mistral",
+      "base_url": "https://api.mistral.ai/v1",
+      "api_mode": "chat_completions",
+      "sources": [
+        "https://docs.mistral.ai/models",
+        "https://docs.mistral.ai/api/endpoint/chat",
+        "https://docs.mistral.ai/studio/conversations/reasoning"
+      ],
+      "models": {
+        "mistral-large-4": {
+          "generation": "4 系列",
+          "description": "适合复杂推理、编程与长上下文分析",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "none"
+            },
+            {
+              "effort": "high"
+            }
+          ],
+          "reasoning_effort": null
+        },
+        "mistral-medium-3-5": {
+          "generation": "3.5 系列",
+          "description": "兼顾效果与效率，适合开发与通用任务",
+          "context_window": 262144,
+          "supported_reasoning_levels": [
+            {
+              "effort": "none"
+            },
+            {
+              "effort": "high"
+            }
+          ],
+          "reasoning_effort": null
+        },
+        "mistral-large-2512": {
+          "generation": "3 系列",
+          "description": "适合多语言理解、文档分析与工具调用",
+          "context_window": 262144,
+          "supported_reasoning_levels": [],
+          "reasoning_effort": null
+        }
+      }
+    }
+  ]
+}

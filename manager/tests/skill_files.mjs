@@ -1,0 +1,65 @@
+// Disposable manager required on 17003, rooted at /tmp/corki-skills-qa.
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const tabs=await(await fetch('http://127.0.0.1:9225/json')).json();
+const tab=tabs.find(t=>t.type==='page'&&t.url.startsWith('http://127.0.0.1:1700'));
+assert(tab);const original=tab.url;
+const ws=new WebSocket(tab.webSocketDebuggerUrl);await new Promise(r=>ws.onopen=r);
+let seq=0;const pending=new Map(),errors=[];
+ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.method==='Runtime.exceptionThrown')errors.push(m.params.exceptionDetails.text);if(pending.has(m.id)){const p=pending.get(m.id);pending.delete(m.id);m.error?p.reject(m.error):p.resolve(m.result)}};
+const cdp=(method,params={})=>new Promise((resolve,reject)=>{const id=++seq;pending.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params}))});
+const ev=async expression=>{const r=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value};
+async function wait(expr){for(let n=0;n<100;n++){if(await ev(`Boolean(${expr})`))return;await new Promise(r=>setTimeout(r,100));}throw Error('Timeout '+expr)}
+const click=s=>ev(`document.querySelector(${JSON.stringify(s)}).click()`);
+const shot=async name=>{await ev('Promise.all(document.getAnimations().map(a=>a.finished.catch(()=>{})))');const r=await cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});fs.writeFileSync('/tmp/'+name+'.png',Buffer.from(r.data,'base64'))};
+const upload=async(name,body)=>ev(`(()=>{const dt=new DataTransfer();dt.items.add(new File([${JSON.stringify(body)}],${JSON.stringify(name)},{type:'text/markdown'}));const el=document.querySelector('#skill-file-input');el.files=dt.files;el.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+try{
+ await cdp('Runtime.enable');await cdp('Page.enable');
+ assert(!await ev('window.CorkiConfig?.dirty'),'Unsaved draft');
+ await cdp('Page.navigate',{url:'http://127.0.0.1:17003/#skills'});
+ await wait('window.CorkiSkills && document.querySelectorAll(".skill-section").length===3');
+ assert(await ev(`state.files.every(f=>f.path.includes('/corki-skills-qa/'))`));
+ assert.deepEqual(await ev('[...document.querySelectorAll("[data-skill-group]")].map(e=>e.dataset.skillGroup)'),['corki','public','builtin']);
+ await cdp('Emulation.setDeviceMetricsOverride',{width:1440,height:1080,deviceScaleFactor:1,mobile:false});
+ await click('[data-skill-group="corki"] [data-action="skill-view"]');await wait('CorkiSkills.editor');
+ assert(await ev('document.querySelector("#sw-content .cm-content").getAttribute("contenteditable")==="false"'));
+ await click('[data-sw-dir="references"]');await click('[data-sw-dir="references/nested"]');await click('[data-sw-file="references/nested/guide.md"]');
+ await wait('CorkiSkills.editor && CorkiSkills.current==="references/nested/guide.md"');
+ await wait('document.querySelectorAll("#sw-content .cm-line span").length>2');
+ await shot('corki-skill-files-desktop');
+ await click('[data-sw="edit"]');assert(await ev('document.querySelector("#sw-content .cm-content").getAttribute("contenteditable")==="true"'));
+ await ev('CorkiSkills.editor.dispatch({changes:{from:CorkiSkills.editor.state.doc.length,insert:"\\nBrowser draft"}})');
+ await click('[data-sw-dir="scripts"]');await click('[data-sw-file="scripts/example.py"]');await wait('CorkiSkills.editor && CorkiSkills.current==="scripts/example.py"');
+ assert(await ev('document.querySelector("#sw-language").textContent.includes("Python")'));
+ await click('[data-sw="edit"]');await ev('CorkiSkills.editor.dispatch({changes:{from:CorkiSkills.editor.state.doc.length,insert:"\\n# browser saved"}})');
+ await click('[data-sw="save"]');await wait('!CorkiSkills.saving && !CorkiSkills.docs.get("scripts/example.py").dirty');
+ assert(await ev('CorkiSkills.docs.get("references/nested/guide.md").dirty'));
+ await click('[data-sw-file="references/nested/guide.md"]');await wait('CorkiSkills.editor && CorkiSkills.current==="references/nested/guide.md"');
+ assert(await ev('CorkiSkills.editor.state.doc.toString().endsWith("Browser draft")'));
+ assert(await ev('document.querySelector("[data-sw=export]").disabled'));
+ await click('[data-sw="close"]');await wait('document.querySelector("#sw-confirm").open');await click('[data-sw-confirm="stay"]');
+ assert(await ev('document.querySelector("#skill-workspace").open'));
+ // Simulate an external edit: the editor must retain its local draft on conflict.
+ await ev(`(()=>{const d=CorkiSkills.docs.get(CorkiSkills.current);return api('mutate',{kind:'skills',action:'save-resource',id:CorkiSkills.id,path:CorkiSkills.current,revision:d.meta.revision,content:d.meta.content+'\\nExternal change'});})()`);
+ await click('[data-sw="save"]');await wait('!CorkiSkills.saving && !document.querySelector("#sw-error").hidden');
+ assert(await ev('CorkiSkills.editor.state.doc.toString().endsWith("Browser draft")'));
+ await click('[data-sw="cancel"]');await wait('document.querySelector("#sw-confirm").open');await click('[data-sw-confirm="discard"]');
+ await click('[data-sw="close"]');
+ await click('[data-skill-group="corki"] [data-action="skill-view"]');await wait('CorkiSkills.editor');
+ await cdp('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:'/tmp/corki-skills-qa-downloads'});
+ await click('[data-sw="export"]');await wait('!CorkiSkills.exporting');
+ for(let i=0;i<50&&!fs.existsSync('/tmp/corki-skills-qa-downloads/private.zip');i++)await new Promise(r=>setTimeout(r,100));
+ assert(fs.statSync('/tmp/corki-skills-qa-downloads/private.zip').size>100);
+ await cdp('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
+ assert(await ev('document.querySelector("#skill-workspace").scrollWidth<=innerWidth'));
+ await shot('corki-skill-files-mobile');
+ await click('[data-sw="tree"]');await click('[data-sw-dir="scripts"]');assert(await ev('document.querySelector(".sw-explorer").getBoundingClientRect().left>=0'));await shot('corki-skill-tree-mobile');
+ await click('[data-sw-file="scripts/example.py"]');await wait('CorkiSkills.editor && CorkiSkills.current==="scripts/example.py"');
+ assert(!await ev('document.querySelector("#skill-workspace").classList.contains("sw-show-tree")'));
+ await click('[data-sw="close"]');await click('[data-skill-group="builtin"] [data-action="skill-view"]');await wait('CorkiSkills.editor');
+ assert(await ev('document.querySelector("[data-sw=edit]").hidden'));
+ await click('[data-sw="tree"]');await click('[data-sw-dir="scripts"]');await click('[data-sw-file="scripts/example.py"]');await wait('CorkiSkills.editor && CorkiSkills.current==="scripts/example.py"');
+ assert(await ev('document.querySelector("[data-sw=edit]").hidden'));
+ await click('[data-sw="close"]');
+ assert.deepEqual(errors,[]);console.log('PASS: group order, nested tree, Markdown/Python highlighting, readonly enforcement, drafts, save/conflict, cancel, ZIP download, mobile navigation.');
+}finally{await cdp('Browser.setDownloadBehavior',{behavior:'default'});await cdp('Emulation.clearDeviceMetricsOverride');await cdp('Page.navigate',{url:original});ws.close();}

@@ -1,0 +1,1556 @@
+"""Test real HTTP boundaries and config mutations against disposable local data."""
+
+import importlib.util
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+import httpx
+import pytest
+
+spec = importlib.util.spec_from_file_location(
+    "manager_server", Path(__file__).parents[1] / "server.py"
+)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+
+@pytest.fixture
+def store(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "settings.json").write_text("""// keep this comment
+{"default":{"provider":"local","model":"model-a"},
+ "providers":{"local":{"base_url":"http://127.0.0.1:17001","api_key":"private-token-123","api_mode":"responses","models":{"model-a":{"context_window":131072,"extra":"preserved"}}}},
+ "unrelated":{"enabled":true}}
+""")
+    return module.Store(home, tmp_path / "work", tmp_path / "compat")
+
+
+def change(store, **data):
+    return store.mutate({"revision": module.revision(store.config_text()), **data})
+
+
+def config(store):
+    return module.document.loads(store.config_text())
+
+
+def test_provider_edit_preserves_secret_models_comments_and_backup(store):
+    change(
+        store,
+        kind="providers",
+        action="save",
+        id="local",
+        values={"base_url": "https://example.com", "api_mode": "responses", "api_key": ""},
+    )
+    p = config(store)["providers"]["local"]
+    assert p["api_key"] == "private-token-123"
+    assert p["models"]["model-a"]["extra"] == "preserved"
+    assert "// keep this comment" in store.config_text()
+    assert config(store)["unrelated"]["enabled"]
+    assert list((store.home / ".manager-backups").iterdir())
+    assert store.config.stat().st_mode & 0o777 == 0o600
+
+
+def test_snapshot_does_not_expose_api_keys(store):
+    result = store.snapshot()
+    assert result["providers"][0]["has_key"]
+    assert "private-token-123" not in json.dumps(result)
+    assert result["errors"] == []
+
+
+def test_concurrent_config_edit_is_rejected(store):
+    rev = module.revision(store.config_text())
+    store.config.write_text(store.config_text() + "\n")
+    with pytest.raises(ValueError, match="更新"):
+        store.mutate({"revision": rev, "kind": "providers", "action": "delete", "id": "other"})
+
+
+@pytest.mark.parametrize(
+    "kind,id,provider", [("providers", "local", None), ("models", "model-a", "local")]
+)
+def test_default_cannot_be_deleted(store, kind, id, provider):
+    with pytest.raises(ValueError, match="默认"):
+        change(store, kind=kind, action="delete", id=id, provider=provider)
+
+
+def test_model_create_select_and_delete(store):
+    change(
+        store,
+        kind="models",
+        action="save",
+        id="model-b",
+        provider="local",
+        values={"context_window": 262144, "reasoning_effort": "medium"},
+    )
+    change(store, kind="models", action="default", id="model-b", provider="local")
+    change(store, kind="models", action="delete", id="model-a", provider="local")
+    assert config(store)["default"] == {"provider": "local", "model": "model-b"}
+    assert list(config(store)["providers"]["local"]["models"]) == ["model-b"]
+
+
+def test_knowledge_crud_conflict_and_recycle(store):
+    change(store, kind="knowledge", action="create", name="notes", content="# Notes\nhello")
+    file = next(f for f in store.files() if f["kind"] == "knowledge")
+    store.mutate(
+        {
+            "kind": "knowledge",
+            "action": "save",
+            "id": file["id"],
+            "revision": file["revision"],
+            "content": "# Notes\nupdated",
+        }
+    )
+    with pytest.raises(ValueError, match="更新"):
+        store.mutate(
+            {
+                "kind": "knowledge",
+                "action": "save",
+                "id": file["id"],
+                "revision": file["revision"],
+                "content": "stale",
+            }
+        )
+    file = store.read_file(file["id"])
+    store.mutate(
+        {"kind": "knowledge", "action": "delete", "id": file["id"], "revision": file["revision"]}
+    )
+    assert not store.files()
+    assert next((store.home / "manager/trash").iterdir()).read_text() == "# Notes\nupdated"
+
+
+def test_knowledge_groups_toggle_and_delete_cleanup(store):
+    change(store, kind="knowledge", action="create", name="notes", content="# Notes\nhello")
+    builtin = store.home / "manager/knowledge/.system/guide.md"
+    builtin.parent.mkdir(parents=True)
+    builtin.write_text("# Guide\nBuilt-in reference")
+    files = {f["group"]: f for f in store.files() if f["kind"] == "knowledge"}
+    assert files["user"]["writable"] and files["user"]["enabled"]
+    assert not files["builtin"]["writable"] and files["builtin"]["enabled"]
+
+    original_revision = store.snapshot()["knowledge_revision"]
+    store.mutate({
+        "kind": "knowledge", "action": "toggle", "id": files["user"]["id"],
+        "knowledge_revision": original_revision, "values": {"enabled": False},
+    })
+    assert not next(f for f in store.files() if f["id"] == files["user"]["id"])["enabled"]
+    assert (store.home / "manager/knowledge-state.json").read_text().find("notes.md") >= 0
+    with pytest.raises(ValueError, match="刷新"):
+        store.mutate({
+            "kind": "knowledge", "action": "toggle", "id": files["builtin"]["id"],
+            "knowledge_revision": original_revision, "values": {"enabled": False},
+        })
+    store.mutate({
+        "kind": "knowledge", "action": "toggle", "id": files["builtin"]["id"],
+        "knowledge_revision": store.snapshot()["knowledge_revision"],
+        "values": {"enabled": False},
+    })
+    assert not next(f for f in store.files() if f["group"] == "builtin")["enabled"]
+    with pytest.raises(ValueError, match="只读"):
+        store.mutate({
+            "kind": "knowledge", "action": "delete", "id": files["builtin"]["id"],
+            "revision": files["builtin"]["revision"],
+        })
+    user = next(f for f in store.files() if f["group"] == "user")
+    store.mutate({
+        "kind": "knowledge", "action": "delete", "id": user["id"],
+        "revision": user["revision"],
+    })
+    assert "notes.md" not in (store.home / "manager/knowledge-state.json").read_text()
+
+
+def test_short_gateway_key_does_not_hide_user_document_or_make_it_readonly(store):
+    store.config.write_text(json.dumps({
+        "providers": {"local": {"base_url": "http://127.0.0.1:17001", "api_key": "note"}}
+    }))
+    change(store, kind="knowledge", action="create", name="note", content="# note\nnote123")
+    item = next(f for f in store.snapshot()["files"] if f["kind"] == "knowledge")
+    assert item["name"] == "note"
+    assert item["path"].endswith("/note.md")
+    assert item["writable"]
+    detail = store.read_file(item["id"])
+    assert detail["content"] == "# note\nnote123"
+    assert detail["writable"]
+
+
+@pytest.mark.parametrize("name", ["../escape", "a/b", ".", ""])
+def test_document_path_traversal_is_rejected(store, name):
+    with pytest.raises(ValueError):
+        change(store, kind="knowledge", action="create", name=name, content="test")
+
+
+def test_shared_skill_edit_and_toggle_is_local(store):
+    path = store.compatibility_home / ".agents/skills/shared/SKILL.md"
+    path.parent.mkdir(parents=True)
+    content = "---\nname: shared\ndescription: Shared skill\n---\nContent"
+    path.write_text(content)
+    file = store.files()[0]
+    assert file["group"] == "public"
+    assert store.read_file(file["id"])["writable"]
+    change(
+        store,
+        kind="skills",
+        action="save",
+        id=file["id"],
+        revision=file["revision"],
+        content=content + " changed",
+    )
+    change(store, kind="skills", action="toggle", id=file["id"], values={"enabled": False})
+    assert not store.snapshot()["files"][0]["enabled"]
+    assert path.read_text().endswith("changed")
+    assert not (store.compatibility_home / ".agents/settings.json").exists()
+
+
+def test_memory_with_secret_is_redacted_and_readonly(store):
+    path = store.home / "memories/MEMORY.md"
+    path.parent.mkdir()
+    path.write_text("token private-token-123")
+    file = store.read_file(store.files()[0]["id"])
+    assert file["content"] == "token [已隐藏]"
+    assert not file["writable"]
+
+
+def test_mcp_config_does_not_execute_and_retains_auth(store):
+    change(
+        store,
+        kind="tools",
+        action="save",
+        id="reader",
+        values={"transport": "http", "url": "https://example.com/mcp"},
+    )
+    change(store, kind="tools", action="toggle", id="reader", values={"enabled": False})
+    assert not config(store)["mcp"]["servers"]["reader"]["enabled"]
+    change(store, kind="tools", action="delete", id="reader")
+    assert config(store)["mcp"]["servers"] == {}
+
+
+def test_http_requires_same_origin_and_custom_header(store):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), module.Handler)
+    server.store = store
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        with httpx.Client(base_url=f"http://127.0.0.1:{server.server_port}", trust_env=False) as c:
+            assert c.get("/").status_code == 200
+            assert c.get("/api/snapshot").status_code == 200
+            key = c.get("/api/provider-key?id=local")
+            assert key.json() == {"api_key": "private-token-123"}
+            assert key.headers["Cache-Control"] == "no-store"
+            assert c.get("/api/provider-key?id=missing").status_code == 400
+            assert (
+                c.get(
+                    "/api/provider-key?id=local", headers={"Origin": "https://attacker.example"}
+                ).status_code
+                == 403
+            )
+
+            assert c.get("/api/snapshot", headers={"Host": "attacker.example"}).status_code == 403
+            assert c.post("/api/mutate", json={}).status_code == 403
+            assert (
+                c.post(
+                    "/api/mutate",
+                    json={},
+                    headers={"X-Corki-Manager": "1", "Origin": "https://attacker.example"},
+                ).status_code
+                == 403
+            )
+            response = c.post(
+                "/api/mutate",
+                headers={"X-Corki-Manager": "1"},
+                json={
+                    "revision": module.revision(store.config_text()),
+                    "kind": "knowledge",
+                    "action": "create",
+                    "name": "http-doc",
+                    "content": "# HTTP document",
+                },
+            )
+            assert response.status_code == 200
+            assert c.get("/api/snapshot").json()["files"][0]["name"] == "HTTP document"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_config_versions_save_rollback_and_corki_loader(store):
+    from corki.config.settings import CorkiSettings
+
+    original = store.config_text()
+    first = store.config_document()
+    edited = module.document.set_value(
+        original, ("providers", "local", "models", "model-a", "context_window"), 262144
+    )
+    change(store, kind="config", action="save", content=edited)
+    loaded = CorkiSettings.for_directory(store.workspace, config_file=store.config)
+    assert loaded.model_context_info("model-a").context_window == 262144
+    history = store.config_document()
+    assert len(history["versions"]) == 2
+    change(store, kind="config", action="restore", id=first["versions"][0]["id"])
+    assert store.config_text() == original
+    assert len(store.config_document()["versions"]) == 3
+    assert all(p.stat().st_mode & 0o777 == 0o600 for p in store.config_versions().glob("*.json"))
+
+
+@pytest.mark.parametrize(
+    "content", ["{broken", "[]", '{"a":1,"a":2}', '{"x":NaN}', "", '{"providers":[]}']
+)
+def test_invalid_config_never_changes_active_file(store, content):
+    original = store.config_text()
+    with pytest.raises(ValueError):
+        change(store, kind="config", action="save", content=content)
+    assert store.config_text() == original
+
+
+def test_history_detects_external_edits_and_conflicts(store):
+    first = store.config_document()
+    store.config.write_text(store.config_text() + "\n")
+    assert len(store.config_document()["versions"]) == 2
+    with pytest.raises(ValueError, match="冲突"):
+        store.mutate(
+            dict(
+                kind="config",
+                action="restore",
+                id=first["versions"][0]["id"],
+                revision=first["revision"],
+            )
+        )
+
+
+def test_structured_edits_are_versioned(store):
+    change(
+        store,
+        kind="models",
+        action="save",
+        id="model-a",
+        provider="local",
+        values={"context_window": 262144, "reasoning_effort": "medium"},
+    )
+    assert len(store.config_document()["versions"]) == 2
+
+
+def test_skills_excludes_codex_and_hidden_backups_but_lists_corki_system(store):
+    roots = [
+        store.compatibility_home / ".codex/skills",
+        store.workspace / ".codex/skills",
+        store.home / "skills/.system.previous",
+        store.home / "skills/.system",
+    ]
+    for root in roots:
+        path = root / "sample/SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text("---\nname: sample\ndescription: Example\n---\nContent")
+    files = store.files()
+    assert len(files) == 1
+    assert files[0]["path"] == str(store.home / "skills/.system/sample/SKILL.md")
+    assert files[0]["source"] == "内置"
+    assert not files[0]["writable"]
+
+
+def skill_upload(entries=None, **kwargs):
+    import base64
+
+    return {
+        "kind": "skills",
+        "action": "import",
+        "files": [
+            {"path": name, "data": base64.b64encode(content).decode()}
+            for name, content in (
+                entries
+                or [
+                    (
+                        "example/SKILL.md",
+                        b"---\nname: example\ndescription: Test import\n---\nInstructions",
+                    )
+                ]
+            )
+        ],
+        **kwargs,
+    }
+
+
+def test_import_preview_package_and_runtime_discovery(store):
+    from corki.skills.service import SkillService
+
+    data = skill_upload()
+    data["files"] += skill_upload(
+        [("example/references/guide.md", b"Guide"), ("example/assets/icon.png", b"\x89PNG\x00")]
+    )["files"]
+    preview = store.mutate({**data, "action": "validate-import"})
+    target = store.compatibility_home / ".agents/skills/example"
+    assert not target.exists()
+    assert len(preview["files"]) == 3
+    store.mutate(data)
+    assert (target / "assets/icon.png").read_bytes() == b"\x89PNG\x00"
+    service = SkillService(
+        home=store.home,
+        project_root=store.workspace,
+        compatibility_home=store.compatibility_home,
+        bundled_enabled=False,
+    )
+    skill = next(s for s in service.snapshot(store.workspace).skills if s.name == "example")
+    assert service.read(skill, "references/guide.md") == "Guide"
+    with pytest.raises(ValueError, match="同名"):
+        store.mutate({**data, "action": "validate-import"})
+    with pytest.raises(ValueError, match="同名"):
+        store.mutate(data)
+    store.mutate({**data, "name": "example-copy"})
+    assert (target.parent / "example-copy/SKILL.md").exists()
+
+
+@pytest.mark.parametrize("group", ["corki", "public"])
+def test_import_skill_to_selected_group(store, group):
+    data = skill_upload(group=group)
+    target = (
+        store.home / "skills/example"
+        if group == "corki"
+        else store.compatibility_home / ".agents/skills/example"
+    )
+    other = (
+        store.compatibility_home / ".agents/skills/example"
+        if group == "corki"
+        else store.home / "skills/example"
+    )
+    preview = store.mutate({**data, "action": "validate-import"})
+    assert preview["group"] == group
+    assert preview["path"] == str(target)
+    assert not target.exists()
+    result = store.mutate(data)
+    assert result["group"] == group
+    assert (target / "SKILL.md").is_file()
+    assert not other.exists()
+    assert next(f for f in store.files() if f["name"] == "example")["group"] == group
+    with pytest.raises(ValueError, match="同名"):
+        store.mutate({**data, "action": "validate-import"})
+
+
+def test_import_skill_rejects_invalid_group(store):
+    with pytest.raises(ValueError, match="导入位置|扩展 Skills"):
+        store.mutate(skill_upload(group="builtin"))
+    assert not (store.home / "skills").exists()
+
+
+@pytest.mark.parametrize(
+    "path", ["../outside", "/outside", "foo/../../outside", "foo\\outside", ".hidden"]
+)
+def test_import_rejects_unsafe_paths_without_partial_writes(store, path):
+    data = skill_upload()
+    data["files"] += skill_upload([(path, b"bad")])["files"]
+    with pytest.raises(ValueError):
+        store.mutate(data)
+    assert not (store.compatibility_home / ".agents/skills").exists()
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        [("README.md", b"none")],
+        [("SKILL.md", b"invalid")],
+        [("a/SKILL.md", b"one"), ("b/SKILL.md", b"two")],
+        [("SKILL.md", b"x"), ("skill.MD", b"x")],
+        [("SKILL.md", b"x" * (128 * 1024 + 1))],
+    ],
+)
+def test_import_rejects_invalid_packages(store, entries):
+    with pytest.raises(ValueError):
+        store.mutate(skill_upload(entries))
+
+
+def test_zip_import_preserves_executable_and_rejects_symlinks(store):
+    import base64
+    import io
+    import zipfile
+
+    def archive(link=False):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as z:
+            z.writestr("sample/SKILL.md", "---\nname: zipped\ndescription: Zip test\n---\nRun")
+            entry = zipfile.ZipInfo("sample/scripts/run.sh")
+            entry.external_attr = (0o120777 if link else 0o100755) << 16
+            z.writestr(entry, b"#!/bin/sh\necho test")
+        return base64.b64encode(stream.getvalue()).decode()
+
+    with pytest.raises(ValueError, match="链接"):
+        store.mutate(dict(kind="skills", action="import", archive=archive(True)))
+    store.mutate(dict(kind="skills", action="import", archive=archive()))
+    script = store.compatibility_home / ".agents/skills/zipped/scripts/run.sh"
+    assert script.stat().st_mode & 0o100
+
+
+def test_three_skill_groups_are_distinct(store):
+    for path in (
+        store.home / "skills/.system/builtin",
+        store.home / "skills/private",
+        store.compatibility_home / ".agents/skills/public",
+    ):
+        path.mkdir(parents=True)
+        (path / "SKILL.md").write_text(f"---\nname: {path.name}\ndescription: Test\n---\nBody")
+    files = store.files()
+    assert {f["name"]: f["group"] for f in files} == {
+        "builtin": "builtin",
+        "private": "corki",
+        "public": "public",
+    }
+    assert not next(f for f in files if f["name"] == "builtin")["writable"]
+
+
+@pytest.fixture
+def skill_package(store):
+    root = store.compatibility_home / ".agents/skills/workbench"
+    (root / "scripts").mkdir(parents=True)
+    (root / "references/nested").mkdir(parents=True)
+    (root / "SKILL.md").write_text(
+        "---\nname: workbench\ndescription: Package test\n---\n# Guide\n"
+    )
+    (root / "scripts/run.py").write_bytes(b'#!/usr/bin/env python3\r\nprint("hello")\r\n')
+    (root / "scripts/run.py").chmod(0o755)
+    (root / "references/nested/guide.md").write_text("# Reference\n\n**Important**")
+    (root / "asset.bin").write_bytes(b"\x00\xff\x80")
+    return root, store.files()[0]["id"]
+
+
+def test_skill_package_read_save_conflict_export(store, skill_package):
+    import io
+    import zipfile
+
+    root, identity = skill_package
+    package = store.skill_package(identity)
+    assert {e["path"] for e in package["entries"]} >= {
+        "scripts",
+        "scripts/run.py",
+        "references/nested/guide.md",
+    }
+    doc = store.read_skill_resource(identity, "scripts/run.py")
+    assert doc["writable"] and "\r\n" in doc["content"]
+    assert store.read_skill_resource(identity, "asset.bin")["type"] == "binary"
+    edited = doc["content"].replace("hello", "saved")
+    store.mutate(
+        dict(
+            kind="skills",
+            action="save-resource",
+            id=identity,
+            path="scripts/run.py",
+            revision=doc["revision"],
+            content=edited,
+        )
+    )
+    assert (root / "scripts/run.py").read_bytes() == edited.encode()
+    assert (root / "scripts/run.py").stat().st_mode & 0o111 == 0o111
+    with pytest.raises(ValueError, match="修改"):
+        store.mutate(
+            dict(
+                kind="skills",
+                action="save-resource",
+                id=identity,
+                path="scripts/run.py",
+                revision=doc["revision"],
+                content="overwrite",
+            )
+        )
+    body, name = store.export_skill(identity)
+    assert name == "workbench.zip"
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        assert archive.read("workbench/scripts/run.py") == edited.encode()
+        assert archive.read("workbench/asset.bin") == b"\x00\xff\x80"
+        assert archive.getinfo("workbench/scripts/run.py").external_attr >> 16 & 0o111
+        assert not any(".manager-backups" in n for n in archive.namelist())
+        assert (
+            archive.read("workbench/references/nested/guide.md")
+            == (root / "references/nested/guide.md").read_bytes()
+        )
+
+
+@pytest.mark.parametrize(
+    "relative",
+    ["../settings.json", "/etc/passwd", "scripts/../../SKILL.md", "scripts", "missing.md"],
+)
+def test_skill_resources_block_paths(store, skill_package, relative):
+    with pytest.raises(ValueError):
+        store.read_skill_resource(skill_package[1], relative)
+
+
+def test_skill_resources_block_links_and_invalid_main(store, skill_package):
+    root, identity = skill_package
+    (root / "linked").symlink_to(store.config)
+    (root / "dirlink").symlink_to(store.home, target_is_directory=True)
+    for path in ["linked", "dirlink/settings.json"]:
+        with pytest.raises(ValueError):
+            store.read_skill_resource(identity, path)
+    doc = store.read_skill_resource(identity, "SKILL.md")
+    with pytest.raises(ValueError):
+        store.mutate(
+            dict(
+                kind="skills",
+                action="save-resource",
+                id=identity,
+                path="SKILL.md",
+                revision=doc["revision"],
+                content="invalid",
+            )
+        )
+    assert store.read_skill_resource(identity, "SKILL.md")["content"] == doc["content"]
+
+
+def test_builtin_resource_readonly_even_through_alias(store):
+    root = store.home / "skills/.system/native"
+    (root / "scripts").mkdir(parents=True)
+    (root / "SKILL.md").write_text("---\nname: native\ndescription: Native\n---\n# Guide")
+    (root / "scripts/run.sh").write_text("echo native")
+    (store.home / "skills/alias").symlink_to(root, target_is_directory=True)
+    item = store.files()[0]
+    assert not item["writable"] and item["group"] == "builtin"
+    doc = store.read_skill_resource(item["id"], "scripts/run.sh")
+    assert not doc["writable"]
+    with pytest.raises(ValueError, match="只读"):
+        store.mutate(
+            dict(
+                kind="skills",
+                action="save-resource",
+                id=item["id"],
+                path="scripts/run.sh",
+                revision=doc["revision"],
+                content="changed",
+            )
+        )
+
+
+def test_skill_http_resources_and_zip(store, skill_package):
+    import io
+    import zipfile
+
+    _, identity = skill_package
+    server = ThreadingHTTPServer(("127.0.0.1", 0), module.Handler)
+    server.store = store
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        with httpx.Client(
+            base_url=f"http://127.0.0.1:{server.server_port}", trust_env=False
+        ) as client:
+            assert client.get("/api/skill-package", params={"id": identity}).json()["entries"]
+            resource = client.get(
+                "/api/skill-resource", params={"id": identity, "path": "scripts/run.py"}
+            )
+            assert resource.json()["type"] == "text"
+            exported = client.get("/api/skill-export", params={"id": identity})
+            assert exported.headers["content-type"] == "application/zip"
+            assert "attachment" in exported.headers["content-disposition"]
+            assert zipfile.is_zipfile(io.BytesIO(exported.content))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_provider_rename_preserves_runtime_compatibility(store):
+    from corki.config.providers import resolve_model_document
+
+    old = config(store)["providers"]["local"]
+    change(
+        store,
+        kind="providers",
+        action="save",
+        id="local",
+        values={"id": "renamed", "base_url": old["base_url"], "api_mode": old["api_mode"]},
+    )
+    updated = config(store)
+    assert "local" not in updated["providers"]
+    assert updated["default"] == {"provider": "renamed", "model": "model-a"}
+    profile = updated["providers"]["renamed"]
+    assert profile["api_key"] == old["api_key"]
+    assert profile["models"] == old["models"]
+    assert profile["aliases"] == ["local"]
+    for name in ("local", "renamed"):
+        resolved = resolve_model_document(updated, provider=name, model="model-a")
+        assert resolved["provider"]["api_key"] == old["api_key"]
+        assert resolved["provider"]["name"] == "local"
+    # Renaming back consumes our own alias and preserves the intervening name.
+    change(
+        store,
+        kind="providers",
+        action="save",
+        id="renamed",
+        values={"id": "local", "base_url": old["base_url"], "api_mode": old["api_mode"]},
+    )
+    assert config(store)["providers"]["local"]["aliases"] == ["renamed"]
+
+
+@pytest.mark.parametrize("name", ["occupied", "reserved", "", "../bad"])
+def test_provider_rename_rejects_collision_and_invalid_name(store, name):
+    current = config(store)
+    current["providers"]["occupied"] = {"aliases": ["reserved"]}
+    store.config.write_text(json.dumps(current))
+    before = store.config_text()
+    with pytest.raises(ValueError):
+        change(
+            store,
+            kind="providers",
+            action="save",
+            id="local",
+            values={"id": name, "base_url": "https://example.com", "api_mode": "responses"},
+        )
+    assert store.config_text() == before
+
+
+def test_provider_rename_updates_legacy_inline_identity(store):
+    current = config(store)
+    current["provider"] = {"name": "local", "thinking": True}
+    store.config.write_text(json.dumps(current))
+    change(
+        store,
+        kind="providers",
+        action="save",
+        id="local",
+        values={"id": "renamed", "base_url": "https://example.com", "api_mode": "responses"},
+    )
+    assert config(store)["provider"] == {"id": "renamed", "name": "local", "thinking": True}
+
+
+@pytest.mark.parametrize("shared_model", [True, False])
+def test_provider_save_as_default(store, shared_model):
+    from corki.config.providers import resolve_model_document
+
+    current = config(store)
+    target_model = "model-a" if shared_model else "other-model"
+    current["providers"]["target"] = {
+        "api_key": "target-secret",
+        "models": {target_model: {"context_window": 262144}},
+    }
+    store.config.write_text(json.dumps(current))
+    change(
+        store,
+        kind="providers",
+        action="save",
+        id="target",
+        make_default=True,
+        values={"id": "renamed-target", "base_url": "https://example.com", "api_mode": "responses"},
+    )
+    updated = config(store)
+    assert updated["default"] == {"provider": "renamed-target", "model": target_model}
+    assert resolve_model_document(updated)["provider"]["api_key"] == "target-secret"
+
+
+def test_empty_provider_cannot_be_default(store):
+    before = store.config_text()
+    with pytest.raises(ValueError, match="添加模型"):
+        change(
+            store,
+            kind="providers",
+            action="save",
+            id="empty",
+            make_default=True,
+            values={"base_url": "https://example.com", "api_mode": "responses"},
+        )
+    assert store.config_text() == before
+
+
+def test_model_description_save_preserve_clear_and_validation(store):
+    from corki.config.providers import resolve_model_document
+
+    values = {"context_window": 131072, "reasoning_effort": "medium"}
+    change(
+        store,
+        kind="models",
+        action="save",
+        provider="local",
+        id="model-a",
+        values={**values, "description": "适合日常编码和问答。"},
+    )
+    assert (
+        store.snapshot()["providers"][0]["models"]["model-a"]["description"]
+        == "适合日常编码和问答。"
+    )
+    assert resolve_model_document(config(store))["agent"]["model"] == "model-a"
+    change(store, kind="models", action="save", provider="local", id="model-a", values=values)
+    assert config(store)["providers"]["local"]["models"]["model-a"]["description"]
+    for invalid in (123, "x" * 501):
+        before = store.config_text()
+        with pytest.raises(ValueError, match="描述"):
+            change(
+                store,
+                kind="models",
+                action="save",
+                provider="local",
+                id="model-a",
+                values={**values, "description": invalid},
+            )
+        assert store.config_text() == before
+    change(
+        store,
+        kind="models",
+        action="save",
+        provider="local",
+        id="model-a",
+        values={**values, "description": ""},
+    )
+    assert config(store)["providers"]["local"]["models"]["model-a"]["description"] == ""
+
+
+def test_config_history_returns_latest_twenty_without_removing_archives(store):
+    ids = [store.archive_config(json.dumps({"version": i}), "test") for i in range(25)]
+    result = store.config_document()
+    assert len(result["versions"]) == 20
+    assert result["versions"][0]["revision"] == module.revision(store.config_text())
+    assert result["versions"][1]["id"] == ids[-1]
+    assert len(list(store.config_versions().glob("*.json"))) == 26
+    assert json.loads(store.config_document(ids[0])["content"]) == {"version": 0}
+
+
+def skill_toggle_fixture(store, rules):
+    path = store.home / "skills/.system/skill-creator/SKILL.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("---\nname: skill-creator\ndescription: fixture\n---\nBody")
+    value = config(store)
+    value["skills"] = {"config": rules(path)}
+    store.config.write_text(json.dumps(value))
+    return next(f for f in store.files() if f["path"] == str(path)), path
+
+
+def test_skill_toggle_removes_enable_rule_and_deduplicates_paths(store):
+    item, path = skill_toggle_fixture(
+        store,
+        lambda p: [
+            {"path": str(p), "enabled": True},
+            {"path": "skills/.system/skill-creator/SKILL.md", "enabled": False},
+            {"path": "/unrelated/SKILL.md", "enabled": False},
+        ],
+    )
+    for enabled in (True, False, False, True):
+        change(store, kind="skills", action="toggle", id=item["id"], values={"enabled": enabled})
+        rules = config(store)["skills"]["config"]
+        assert rules == [{"path": "/unrelated/SKILL.md", "enabled": False}] + (
+            [] if enabled else [{"path": str(path), "enabled": False}]
+        )
+        assert (
+            next(f for f in store.snapshot()["files"] if f["id"] == item["id"])["enabled"]
+            == enabled
+        )
+
+
+def test_skill_enable_preserves_extra_fields_without_enabled(store):
+    item, path = skill_toggle_fixture(
+        store,
+        lambda p: [
+            {"path": str(p), "enabled": False, "custom": {"keep": True}},
+            {"path": "/unrelated/SKILL.md", "enabled": False},
+        ],
+    )
+    change(store, kind="skills", action="toggle", id=item["id"], values={"enabled": True})
+    rules = config(store)["skills"]["config"]
+    assert rules[-1] == {"path": str(path), "custom": {"keep": True}}
+    from corki.config.skills import disabled_skill_paths, parse_skill_rules
+
+    disabled = disabled_skill_paths(parse_skill_rules(rules, store.home), ())
+    assert Path("/unrelated/SKILL.md") in disabled
+    assert path not in disabled
+    change(store, kind="skills", action="toggle", id=item["id"], values={"enabled": False})
+    assert config(store)["skills"]["config"][-1] == {
+        "path": str(path),
+        "custom": {"keep": True},
+        "enabled": False,
+    }
+
+
+def test_skill_enable_removes_last_rule(store):
+    item, _ = skill_toggle_fixture(store, lambda p: [{"path": str(p), "enabled": False}])
+    change(store, kind="skills", action="toggle", id=item["id"], values={"enabled": True})
+    assert "config" not in config(store)["skills"]
+
+
+def test_skill_enable_does_not_override_other_same_name_skills(store):
+    item, _ = skill_toggle_fixture(store, lambda p: [{"name": "skill-creator", "enabled": False}])
+    before = store.config_text()
+    with pytest.raises(ValueError, match="名称规则"):
+        change(store, kind="skills", action="toggle", id=item["id"], values={"enabled": True})
+    assert store.config_text() == before
+
+
+def test_knowledge_document_import_formats(store):
+    import base64
+    import io
+    import zipfile
+
+    from reportlab.pdfgen.canvas import Canvas
+
+    pdf = io.BytesIO()
+    canvas = Canvas(pdf)
+    canvas.drawString(50, 750, "Knowledge PDF content")
+    canvas.save()
+    docx = io.BytesIO()
+    with zipfile.ZipFile(docx, "w") as archive:
+        archive.writestr(
+            "word/document.xml",
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>知识正文</w:t></w:r></w:p></w:body></w:document>',
+        )
+    for filename, raw, expected in [
+        ("说明.md", "# 知识正文".encode(), "# 知识正文"),
+        ("说明.txt", "知识正文".encode("gb18030"), "知识正文"),
+        ("说明.docx", docx.getvalue(), "知识正文"),
+        ("说明.pdf", pdf.getvalue(), "Knowledge PDF content"),
+    ]:
+        result = store.mutate(
+            {
+                "kind": "knowledge",
+                "action": "parse-document",
+                "filename": filename,
+                "data": base64.b64encode(raw).decode(),
+            }
+        )
+        assert result == {"name": "说明", "content": expected}
+    assert not (store.home / "manager/knowledge").exists()
+    store.mutate({"kind": "knowledge", "action": "create", **result})
+    assert (store.home / "manager/knowledge/说明.md").read_text() == expected
+    with pytest.raises(ValueError, match="同名"):
+        store.mutate({"kind": "knowledge", "action": "create", **result})
+
+
+def test_knowledge_document_invalid_and_empty(store):
+    import base64
+
+    for name, raw in [
+        ("a.exe", b"binary"),
+        ("a.pdf", b"broken"),
+        ("a.docx", b"broken"),
+        ("a.txt", b" "),
+    ]:
+        with pytest.raises(ValueError):
+            store.mutate(
+                {
+                    "kind": "knowledge",
+                    "action": "parse-document",
+                    "filename": name,
+                    "data": base64.b64encode(raw).decode(),
+                }
+            )
+
+
+def test_knowledge_html_extracts_text_not_scripts():
+    parser = module.KnowledgeHTML()
+    parser.feed(
+        "<html><head><title>业务说明</title><style>hidden</style></head><body>"
+        "<nav>导航</nav><article><h1>标题</h1><p>你好 &amp; <b>世界</b></p>"
+        "<script>bad()</script><p>第二段</p></article></body></html>"
+    )
+    assert parser.result() == ("业务说明", "标题\n\n你好 & 世界\n\n第二段")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///etc/passwd",
+        "http://localhost/",
+        "http://127.0.0.1/",
+        "http://[::1]/",
+        "https://user:pass@example.com/",
+        "ftp://example.com/",
+    ],
+)
+def test_knowledge_web_rejects_invalid_addresses(url):
+    with pytest.raises(ValueError):
+        module.fetch_knowledge_page(url)
+
+
+def test_knowledge_web_fetch_and_redirect_validation(monkeypatch):
+    from email.message import Message
+
+    class Response:
+        status = 200
+        headers = Message()
+        headers["Content-Type"] = "text/html; charset=utf-8"
+
+        def read(self, limit):
+            return "<title>网页标题</title><article><p>网页正文</p></article>".encode()
+
+    class Connection:
+        def __init__(self, *args, **kwargs):
+            self.sock = None
+
+        def request(self, *args, **kwargs):
+            pass
+
+        def getresponse(self):
+            return response
+
+        def close(self):
+            pass
+
+    response = Response()
+    monkeypatch.setattr(
+        module.socket,
+        "getaddrinfo",
+        lambda host, port, **kw: [
+            (2, 1, 6, "", ("127.0.0.1" if host == "localhost" else "93.184.216.34", port))
+        ],
+    )
+    monkeypatch.setattr(module.socket, "create_connection", lambda *a, **k: object())
+    monkeypatch.setattr(module.http.client, "HTTPConnection", Connection)
+    assert module.fetch_knowledge_page("http://example.com/article") == {
+        "name": "网页标题",
+        "content": "网页正文\n\n来源：http://example.com/article",
+    }
+    response.status = 302
+    response.getheader = lambda key: "http://localhost/private"
+    with pytest.raises(ValueError, match="公开"):
+        module.fetch_knowledge_page("http://example.com/article")
+
+
+def test_mcp_stdio_editor_preserves_advanced_settings(store):
+    values = {
+        "transport": "stdio",
+        "command": "python",
+        "args": ["/tmp/a b.py", "--flag"],
+        "env": {"SECRET": "secret-value"},
+        "cwd": "/tmp",
+        "timeout_seconds": 15,
+    }
+    change(store, kind="tools", action="save", id="local-tool", values=values, is_new=True)
+    settings = config(store)
+    settings["mcp"]["servers"]["local-tool"]["disabled_tools"] = ["danger"]
+    store.config.write_text(json.dumps(settings))
+    change(
+        store,
+        kind="tools",
+        action="save",
+        id="local-tool",
+        values={**values, "command": "python3", "args": ["/tmp/new.py"], "cwd": None},
+    )
+    saved = config(store)["mcp"]["servers"]["local-tool"]
+    assert saved["command"] == "python3"
+    assert saved["args"] == ["/tmp/new.py"]
+    assert saved["env"] == {"SECRET": "secret-value"}
+    assert saved["disabled_tools"] == ["danger"]
+    assert "cwd" not in saved
+    module.MCPServerSettings.from_mapping("local-tool", saved)
+    with pytest.raises(ValueError, match="同名"):
+        change(store, kind="tools", action="save", id="local-tool", values=values, is_new=True)
+    with pytest.raises(ValueError, match="启用状态"):
+        change(store, kind="tools", action="toggle", id="local-tool", values={"enabled": "false"})
+
+
+def test_mcp_http_editor_preserves_credentials_and_rejects_transport_change(store):
+    values = {
+        "transport": "http",
+        "url": "https://example.com/mcp",
+        "http_headers": {"Authorization": "Bearer secret"},
+        "bearer_token_env_var": "MY_TOKEN",
+        "timeout_seconds": 45,
+    }
+    change(store, kind="tools", action="save", id="remote-tool", values=values)
+    change(
+        store,
+        kind="tools",
+        action="save",
+        id="remote-tool",
+        values={"transport": "http", "url": "https://example.com/new"},
+    )
+    saved = config(store)["mcp"]["servers"]["remote-tool"]
+    assert saved["http_headers"] == values["http_headers"]
+    assert saved["bearer_token_env_var"] == "MY_TOKEN"
+    assert saved["timeout_seconds"] == 45
+    with pytest.raises(ValueError, match="传输方式"):
+        change(
+            store,
+            kind="tools",
+            action="save",
+            id="remote-tool",
+            values={"transport": "stdio", "command": "python"},
+        )
+    with pytest.raises(ValueError):
+        change(
+            store,
+            kind="tools",
+            action="save",
+            id="remote-tool",
+            values={**values, "http_headers": {"bad": 123}},
+        )
+
+
+@pytest.mark.parametrize("valid", [True, False])
+@pytest.mark.parametrize("draft", [True, False])
+def test_mcp_connection_stdio_validates_and_closes(store, tmp_path, valid, draft):
+    import sys
+
+    store.workspace.mkdir(parents=True, exist_ok=True)
+    script = tmp_path / "mcp_test.py"
+    trace = tmp_path / "calls.jsonl"
+    tools = (
+        [
+            {
+                "name": "echo",
+                "description": "示例工具",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"text": {"type": "string"}},
+                    "required": ["text"],
+                },
+            }
+        ]
+        if valid
+        else [{"name": "broken", "inputSchema": "not-an-object"}]
+    )
+    script.write_text("""import json, sys
+from pathlib import Path
+for line in sys.stdin:
+ packet=json.loads(line)
+ with Path(sys.argv[1]).open('a') as log: log.write(packet['method']+'\\n')
+ if 'id' not in packet: continue
+ if packet['method']=='initialize':
+  result={'protocolVersion':'2025-03-26','capabilities':{'tools':{}},'serverInfo':{'name':'fixture','version':'1'}}
+ elif packet['method']=='tools/list': result={'tools':json.loads(sys.argv[2])}
+ else: raise RuntimeError('unexpected tool execution')
+ print(json.dumps({'jsonrpc':'2.0','id':packet['id'],'result':result}),flush=True)
+""")
+    values = {
+        "transport": "stdio",
+        "command": sys.executable,
+        "args": [str(script), str(trace), json.dumps(tools)],
+    }
+    if not draft:
+        change(store, kind="tools", action="save", id="probe", values=values)
+    before = store.config_text()
+    result = change(
+        store,
+        kind="tools",
+        action="test-connection",
+        id="probe",
+        **({"values": values, "is_new": True} if draft else {}),
+    )
+    assert result["ok"] is valid, result
+    assert result["response"] == {"tools": tools}
+    if valid:
+        assert result["tool_count"] == 1
+    else:
+        assert "校验返回格式" in result["error"]
+    assert trace.read_text().splitlines() == [
+        "initialize",
+        "notifications/initialized",
+        "tools/list",
+    ]
+    assert store.config_text() == before
+
+
+def test_mcp_connection_http_and_empty_catalog(store):
+    from http.server import BaseHTTPRequestHandler
+
+    calls = []
+
+    class MCPHandler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_POST(self):
+            packet = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            calls.append(packet["method"])
+            if "id" not in packet:
+                self.send_response(202)
+                self.end_headers()
+                return
+            if packet["method"] == "initialize":
+                result = {
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "http-fixture", "version": "1"},
+                }
+            else:
+                assert packet["method"] == "tools/list"
+                result = {"tools": []}
+            body = json.dumps({"jsonrpc": "2.0", "id": packet["id"], "result": result}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), MCPHandler)
+    worker = threading.Thread(target=server.serve_forever)
+    worker.start()
+    try:
+        change(
+            store,
+            kind="tools",
+            action="save",
+            id="remote-probe",
+            values={"transport": "http", "url": f"http://127.0.0.1:{server.server_port}/mcp"},
+        )
+        result = change(store, kind="tools", action="test-connection", id="remote-probe")
+        assert result["ok"], result
+        assert result["tool_count"] == 0
+        assert calls == ["initialize", "notifications/initialized", "tools/list"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join()
+
+
+def test_mcp_connection_timeout_releases_client(store, monkeypatch):
+    import asyncio
+
+    closed = []
+
+    class SlowClient:
+        async def start(self):
+            await asyncio.sleep(1)
+
+        async def aclose(self):
+            closed.append(True)
+
+    monkeypatch.setattr(module, "create_client", lambda settings: SlowClient())
+    change(
+        store,
+        kind="tools",
+        action="save",
+        id="slow",
+        values={"transport": "http", "url": "https://example.com/mcp", "timeout_seconds": 0.01},
+    )
+    result = change(store, kind="tools", action="test-connection", id="slow")
+    assert not result["ok"]
+    assert "超时" in result["error"]
+    assert closed == [True]
+    with pytest.raises(ValueError, match="配置已更新"):
+        store.mutate(
+            {"kind": "tools", "action": "test-connection", "id": "slow", "revision": "old"}
+        )
+
+
+def test_mcp_draft_preserves_saved_settings_and_redacts(store, monkeypatch):
+    change(
+        store,
+        kind="tools",
+        action="save",
+        id="draft",
+        values={
+            "transport": "http",
+            "url": "https://old.example/mcp",
+            "headers": {"Authorization": "secret-old"},
+        },
+    )
+    before = store.config_text()
+
+    async def probe(settings, config):
+        assert settings.url == "https://new.example/mcp"
+        assert dict(settings.headers)["Authorization"] == "secret-new"
+        return {"ok": True, "response": {"message": "secret-new"}}
+
+    monkeypatch.setattr(store, "_test_mcp", probe)
+    values = {
+        "transport": "http",
+        "url": "https://new.example/mcp",
+        "headers": {"Authorization": "secret-new"},
+    }
+    result = change(store, kind="tools", action="test-connection", id="draft", values=values)
+    assert result["response"]["message"] == "[已隐藏]"
+    assert store.config_text() == before
+    with pytest.raises(ValueError, match="同名"):
+        change(
+            store, kind="tools", action="test-connection", id="draft", values=values, is_new=True
+        )
+
+
+def test_custom_tool_crud_is_separate_and_loadable(store):
+    from corki.tools.custom import register_custom_tools
+    from corki.tools.registry import ToolRegistry
+
+    before = store.config_text()
+    value = {
+        "name": "query",
+        "description": "Query",
+        "transport": "http",
+        "url": "https://example.com/query",
+        "headers": {"Authorization": "secret-custom"},
+        "parameters": {"type": "object", "properties": {}},
+    }
+    store.mutate(
+        {
+            "kind": "custom-tools",
+            "action": "save",
+            "id": "query",
+            "is_new": True,
+            "revision": None,
+            "values": value,
+        }
+    )
+    path = store.home / "tools/custom/query.json"
+    assert path.is_file() and path.stat().st_mode & 0o777 == 0o600
+    assert "secret-custom" not in json.dumps(store.snapshot())
+    registry = ToolRegistry()
+    register_custom_tools(registry, store.home)
+    assert registry.get("custom__query")
+    with pytest.raises(ValueError, match="同名"):
+        store.mutate(
+            {
+                "kind": "custom-tools",
+                "action": "save",
+                "id": "query",
+                "is_new": True,
+                "revision": None,
+                "values": value,
+            }
+        )
+    with pytest.raises(ValueError, match="已更新"):
+        store.mutate({"kind": "custom-tools", "action": "delete", "id": "query", "revision": "old"})
+    current = store.custom_tool_document("query")
+    store.mutate(
+        {
+            "kind": "custom-tools",
+            "action": "toggle",
+            "id": "query",
+            "enabled": False,
+            "revision": current["revision"],
+        }
+    )
+    registry = ToolRegistry()
+    register_custom_tools(registry, store.home)
+    assert registry.get("custom__query") is None
+    current = store.custom_tool_document("query")
+    store.mutate(
+        {"kind": "custom-tools", "action": "delete", "id": "query", "revision": current["revision"]}
+    )
+    assert not path.exists()
+    assert store.config_text() == before
+    assert list((store.home / "manager/trash").glob("tool-*.json"))
+    with pytest.raises(ValueError):
+        store.custom_tool_path("../outside")
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"transport": "wrong"}, {"description": ""}, {"parameters": []}, {"name": "../escape"}],
+)
+def test_custom_tool_import_invalid_does_not_write(store, changes):
+    value = {
+        "name": "imported",
+        "description": "Imported tool",
+        "transport": "http",
+        "url": "https://example.com/query",
+        "parameters": {"type": "object"},
+        **changes,
+    }
+    with pytest.raises(ValueError):
+        store.mutate(
+            {
+                "kind": "custom-tools",
+                "action": "save",
+                "id": value["name"],
+                "values": value,
+                "is_new": True,
+                "revision": None,
+            }
+        )
+    assert not list((store.home / "tools/custom").glob("*.json"))
+
+
+def test_custom_tool_import_preserves_complete_definition(store):
+    import sys
+
+    from corki.tools.custom import register_custom_tools
+    from corki.tools.registry import ToolRegistry
+
+    value = {
+        "name": "imported",
+        "description": "Complete process tool",
+        "transport": "process",
+        "command": sys.executable,
+        "args": ["-c", "print('ok')"],
+        "env": {"TEST": "value"},
+        "cwd": str(store.workspace),
+        "timeout_seconds": 45,
+        "enabled": True,
+        "parameters": {
+            "type": "object",
+            "properties": {"count": {"type": "integer"}},
+            "required": ["count"],
+        },
+    }
+    store.mutate(
+        {
+            "kind": "custom-tools",
+            "action": "save",
+            "id": value["name"],
+            "values": value,
+            "is_new": True,
+            "revision": None,
+        }
+    )
+    path = store.home / "tools/custom/imported.json"
+    before = path.read_text()
+    assert json.loads(before) == value
+    registry = ToolRegistry()
+    register_custom_tools(registry, store.home)
+    assert registry.get("custom__imported").spec.parameters == value["parameters"]
+    with pytest.raises(ValueError, match="同名"):
+        store.mutate(
+            {
+                "kind": "custom-tools",
+                "action": "save",
+                "id": value["name"],
+                "values": {**value, "description": "overwrite"},
+                "is_new": True,
+                "revision": None,
+            }
+        )
+    assert path.read_text() == before
+
+
+def custom_probe(store, script, **options):
+    import sys
+
+    store.workspace.mkdir(parents=True, exist_ok=True)
+    values = {
+        "name": "probe",
+        "description": "Test",
+        "transport": "process",
+        "command": sys.executable,
+        "args": ["-c", script],
+        "parameters": {
+            "type": "object",
+            "properties": {"q": {"type": "string"}},
+            "required": ["q"],
+        },
+    }
+    return store.mutate(
+        {
+            "kind": "custom-tools",
+            "action": "test",
+            "id": "probe",
+            "revision": None,
+            "values": values,
+            "arguments": {"q": "hello"},
+            **options,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "script,expected,success",
+    [
+        ("import json,sys;print(json.dumps(json.load(sys.stdin)))", "json", True),
+        ("print('plain text')", "json", False),
+        ("print('plain text')", "text", True),
+        ("print('')", "json", False),
+        ("print('NaN')", "json", False),
+        ("print('1e999')", "json", False),
+        ("import sys;print('broken',file=sys.stderr);sys.exit(1)", "json", False),
+    ],
+)
+def test_custom_tool_probe_formats_and_no_writes(store, script, expected, success):
+    before = store.config_text()
+    result = custom_probe(store, script, expected_format=expected)
+    assert result["ok"] is success, result
+    assert result["duration_ms"] >= 0
+    assert isinstance(result["output"], str)
+    assert store.config_text() == before
+    assert not list((store.home / "tools/custom").glob("*.json"))
+
+
+def test_custom_tool_probe_rejects_arguments_before_execution(store):
+    marker = store.home / "must-not-exist"
+    result = custom_probe(
+        store,
+        f"from pathlib import Path;Path({str(marker)!r}).write_text('bad')",
+        arguments={"q": 1},
+    )
+    assert not result["ok"]
+    assert "string" in result["error"]
+    assert not marker.exists()
+
+
+def test_custom_tool_probe_saved_revision_and_credentials(store):
+    import sys
+
+    store.workspace.mkdir(parents=True, exist_ok=True)
+    values = {
+        "name": "saved",
+        "description": "Saved",
+        "transport": "process",
+        "command": sys.executable,
+        "args": ["-c", "import os,json;print(json.dumps({'secret':os.environ['MY_SECRET']}))"],
+        "env": {"MY_SECRET": "test-private-token"},
+        "parameters": {"type": "object"},
+    }
+    store.mutate(
+        {
+            "kind": "custom-tools",
+            "action": "save",
+            "id": "saved",
+            "revision": None,
+            "values": values,
+        }
+    )
+    path = store.home / "tools/custom/saved.json"
+    before = path.read_text()
+    result = store.mutate(
+        {
+            "kind": "custom-tools",
+            "action": "test",
+            "id": "saved",
+            "revision": module.revision(before),
+            "arguments": {},
+        }
+    )
+    assert result["ok"], result
+    assert "test-private-token" not in json.dumps(result)
+    assert path.read_text() == before
+    with pytest.raises(ValueError, match="已更新"):
+        store.mutate(
+            {
+                "kind": "custom-tools",
+                "action": "test",
+                "id": "saved",
+                "revision": "old",
+                "arguments": {},
+            }
+        )
+
+
+def test_custom_tool_probe_timeout(store):
+    import sys
+
+    result = custom_probe(
+        store,
+        "",
+        values={
+            "name": "probe",
+            "description": "Timeout",
+            "transport": "process",
+            "command": sys.executable,
+            "args": ["-c", "import time;time.sleep(10)"],
+            "timeout_seconds": 0.1,
+            "parameters": {"type": "object"},
+        },
+    )
+    assert not result["ok"] and "timed out" in result["error"]
+
+
+def test_custom_tool_probe_http(store):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_GET(self):
+            self.send_response(200 if self.path.startswith("/ok?") else 500)
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        for endpoint, success in [("ok", True), ("error", False)]:
+            result = custom_probe(
+                store,
+                "",
+                values={
+                    "name": "probe",
+                    "description": "HTTP",
+                    "transport": "http",
+                    "method": "GET",
+                    "url": f"http://127.0.0.1:{server.server_port}/{endpoint}",
+                    "parameters": {"type": "object"},
+                },
+            )
+            assert result["ok"] is success, result
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
