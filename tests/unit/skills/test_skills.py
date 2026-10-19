@@ -58,6 +58,7 @@ def test_bundled_catalog_contains_supported_skills(tmp_path: Path) -> None:
     assert {skill.name for skill in snapshot.skills} == {
         "agent-reach",
         "arxiv",
+        "corki-text-C&E",
         "grounded-citations",
         "imagegen",
         "pdf",

@@ -11,7 +11,11 @@ _INPUT_CONTEXT_NAMESPACE = UUID("6fc515bd-a3b0-445f-b1d7-cde7bf71185d")
 
 def is_input_context(item: ContextItem) -> bool:
     """Recognize bound fragments and legacy selected-skill rows without migration."""
-    return item.source_input_id is not None or item.key.startswith("extensions.skills.selected.")
+    return (
+        item.source_input_id is not None
+        or item.key.startswith("extensions.skills.selected.")
+        or item.content_kind in {"corki.goal.continuation", "corki.goal.command"}
+    )
 
 
 def bind_input_context(

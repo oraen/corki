@@ -4,7 +4,7 @@ function quickToolsCards(){
  return `<section class="panel quick-tools-panel"><div class="panel-head"><h2>快捷工具</h2></div><div class="quick-tools-grid">${[
   ['guide','使用指引','从首次配置到完成一个任务','knowledge'],
   ['setup','快速配置','快速使用厂商和模型初始化配置','config'],
-  ['launch','快速启动','在终端打开 Corki','developer']
+  ['launch','快速启动','打开 CLI 或桌面应用','developer']
  ].map(([id,title,note,i])=>`<button type="button" class="quick-tool-card" data-action="quick-${id}"><span class="quick-tool-icon">${icon(i)}</span><span><strong>${title}</strong><small>${note}</small></span>${icon('arrow')}</button>`).join('')}</div></section>`;
 }
 
@@ -77,14 +77,16 @@ async function openQuickSetup(mode='configure'){
   const modelIds=Object.keys(p.models).filter(id=>!existing||!Object.hasOwn(existing.models,id));
   if(!drafts.has(selected))drafts.set(selected,{api_key:'',model:adding?'':modelIds[0],models:[]});
   const draft=drafts.get(selected);
-  const options=modelIds.map(id=>option(id,p.models[id].label||id,adding?draft.models.includes(id):id===draft.model,'quick-model','',adding)).join('');
+  const options=(adding?`<div class="quick-model-actions"><button type="button" class="text-button" data-select-all aria-pressed="${draft.models.length===modelIds.length}">${draft.models.length===modelIds.length?'取消全选':'全选'}</button></div>`:'')+modelIds.map(id=>option(id,p.models[id].label||id,adding?draft.models.includes(id):id===draft.model,'quick-model','',adding)).join('');
   const summary=adding?(draft.models.length?`已选 ${draft.models.length} 个模型`:'选择模型'):(p.models[draft.model]?.label||draft.model);
   dialog.querySelector('.quick-setup-fields').innerHTML=`${quickSelect('模型',esc(summary),options,'data-models')}${existing?.has_key?'<div class="quick-existing-key">沿用已配置的 API Key</div>':`<label class="quick-field"><span>API Key</span><span class="quick-secret"><input data-key type="password" value="${esc(draft.api_key)}" autocomplete="new-password" placeholder="输入 ${esc(p.label)} API Key" aria-label="API Key"><button type="button" class="icon-button" data-reveal aria-label="显示 API Key">${icon('eye')}</button></span></label>`}`;
  }
  dialog.addEventListener('change',e=>{
   if(e.target.closest('[data-vendors]')){capture();selected=e.target.value;const menu=e.target.closest('details');menu.querySelector('summary>span').innerHTML=quickVendorLabel(catalog.providers.find(p=>p.id===selected));menu.open=false;renderFields();}
-  else if(e.target.closest('[data-models]')){capture();const menu=e.target.closest('details');const p=catalog.providers.find(p=>p.id===selected);menu.querySelector('summary>span').textContent=adding?(drafts.get(selected).models.length?`已选 ${drafts.get(selected).models.length} 个模型`:'选择模型'):(p.models[e.target.value].label||e.target.value);if(!adding)menu.open=false;}
+  else if(e.target.closest('[data-models]')){capture();const menu=e.target.closest('details');const p=catalog.providers.find(p=>p.id===selected);menu.querySelector('summary>span').textContent=adding?(drafts.get(selected).models.length?`已选 ${drafts.get(selected).models.length} 个模型`:'选择模型'):(p.models[e.target.value].label||e.target.value);if(adding)syncSelectAll(menu);else menu.open=false;}
  });
+ function syncSelectAll(menu){const inputs=[...menu.querySelectorAll('input[name="quick-model"]')],all=inputs.length>0&&inputs.every(input=>input.checked),button=menu.querySelector('[data-select-all]');button.textContent=all?'取消全选':'全选';button.setAttribute('aria-pressed',String(all));}
+ dialog.addEventListener('click',e=>{const button=e.target.closest('[data-select-all]');if(!button||button.disabled)return;const menu=button.closest('[data-models]'),inputs=[...menu.querySelectorAll('input[name="quick-model"]')],checked=!inputs.every(input=>input.checked);for(const input of inputs)input.checked=checked;capture();menu.querySelector('summary>span').textContent=checked?`已选 ${inputs.length} 个模型`:'选择模型';syncSelectAll(menu);});
  dialog.addEventListener('click',e=>{const button=e.target.closest('[data-reveal]');if(button){const input=button.previousElementSibling;input.type=input.type==='password'?'text':'password';button.innerHTML=icon(input.type==='password'?'eye':'eyeOff');button.setAttribute('aria-label',input.type==='password'?'显示 API Key':'隐藏 API Key');}});
  dialog.addEventListener('close',()=>{drafts.clear();},{once:true});renderFields();
 }
@@ -92,10 +94,11 @@ async function openQuickSetup(mode='configure'){
 function openQuickAdd(){return openQuickSetup('add');}
 
 function openQuickLaunch(){
- const dialog=quickDialog('快速启动',`<div class="quick-launch-hero"><span class="quick-launch-terminal">${icon('developer')}</span><div><h3>在终端打开 Corki</h3><p>优先使用 iTerm，其次使用 Terminal</p></div></div><label class="quick-field"><span>工作目录</span><div class="quick-directory"><input id="quick-directory" placeholder="~/.corki/main/default" autocomplete="off" spellcheck="false"><button type="button" class="button" data-pick-directory>${icon('knowledge')}选择目录</button></div></label><p class="quick-directory-note">留空使用默认目录</p>`,'启动 Corki',async()=>{
-  const result=await api('mutate',{kind:'quick-tools',action:'launch',directory:dialog.querySelector('#quick-directory').value});toast(result.message);
+ const dialog=quickDialog('快速启动',`${quickSelect('启动方式','桌面应用',`<label class="quick-option"><input type="radio" name="launch-mode" value="cli"><span>CLI</span></label><label class="quick-option"><input type="radio" name="launch-mode" value="desktop" checked><span>桌面应用</span></label>`,'data-launch-mode')}<label class="quick-field"><span>工作目录</span><div class="quick-directory"><input id="quick-directory" placeholder="~/.corki/main/default" autocomplete="off" spellcheck="false"><button type="button" class="button" data-pick-directory>${icon('knowledge')}选择目录</button></div></label><p class="quick-directory-note">留空使用默认目录</p>`,'启动 Corki',async()=>{
+  const result=await api('mutate',{kind:'quick-tools',action:'launch',mode:dialog.querySelector('[name="launch-mode"]:checked').value,directory:dialog.querySelector('#quick-directory').value});toast(result.message);
  });
  dialog.classList.add('quick-launch-dialog');
+ dialog.querySelector('[data-launch-mode]').addEventListener('change',e=>{const menu=e.currentTarget;menu.querySelector('summary>span').textContent=e.target.value==='desktop'?'桌面应用':'CLI';menu.open=false;});
  dialog.querySelector('[data-pick-directory]').onclick=async e=>{const button=e.currentTarget,confirm=dialog.querySelector('.quick-confirm');button.disabled=true;confirm.disabled=true;dialog.querySelector('.quick-error').textContent='';try{const result=await api('mutate',{kind:'quick-tools',action:'choose-directory'});if(dialog.isConnected&&result.path)dialog.querySelector('#quick-directory').value=result.path;}catch(error){if(dialog.isConnected)dialog.querySelector('.quick-error').textContent=error.message;}finally{button.disabled=false;confirm.disabled=false;}};
  dialog.querySelector('#quick-directory').focus();
 }

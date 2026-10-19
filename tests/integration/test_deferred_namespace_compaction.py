@@ -221,6 +221,8 @@ async def make_runtime(tmp_path, registry, model, **settings):
     return await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=tmp_path,
+            # Keep this fixed schema/window fixture independent of Goal tools.
+            goals_enabled=False,
             skills_enabled=False,
             deferred_tool_world_state=True,
             model_contexts=(ModelContextInfo("gpt-5", supports_search_tool=True),),

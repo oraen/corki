@@ -82,7 +82,7 @@ def test_new_model_highlights_its_default_not_old_effort(tmp_path, monkeypatch):
     assert result == model_picker.ModelSelection("new", "medium", "default")
 
 
-def test_model_menu_sorts_pairs_and_uses_selected_provider_metadata(tmp_path, monkeypatch):
+def test_model_menu_only_lists_current_provider_with_its_metadata(tmp_path, monkeypatch):
     import json
 
     from corki.core.model_settings import capture_model_settings
@@ -109,12 +109,46 @@ def test_model_menu_sorts_pairs_and_uses_selected_provider_metadata(tmp_path, mo
     settings = CorkiSettings.for_directory(tmp_path, config_file=path)
 
     async def choose(session, current, choices, **kwargs):
-        assert choices == ("aaa(z)", "shared(a)", "shared(z)")
+        assert choices == ("aaa(z)", "shared(z)")
         assert current == "shared(z)"
-        return "shared(a)"
+        return "shared(z)"
 
     monkeypatch.setattr(model_picker, "choose_model", choose)
     result = asyncio.run(
         model_picker.choose_model_and_effort(None, settings, capture_model_settings(settings))
     )
-    assert result == model_picker.ModelSelection("shared", "high", "a")
+    assert result == model_picker.ModelSelection("shared", "low", "z")
+
+
+@pytest.mark.parametrize("selection", [None, "beta"])
+def test_provider_menu_is_sorted_and_cancellable(tmp_path, monkeypatch, selection):
+    import json
+
+    from corki.core.model_settings import capture_model_settings
+
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "default": {"provider": "alpha", "model": "a"},
+                "providers": {
+                    "beta": {"models": {"b": {}}},
+                    "empty": {},
+                    "alpha": {"models": {"a": {}}},
+                },
+            }
+        )
+    )
+    settings = CorkiSettings.for_directory(tmp_path, config_file=path)
+
+    async def choose(session, current, choices, **kwargs):
+        assert current == "alpha"
+        assert choices == ["alpha", "beta"]
+        assert kwargs["allow_custom"] is False
+        return selection
+
+    monkeypatch.setattr(model_picker, "choose_model", choose)
+    assert (
+        asyncio.run(model_picker.choose_provider(None, settings, capture_model_settings(settings)))
+        == selection
+    )

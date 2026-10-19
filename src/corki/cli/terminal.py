@@ -1017,6 +1017,23 @@ class TerminalUI(PlanStreamUI):
             self._model_menu = None
             self._transcript.modal_depth -= 1
 
+    async def read_provider(self, current):
+        from corki.cli.menu_overlay import MenuOverlayHost
+        from corki.cli.model_picker import choose_provider
+
+        self._transcript.modal_depth += 1
+        overlay_host = MenuOverlayHost(self._form_session)
+        self._model_menu = overlay_host
+        try:
+            with patch_stdout(raw=True):
+                return await choose_provider(
+                    self._form_session, self._settings, current, overlay_host=overlay_host
+                )
+        finally:
+            overlay_host.close()
+            self._model_menu = None
+            self._transcript.modal_depth -= 1
+
     async def read_copy(self, _request):
         from corki.cli.clipboard import copy_choices, write_clipboard
         from corki.cli.menu_overlay import MenuOverlayHost

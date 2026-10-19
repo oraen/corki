@@ -56,6 +56,8 @@ def test_cold_downshift_preserves_old_search_and_new_plan_separately(
             tmp_path,
             model="large",
             api_mode="responses",
+            # Keep this fixed schema/window fixture independent of Goal tools.
+            goals_enabled=False,
             skills_enabled=False,
             tool_search_mode="native",
             tool_namespace_mode="native",

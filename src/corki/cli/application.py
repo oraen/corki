@@ -43,6 +43,7 @@ from corki.protocol.events import (
     AssistantTextDelta,
     ContextCompacted,
     ContextCompactionStarted,
+    GoalUpdated,
     HookCompleted,
     HookStarted,
     ModelRetryScheduled,
@@ -334,6 +335,7 @@ class CorkiApplication:
                     else self._commands.dispatch(message)
                 )
                 if command.handled and command.action not in (
+                    CommandAction.GOAL,
                     CommandAction.COMPACT,
                     CommandAction.PLAN,
                     CommandAction.CYCLE_MODE,
@@ -344,6 +346,9 @@ class CorkiApplication:
                         await self._input.copy_response()
                     elif command.action is CommandAction.MODEL:
                         await self._set_model(command.input_text)
+                    elif command.action is CommandAction.PROVIDER:
+                        await self._set_provider(command.input_text)
+                        continue
                     elif command.action is CommandAction.MODEL_PICK:
                         await self._pick_model()
                         continue
@@ -376,7 +381,9 @@ class CorkiApplication:
 
                 self._interruption_reported = False
                 try:
-                    if command.action is CommandAction.CYCLE_MODE:
+                    if command.action is CommandAction.GOAL:
+                        await self._handle_goal(command.input_text)
+                    elif command.action is CommandAction.CYCLE_MODE:
                         if self._runtime.thread_settings.collaboration_mode == "default":
                             await self._enter_plan_mode()
                         else:
@@ -565,6 +572,20 @@ class CorkiApplication:
                 provider=selected.provider,
             )
 
+    async def _set_provider(self, provider: str = "") -> None:
+        current = self._runtime.thread_settings
+        if not provider:
+            provider = await self._input.select_provider(current)
+            if provider is None:
+                return
+        provider = self._settings.model_provider_name(provider)
+        models = [name for name, owner in self._settings.model_choices() if owner == provider]
+        if not models:
+            self._ui.show_notice("Provider is not configured or has no models.")
+            return
+        model = current.model if current.model in models else models[0]
+        await self._set_model(model, provider=provider)
+
     async def _set_model(self, model: str, *, reasoning_effort=UNSET, provider=None) -> None:
         cancelled = None
         try:
@@ -678,6 +699,85 @@ class CorkiApplication:
             "Existing history and extracted data are retained; this is not erasure."
         )
 
+    async def _handle_goal(self, text: str, *, running=False) -> None:
+        parts = text.strip().split(maxsplit=1)
+        action = parts[0].lower() if parts else "get"
+        try:
+            if action == "get" and not parts:
+                result = await self._runtime.goal_command()
+            elif action in {"pause", "resume", "clear"} and len(parts) == 1:
+                result = await self._runtime.goal_command(action)
+            else:
+                if action == "edit":
+                    current = (await self._runtime.goal_command())["goal"]
+                    if current is None:
+                        raise ValueError("This thread has no goal.")
+                    objective = parts[1] if len(parts) > 1 else ""
+                    budget = ...
+                    if not objective:
+                        self._ui.show_notice(
+                            f"Current objective: {current['objective']}\n"
+                            "Enter a new objective; empty keeps it, /cancel cancels."
+                        )
+                        objective = submission_text(await self._input.read_message()).strip()
+                        if objective == "/cancel":
+                            return
+                        objective = objective or current["objective"]
+                        self._ui.show_notice(
+                            f"Token budget: {current.get('token_budget') or 'none'}\n"
+                            "Enter a positive integer or none; empty keeps it, /cancel cancels."
+                        )
+                        raw_budget = submission_text(await self._input.read_message()).strip()
+                        if raw_budget == "/cancel":
+                            return
+                        if raw_budget:
+                            budget = None if raw_budget.lower() == "none" else int(raw_budget)
+                    result = await self._runtime.goal_command(
+                        "edit",
+                        objective=objective,
+                        token_budget=budget,
+                    )
+                else:
+                    from corki.goals.store import validate_objective
+
+                    objective = validate_objective(text)
+                    current = (await self._runtime.goal_command())["goal"]
+                    if current and current["status"] != "complete":
+                        self._ui.show_notice(
+                            f"Replace this goal?\n{current['objective']}\n"
+                            "Enter yes to replace; any other input cancels."
+                        )
+                        answer = submission_text(await self._input.read_message()).strip().lower()
+                        if answer not in {"yes", "y"}:
+                            return
+                        await self._runtime.goal_command("clear")
+                    result = await self._runtime.goal_command("create", objective=objective)
+            goal = result.get("goal")
+            if goal is None:
+                self._ui.show_notice(
+                    "Goal cleared."
+                    if action == "clear"
+                    else "No goal. Use /goal <objective> to start one."
+                )
+                return
+            budget = goal.get("token_budget")
+            usage = f"{goal['tokens_used']}" + (f" / {budget}" if budget is not None else "")
+            self._ui.show_notice(
+                f"Goal · {goal['status']}\n{goal['objective']}\n"
+                f"Tokens: {usage} · Time: {goal['time_used_seconds']}s\n"
+                "/goal edit <objective> · /goal pause · /goal resume · /goal clear"
+            )
+            if not running and text.strip() and goal["status"] == "active":
+                events = self._runtime.continue_goal(realtime=self._realtime_enabled)
+                if self._realtime_enabled or getattr(self._ui, "keep_composer_during_turn", False):
+                    await self._consume_interactive_events(
+                        events, steering_enabled=self._realtime_enabled
+                    )
+                else:
+                    await self._consume_events(events)
+        except (ValueError, RuntimeError) as exc:
+            self._ui.show_notice(str(exc))
+
     async def _consume_realtime_turn(self, message: str | ImageInput | None) -> None:
         """Keep the composer available during ordinary work or standalone compaction."""
 
@@ -749,6 +849,9 @@ class CorkiApplication:
                 if isinstance(submission, QueuedInput):
                     if turn_input:
                         self._pending_messages.append(turn_input)
+                        defer = getattr(self._runtime, "defer_goal_continuation", None)
+                        if defer is not None:
+                            defer()
                         self._refresh_pending_inputs()
                         self._ui.show_notice("Queued for the next turn.")
                     continue
@@ -780,11 +883,17 @@ class CorkiApplication:
                     continue
                 command = self._commands.dispatch(steering)
                 if command.handled:
+                    if command.action is CommandAction.GOAL:
+                        await self._handle_goal(command.input_text, running=True)
+                        continue
                     if command.action is CommandAction.COPY:
                         await self._input.copy_response()
                         continue
                     elif command.action is CommandAction.MODEL_PICK:
                         await self._pick_model()
+                        continue
+                    elif command.action is CommandAction.PROVIDER:
+                        await self._set_provider(command.input_text)
                         continue
                     elif command.action is CommandAction.MODEL:
                         await self._set_model(command.input_text)
@@ -805,6 +914,9 @@ class CorkiApplication:
                         # Compaction and non-realtime turns cannot accept steering.
                         # The existing input owner keeps it as a later user turn.
                         self._pending_messages.append(turn_input)
+                        defer = getattr(self._runtime, "defer_goal_continuation", None)
+                        if defer is not None:
+                            defer()
                         self._refresh_pending_inputs()
                         self._ui.show_notice("Queued for the next turn.")
                         continue
@@ -1321,6 +1433,14 @@ class CorkiApplication:
                 )
             elif isinstance(event, ContextCompactionStarted):
                 self._ui.show_notice("Compacting context...")
+            elif isinstance(event, GoalUpdated):
+                if event.status != "active":
+                    usage = str(event.tokens_used)
+                    if event.token_budget is not None:
+                        usage += f" / {event.token_budget}"
+                    self._ui.show_notice(
+                        f"Goal · {event.status} · {usage} tokens · {event.time_used_seconds}s"
+                    )
             elif isinstance(event, TokenUsageUpdated):
                 continue
             elif isinstance(event, TurnCompleted):

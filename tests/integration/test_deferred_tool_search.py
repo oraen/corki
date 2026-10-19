@@ -388,6 +388,8 @@ def test_responses_search_wire_roundtrip_without_eager_schemas(
                 api_mode="responses",
                 tool_search_mode=mode,
                 model_contexts=(ModelContextInfo("gpt-5", supports_search_tool=True),),
+                # Keep this fixed schema/window fixture independent of Goal tools.
+                goals_enabled=False,
                 skills_enabled=False,
             ),
             database_path=tmp_path / "wire.db",

@@ -30,7 +30,7 @@ import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
@@ -41,15 +41,22 @@ from corki.config.features import MCPServerSettings
 from corki.config.settings import CorkiSettings
 from corki.config.skills import disabled_skill_paths, parse_skill_rules
 from corki.core.runtime import _create_model, _model_capabilities
+from corki.cron.diagnostics import safe_log
+from corki.cron.service import CronService
+from corki.cron.store import CronStore
+from corki.knowledge.extraction import extract as extract_knowledge
+from corki.knowledge.store import KnowledgeStore
 from corki.mcp.client import create_client
 from corki.mcp.input_schema import mcp_input_schema
 from corki.mcp.json_rpc import plain_json
-from corki.models.types import ModelCompleted, ModelRequest, ModelTextDelta
+from corki.models.types import ModelRequest, ModelTextDelta
 from corki.protocol.ids import new_model_step_id, new_tool_call_id, new_turn_id
 from corki.protocol.items import AssistantMessageItem, UserMessageItem
 from corki.protocol.tools import ToolCall
 from corki.skills.frontmatter import parse as parse_skill
 from corki.skills.walk import walk_skill_files
+from corki.storage.admin import DatabaseAdmin
+from corki.storage.query_workspace import QueryWorkspace
 from corki.tools.base import ToolContext
 from corki.tools.custom import (
     NAME as CUSTOM_TOOL_NAME,
@@ -68,6 +75,7 @@ LOCK = threading.RLock()
 MCP_TEST_SLOTS = threading.BoundedSemaphore(4)
 MODEL_TEST_SLOTS = threading.BoundedSemaphore(3)
 CUSTOM_TEST_SLOTS = threading.BoundedSemaphore(4)
+KNOWLEDGE_SLOTS = threading.BoundedSemaphore(2)
 CONFIG_HISTORY_LIMIT = 20
 LIMIT = 256 * 1024
 IMPORT_LIMIT = 8 * 1024 * 1024
@@ -298,6 +306,12 @@ class Store:
         self.compatibility_home = (compatibility_home or Path.home()).resolve()
         self.config = self.home / "settings.json"
         self.database = self.home / "sessions/corki.db"
+        self.knowledge = KnowledgeStore(self.home)
+        from corki.knowledge.builtin import install_builtin_knowledge
+
+        install_builtin_knowledge(self.home)
+        self.cron = CronStore(self.home)
+        self.cron_service = CronService(self.home)
 
     @property
     def knowledge_root(self):
@@ -348,12 +362,75 @@ class Store:
         if not isinstance(enabled, bool):
             raise ValueError("知识库开关必须是布尔值")
         key = self.knowledge_key(item["path"])
+        if enabled and item["index_status"] != "ready":
+            # Preparation stays disabled until finish publishes the validated index.
+            disabled.add(key)
+            self.write_knowledge_state(disabled)
+            self.start_knowledge(item)
+            return {"message": "技能加载中"}
         if enabled:
             disabled.discard(key)
         else:
             disabled.add(key)
+        self.knowledge.set_enabled(item["document_id"], enabled)
         self.write_knowledge_state(disabled)
-        return {"message": "知识库状态已更新"}
+        return {"message": "已开启" if enabled else "已停用"}
+
+    def start_knowledge(self, item):
+        doc = self.knowledge.sync(item["path"], item["name"], Path(item["path"]).read_text())
+        if doc["status"] in ("ready", "processing"):
+            return
+        if not KNOWLEDGE_SLOTS.acquire(blocking=False):
+            raise ValueError("已有两篇文档正在处理，请稍后点击重试")
+        job = None
+        try:
+            config = document.loads(self.config_text())
+            default = config.get("default", {})
+            provider, model = default.get("provider"), default.get("model")
+            if not provider or not model:
+                raise ValueError("请先配置默认供应商和模型")
+            settings = CorkiSettings.for_directory(
+                self.home, config_file=self.config, provider=provider, model=model)
+            settings = replace(settings, model_request_max_retries=1,
+                               model_unbounded_connection_retries=False,
+                               execution_permissions=None)
+            content = Path(item["path"]).read_text()
+            self.knowledge.set_enabled(doc["id"], False)
+            job = self.knowledge.claim(
+                doc["id"], settings.provider_id + "/" + settings.model, prepare=True)
+            if not job:
+                KNOWLEDGE_SLOTS.release()
+                return
+            thread = threading.Thread(target=self._process_knowledge,
+                                      args=(settings, doc, job, content), daemon=True)
+            thread.start()
+        except Exception:
+            KNOWLEDGE_SLOTS.release()
+            if job:
+                self.knowledge.fail(doc["id"], job, "无法启动处理，请检查默认模型配置后重试")
+            raise
+
+    def _process_knowledge(self, settings, doc, job, content):
+        async def process():
+            model = _create_model(settings, _model_capabilities(settings))
+            await extract_knowledge(model, settings, self.knowledge, doc, job, content)
+        try:
+            asyncio.run(process())
+            with LOCK:
+                with self.knowledge.connect() as db:
+                    current = db.execute(
+                        "SELECT enabled FROM documents WHERE id=?", (doc["id"],)).fetchone()
+                if current and current["enabled"]:
+                    _, disabled = self.knowledge_state()
+                    disabled.discard(doc["path"])
+                    self.write_knowledge_state(disabled)
+        except Exception as error:
+            # Never persist provider error bodies: they may contain credentials or source text.
+            reason = ("模型返回的摘要格式不符合要求，请重试" if isinstance(error, ValueError)
+                      else "默认模型请求失败，请检查连接或额度后重试")
+            self.knowledge.fail(doc["id"], job, reason)
+        finally:
+            KNOWLEDGE_SLOTS.release()
 
     def config_text(self):
         return self.config.read_text() if self.config.exists() else "{}"
@@ -493,7 +570,20 @@ class Store:
         path = self.desktop_script('return POSIX path of (choose folder with prompt "选择 Corki 工作目录")', timeout=120)
         return {"path": path, "cancelled": path is None}
 
+    def desktop_application(self):
+        local = Path(__file__).resolve().parents[1] / "app/out"
+        candidates = [*sorted(local.glob("Corki-darwin-*/Corki.app")),
+                      Path("/Applications/Corki.app"), Path.home() / "Applications/Corki.app"]
+        for bundle in candidates:
+            executable = bundle / "Contents/MacOS/Corki"
+            if executable.is_file() and os.access(executable, os.X_OK):
+                return executable
+        raise ValueError("未找到 Corki 桌面应用，请先安装或打包桌面应用")
+
     def quick_launch(self, data):
+        mode = data.get("mode", "cli")
+        if mode not in ("cli", "desktop"):
+            raise ValueError("请选择有效的启动方式")
         if sys.platform != "darwin":
             raise ValueError("快速启动目前支持 macOS")
         message = "配置无效，建议使用快速配置配置厂商和模型"
@@ -526,6 +616,22 @@ class Store:
             path.mkdir(parents=True, exist_ok=True, mode=0o700)
         if not path.is_dir():
             raise ValueError("工作目录不存在，请重新选择")
+        if mode == "desktop":
+            executable = self.desktop_application()
+            environment = os.environ.copy()
+            environment.pop("ELECTRON_RUN_AS_NODE", None)
+            environment["CORKI_HOME"] = str(self.home)
+            environment["CORKI_PYTHON"] = sys.executable
+            try:
+                subprocess.Popen(
+                    [str(executable), "--corki-directory", str(path.resolve())],
+                    cwd=str(path.resolve()), env=environment,
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except OSError as error:
+                raise ValueError("无法启动 Corki 桌面应用，请检查安装是否完整") from error
+            return {"message": "已请求打开 Corki 桌面应用", "directory": str(path.resolve()), "mode": mode}
         executable = shutil.which("corki")
         if not executable:
             executable = next((str(p) for p in (Path.home()/".local/bin/corki", Path(sys.executable).parent/"corki") if p.is_file() and os.access(p, os.X_OK)), None)
@@ -670,7 +776,6 @@ end run'''
         result = []
         if redaction_secrets is None:
             redaction_secrets = self.redaction_secrets()
-        _, knowledge_disabled = self.knowledge_state()
         roots = [
             (self.home / "skills", "skills", True),
             (self.home / "skills/.system", "skills", False),
@@ -727,6 +832,7 @@ end run'''
                         ),
                         "",
                     )
+                knowledge = self.knowledge.sync(path, name, text) if kind == "knowledge" else None
                 result.append(
                     dict(
                         id=revision(str(path)),
@@ -737,7 +843,11 @@ end run'''
                         writable=writable and not builtin,
                         valid=valid,
                         **(
-                            {"enabled": self.knowledge_key(path) not in knowledge_disabled}
+                            {"enabled": bool(knowledge["enabled"]),
+                             "document_id": knowledge["id"],
+                             "index_status": knowledge["status"],
+                             "index_error": knowledge["error"],
+                             "index_summary": knowledge["summary"]}
                             if kind == "knowledge" else {}
                         ),
                         group=(
@@ -775,6 +885,21 @@ end run'''
         with sqlite3.connect(self.database.as_uri() + "?mode=ro", uri=True, timeout=2) as db:
             db.row_factory = sqlite3.Row
             return [dict(row) for row in db.execute(sql, args)]
+
+    def monthly_usage(self, today=None):
+        today = today or datetime.now().astimezone().date()
+        first = today - timedelta(days=29)
+        rows = self.query(
+            "SELECT date(created_at,'localtime') AS day, "
+            "coalesce(sum(input_tokens),0) AS input, "
+            "coalesce(sum(output_tokens),0) AS output, count(*) AS steps "
+            "FROM model_steps WHERE date(created_at,'localtime') BETWEEN ? AND ? "
+            "GROUP BY day",
+            (first.isoformat(), today.isoformat()),
+        )
+        by_day = {row["day"]: row for row in rows}
+        days = [(first + timedelta(days=index)).isoformat() for index in range(30)]
+        return [by_day.get(day, dict(day=day, input=0, output=0, steps=0)) for day in days]
 
     def snapshot(self):
         text = self.config_text()
@@ -819,11 +944,7 @@ end run'''
                     ORDER BY updated_at DESC LIMIT 1) AS status,
                 (SELECT model FROM thread_model_settings WHERE thread_id=t.id) AS model
                 FROM threads t ORDER BY t.updated_at DESC LIMIT 40""")
-            usage = self.query(
-                "SELECT substr(created_at,1,10) AS day, sum(input_tokens) AS input, "
-                "sum(output_tokens) AS output, count(*) AS steps FROM model_steps "
-                "GROUP BY day ORDER BY day DESC LIMIT 14"
-            )
+            usage = self.monthly_usage()
             totals = next(
                 iter(
                     self.query(
@@ -858,7 +979,7 @@ end run'''
                         tools=tools,
                         custom_tools=self.custom_tools(),
                         sessions=sessions,
-                        usage=usage[::-1],
+                        usage=usage,
                         totals=totals,
                         executions=executions,
                         errors=errors,
@@ -872,6 +993,37 @@ end run'''
                 redaction_secrets,
             )
         )
+
+    def archive_knowledge(self, item, content):
+        folder = self.home / "manager/knowledge-versions" / item["document_id"]
+        folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+        entries = sorted(folder.glob("*.json"), reverse=True)
+        if not entries or json.loads(entries[0].read_text())["revision"] != revision(content):
+            identity = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f") + "-" + uuid.uuid4().hex
+            atomic(folder / (identity + ".json"), json.dumps(dict(
+                id=identity, created=datetime.now(UTC).isoformat(),
+                revision=revision(content), content=content,
+            ), ensure_ascii=False), backup=False)
+        for old in sorted(folder.glob("*.json"), reverse=True)[CONFIG_HISTORY_LIMIT:]:
+            old.unlink()
+        return folder
+
+    def knowledge_document(self, identity):
+        with LOCK:
+            item = self.read_file(identity)
+            if item["kind"] != "knowledge":
+                raise ValueError("知识文档不存在")
+            versions = []
+            if item["group"] != "builtin":
+                raw = Path(item["path"]).read_text()
+                folder = self.archive_knowledge(item, raw)
+                for path in sorted(folder.glob("*.json"), reverse=True):
+                    value = json.loads(path.read_text())
+                    raw_content = value["content"]
+                    value["content"] = self.redact(raw_content)
+                    value["writable"] = item["writable"] and raw_content == value["content"]
+                    versions.append(value)
+            return {**item, "versions": versions}
 
     def read_file(self, identity):
         item = next((x for x in self.files() if x["id"] == identity), None)
@@ -952,6 +1104,44 @@ end run'''
             "redacted": redacted != content,
         }
 
+    def rename_skill(self, data):
+        import yaml
+
+        name = data.get("name")
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 64:
+            raise ValueError("名称需为 1–64 个字符")
+        name = " ".join(name.split())
+        current = self.read_skill_resource(data.get("id"), "SKILL.md")
+        if not current["writable"]:
+            raise ValueError("此技能只读")
+        if data.get("revision") != current["revision"]:
+            raise ValueError("文件已被其他程序修改，请重新打开后重试")
+        if any(f["kind"] == "skills" and f["id"] != data.get("id")
+               and f["name"].casefold() == name.casefold() for f in self.files()):
+            raise ValueError("已存在同名技能")
+        content = current["content"]
+        header = re.match(r"^---[^\S\n]*\n(.*?)^---[^\S\n]*(?:\n|$)", content, re.M | re.S)
+        if not header:
+            raise ValueError("SKILL.md 缺少有效的元数据")
+        node = yaml.compose(header.group(1), Loader=yaml.BaseLoader)
+        fields = [(k, v) for k, v in node.value if k.value == "name"] if isinstance(node, yaml.MappingNode) else []
+        if len(fields) > 1:
+            raise ValueError("SKILL.md 包含重复的 name 字段")
+        encoded = json.dumps(name, ensure_ascii=False)
+        if fields:
+            value = fields[0][1]
+            start, end = header.start(1) + value.start_mark.index, header.start(1) + value.end_mark.index
+            suffix = "\n" if content[start:end].endswith("\n") else ""
+            content = content[:start] + encoded + suffix + content[end:]
+        else:
+            start = header.start(1)
+            content = content[:start] + "name: " + encoded + "\n" + content[start:]
+        parsed, _, _ = parse_skill(content, "skill")
+        if parsed != name:
+            raise ValueError("无法更新技能名称")
+        result = self.save_skill_resource({**data, "path": "SKILL.md", "content": content})
+        return {**result, "name": name}
+
     def save_skill_resource(self, data):
         package, path = self.skill_resource(data.get("id"), data.get("path"))
         if not package["writable"]:
@@ -997,6 +1187,23 @@ end run'''
                 info.compress_type = zipfile.ZIP_DEFLATED
                 archive.writestr(info, raw)
         return buffer.getvalue(), root.name + ".zip"
+
+    def cron_run(self, identity):
+        row = self.cron.run(identity)
+        if row["status"] == "failed":
+            log = row.get("error_log", "")
+            if not log and row.get("session_id"):
+                try:
+                    errors = self.query(
+                        "SELECT updated_at,error FROM turns WHERE thread_id=? "
+                        "AND error IS NOT NULL AND error != '' ORDER BY updated_at LIMIT 20",
+                        (row["session_id"],),
+                    )
+                    log = "\n\n".join(f"{e['updated_at']}\n{e['error']}" for e in errors)
+                except (OSError, sqlite3.Error):
+                    pass
+            row["error_log"] = safe_log(self.home, log or row["error"])
+        return row
 
     def execution(self, identity):
         rows = self.query(
@@ -1070,9 +1277,7 @@ end run'''
             if action == "delete":
                 if not exists:
                     raise ValueError("工具不存在")
-                trash = self.home / "manager" / "trash"
-                trash.mkdir(parents=True, exist_ok=True)
-                os.replace(path, trash / ("tool-" + uuid.uuid4().hex + ".json"))
+                path.unlink()
             elif action in ("save", "toggle"):
                 if action == "toggle":
                     if not exists:
@@ -1333,6 +1538,27 @@ end run'''
         return result
 
     def mutate(self, data):
+        if data.get("kind") == "sql-workspace":
+            return QueryWorkspace(self.home).mutate(data)
+        if data.get("kind") == "database":
+            if data.get("action") == "query":
+                return DatabaseAdmin(self.home).query(data)
+            return DatabaseAdmin(self.home).mutate(data)
+        if data.get("kind") == "cron":
+            action = data.get("action")
+            identity = data.get("id")
+            if action == "save":
+                values = data.get("values")
+                if not isinstance(values, dict) or not values.get("provider") or not values.get("model"):
+                    raise ValueError("请选择模型供应商和运行模型")
+                identity = self.cron.save(data.get("values"), identity, data.get("version"))
+            elif action == "run":
+                self.cron_service.run_now(identity)
+            else:
+                self.cron.change(identity, action, data.get("version"))
+            return {"message": {"save": "任务已保存", "run": "任务已开始", "pause": "任务已暂停",
+                                "resume": "任务已开启", "delete": "任务已删除",
+                                "stop": "正在停止执行"}.get(action, "已更新"), "id": identity}
         if data.get("kind") == "quick-tools":
             action = data.get("action")
             if action == "configure":
@@ -1363,6 +1589,13 @@ end run'''
                 return fetch_knowledge_page(url.strip())
         with LOCK:
             action, kind = data.get("action"), data.get("kind")
+            if kind == "knowledge" and action == "retry":
+                item = next((f for f in self.files() if f["id"] == data.get("id")
+                             and f["kind"] == "knowledge"), None)
+                if item is None or not item["enabled"]:
+                    raise ValueError("请先开启知识文档")
+                self.start_knowledge(item)
+                return {"message": "正在生成摘要"}
             if kind == "knowledge" and action == "toggle":
                 return self.toggle_knowledge(data)
             if kind == "config":
@@ -1385,6 +1618,8 @@ end run'''
                     "回滚历史版本" if action == "restore" else "编辑配置文件",
                 )
                 return {"message": "已创建并应用新版本；新 Corki 会话使用此配置"}
+            if kind == "skills" and action == "rename":
+                return self.rename_skill(data)
             if kind == "skills" and action == "save-resource":
                 return self.save_skill_resource(data)
             if kind == "skills" and action in ("import", "validate-import"):
@@ -1646,8 +1881,6 @@ end run'''
             if any(p.startswith(".") or p == "__MACOSX" for p in parts):
                 raise ValueError("请移除隐藏文件和系统文件后重新导入")
             total += len(content)
-            if total > IMPORT_LIMIT or len(entries) >= 200:
-                raise ValueError("每个技能最多 200 个文件，总大小不超过 8 MB")
             entries.append((name, content, executable))
 
         def decode(value):
@@ -1660,8 +1893,6 @@ end run'''
             try:
                 with zipfile.ZipFile(io.BytesIO(decode(data["archive"]))) as archive:
                     infos = archive.infolist()
-                    if len(infos) > 400 or sum(i.file_size for i in infos) > IMPORT_LIMIT:
-                        raise ValueError("ZIP 解压后不能超过 8 MB 或 200 个文件")
                     for info in infos:
                         mode = info.external_attr >> 16
                         if stat.S_ISLNK(mode) or (
@@ -1679,7 +1910,7 @@ end run'''
                 raise ValueError("无法读取 ZIP，请使用未加密的标准 ZIP 文件") from exc
         else:
             files = data.get("files")
-            if not isinstance(files, list) or not files or len(files) > 200:
+            if not isinstance(files, list) or not files:
                 raise ValueError("请选择包含 SKILL.md 的技能文件夹、ZIP 或单个 SKILL.md")
             for entry in files:
                 if not isinstance(entry, dict):
@@ -1774,19 +2005,31 @@ end run'''
         if action == "delete":
             if kind != "knowledge":
                 raise ValueError("仅知识库文档支持删除，技能可停用")
-            trash = self.home / "manager/trash"
-            trash.mkdir(parents=True, exist_ok=True)
-            os.replace(path, trash / (revision(str(path) + str(datetime.now()))[:16] + ".md"))
+            path.unlink()
             _, disabled = self.knowledge_state()
             disabled.discard(self.knowledge_key(path))
             self.write_knowledge_state(disabled)
+            self.knowledge.delete(item["document_id"])
+            shutil.rmtree(self.home / "manager/knowledge-versions" / item["document_id"],
+                          ignore_errors=True)
         elif action in ("create", "save"):
             content = data.get("content", "")
             if not isinstance(content, str) or len(content.encode()) > LIMIT:
                 raise ValueError("文档不能超过 256 KB")
             if kind == "skills":
                 parse_skill(content, path.parent.name)
-            atomic(path, content)
+            if kind == "knowledge" and action == "save":
+                self.archive_knowledge(item, Path(path).read_text())
+            atomic(path, content, backup=kind != "knowledge")
+            if kind == "knowledge":
+                title = next((line.lstrip("# ").strip() for line in content.splitlines()
+                              if line.startswith("# ")), path.stem)
+                doc = self.knowledge.sync(path, title, content)
+                self.knowledge.set_enabled(doc["id"], False)
+                _, disabled = self.knowledge_state()
+                disabled.add(self.knowledge_key(path))
+                self.write_knowledge_state(disabled)
+                self.archive_knowledge({"document_id": doc["id"]}, content)
         else:
             raise ValueError("不支持的操作")
         return {"message": "文档已保存" if action != "delete" else "文档已移到知识库回收目录"}
@@ -1829,6 +2072,31 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(403, {"error": "仅允许本机同源访问"})
         parsed = urlparse(self.path)
         try:
+            if parsed.path == "/api/sql-workspace":
+                params = parse_qs(parsed.query)
+                workspace = QueryWorkspace(self.server.store.home)
+                if "result" in params:
+                    return self.respond(200, workspace.result(params.get("query", [""])[0], params["result"][0]))
+                return self.respond(200, workspace.listing())
+            if parsed.path == "/api/databases":
+                query = parse_qs(parsed.query)
+                admin = DatabaseAdmin(self.server.store.home)
+                if "table" in query:
+                    return self.respond(200, admin.read(query.get("database", [""])[0], query["table"][0], query.get("offset", [0])[0], query.get("search", [""])[0]))
+                return self.respond(200, admin.catalog())
+            if parsed.path == "/api/cron":
+                query = parse_qs(parsed.query)
+                if "records" in query:
+                    return self.respond(200, self.server.store.cron.records(
+                        offset=int(query.get("offset", ["0"])[0]),
+                        query=query.get("query", [""])[0],
+                        names=query.get("name", []),
+                    ))
+                if "run" in query:
+                    return self.respond(200, self.server.store.cron_run(query["run"][0]))
+                if "id" in query:
+                    return self.respond(200, self.server.store.cron.history(query["id"][0]))
+                return self.respond(200, self.server.store.cron.list())
             if parsed.path == "/api/quick-templates":
                 return self.respond(200, self.server.store.quick_catalog())
             if parsed.path in ("/api/skill-package", "/api/skill-resource", "/api/skill-export"):
@@ -1870,6 +2138,18 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/config":
                 identity = parse_qs(parsed.query).get("id", [None])[0]
                 return self.respond(200, self.server.store.config_document(identity))
+            if parsed.path == "/api/knowledge-status":
+                identity = parse_qs(parsed.query).get("id", [""])[0]
+                with LOCK:
+                    item = next((f for f in self.server.store.files()
+                                 if f["id"] == identity and f["kind"] == "knowledge"), None)
+                    if item is None:
+                        raise ValueError("知识文档不存在")
+                    return self.respond(200, {key: item[key] for key in
+                                             ("enabled", "index_status", "index_error")})
+            if parsed.path == "/api/knowledge-document":
+                identity = parse_qs(parsed.query).get("id", [""])[0]
+                return self.respond(200, self.server.store.knowledge_document(identity))
             if parsed.path == "/api/snapshot":
                 return self.respond(200, self.server.store.snapshot())
             if parsed.path in ("/api/file", "/api/execution"):
@@ -1898,11 +2178,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(404, {"error": "接口不存在"})
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if not 0 < length <= 12 * 1024 * 1024:
+            skill_import = self.headers.get("X-Corki-Skill-Import") == "1"
+            if length <= 0 or (not skill_import and length > 12 * 1024 * 1024):
                 raise ValueError("请求体过大或为空")
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError("无效请求")
+            if skill_import and not (
+                data.get("kind") == "skills"
+                and data.get("action") in ("import", "validate-import")
+            ):
+                raise ValueError("无效的技能导入请求")
             if (
                 data.get("action") not in ("import", "validate-import", "parse-document")
                 and length > 2 * LIMIT
@@ -1963,12 +2249,14 @@ def main():
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     server.daemon_threads = True
     server.store = Store(args.home, args.workspace)
+    server.store.cron_service.start()
     print(f"Corki Manager: http://127.0.0.1:{server.server_port}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        server.store.cron_service.close()
         server.server_close()
 
 

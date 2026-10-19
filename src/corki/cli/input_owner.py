@@ -190,6 +190,9 @@ class InputOwner:
     async def select_model(self, current):
         return await self._modal(self.ui.read_model, current)
 
+    async def select_provider(self, current):
+        return await self._modal(self.ui.read_provider, current)
+
     async def copy_response(self):
         return await self._modal(self.ui.read_copy, None)
 

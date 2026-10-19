@@ -92,7 +92,7 @@ def test_model_create_select_and_delete(store):
 
 def test_knowledge_crud_conflict_and_recycle(store):
     change(store, kind="knowledge", action="create", name="notes", content="# Notes\nhello")
-    file = next(f for f in store.files() if f["kind"] == "knowledge")
+    file = next(f for f in store.files() if f["kind"] == "knowledge" and f["group"] == "user")
     store.mutate(
         {
             "kind": "knowledge",
@@ -116,19 +116,24 @@ def test_knowledge_crud_conflict_and_recycle(store):
     store.mutate(
         {"kind": "knowledge", "action": "delete", "id": file["id"], "revision": file["revision"]}
     )
-    assert not store.files()
-    assert next((store.home / "manager/trash").iterdir()).read_text() == "# Notes\nupdated"
+    assert all(f["name"] == "corki_docs" for f in store.files())
+    assert not Path(file["path"]).exists()
+    assert not (store.home / "manager/trash").exists()
+    assert not (store.home / "manager/knowledge-versions" / file["document_id"]).exists()
 
 
 def test_knowledge_groups_toggle_and_delete_cleanup(store):
     change(store, kind="knowledge", action="create", name="notes", content="# Notes\nhello")
     builtin = store.home / "manager/knowledge/.system/guide.md"
-    builtin.parent.mkdir(parents=True)
+    builtin.parent.mkdir(parents=True, exist_ok=True)
     builtin.write_text("# Guide\nBuilt-in reference")
     files = {f["group"]: f for f in store.files() if f["kind"] == "knowledge"}
-    assert files["user"]["writable"] and files["user"]["enabled"]
-    assert not files["builtin"]["writable"] and files["builtin"]["enabled"]
+    assert files["user"]["writable"] and not files["user"]["enabled"]
+    assert not files["builtin"]["writable"] and not files["builtin"]["enabled"]
 
+    # Exercise a state change from an explicitly enabled document without a model call.
+    store.knowledge.set_enabled(files["user"]["document_id"], True)
+    store.write_knowledge_state(set())
     original_revision = store.snapshot()["knowledge_revision"]
     store.mutate({
         "kind": "knowledge", "action": "toggle", "id": files["user"]["id"],
@@ -146,7 +151,7 @@ def test_knowledge_groups_toggle_and_delete_cleanup(store):
         "knowledge_revision": store.snapshot()["knowledge_revision"],
         "values": {"enabled": False},
     })
-    assert not next(f for f in store.files() if f["group"] == "builtin")["enabled"]
+    assert not next(f for f in store.files() if f["id"] == files["builtin"]["id"])["enabled"]
     with pytest.raises(ValueError, match="只读"):
         store.mutate({
             "kind": "knowledge", "action": "delete", "id": files["builtin"]["id"],
@@ -165,7 +170,7 @@ def test_short_gateway_key_does_not_hide_user_document_or_make_it_readonly(store
         "providers": {"local": {"base_url": "http://127.0.0.1:17001", "api_key": "note"}}
     }))
     change(store, kind="knowledge", action="create", name="note", content="# note\nnote123")
-    item = next(f for f in store.snapshot()["files"] if f["kind"] == "knowledge")
+    item = next(f for f in store.snapshot()["files"] if f["kind"] == "knowledge" and f["group"] == "user")
     assert item["name"] == "note"
     assert item["path"].endswith("/note.md")
     assert item["writable"]
@@ -206,7 +211,7 @@ def test_memory_with_secret_is_redacted_and_readonly(store):
     path = store.home / "memories/MEMORY.md"
     path.parent.mkdir()
     path.write_text("token private-token-123")
-    file = store.read_file(store.files()[0]["id"])
+    file = store.read_file(next(f for f in store.files() if f["kind"] == "memories")["id"])
     assert file["content"] == "token [已隐藏]"
     assert not file["writable"]
 
@@ -267,7 +272,7 @@ def test_http_requires_same_origin_and_custom_header(store):
                 },
             )
             assert response.status_code == 200
-            assert c.get("/api/snapshot").json()["files"][0]["name"] == "HTTP document"
+            assert any(f["name"] == "HTTP document" for f in c.get("/api/snapshot").json()["files"])
     finally:
         server.shutdown()
         server.server_close()
@@ -341,7 +346,7 @@ def test_skills_excludes_codex_and_hidden_backups_but_lists_corki_system(store):
         path = root / "sample/SKILL.md"
         path.parent.mkdir(parents=True)
         path.write_text("---\nname: sample\ndescription: Example\n---\nContent")
-    files = store.files()
+    files = [f for f in store.files() if f["kind"] == "skills"]
     assert len(files) == 1
     assert files[0]["path"] == str(store.home / "skills/.system/sample/SKILL.md")
     assert files[0]["source"] == "内置"
@@ -486,7 +491,7 @@ def test_three_skill_groups_are_distinct(store):
     ):
         path.mkdir(parents=True)
         (path / "SKILL.md").write_text(f"---\nname: {path.name}\ndescription: Test\n---\nBody")
-    files = store.files()
+    files = [f for f in store.files() if f["kind"] == "skills"]
     assert {f["name"]: f["group"] for f in files} == {
         "builtin": "builtin",
         "private": "corki",
@@ -898,7 +903,7 @@ def test_knowledge_document_import_formats(store):
             }
         )
         assert result == {"name": "说明", "content": expected}
-    assert not (store.home / "manager/knowledge").exists()
+    assert not list((store.home / "manager/knowledge").glob("*.md"))
     store.mutate({"kind": "knowledge", "action": "create", **result})
     assert (store.home / "manager/knowledge/说明.md").read_text() == expected
     with pytest.raises(ValueError, match="同名"):
@@ -1308,7 +1313,7 @@ def test_custom_tool_crud_is_separate_and_loadable(store):
     )
     assert not path.exists()
     assert store.config_text() == before
-    assert list((store.home / "manager/trash").glob("tool-*.json"))
+    assert not (store.home / "manager/trash").exists()
     with pytest.raises(ValueError):
         store.custom_tool_path("../outside")
 
@@ -1554,3 +1559,312 @@ def test_custom_tool_probe_http(store):
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_knowledge_enable_extract_reuse_and_edit(store, monkeypatch):
+    import asyncio
+    import time
+
+    from corki.models.types import ModelCompleted, ModelTextDelta
+
+    requests = []
+
+    class Model:
+        async def stream(self, request):
+            requests.append(request)
+            await asyncio.sleep(0.02)
+            blocks = json.loads(request.items[0].content)["blocks"]
+            yield ModelTextDelta(json.dumps({"segments": [{
+                "start": 1, "end": len(blocks), "title": "本地说明",
+                "summary": "解释文档中的设置及其用途。", "keywords": ["设置"]}]}))
+            yield ModelCompleted(())
+
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(module, "_create_model", lambda *_: Model())
+    change(store, kind="knowledge", action="create", name="guide", content="# 设置\n\n设置说明")
+
+    def item():
+        return next(f for f in store.files() if f["kind"] == "knowledge" and f["group"] == "user")
+
+    def wait_ready():
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if item()["index_status"] == "ready":
+                return
+            time.sleep(0.01)
+        pytest.fail(str(item()))
+
+    def toggle(enabled):
+        change(store, kind="knowledge", action="toggle", id=item()["id"],
+               knowledge_revision=store.snapshot()["knowledge_revision"],
+               values={"enabled": enabled})
+
+    assert not item()["enabled"] and not requests
+    document_id = item()["document_id"]
+    toggle(True)
+    wait_ready()
+    assert len(requests) == 1 and requests[0].model == "model-a"
+    assert store.knowledge.search("设置", document_id=document_id)["total"] == 1
+    toggle(False)
+    assert all(d["title"] == "corki_docs" for d in store.knowledge.search()["results"])
+    toggle(True)
+    assert len(requests) == 1
+    current = item()
+    change(store, kind="knowledge", action="save", id=current["id"],
+           revision=current["revision"], content="# 设置\n\n修改后的设置")
+    assert not item()["enabled"] and item()["index_status"] == "pending"
+    assert len(requests) == 1
+    toggle(True)
+    wait_ready()
+    assert len(requests) == 2 and item()["document_id"] == document_id
+    segment = store.knowledge.search("设置", document_id=document_id)["results"][0]
+    assert "修改后" in store.knowledge.read(segment["id"])["content"]
+    current = item()
+    change(store, kind="knowledge", action="delete", id=current["id"], revision=current["revision"])
+    assert all(d["title"] == "corki_docs" for d in store.knowledge.search()["results"])
+
+
+def test_knowledge_missing_default_rolls_back_enable(store):
+    store.config.write_text('{}')
+    change(store, kind="knowledge", action="create", name="guide", content="hello")
+    item = next(f for f in store.files() if f["kind"] == "knowledge" and f["group"] == "user")
+    with pytest.raises(ValueError, match="默认"):
+        change(store, kind="knowledge", action="toggle", id=item["id"],
+               knowledge_revision=store.snapshot()["knowledge_revision"], values={"enabled": True})
+    assert not next(f for f in store.files() if f["kind"] == "knowledge" and f["group"] == "user")["enabled"]
+
+
+def test_cron_crud_versions_and_separate_storage(store, monkeypatch):
+    before = store.config_text()
+    values = {"name": "Daily notes", "prompt": "Summarize notes", "schedule": "every 1h",
+              "timezone": "UTC", "provider": "local", "model": "model-a"}
+    created = store.mutate({"kind": "cron", "action": "save", "values": values})
+    job = store.cron.list()["jobs"][0]
+    assert job["id"] == created["id"]
+    assert not store.cron.path.is_relative_to(store.workspace)
+    # An implicit default directory can be edited before its first execution creates it.
+    job["prompt"] = "Updated notes"
+    store.mutate({"kind": "cron", "action": "save", "id": job["id"],
+                  "version": job["version"], "values": job})
+    with pytest.raises(ValueError, match="更新"):
+        store.mutate({"kind": "cron", "action": "pause", "id": job["id"], "version": 1})
+    launched = []
+    monkeypatch.setattr(store.cron_service, "launch", launched.append)
+    store.mutate({"kind": "cron", "action": "run", "id": job["id"]})
+    assert len(launched) == 1
+    with pytest.raises(ValueError, match="已在执行"):
+        store.mutate({"kind": "cron", "action": "run", "id": job["id"]})
+    store.mutate({"kind": "cron", "action": "stop", "id": job["id"], "version": 2})
+    assert store.cron.run(launched[0])["cancel"] == 1
+    store.cron.finish(launched[0], "cancelled")
+    store.mutate({"kind": "cron", "action": "delete", "id": job["id"], "version": 2})
+    assert not store.cron.list()["jobs"]
+    assert before == store.config_text()
+
+
+def test_database_admin_http(store):
+    import sqlite3
+
+    with sqlite3.connect(store.home / "fixture.db") as db:
+        db.execute("CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), module.Handler)
+    server.store = store
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        with httpx.Client(base_url=f"http://127.0.0.1:{server.server_port}", trust_env=False) as client:
+            assert client.get("/api/databases").status_code == 200
+            body = {"kind": "database", "action": "insert", "database": "fixture.db",
+                    "table": "items", "values": {"name": "example"}}
+            assert client.post("/api/mutate", json=body).status_code == 403
+            response = client.post("/api/mutate", json=body, headers={"X-Corki-Manager": "1"})
+            assert response.status_code == 200
+            result = client.get("/api/databases", params={"database": "fixture.db", "table": "items"})
+            assert result.json()["rows"][0]["values"]["name"] == "example"
+            assert client.get("/api/databases", headers={"Origin": "https://example.com"}).status_code == 403
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_cron_failed_detail_recovers_session_error(store):
+    import sqlite3
+
+    identity = store.cron.claim(store.cron.save({
+        'name': 'error fixture', 'prompt': 'fixture', 'schedule': 'every 2h',
+        'timezone': 'Asia/Shanghai',
+    }))
+    store.cron.start_run(identity)
+    store.cron.finish(identity, 'failed', error='Agent 执行失败')
+    store.database.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(store.database) as db:
+        db.execute('CREATE TABLE turns(thread_id TEXT, error TEXT, updated_at TEXT)')
+        db.execute('INSERT INTO turns VALUES(?,?,?)', (
+            identity, 'HTTP 401: private-token-123', '2026-01-01 12:00',
+        ))
+    result = store.cron_run(identity)
+    assert 'HTTP 401' in result['error_log']
+    assert 'private-token-123' not in result['error_log']
+    store.database.unlink()
+    assert store.cron_run(identity)['error_log'] == 'Agent 执行失败'
+
+
+def test_knowledge_versions_external_changes_retention_and_readonly(store):
+    change(store, kind="knowledge", action="create", name="versioned", content="# First\ninitial")
+    item = next(f for f in store.files() if f["kind"] == "knowledge" and f["group"] == "user")
+    for index in range(23):
+        current = store.knowledge_document(item["id"])
+        change(store, kind="knowledge", action="save", id=item["id"],
+               revision=current["revision"], content=f"# Version {index}\nbody")
+    current = store.knowledge_document(item["id"])
+    assert len(current["versions"]) == 20
+    assert current["versions"][0]["content"] == current["content"]
+    assert not current["enabled"]
+    Path(current["path"]).write_text("# External\nchanged")
+    external = store.knowledge_document(item["id"])
+    assert external["versions"][0]["content"] == "# External\nchanged"
+    assert len(external["versions"]) == 20
+    with pytest.raises(ValueError, match="更新"):
+        change(store, kind="knowledge", action="save", id=item["id"],
+               revision=current["revision"], content="stale")
+    prior = external["versions"][2]["content"]
+    change(store, kind="knowledge", action="save", id=item["id"],
+           revision=external["revision"], content=prior)
+    assert store.knowledge_document(item["id"])["content"] == prior
+    builtin = next(f for f in store.files() if f["kind"] == "knowledge" and f["group"] == "builtin")
+    assert store.knowledge_document(builtin["id"])["versions"] == []
+    with pytest.raises(ValueError, match="只读"):
+        change(store, kind="knowledge", action="save", id=builtin["id"],
+               revision=builtin["revision"], content="forbidden")
+    assert len([f for f in store.files() if f["kind"] == "knowledge"]) == 2
+
+
+def test_knowledge_preparation_stays_disabled_and_edit_invalidates_job(store, monkeypatch):
+    import time
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+    async def extraction(model, settings, knowledge, doc, job, content):
+        started.set()
+        release.wait(5)
+        try:
+            knowledge.check_job(doc["id"], job)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(module, "_create_model", lambda *_: object())
+    monkeypatch.setattr(module, "extract_knowledge", extraction)
+    change(store, kind="knowledge", action="create", name="slow", content="# Original")
+    item = next(f for f in store.files() if f["kind"] == "knowledge" and f["group"] == "user")
+    change(store, kind="knowledge", action="toggle", id=item["id"],
+           knowledge_revision=store.snapshot()["knowledge_revision"], values={"enabled": True})
+    assert started.wait(2)
+    processing = store.knowledge_document(item["id"])
+    assert not processing["enabled"] and processing["index_status"] == "processing"
+    change(store, kind="knowledge", action="save", id=item["id"],
+           revision=item["revision"], content="# New source")
+    release.set()
+    assert finished.wait(2)
+    time.sleep(.05)
+    current = store.knowledge_document(item["id"])
+    assert not current["enabled"] and current["index_status"] == "pending"
+    assert current["content"] == "# New source"
+
+
+def test_knowledge_failed_preparation_does_not_enable_or_leak_error(store, monkeypatch):
+    import time
+
+    def fail(*args):
+        raise RuntimeError("private-token-123 private source")
+
+    monkeypatch.setattr(module, "_create_model", fail)
+    change(store, kind="knowledge", action="create", name="fail", content="# Failure")
+    item = next(f for f in store.files() if f["kind"] == "knowledge" and f["group"] == "user")
+    change(store, kind="knowledge", action="toggle", id=item["id"],
+           knowledge_revision=store.snapshot()["knowledge_revision"], values={"enabled": True})
+    for _ in range(100):
+        current = store.knowledge_document(item["id"])
+        if current["index_status"] == "failed":
+            break
+        time.sleep(.01)
+    assert current["index_status"] == "failed" and not current["enabled"]
+    assert "默认模型请求失败" in current["index_error"]
+    assert "private" not in current["index_error"]
+
+
+def test_monthly_usage_has_30_local_dates_and_zero_fills_gaps(store):
+    import sqlite3
+    from datetime import date
+
+    assert len(store.monthly_usage(date(2026, 10, 17))) == 30
+    store.database.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(store.database) as db:
+        db.execute('CREATE TABLE model_steps(created_at TEXT,input_tokens INTEGER,output_tokens INTEGER)')
+        for day, value in [('2026-09-17', 999), ('2026-09-18', 10),
+                           ('2026-10-17', 20), ('2026-10-18', 999)]:
+            # Convert local noon to UTC to test the same local-date contract as the API.
+            db.execute("INSERT INTO model_steps VALUES(datetime(?,'utc'),?,?)",
+                       (day + ' 12:00:00', value, value))
+        db.execute("INSERT INTO model_steps VALUES(datetime('2026-10-17 13:00:00','utc'),5,7)")
+    rows = store.monthly_usage(date(2026, 10, 17))
+    assert len(rows) == 30
+    assert rows[0] == dict(day='2026-09-18', input=10, output=10, steps=1)
+    assert rows[-1] == dict(day='2026-10-17', input=25, output=27, steps=2)
+    assert all(r['input'] == r['output'] == r['steps'] == 0 for r in rows[1:-1])
+
+@pytest.mark.parametrize("archive", [False, True])
+def test_skill_import_without_package_count_or_size_cap(store, archive):
+    import base64
+    import io
+    import zipfile
+
+    entries = [("example/SKILL.md", b"---\nname: example\ndescription: Large package\n---\nBody")]
+    entries += [(f"example/assets/file-{i}.txt", b"data") for i in range(410)]
+    entries.append(("example/assets/large.bin", b"x" * (10 * 1024 * 1024)))
+    data = skill_upload(entries)
+    if archive:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
+            for name, content in entries:
+                z.writestr(name, content)
+        data.pop("files")
+        data["archive"] = base64.b64encode(buf.getvalue()).decode()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), module.Handler)
+    server.store = store
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        with httpx.Client(base_url=f"http://127.0.0.1:{server.server_port}", trust_env=False, timeout=30) as client:
+            headers = {"X-Corki-Manager": "1", "X-Corki-Skill-Import": "1"}
+            response = client.post("/api/mutate", json={**data, "action": "validate-import"}, headers=headers)
+            assert response.status_code == 200, response.text
+            assert len(response.json()["files"]) == len(entries)
+            response = client.post("/api/mutate", json=data, headers=headers)
+            assert response.status_code == 200, response.text
+            target = store.compatibility_home / ".agents/skills/example"
+            assert (target / "assets/large.bin").stat().st_size == 10 * 1024 * 1024
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+@pytest.mark.parametrize("header", ["name: example", "name: >\n  example", "description: Test import"])
+def test_skill_rename_preserves_path_and_runtime_discovery(store, header):
+    from corki.skills.service import SkillService
+    content = "---\n" + header + ("\ndescription: Test import" if "description:" not in header else "") + "\n---\nBody\n"
+    store.mutate(skill_upload([("example/SKILL.md", content.encode())]))
+    item = next(f for f in store.files() if f["kind"] == "skills")
+    old_path = Path(item["path"])
+    resource = store.read_skill_resource(item["id"], "SKILL.md")
+    store.mutate(dict(kind="skills", action="rename", id=item["id"], name="renamed-skill",
+                      revision=resource["revision"]))
+    assert old_path.exists()
+    assert old_path.read_text().endswith("---\nBody\n")
+    service = SkillService(home=store.home, project_root=store.workspace,
+                           compatibility_home=store.compatibility_home, bundled_enabled=False)
+    assert any(s.name == "renamed-skill" for s in service.snapshot(store.workspace).skills)
+    with pytest.raises(ValueError, match="其他程序"):
+        store.mutate(dict(kind="skills", action="rename", id=item["id"], name="again",
+                          revision=resource["revision"]))

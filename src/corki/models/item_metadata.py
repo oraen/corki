@@ -8,6 +8,7 @@ from corki.protocol.items import (
     ReasoningItem,
     RemoteHistoryItem,
     ToolCallItem,
+    TurnAbortedItem,
     UserMessageItem,
 )
 from corki.protocol.wire_json import WireObject, object_pairs
@@ -43,7 +44,7 @@ def capture_response_identity(item):
 
 
 def annotate_response_input(item, payload):
-    if isinstance(item, (HostedToolItem, RemoteHistoryItem)) or (
+    if isinstance(item, (HostedToolItem, RemoteHistoryItem, TurnAbortedItem)) or (
         isinstance(item, CompactionItem) and item.remote_payload_json is not None
     ):
         return payload

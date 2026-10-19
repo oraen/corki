@@ -272,3 +272,27 @@ def test_launch_rejects_invalid_or_incomplete_config_before_side_effects(store, 
     with pytest.raises(ValueError, match="配置无效，建议使用快速配置配置厂商和模型"):
         store.quick_launch({})
     assert not (store.home / "main/default").exists()
+
+
+def test_desktop_launch_passes_directory_and_home_without_shell(store, monkeypatch, tmp_path):
+    configured_launch(store)
+    folder = tmp_path / "中文 项目 $(not-a-command)"
+    folder.mkdir()
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(store, "desktop_application", lambda: Path("/fixture/Corki.app/Contents/MacOS/Corki"))
+    calls = []
+    monkeypatch.setattr(module.subprocess, "Popen", lambda args, **kw: calls.append((args, kw)))
+    monkeypatch.setenv("ELECTRON_RUN_AS_NODE", "1")
+    result = store.quick_launch({"mode": "desktop", "directory": str(folder)})
+    args, options = calls[0]
+    assert args == ["/fixture/Corki.app/Contents/MacOS/Corki", "--corki-directory", str(folder)]
+    assert options["env"]["CORKI_HOME"] == str(store.home)
+    assert "ELECTRON_RUN_AS_NODE" not in options["env"]
+    assert options["cwd"] == str(folder)
+    assert options["start_new_session"]
+    assert result["mode"] == "desktop"
+
+
+def test_invalid_launch_mode_rejected(store):
+    with pytest.raises(ValueError, match="启动方式"):
+        store.quick_launch({"mode": "arbitrary-command"})

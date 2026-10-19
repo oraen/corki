@@ -104,6 +104,8 @@ def test_initialization_cancellation_joins_rollback_before_retry_or_close(
             model=Model(),
         )
 
+        initial_specs = runtime._registry.specs()
+
         if boundary == "thread":
             original_write = runtime._repository._create_thread
 
@@ -189,7 +191,8 @@ def test_initialization_cancellation_joins_rollback_before_retry_or_close(
                 assert all(client._client.is_closed for client in clients)
                 assert {"a_ready", "held"} <= set(disposed)
                 assert not runtime._mcp_manager.tool_names
-                assert not runtime._registry.specs()
+                # Rollback removes MCP tools but retains preexisting built-in tools.
+                assert runtime._registry.specs() == initial_specs
             elif boundary == "checkpoint":
                 assert "checkpoint" in disposed
             else:

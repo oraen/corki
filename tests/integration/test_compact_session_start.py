@@ -94,6 +94,8 @@ def test_compact_start_runs_before_continuation(tmp_path, monkeypatch, trigger, 
         runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 tmp_path,
+                # Keep this fixed schema/window fixture independent of Goal tools.
+                goals_enabled=False,
                 skills_enabled=False,
                 plugins_enabled=False,
                 tool_mode="direct",

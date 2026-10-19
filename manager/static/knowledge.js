@@ -1,15 +1,13 @@
 'use strict';
 const collapsedKnowledgeGroups=new Set(['builtin']);
-const knowledgeEditIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M4 16.5 16.5 4a2.1 2.1 0 0 1 3 3L7 19.5 3 21l1-4.5Z"/></svg>';
 function knowledgePage(){
  const all=state.files.filter(f=>f.kind==='knowledge');
  const rows=all.filter(f=>match(f)&&(filter==='all'||(filter==='enabled'?f.enabled:!f.enabled)));
  const groups=[['user','用户知识库','folder'],['builtin','内置知识库','shield']];
  return toolbar(rows.length,tabs([['all','全部'],['enabled','已启用'],['disabled','已停用']]),`<button class="button primary" data-action="new">${icon('plus')}添加文档</button>`)
-  +notice('知识库文档目前仅供管理，尚未接入 Agent 自动检索。')
   +groups.map(([group,title,symbol])=>{
    const items=rows.filter(f=>f.group===group),total=all.filter(f=>f.group===group).length;
-   return `<details class="skill-section knowledge-section" data-knowledge-group="${group}" ${collapsedKnowledgeGroups.has(group)?'':'open'}><summary class="skill-section-head"><span class="skill-group-icon ${group==='builtin'?'builtin':'corki'}">${skillIcon(symbol)}</span><div><h2>${title}<span>${total}</span></h2></div><svg class="skill-collapse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary><div class="skill-grid">${items.map(f=>`<article class="skill-card knowledge-card ${f.enabled?'':'is-disabled'}"><div class="skill-card-top"><span class="skill-avatar knowledge-avatar">${icon('knowledge')}</span><div class="skill-card-name"><button class="skill-name" data-action="file" data-id="${esc(f.id)}" title="${esc(f.name)}">${esc(f.name)}</button></div><button class="toggle ${f.enabled?'on':''}" role="switch" aria-checked="${f.enabled}" aria-label="${esc(f.name)} 启用状态" data-action="toggle" data-id="${esc(f.id)}"></button></div><p class="skill-description" title="${esc(f.description)}">${esc(f.description||'暂无摘要')}</p><div class="skill-card-bottom"><span>${size(f.bytes)} · ${when(f.updated)}</span><div class="knowledge-card-actions"><button class="skill-detail-button" data-action="file" data-id="${esc(f.id)}">${f.writable?knowledgeEditIcon:skillIcon('eye')}${f.writable?'编辑':'查看'}</button>${f.writable?`<button class="skill-detail-button danger" data-action="delete" data-id="${esc(f.id)}">删除</button>`:''}</div></div></article>`).join('')}</div>${items.length?'':`<div class="skill-empty">${skillIcon(symbol)}<span>${total?'没有符合筛选条件的文档':group==='builtin'?'暂无内置知识库':'暂无用户知识库'}</span></div>`}</details>`;
+   return `<details class="skill-section knowledge-section" data-knowledge-group="${group}" ${collapsedKnowledgeGroups.has(group)?'':'open'}><summary class="skill-section-head"><span class="skill-group-icon ${group==='builtin'?'builtin':'corki'}">${skillIcon(symbol)}</span><div><h2>${title}<span>${total}</span></h2></div><svg class="skill-collapse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary><div class="skill-grid">${items.map(f=>`<article class="skill-card knowledge-card ${f.enabled?'':'is-disabled'}"><div class="skill-card-top"><span class="skill-avatar knowledge-avatar">${icon('knowledge')}</span><div class="skill-card-name"><button class="skill-name" data-action="file" data-id="${esc(f.id)}" title="${esc(f.name)}">${esc(f.name)}</button></div><button class="toggle ${f.enabled?'on':''}" role="switch" aria-checked="${f.enabled}" aria-label="${esc(f.name)} 启用状态" data-action="toggle" data-id="${esc(f.id)}"></button></div><p class="skill-description" title="${esc(f.description)}">${esc(f.index_summary||f.description||'暂无摘要')}</p><div class="skill-card-bottom"><span title="${esc(f.index_error||'')}">${({pending:'待生成摘要',processing:'正在生成摘要…',ready:'摘要已就绪',failed:'摘要生成失败'})[f.index_status]||''} · ${size(f.bytes)}</span><div class="knowledge-card-actions">${f.enabled&&['failed','pending'].includes(f.index_status)?`<button class="skill-detail-button" data-action="knowledge-retry" data-id="${esc(f.id)}">重试</button>`:''}${!f.writable?`<button class="skill-detail-button" data-action="file" data-id="${esc(f.id)}">${skillIcon('eye')}查看</button>`:''}${f.writable?`<button class="skill-detail-button danger" data-action="delete" data-id="${esc(f.id)}">删除</button>`:''}</div></div></article>`).join('')}</div>${items.length?'':`<div class="skill-empty">${skillIcon(symbol)}<span>${total?'没有符合筛选条件的文档':group==='builtin'?'暂无内置知识库':'暂无用户知识库'}</span></div>`}</details>`;
   }).join('');
 }
 document.querySelector('#main').addEventListener('toggle',event=>{
@@ -59,4 +57,41 @@ function createKnowledge(){
  $('#knowledge-parse').onclick=()=>parse(()=>api('mutate',{kind:'knowledge',action:'parse-web',url:$('#knowledge-url').value.trim()}));
  $('#knowledge-url').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('#knowledge-parse').click();}};
  sync();
+}
+
+setInterval(()=>{if(route==='knowledge'&&!selectedProvider&&!document.querySelector('.knowledge-loading')&&!document.hidden&&!$('#editor').open&&state.files.some(f=>f.kind==='knowledge'&&f.index_status==='processing'))load(true);},3000);
+
+async function toggleKnowledge(id){
+ const item=state.files.find(f=>f.id===id&&f.kind==='knowledge');if(!item)return;
+ if(item.enabled)return mutate({kind:'knowledge',action:'toggle',id,values:{enabled:false},knowledge_revision:state.knowledge_revision});
+ const dialog=document.createElement('dialog');dialog.className='knowledge-loading';dialog.setAttribute('aria-labelledby','knowledge-learning-title');dialog.innerHTML=`<div class="knowledge-learning-body"><div class="knowledge-learning-mark" aria-hidden="true"><img src="/corki-icon-ears.png" alt=""><span></span></div><div role="status" aria-live="polite"><h2 id="knowledge-learning-title">Corki正在学习知识中<span class="knowledge-learning-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span><span class="sr-only">...</span></h2></div><p class="knowledge-learning-document" title="${esc(item.name)}">${esc(item.name)}</p></div><div class="knowledge-learning-actions"><button type="button" class="button">取消</button></div>`;document.body.append(dialog);dialog.addEventListener('cancel',e=>e.preventDefault());dialog.showModal();
+ let cancelled=false;
+ dialog.querySelector('button').onclick=async()=>{
+  dialog.querySelector('button').disabled=true;
+  try{const snapshot=await api('snapshot');await api('mutate',{kind:'knowledge',action:'toggle',id,values:{enabled:false},knowledge_revision:snapshot.knowledge_revision});cancelled=true;dialog.close();dialog.remove();await load(true);}
+  catch(e){toast(e.message);if(dialog.isConnected)dialog.querySelector('button').disabled=false;}
+ };
+ try{
+  await api('mutate',{kind:'knowledge',action:'toggle',id,values:{enabled:true},knowledge_revision:state.knowledge_revision});
+  while(dialog.isConnected){
+   const doc=await api('knowledge-status?id='+encodeURIComponent(id));
+   if(cancelled)return;
+   if(doc.enabled&&doc.index_status==='ready'){toast('知识库已开启');break;}
+   if(doc.index_status==='failed')throw Error(doc.index_error||'摘要生成失败，请检查默认模型连接');
+   if(doc.index_status!=='processing')throw Error('文档已变更或处理已取消，请重试');
+   await new Promise(resolve=>setTimeout(resolve,1000));
+  }
+  dialog.close();dialog.remove();await load(true);
+ }catch(e){if(cancelled)return;const disconnected=e instanceof TypeError||e instanceof SyntaxError;dialog.innerHTML=`<div class="knowledge-learning-body is-error"><div class="knowledge-learning-error" aria-hidden="true">!</div><h2 id="knowledge-learning-title">${disconnected?'连接中断':'加载失败'}</h2><p>${esc(disconnected?'暂时无法确认加载结果，请恢复连接后刷新查看。':e.message)}</p></div><div class="knowledge-learning-actions"><button type="button" class="button primary">知道了</button></div>`;dialog.querySelector('button').onclick=()=>{dialog.close();dialog.remove();load(true);};}
+}
+
+function confirmKnowledgeDelete(id){
+ const item=state.files.find(f=>f.id===id&&f.kind==='knowledge');
+ if(!item||!item.writable)return toast('此文档不可删除');
+ showDialog('删除知识文档',`<div class="knowledge-delete-file"><span class="knowledge-delete-icon">${icon('knowledge')}</span><div><strong>${esc(item.name)}</strong><span>用户知识库</span></div></div><p class="knowledge-delete-description">删除后无法恢复，Corki 将不再检索此文档。</p>`,async()=>{
+  await mutate({kind:'knowledge',action:'delete',id,revision:item.revision});
+ },'');
+ $('#editor').classList.add('knowledge-delete-dialog');
+ $('#save').textContent='删除';
+ $('#cancel-dialog').focus();
 }

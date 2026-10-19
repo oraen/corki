@@ -163,3 +163,13 @@ def test_archive_only_metadata_has_no_wire_budget(kind):
 def test_invalid_persisted_metadata_is_rejected_at_canonical_boundary(kind, value):
     with pytest.raises(ValueError):
         canonical(kind, response_item_metadata_json=value)
+
+
+def test_interrupted_marker_does_not_send_local_colon_id():
+    from corki.models.responses import _to_response_input
+    from corki.protocol.items import TurnAbortedItem
+
+    marker = TurnAbortedItem("The previous turn was stopped.", "turn", id="turn-aborted:turn")
+    # Like Codex's rendered interruption fragment, this input needs no wire ID.
+    assert _to_response_input(marker) == {"role": "user", "content": marker.content}
+    assert marker.id == "turn-aborted:turn"  # Existing durable history remains intact.

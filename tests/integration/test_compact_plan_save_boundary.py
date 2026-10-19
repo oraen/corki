@@ -38,6 +38,8 @@ def test_failed_plan_save_does_not_activate_orphaned_hook(
         )
         settings = CorkiSettings(
             tmp_path,
+            # Keep this fixed schema/window fixture independent of Goal tools.
+            goals_enabled=False,
             skills_enabled=False,
             plugins_enabled=False,
             context_window_tokens=8000,

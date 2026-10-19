@@ -82,6 +82,8 @@ class CorkiSettings:
     )
     auto_compact_tokens: int | None = None
     auto_compact_token_limit_scope: str = "total"
+    goals_enabled: bool = True
+    max_goal_token_budget: int | None = None
     token_budget_enabled: bool = False
     # Compatibility tombstone, never selects a model protocol.
     remote_compaction_v2: bool = False
@@ -454,6 +456,7 @@ class CorkiSettings:
             memory = document.get("memory", {})  # pre-0.2 compatibility
             models = document.get("models", {})
             features = document.get("features", {})
+            goals = document.get("goals", {})
             orchestrator = document.get("orchestrator", {})
             if not isinstance(orchestrator, dict):
                 raise ValueError("orchestrator must be an object")
@@ -465,6 +468,7 @@ class CorkiSettings:
                 for section in (
                     agent,
                     agents,
+                    goals,
                     provider_values,
                     tools,
                     runtime,
@@ -544,6 +548,8 @@ class CorkiSettings:
                 auto_compact_token_limit_scope=agent.get(
                     "auto_compact_token_limit_scope", defaults.auto_compact_token_limit_scope
                 ),
+                goals_enabled=features.get("goals", defaults.goals_enabled),
+                max_goal_token_budget=goals.get("max_goal_token_budget"),
                 token_budget_enabled=budget_enabled,
                 effective_context_window_percent=agent.get(
                     "effective_context_window_percent", defaults.effective_context_window_percent
@@ -793,6 +799,11 @@ class CorkiSettings:
         )
 
     def _validate(self) -> None:
+        from corki.goals.store import validate_budget
+
+        validate_budget(self.max_goal_token_budget)
+        if not isinstance(self.goals_enabled, bool):
+            raise ValueError("features.goals must be a boolean")
         if self.tool_output_token_limit is not None and (
             type(self.tool_output_token_limit) is not int or self.tool_output_token_limit < 0
         ):

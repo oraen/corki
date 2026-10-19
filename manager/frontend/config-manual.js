@@ -42,6 +42,10 @@ export const manualSections = [
     field('instructions','基础指令','额外提供给 Agent 的基础文字指令。','仅放稳定且通用的规则'),
     field('compact_prompt','压缩提示词','覆盖自动压缩时使用的提示文字。','通常不设置'),
   ]},
+  {key:'goals', title:'持续目标', fields:[
+    field('features.goals','Goal 功能','启用 /goal 命令及目标工具。目标按会话保存，并在空闲时继续执行。','true（默认）','布尔值'),
+    field('goals.max_goal_token_budget','目标预算上限','限制每个目标的 token 预算；设置后也作为新目标的默认预算，缓存输入不计入用量。','按任务成本设置；不设置则不限预算','正整数或 null'),
+  ]},
   {key:'execution', title:'权限与执行', fields:[
     field('default_permissions','默认权限','选择内置权限或 permissions 中定义的命名权限。','按工作区信任状态由 Corki 自动选择','枚举',choice([':read-only','只读'],[':workspace','工作区可写'],[':danger-full-access','完整本机访问'],['自定义名称','引用 permissions 中的配置'])),
     field('approval_policy','审批策略','工具需要确认时的处理方式。','on-request','枚举',choice(['on-request','需要确认时询问'],['never','不发起审批请求'],['granular','按审批类型分别配置的对象'])),
@@ -175,6 +179,7 @@ const groupInfo = {
   tools:['工具设置','控制本地工具调用、超时和协议模式。'],
   skills:['Skills 设置','控制技能加载、说明注入和单项启停。'],
   plugins:['插件设置','配置插件目录和禁用列表。'],
+  goals:['持续目标','设置会话目标的预算上限。'],
   features:['功能开关','控制可选运行时能力。'],
   mcp:['MCP 设置','配置 MCP 审批及服务连接。'],
   memories:['记忆设置','控制长期记忆的生成、使用和保留。'],
@@ -190,6 +195,7 @@ const nestedInfo = {
   'features.token_budget':['Token 预算','预算提示的开关和细项设置；也可直接使用布尔值。'],
 };
 const defaults = {
+  'features.goals':'true','goals.max_goal_token_budget':'null',
   'provider.api_mode':'"chat_completions"',
   'runtime.event_queue_size':'0','agents.interrupt_message':'true',
   'orchestrator.mcp.enabled':'true','include_permissions_instructions':'true',
@@ -254,6 +260,7 @@ const required = {
   'providers.[provider].models.[model].supported_reasoning_levels.[0].effort':'数组条目必填',
 };
 const samples = {
+  'goals.max_goal_token_budget':200000,
   provider:{id:'demo',base_url:'https://api.example.com/v1',api_key:'YOUR_API_KEY',api_mode:'chat_completions'},
   'models.catalog':{'demo-model':{context_window:262144}},
   'models.catalog.[model]':{context_window:262144},

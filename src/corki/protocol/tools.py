@@ -437,6 +437,7 @@ class ToolResult:
     # Executor failure, distinct from a handler returning an error-valued result.
     # Durable internally; Code Mode rejects this instead of resolving a value.
     dispatch_error: bool = False
+    handler_failed: bool = False
     # Trusted handler metadata, never inferred from result text or tool names.
     contains_external_context: bool = False
     fallback_token_limit_override: int | None = None

@@ -129,6 +129,8 @@ def test_same_leaf_names_route_independently_and_replay_after_restart(
             return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
+                    # Keep this fixed schema/window fixture independent of Goal tools.
+                    goals_enabled=False,
                     skills_enabled=False,
                     api_mode=mode,
                     tool_namespace_mode="native" if active_native else "compatible",
@@ -496,6 +498,8 @@ def test_namespaced_discovery_loads_freeform_and_survives_reopening(
             return await LangGraphRuntime.acreate(
                 settings=CorkiSettings(
                     working_directory=tmp_path,
+                    # Keep this fixed schema/window fixture independent of Goal tools.
+                    goals_enabled=False,
                     skills_enabled=False,
                     api_mode="responses",
                     tool_namespace_mode="native" if native_namespace else "compatible",

@@ -254,6 +254,8 @@ def test_cold_search_commit_recovery_projects_stale_definitions_before_budget(
 
         settings = CorkiSettings(
             working_directory=tmp_path,
+            # Keep this fixed schema/window fixture independent of Goal tools.
+            goals_enabled=False,
             skills_enabled=False,
             plugins_enabled=False,
             context_window_tokens=18000,
@@ -388,6 +390,8 @@ def test_unavailable_large_search_result_does_not_consume_request_budget(tmp_pat
         runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
+                # Keep this fixed schema/window fixture independent of Goal tools.
+                goals_enabled=False,
                 skills_enabled=False,
                 model="fixture",
                 context_window_tokens=18000,

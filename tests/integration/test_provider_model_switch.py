@@ -332,3 +332,50 @@ def test_provider_change_with_distinct_models_does_not_fallback_or_misroute_comp
             await runtime.aclose()
 
     asyncio.run(scenario())
+
+
+def test_provider_command_switches_valid_pair_and_persists_atomically(host):  # noqa: F811
+    from types import SimpleNamespace
+
+    path, _ = host
+    configure(path)
+    document = loads(path.read_text())
+    document["providers"]["gamma"] = {"models": {"zeta": {}, "aaa": {"reasoning_effort": "medium"}}}
+    document["providers"]["empty"] = {}
+    path.write_text(json.dumps(document))
+
+    async def scenario():
+        app = await build_application_async()
+        notices = []
+        app._ui = SimpleNamespace(show_notice=notices.append)
+        try:
+            await app._set_provider("beta")
+            selected = app._runtime.thread_settings
+            assert (selected.provider, selected.model, selected.reasoning_effort) == (
+                "beta",
+                "shared",
+                "high",
+            )
+            assert loads(path.read_text())["default"] == {"provider": "beta", "model": "shared"}
+            await app._set_provider("gamma")
+            selected = app._runtime.thread_settings
+            assert (selected.provider, selected.model) == ("gamma", "aaa")
+            assert loads(path.read_text())["default"] == {"provider": "gamma", "model": "aaa"}
+            saved = path.read_text()
+            for invalid in ("missing", "empty"):
+                await app._set_provider(invalid)
+                assert app._runtime.thread_settings == selected
+                assert path.read_text() == saved
+
+            async def cancel(current):
+                assert current == selected
+                return None
+
+            app._input = SimpleNamespace(select_provider=cancel)
+            await app._set_provider()
+            assert app._runtime.thread_settings == selected
+            assert path.read_text() == saved
+        finally:
+            await app._runtime.aclose()
+
+    asyncio.run(scenario())

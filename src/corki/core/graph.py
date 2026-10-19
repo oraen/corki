@@ -1224,6 +1224,7 @@ class CorkiGraph:
                 completed.usage.output_tokens,
                 completed.usage.cached_tokens,
                 completed.usage.reasoning_tokens,
+                usage_id=f"model:{_sample_index(state)}",
                 cache_write_tokens=completed.usage.cache_write_tokens,
                 codex_rollout_budget_units=completed.usage.codex_rollout_budget_units,
             )
@@ -1720,6 +1721,7 @@ class CorkiGraph:
                     call.id,
                     call.name,
                     result.is_error,
+                    handler_failed=result.handler_failed,
                     mcp_result_json=result.mcp_result_json,
                     mcp_error=result.mcp_error,
                     patch_delta_json=result.patch_delta_json,

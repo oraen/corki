@@ -101,6 +101,8 @@ def test_real_loop_retries_compaction_without_replaying_tools(tmp_path, failure)
         runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
+                # Keep this fixed schema/window fixture independent of Goal tools.
+                goals_enabled=False,
                 skills_enabled=False,
                 context_window_tokens=8000,
                 auto_compact_tokens=3000,

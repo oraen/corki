@@ -31,7 +31,8 @@ async def choose_model_and_effort(session, settings, current, *, overlay_host=No
         or "default"
     )
     provider = settings.model_provider_name(provider)
-    pairs = set(settings.model_choices()) | {(current.model, provider)}
+    pairs = {pair for pair in settings.model_choices() if pair[1] == provider}
+    pairs.add((current.model, provider))
     labels = {
         f"{name}({owner})": (name, owner)
         for name, owner in sorted(
@@ -59,7 +60,7 @@ async def choose_model_and_effort(session, settings, current, *, overlay_host=No
             current_label,
             models,
             initial=selected_model,
-            subtitle="Choose a model, then its reasoning level.",
+            subtitle=f"Provider: {provider} · /provider to switch providers.",
             **common,
         )
         if model is None:
@@ -121,6 +122,24 @@ async def choose_model_and_effort(session, settings, current, *, overlay_host=No
                 initial = "More reasoning…"
                 continue
             return ModelSelection(model, effort, selected_provider)
+
+
+async def choose_provider(session, settings, current, *, overlay_host=None):
+    provider = settings.model_provider_name(current.provider)
+    providers = sorted(
+        {owner for _, owner in settings.model_choices()} | {provider},
+        key=lambda name: (name.casefold(), name),
+    )
+    return await choose_model(
+        session,
+        provider,
+        providers,
+        title="Select provider",
+        subtitle="Use /model to choose a model after switching.",
+        allow_custom=False,
+        compact=True,
+        overlay_host=overlay_host,
+    )
 
 
 async def choose_model(

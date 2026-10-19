@@ -11,8 +11,11 @@ let serial=0;const pending=new Map();
 socket.onmessage=event=>{const message=JSON.parse(event.data),item=pending.get(message.id);if(!item)return;pending.delete(message.id);message.error?item.reject(new Error(message.error.message)):item.resolve(message.result);};
 function cdp(method,params={}){return new Promise((resolve,reject)=>{const id=++serial;pending.set(id,{resolve,reject});socket.send(JSON.stringify({id,method,params}));});}
 async function evaluate(expression){const result=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(result.exceptionDetails)throw new Error(result.exceptionDetails.text);return result.result.value;}
-async function wait(expression){for(let i=0;i<70;i++){if(await evaluate(expression))return;await new Promise(resolve=>setTimeout(resolve,100));}throw new Error(`Timed out: ${expression}`);}
+async function wait(expression){for(let i=0;i<70;i++){if(await evaluate(`Boolean(${expression})`))return;await new Promise(resolve=>setTimeout(resolve,100));}throw new Error(`Timed out: ${expression}`);}
 try{
+ const initial=await(await fetch(base+'/api/snapshot')).json();
+ for(const f of initial.files.filter(f=>f.kind==='knowledge'&&f.group==='user'))await fetch(base+'/api/mutate',{method:'POST',headers:{'Content-Type':'application/json','X-Corki-Manager':'1'},body:JSON.stringify({kind:'knowledge',action:'delete',id:f.id,revision:f.revision})});
+ await fetch(base+'/api/mutate',{method:'POST',headers:{'Content-Type':'application/json','X-Corki-Manager':'1'},body:JSON.stringify({kind:'knowledge',action:'create',name:'notes',content:'# 项目使用说明\n\n这是 **重要** 的说明。\n\n- 配置模型\n- 开启知识库'})});
  await cdp('Page.enable');await cdp('Runtime.enable');
  await cdp('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
  await cdp('Page.navigate',{url:base+'/#knowledge'});
@@ -22,24 +25,70 @@ try{
  assert.equal(await evaluate(`document.querySelectorAll('[data-knowledge-group="user"] .knowledge-card').length`),1);
  assert.equal(await evaluate(`document.querySelectorAll('[data-knowledge-group="builtin"] .knowledge-card').length`),1);
  assert.equal(await evaluate(`document.querySelectorAll('[data-knowledge-group="builtin"] [data-action="delete"]').length`),0);
+ assert.equal(await evaluate(`document.querySelector('[data-knowledge-group="user"] .toggle').getAttribute('aria-checked')`),'false');
+ await evaluate(`document.querySelector('[data-knowledge-group="user"] .toggle').click()`);
+ await wait(`document.querySelector('.knowledge-loading')?.textContent.includes('Corki正在学习知识中')`);
+ assert.equal(await evaluate(`document.querySelector('[data-knowledge-group="user"] .toggle').getAttribute('aria-checked')`),'false');
+ await wait(`document.querySelector('[data-knowledge-group="user"] .knowledge-card')?.textContent.includes('摘要已就绪') && document.querySelector('[data-knowledge-group="user"] .toggle')?.getAttribute('aria-checked')==='true'`);
  await evaluate(`document.querySelector('[data-knowledge-group="user"] .toggle').click()`);
  await wait(`document.querySelector('[data-knowledge-group="user"] .toggle')?.getAttribute('aria-checked')==='false'`);
  const disabled=await(await fetch(base+'/api/snapshot')).json();
  assert.equal(disabled.files.find(f=>f.kind==='knowledge'&&f.group==='user').enabled,false);
+ await evaluate('window.__knowledgeQaReload=true');
  await cdp('Page.reload',{ignoreCache:true});
+ await wait('!window.__knowledgeQaReload');
  await wait(`document.querySelector('[data-knowledge-group="user"] .toggle')?.getAttribute('aria-checked')==='false'`);
  await evaluate(`document.querySelector('[data-knowledge-group="user"] .toggle').click()`);
  await wait(`document.querySelector('[data-knowledge-group="user"] .toggle')?.getAttribute('aria-checked')==='true'`);
  await evaluate(`document.querySelector('[data-knowledge-group="builtin"] summary').click()`);
  await wait(`document.querySelector('[data-knowledge-group="builtin"]').open`);
  await evaluate(`document.querySelector('[data-knowledge-group="builtin"] [data-action="file"]').click()`);
- await wait(`document.querySelector('#editor').open`);
- assert(await evaluate(`document.querySelector('#editor textarea[name="content"]').readOnly`));
- await evaluate(`document.querySelector('#close-dialog').click()`);
+ await wait(`document.querySelector('.kw-editor .cm-content')`);
+ assert.equal(await evaluate(`document.querySelector('.kw-editor .cm-content').getAttribute('contenteditable')`),'false');
+ assert.equal(await evaluate(`document.querySelectorAll('[data-kw="edit"]').length`),0);
+ await evaluate(`document.querySelector('.header-back').click()`);
+ await wait(`document.querySelector('[data-knowledge-group="user"] [data-action="file"]')`);
  await evaluate(`document.querySelector('[data-knowledge-group="user"] [data-action="file"]').click()`);
- await wait(`document.querySelector('#editor').open`);
- assert.equal(await evaluate(`document.querySelector('#editor textarea[name="content"]').readOnly`),false);
- await evaluate(`document.querySelector('#close-dialog').click()`);
+ await wait(`document.querySelector('[data-kw="edit"]')`);
+ assert.equal(await evaluate(`document.querySelector('.kw-editor .cm-content').getAttribute('contenteditable')`),'false');
+ await evaluate(`document.querySelector('[data-kw="edit"]').click()`);
+ assert.equal(await evaluate(`document.querySelector('.kw-editor .cm-content').getAttribute('contenteditable')`),'true');
+ await evaluate(`window.CorkiKnowledge.editor.dispatch({changes:{from:0,to:window.CorkiKnowledge.editor.state.doc.length,insert:'# 新版本\\n\\n修改后的 **知识文档**。'}})`);
+ await evaluate(`document.querySelector('[data-kw="save"]').click()`);
+ await wait(`document.querySelectorAll('[data-version]').length===2 && document.querySelector('[data-kw="edit"]')`);
+ assert.equal(await evaluate(`window.CorkiKnowledge.data.enabled`),false);
+ await evaluate(`document.querySelectorAll('[data-version]')[1].click()`);
+ assert(await evaluate(`document.querySelectorAll('[data-version]')[1].classList.contains('selected')`));
+ await evaluate(`document.querySelector('[data-kw="diff"]').click()`);
+ await wait(`document.querySelector('.cm-mergeView')`);
+ await evaluate(`document.querySelector('[data-kw="back"]').click()`);
+ await evaluate(`document.querySelector('[data-kw="restore"]').click()`);
+ await wait(`document.querySelectorAll('[data-version]').length===3 && document.querySelector('[data-kw="edit"]')`);
+ assert.equal(await evaluate(`window.CorkiKnowledge.data.enabled`),false);
+ assert(await evaluate(`window.CorkiKnowledge.data.content.includes('项目使用说明')`));
+ assert(await evaluate(`document.querySelector('.kw-history').getBoundingClientRect().left > document.querySelector('.kw-editor').getBoundingClientRect().left`));
  if(process.env.KNOWLEDGE_SCREENSHOT){const shot=await cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});fs.writeFileSync(process.env.KNOWLEDGE_SCREENSHOT,Buffer.from(shot.data,'base64'));}
- console.log('PASS: knowledge groups, collapse, persistent toggle, built-in read-only, user edit');
-}finally{socket.close();await fetch(`http://127.0.0.1:${port}/json/close/${target.id}`);}
+ await evaluate(`document.querySelector('[data-kw="edit"]').click()`);
+ await evaluate(`window.CorkiKnowledge.editor.dispatch({changes:{from:0,to:window.CorkiKnowledge.editor.state.doc.length,insert:'# FAIL_SIM'}})`);
+ await evaluate(`document.querySelector('[data-kw="save"]').click()`);
+ await wait(`document.querySelector('[data-kw="edit"]') && window.CorkiKnowledge.data.content==='# FAIL_SIM'`);
+ await evaluate(`document.querySelector('.header-back').click()`);
+ await wait(`document.querySelector('[data-knowledge-group="user"] .toggle')`);
+ await evaluate(`document.querySelector('[data-knowledge-group="user"] .toggle').click()`);
+ await wait(`document.querySelector('.knowledge-loading')?.textContent.includes('加载失败')`);
+ assert(await evaluate(`document.querySelector('.knowledge-loading').textContent.includes('默认模型请求失败')`));
+ await evaluate(`document.querySelector('.knowledge-loading button').click()`);
+ await wait(`!document.querySelector('.knowledge-loading') && document.querySelector('[data-knowledge-group="user"] .toggle')?.getAttribute('aria-checked')==='false'`);
+ const failureSnapshot=await(await fetch(base+'/api/snapshot')).json();
+ const failureDoc=failureSnapshot.files.find(f=>f.kind==='knowledge'&&f.group==='user');
+ await fetch(base+'/api/mutate',{method:'POST',headers:{'Content-Type':'application/json','X-Corki-Manager':'1'},body:JSON.stringify({kind:'knowledge',action:'save',id:failureDoc.id,revision:failureDoc.revision,content:'# Cancel preparation'})});
+ await evaluate('load(true)');
+ await evaluate(`document.querySelector('[data-knowledge-group="user"] .toggle').click()`);
+ await wait(`document.querySelector('.knowledge-loading button')?.textContent==='取消'`);
+ await evaluate(`document.querySelector('.knowledge-loading button').click()`);
+ await wait(`!document.querySelector('.knowledge-loading')`);
+ await new Promise(resolve=>setTimeout(resolve,1200));
+ const cancelled=await(await fetch(base+'/api/snapshot')).json();
+ assert.equal(cancelled.files.find(f=>f.kind==='knowledge'&&f.group==='user').enabled,false);
+ console.log('PASS: groups, loading before enable, detail navigation, built-in read-only, edit/save, history, diff, restore, failure, cancellation');
+}catch(error){console.error(await evaluate('document.body.innerText'));throw error;}finally{socket.close();await fetch(`http://127.0.0.1:${port}/json/close/${target.id}`);}

@@ -209,6 +209,12 @@ class AgentRuntime(Protocol):
         image_positions=(),
     ) -> AsyncIterator[RuntimeEvent]: ...
 
+    async def goal_command(self, action="get", *, objective=None, token_budget=...) -> dict: ...
+
+    async def continue_goal(self, *, realtime=False) -> AsyncIterator[RuntimeEvent]: ...
+
+    def defer_goal_continuation(self) -> None: ...
+
     async def resume_pending(self) -> AsyncIterator[RuntimeEvent]: ...
 
     async def load_display_history(self) -> tuple[ConversationItem, ...]: ...
@@ -269,10 +275,13 @@ class AgentRuntime(Protocol):
 
 
 class _QueueEventSink(EventSink):
-    def __init__(self, queue: asyncio.Queue[RuntimeEvent]) -> None:
+    def __init__(self, queue: asyncio.Queue[RuntimeEvent], goals=None) -> None:
         self._queue = queue
+        self._goals = goals
 
     async def emit(self, event: RuntimeEvent) -> None:
+        if self._goals is not None:
+            await self._goals.observe(event)
         await self._queue.put(event)
 
 
@@ -416,6 +425,29 @@ class LangGraphRuntime:
         self._memory_repository = memory_repository
         self._memory_resetter = memory_resetter
         self._thread_id = thread_id or new_thread_id()
+        from corki.goals.runtime import GoalController
+        from corki.goals.tools import goal_tools
+
+        review = getattr(session_source.value, "variant", None) == "review"
+        self._goals = GoalController(
+            checkpoint_path.with_name("goals_1.sqlite"),
+            self._thread_id,
+            available=settings.goals_enabled and not ephemeral and not review,
+            max_token_budget=settings.max_goal_token_budget,
+            parent_thread_id=getattr(
+                getattr(session_source.value, "value", None), "parent_thread_id", None
+            ),
+        )
+        self._goals.on_created = getattr(repository, "set_goal_preview_if_empty", None)
+        if self._goals.on_created is not None:
+
+            async def goal_preview(objective):
+                await repository.set_goal_preview_if_empty(self._thread_id, objective)
+
+            self._goals.on_created = goal_preview
+        if settings.goals_enabled and not review:
+            registry.replace_owned(registry.create_owner(), goal_tools(self._goals))
+        context_builder = context_builder.with_step_contributor(self._goals)
         self._thread_archive = (
             ThreadArchiveController(self._archive_store, self._thread_id, self.aclose)
             if self._archive_store is not None
@@ -454,6 +486,9 @@ class LangGraphRuntime:
         self._fork_source = fork_from_thread_id
         self._fork_before = fork_before_user_message
         self._fork_repository = fork_source_repository
+        self._goal_fork_store_path = getattr(
+            fork_source_repository, "path", checkpoint_path
+        ).with_name("goals_1.sqlite")
         self._fork_snapshot = None
         self._thread_lock = asyncio.Lock()
         self._process_manager.set_identity_resolver(self._ensure_thread)
@@ -940,6 +975,11 @@ class LangGraphRuntime:
         process_manager.approvals.rules.path = (
             capability_home.absolute() / "rules" / "default.rules"
         )
+        from corki.cron.tools import register_cron_tools
+        from corki.knowledge.tools import register_knowledge_tools
+
+        register_knowledge_tools(actual_registry, capability_home, install_builtin=not ephemeral)
+        register_cron_tools(actual_registry, capability_home)
         register_custom_tools(
             actual_registry,
             capability_home,
@@ -1253,6 +1293,86 @@ class LangGraphRuntime:
             async for event in events:
                 yield event
 
+        async with aclosing(self.continue_goal(realtime=realtime)) as events:
+            async for event in events:
+                yield event
+
+    async def goal_command(self, action="get", *, objective=None, token_budget=...):
+        """Host controls; ordinary chat never creates/resumes a goal implicitly."""
+        await self._ensure_ready()
+        self._goals.require_available()
+        if action == "get":
+            return await self._goals.get()
+
+        async def record():
+            from corki.protocol.items import ContextItem, ContextRole
+
+            command = f"/goal {objective}" if action == "create" else f"/goal {action}"
+            if action == "edit" and objective is not None:
+                command += f" {objective}"
+            if token_budget is not ...:
+                command += f" (token budget: {token_budget})"
+            await self._repository.append_items(
+                self._thread_id,
+                (
+                    ContextItem(
+                        "goal.command",
+                        ContextRole.USER,
+                        command,
+                        self._active_run.turn_id if self._active_run else new_turn_id(),
+                        content_kind="corki.goal.command",
+                        separate_message=True,
+                    ),
+                ),
+            )
+
+        if action == "create":
+            return await self._goals.create(
+                objective, None if token_budget is ... else token_budget, record=record
+            )
+        if action == "clear":
+            await self._goals.clear(record=record)
+            return {"goal": None}
+        if action in {"pause", "resume", "edit"}:
+            return await self._goals.update(
+                status={"pause": "paused", "resume": "active", "edit": None}[action],
+                objective=objective,
+                token_budget=token_budget,
+                record=record,
+            )
+        raise ValueError("Unknown goal action")
+
+    def defer_goal_continuation(self):
+        """Let queued user input take priority over automatic idle work."""
+        self._goals.suspended = True
+
+    async def continue_goal(self, *, realtime=False):
+        if self._closed or not self._goals.available:
+            return
+        await self._ensure_ready()
+        while not self._closed:
+            async with self._goals.lock:
+                await self._goals.load()
+                if (
+                    not self._goals.can_continue
+                    or self.thread_settings.collaboration_mode == "plan"
+                ):
+                    return
+                generation = self._goals.generation
+            async with aclosing(
+                self._start_turn(
+                    "",
+                    realtime=realtime,
+                    goal_generation=generation,
+                )
+            ) as events:
+                started = False
+                async for event in events:
+                    started = True
+                    yield event
+            if not started:
+                return
+
     @property
     def thread_settings(self) -> ModelSettingsSnapshot:
         """Current defaults for future Turns, not the active Turn's model selection."""
@@ -1383,6 +1503,9 @@ class LangGraphRuntime:
         async with aclosing(self._start_turn(None)) as events:
             async for event in events:
                 yield event
+        async with aclosing(self.continue_goal()) as events:
+            async for event in events:
+                yield event
 
     async def _start_turn(
         self,
@@ -1392,8 +1515,11 @@ class LangGraphRuntime:
         mentions=(),
         attachments=(),
         image_positions=(),
+        goal_generation: int | None = None,
     ) -> AsyncIterator[RuntimeEvent]:
-        operation = "compact" if message is None else "normal"
+        operation = (
+            "goal" if goal_generation is not None else "compact" if message is None else "normal"
+        )
         pending_warning = None
         async with self._turn_lock:
             # Serialize admission, not observation. The previous worker owns
@@ -1403,9 +1529,19 @@ class LangGraphRuntime:
                 # requested cancellation. Replace the actual current worker.
                 await self.cancel_active(reason="replaced")
             if self._active_run is not None:
+                if operation == "goal":
+                    return
                 await self._active_run.done.wait()
             async with self._lifecycle_lock:
+                if operation == "goal" and self._closed:
+                    return
                 await self._ensure_ready()
+                if operation == "goal" and (
+                    not self._goals.can_continue
+                    or self._goals.generation != goal_generation
+                    or self.thread_settings.collaboration_mode == "plan"
+                ):
+                    return
                 try:
                     await self._flush_pending_terminals()
                 except Exception as exc:
@@ -1420,6 +1556,10 @@ class LangGraphRuntime:
                     )
                 if self._input_flush_pending:
                     await self._flush_realtime_inputs()
+                if operation == "goal" and (
+                    not self._goals.can_continue or self._goals.generation != goal_generation
+                ):
+                    return
                 self._admit_skill_configuration()
                 self._admit_model_settings(self.thread_settings)
                 turn_id = new_turn_id()
@@ -1431,7 +1571,7 @@ class LangGraphRuntime:
                         attachments=attachments,
                         image_positions=image_positions,
                     )
-                    if message is not None
+                    if message is not None and operation != "goal"
                     else None
                 )
                 initial = _initial_state(
@@ -1441,6 +1581,7 @@ class LangGraphRuntime:
                     user_item,
                     realtime=realtime,
                 )
+                initial["operation"] = "compact" if operation == "compact" else "normal"
                 initial["turn_base_instructions"] = self._graph._context_builder.base_instructions()
                 if realtime:
                     self._realtime.activate(turn_id)
@@ -1485,6 +1626,18 @@ class LangGraphRuntime:
         items, self._unsubmitted_inputs = self._unsubmitted_inputs, ()
         return items
 
+    async def _pause_goal_for_interrupt(self):
+        if (
+            not self._closed
+            and self._goals.available
+            and self._goals.goal is not None
+            and self._goals.goal.status == "active"
+        ):
+            try:
+                await self.goal_command("pause")
+            except Exception:
+                _LOG.warning("Could not persist interrupted goal pause", exc_info=True)
+
     async def cancel_active(
         self, *, reason: Literal["interrupted", "replaced"] = "interrupted"
     ) -> None:
@@ -1492,6 +1645,7 @@ class LangGraphRuntime:
 
         if reason not in {"interrupted", "replaced"}:
             raise ValueError("cancel reason must be interrupted or replaced")
+        self._goals.suspended = True
         startup = self._startup_task
         if startup is not None and not startup.done() and not startup.cancelling():
             startup.cancel()
@@ -1500,6 +1654,8 @@ class LangGraphRuntime:
             self._active_run.cancel(reason=reason)
         else:
             self._mcp_manager.cancel_startup()
+        if reason == "interrupted":
+            await self._pause_goal_for_interrupt()
 
     async def load_display_history(self) -> tuple[ConversationItem, ...]:
         """Read canonical local history without resuming a Turn or executing a tool."""
@@ -1558,6 +1714,14 @@ class LangGraphRuntime:
             return reading.result()
 
     async def resume_pending(self) -> AsyncIterator[RuntimeEvent]:
+        async with aclosing(self._resume_pending_turn()) as events:
+            async for event in events:
+                yield event
+        async with aclosing(self.continue_goal()) as events:
+            async for event in events:
+                yield event
+
+    async def _resume_pending_turn(self) -> AsyncIterator[RuntimeEvent]:
         """Continue the latest checkpointed running turn, if one exists."""
         async with self._turn_lock:
             if self._active_run is not None:
@@ -1628,13 +1792,14 @@ class LangGraphRuntime:
                         ),
                         None,
                     )
-                    if user_item is None and turn.operation != "compact":
+                    if user_item is None and turn.operation == "normal":
                         user_item = UserMessageItem(turn.user_input, turn.id)
                     if turn.operation == "compact":
                         user_item = None
                     initial = _initial_state(
                         self._thread_id, turn.id, self._graph._settings, user_item
                     )
+                    initial["operation"] = "compact" if turn.operation == "compact" else "normal"
                     if turn.base_instructions is not None:
                         initial["turn_base_instructions"] = turn.base_instructions
                 events = self._run_graph(
@@ -1737,6 +1902,7 @@ class LangGraphRuntime:
             if isinstance(terminal, TurnCancelled):
                 raise asyncio.CancelledError
         except asyncio.CancelledError:
+            await self._pause_goal_for_interrupt()
             run.cancel()
             await run.join()
             if not terminal_sent:
@@ -1811,7 +1977,7 @@ class LangGraphRuntime:
         turn_id = run.turn_id
         terminal: RuntimeEvent | None = None
         graph_context = GraphRunContext(
-            events=_QueueEventSink(run.queue),
+            events=_QueueEventSink(run.queue, self._goals),
             request_user_input=lambda call_id, questions, blocking: run.user_input.request(
                 self._thread_id,
                 run.turn_id,
@@ -1847,11 +2013,43 @@ class LangGraphRuntime:
                     )
                 )
             writing_start = False
+            await self._goals.begin(
+                turn_id,
+                automatic=operation == "goal",
+                plan=self._graph._settings.collaboration_mode == "plan",
+                compact=operation == "compact",
+            )
+            if operation == "goal":
+                from corki.goals.runtime import GoalAdmissionSkipped
+                from corki.protocol.items import ContextItem, ContextRole
+
+                if not resumed and not self._goals.can_continue:
+                    raise GoalAdmissionSkipped()
+                history = await self._repository.load_items(self._thread_id)
+                if self._goals.goal is not None and not any(
+                    isinstance(item, ContextItem)
+                    and item.key == "goal.continuation"
+                    and item.turn_id == turn_id
+                    for item in history
+                ):
+                    await self._repository.append_items(
+                        self._thread_id,
+                        (
+                            ContextItem(
+                                "goal.continuation",
+                                ContextRole.USER,
+                                self._goals.prompt(),
+                                turn_id,
+                                content_kind="corki.goal.continuation",
+                                separate_message=True,
+                            ),
+                        ),
+                    )
             if run.cancel_requested:
                 raise asyncio.CancelledError
             if (
                 not resumed
-                and operation == "normal"
+                and operation in {"normal", "goal"}
                 and self._memory_service is not None
                 and not self._session_source.is_non_root_agent
             ):
@@ -1996,6 +2194,7 @@ class LangGraphRuntime:
                 )
         except BaseException as exc:
             from corki.core.compact_start_hooks import StartHookStopped
+            from corki.goals.runtime import GoalAdmissionSkipped
 
             if isinstance(
                 exc,
@@ -2012,7 +2211,7 @@ class LangGraphRuntime:
                     f"Initial Turn persistence failed: {exc}",
                     error_kind="storage",
                 )
-            elif isinstance(exc, StartHookStopped):
+            elif isinstance(exc, (StartHookStopped, GoalAdmissionSkipped)):
                 terminal = TurnCompleted(self._thread_id, turn_id, "")
             elif isinstance(exc, ModelError):
                 terminal = TurnFailed(
@@ -2256,6 +2455,21 @@ class LangGraphRuntime:
                         f"Terminal persistence failed: {exc}",
                         error_kind="storage",
                     )
+            await self._goals.finish(terminal)
+            if self._goals.available and (goal := self._goals.goal) is not None:
+                from corki.protocol.events import GoalUpdated
+
+                run.final_events.append(
+                    GoalUpdated(
+                        self._thread_id,
+                        turn_id,
+                        goal.objective,
+                        goal.status,
+                        goal.tokens_used,
+                        goal.token_budget,
+                        goal.time_used_seconds,
+                    )
+                )
             return terminal
         finally:
             try:
@@ -2475,6 +2689,14 @@ class LangGraphRuntime:
                     personality=self._settings.personality,
                 ),
             )
+            if self._goals.available:
+                if self._fork_source is not None:
+                    source_goal = await self._goals.source_snapshot(
+                        self._goal_fork_store_path, self._fork_source
+                    )
+                    if source_goal is not None:
+                        await self._goals.store.copy_snapshot(self._thread_id, source_goal)
+                await self._goals.load()
             if self._closed or initializing.cancelling():
                 raise asyncio.CancelledError
         except BaseException as exc:
@@ -2494,6 +2716,7 @@ class LangGraphRuntime:
         self._checkpoint_context = checkpoint_context
         self._checkpointer = checkpointer
         self._compiled = compiled
+        self._goals.register()
         self._mcp_prewarm.start()
 
     def request_mcp_refresh(
@@ -2743,6 +2966,7 @@ class LangGraphRuntime:
             # New Turns/inputs are already rejected by the Runtime boundary.
             self._graph._async_post_hooks.owner.close_admission()
             self._graph._async_pre_hooks.owner.close_admission()
+            self._goals.unregister()
             self._thread_memory.close_admission()
             self._realtime.close_input()
             startup = self._startup_task

@@ -314,6 +314,8 @@ def test_prefix_cost_prevents_installing_an_oversized_replacement(tmp_path, wire
                 model="fixture",
                 api_mode=api_mode,
                 api_base="https://fixture.invalid/v1",
+                # Keep this fixed schema/window fixture independent of Goal tools.
+                goals_enabled=False,
                 skills_enabled=False,
                 context_window_tokens=512,
                 auto_compact_tokens=450,

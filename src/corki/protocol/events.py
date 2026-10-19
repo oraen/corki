@@ -81,6 +81,7 @@ class TokenUsageUpdated:
     reasoning_tokens: int
     cache_write_tokens: int = 0
     codex_rollout_budget_units: int | float | WireNumber | None = None
+    usage_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +192,7 @@ class ToolCallCompleted:
     patch_delta_json: str | None = None
     exit_code: int | None = None
     session_id: int | None = None
+    handler_failed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,6 +220,17 @@ class TurnDiff:
     thread_id: ThreadId
     turn_id: TurnId
     unified_diff: str
+
+
+@dataclass(frozen=True, slots=True)
+class GoalUpdated:
+    thread_id: ThreadId
+    turn_id: TurnId
+    objective: str
+    status: str
+    tokens_used: int
+    token_budget: int | None
+    time_used_seconds: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,6 +265,7 @@ RuntimeEvent = (
     | AssistantReasoningDelta
     | AssistantReasoningCompleted
     | ModelRetryScheduled
+    | GoalUpdated
     | TokenUsageUpdated
     | ContextCompacted
     | AssistantMessageCompleted

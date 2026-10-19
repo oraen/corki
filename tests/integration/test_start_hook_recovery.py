@@ -84,6 +84,9 @@ def test_start_hook_cold_recovery(
             skills_enabled=False,
             plugins_enabled=False,
             compact_prompt="SUMMARIZE_FOR_TEST",
+            # This fixture fixes an 8k threshold to isolate hook replay. Goal
+            # tool schemas are unrelated overhead that changes that boundary.
+            goals_enabled=False,
             # The full base prompt must fit before the large tool result rolls
             # the window. Keep base_instructions unset: this also exercises
             # recovery of legacy turns without an admitted base snapshot.

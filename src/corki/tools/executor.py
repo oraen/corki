@@ -70,6 +70,7 @@ class ToolExecutor:
                 return self.error(call, execution_input, spec=spec)
         task = asyncio.current_task()
         cancellations = task.cancelling() if task is not None else 0
+        handler_started = False
         try:
             execution_call = deepcopy(execution_input)
             if call.input_kind == "json" and isinstance(tool, ToolCallArgumentParser):
@@ -100,6 +101,7 @@ class ToolExecutor:
                 }
             )
             _text(execution_input_json, "execution input")
+            handler_started = True
             result = await tool.execute(execution_call, context)
             result = self._normalize_result(
                 call,
@@ -112,14 +114,19 @@ class ToolExecutor:
         except FatalToolError as exc:
             raise FatalToolError(truncate_text(_exception_message(exc), 4_000)) from exc
         except TimeoutError as exc:
-            return self.error(
-                call,
-                "tool timed out; execution outcome may be unknown. Do not automatically retry "
-                f"an operation with side effects. {_exception_message(exc)}",
-                spec=spec,
+            return replace(
+                self.error(
+                    call,
+                    "tool timed out; execution outcome may be unknown. Do not automatically retry "
+                    f"an operation with side effects. {_exception_message(exc)}",
+                    spec=spec,
+                ),
+                handler_failed=handler_started,
             )
         except Exception as exc:  # noqa: BLE001 - tool boundary normalizes failures
-            return self.error(call, _exception_message(exc), spec=spec)
+            return replace(
+                self.error(call, _exception_message(exc), spec=spec), handler_failed=handler_started
+            )
         finally:
             # A handler (or media preparer) may mask CancelledError with a
             # return value or cleanup exception. Do not publish that as a

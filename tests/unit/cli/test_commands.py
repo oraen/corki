@@ -22,6 +22,16 @@ def test_model_selection_preserves_provider_identifier(tmp_path):
     assert dispatcher(tmp_path).dispatch("/model two names").action is CommandAction.NONE
 
 
+def test_provider_command_preserves_identity_and_supports_picker(tmp_path):
+    commands = dispatcher(tmp_path)
+    assert commands.dispatch("/provider").action is CommandAction.PROVIDER
+    assert commands.dispatch("/provider").input_text == ""
+    result = commands.dispatch("/provider Codex-Local")
+    assert result.action is CommandAction.PROVIDER
+    assert result.input_text == "Codex-Local"
+    assert "/provider" in commands.dispatch("/help").output
+
+
 def test_status_reports_session_paths(tmp_path: Path) -> None:
     result = dispatcher(tmp_path).dispatch("/status")
 
@@ -84,3 +94,13 @@ def test_memory_mode_dispatches_only_public_modes(tmp_path):
         result = commands.dispatch(text)
         assert result.handled and result.action is CommandAction.NONE
         assert "Unknown command" in result.output
+
+
+def test_goal_command_preserves_objective_and_exposes_controls(tmp_path):
+    commands = dispatcher(tmp_path)
+    for text in ("", "pause", "resume", "clear", "edit", "Finish Project-X"):
+        result = commands.dispatch("/goal " + text)
+        assert result.handled
+        assert result.action is CommandAction.GOAL
+        assert result.input_text == text
+    assert "/goal" in commands.dispatch("/help").output

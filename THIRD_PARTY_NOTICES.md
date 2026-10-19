@@ -605,3 +605,11 @@ bundle's `THIRD_PARTY.txt` and the matching compiler distribution's standard
 library notices into `RUST_COPYRIGHT.html`. Both files are checksummed and included
 beside the executable in platform wheels. Source, build instructions and exact
 transitive dependency versions are under `native/file_search`.
+
+`prompts/goals/continuation.md`, `budget_limit.md`, and `objective_updated.md`
+adapt OpenAI Codex `codex-rs/ext/goal/templates/goals/` at commit
+`bb64b894fd` (template placeholders converted for Corki). The Python goal
+lifecycle, tools, storage and associated tests in `src/corki/goals/` follow
+`codex-rs/ext/goal/` and `codex-rs/state/src/runtime/goals.rs` from that revision.
+These are modified implementations under the Apache-2.0 license and upstream
+notice reproduced in `src/corki/skills/CODEX_CATALOG_LICENSE.txt`.

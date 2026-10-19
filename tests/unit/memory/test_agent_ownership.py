@@ -107,6 +107,8 @@ def test_worker_runtime_resolves_its_own_model_window(tmp_path, monkeypatch, ove
             working_directory=tmp_path,
             # Isolate window ownership from bundled prompt wording/size.
             base_instructions="B" * 4962,
+            # Keep this fixed schema/window fixture independent of Goal tools.
+            goals_enabled=False,
             skills_enabled=False,
             context_window_tokens=window,
             model_context_window_override=override,

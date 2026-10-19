@@ -12,9 +12,11 @@ class CommandAction(Enum):
     """Side effects requested by a built-in command."""
 
     NONE = auto()
+    GOAL = auto()
     PLAN = auto()
     MODEL = auto()
     MODEL_PICK = auto()
+    PROVIDER = auto()
     CYCLE_MODE = auto()
     CLEAR = auto()
     COPY = auto()
@@ -63,11 +65,23 @@ class CommandDispatcher:
 
         command = message.strip().lower()
         parts = message.strip().split(maxsplit=1)
+        if parts and parts[0].lower() == "/provider":
+            return CommandResult(
+                handled=True,
+                action=CommandAction.PROVIDER,
+                input_text=parts[1] if len(parts) == 2 else "",
+            )
         if len(parts) == 2 and parts[0].lower() == "/model":
             model = parts[1].strip()
             if any(c.isspace() or not c.isprintable() for c in model):
                 return CommandResult(handled=True, output="Usage: /model <model-name>")
             return CommandResult(handled=True, action=CommandAction.MODEL, input_text=model)
+        if parts and parts[0].lower() == "/goal":
+            return CommandResult(
+                handled=True,
+                action=CommandAction.GOAL,
+                input_text=parts[1] if len(parts) == 2 else "",
+            )
         if parts and parts[0].lower() == "/plan":
             return CommandResult(
                 handled=True,
@@ -89,6 +103,8 @@ class CommandDispatcher:
                     "  /clear   clear the terminal and redraw the header\n"
                     "  /copy    copy the last response, code block, or quote\n"
                     "  /model [name]  show or change the session model\n"
+                    "  /provider [name]  choose or switch the model provider\n"
+                    "  /goal [objective|edit|pause|resume|clear]  manage a persistent goal\n"
                     "  /plan [prompt]  enter Plan mode, optionally planning a request\n"
                     "  /compact summarize history in a standalone turn\n"
                     "  /memory reset  review explicit memory reset confirmation\n"
@@ -105,6 +121,7 @@ class CommandDispatcher:
                 handled=True,
                 output=(
                     f"Model:       {self._settings.model}\n"
+                    f"Provider:    {self._settings.provider_id or self._settings.provider_name}\n"
                     f"Reasoning:   {self._settings.reasoning_effort or 'model default'}\n"
                     f"Mode:        {self._settings.collaboration_mode.title()}\n"
                     f"Directory:   {self._settings.working_directory}\n"
@@ -169,7 +186,7 @@ class CommandDispatcher:
                 output=(
                     f"Current model: {self._settings.model}\n"
                     "Use /model <model-name> to change subsequent turns in this session. "
-                    "Choose model(provider) to switch providers; "
+                    "Use /provider to switch providers; "
                     "the selection is saved as the default."
                 ),
             )

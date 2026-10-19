@@ -65,7 +65,7 @@ class TurnRecord:
     def __post_init__(self) -> None:
         if self.base_instructions is not None and not isinstance(self.base_instructions, str):
             raise ValueError("Turn base instructions must be a string or None")
-        if self.operation not in {"normal", "compact"}:
+        if self.operation not in {"normal", "compact", "goal"}:
             raise ValueError(f"unknown turn operation: {self.operation}")
         if self.model_settings is not None and not isinstance(
             self.model_settings, ModelSettingsSnapshot

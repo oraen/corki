@@ -37,6 +37,8 @@ def test_namespace_policy_controls_real_module_and_direct_dispatch(tmp_path, mod
             'excluded_tool_namespaces=["excluded"]\n'
         )
         settings = CorkiSettings.for_directory(tmp_path, config_file=config)
+        # Assert this fixture's exact module catalog, without unrelated Goal tools.
+        settings = replace(settings, goals_enabled=False)
         calls, requests = [], []
 
         class Probe:

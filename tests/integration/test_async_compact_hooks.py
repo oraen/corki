@@ -84,6 +84,8 @@ def test_async_compact_hook_control_is_ignored_and_process_is_owned(
         )
         settings = CorkiSettings(
             tmp_path,
+            # Keep this fixed schema/window fixture independent of Goal tools.
+            goals_enabled=False,
             skills_enabled=False,
             plugins_enabled=False,
             tool_mode="direct",

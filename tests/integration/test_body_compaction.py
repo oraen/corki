@@ -256,6 +256,8 @@ def test_manual_and_missing_usage_prefix_boundaries(tmp_path, mode):
         runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=tmp_path,
+                # Keep this fixed schema/window fixture independent of Goal tools.
+                goals_enabled=False,
                 skills_enabled=False,
                 context_window_tokens=200_000,
                 # Reinjected native permission context after manual compaction

@@ -1376,6 +1376,16 @@ class SQLiteSessionRepository:
     ) -> ModelCompleted | None:
         return await asyncio.to_thread(self._load_model_step, thread_id, turn_id, step_index)
 
+    async def set_goal_preview_if_empty(self, thread_id: ThreadId, objective: str) -> None:
+        def update():
+            with self._connect() as connection:
+                connection.execute(
+                    "UPDATE threads SET preview=? WHERE id=? AND preview=''",
+                    (objective, str(thread_id)),
+                )
+
+        await asyncio.to_thread(update)
+
     async def load_context_usage(self, thread_id: ThreadId) -> ContextUsage | None:
         return await asyncio.to_thread(self._load_context_usage, thread_id)
 
@@ -1642,6 +1652,8 @@ def _result_to_json(result: ToolResult) -> str:
         value["code_mode_output"] = {"value": result.code_mode_output.value}
     if result.content_items:
         value["content_items"] = [content_to_payload(part) for part in result.content_items]
+    if result.handler_failed:
+        value["handler_failed"] = True
     if result.dispatch_error:
         value["dispatch_error"] = True
     if result.contains_external_context:
@@ -1696,6 +1708,7 @@ def _result_from_json(value: str) -> ToolResult:
         ),
         is_error=bool(raw["is_error"]),
         dispatch_error=bool(raw.get("dispatch_error", False)),
+        handler_failed=bool(raw.get("handler_failed", False)),
         contains_external_context=raw.get("contains_external_context", False),
         fallback_token_limit_override=raw.get("fallback_token_limit_override"),
         legacy_output_char_budget=raw.get("legacy_output_char_budget"),

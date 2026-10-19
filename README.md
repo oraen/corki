@@ -91,7 +91,10 @@ specified per model. Context windows, truncation policies and reasoning presets
 also belong to that provider's model entry. Equal model names on different
 providers do not share metadata.
 
-`/model` lists `model(provider)`, sorted by model name and then provider name.
+`/model` lists only the current provider's models, sorted by model name.
+`/provider` opens the provider menu; `/provider <name>` switches directly.
+Switching providers keeps the current model name when available, otherwise it
+selects the target provider's first model in name order and its reasoning default.
 Confirming a selection switches both resources for subsequent turns and saves
 the pair plus reasoning preference to the user settings file. An active turn
 keeps its admitted connection, including its compaction requests. Cancelling the
@@ -2981,3 +2984,41 @@ Mid-turn compaction does not automatically reinject old skill bodies; the model 
 use `skill_read` again. Mentions added through steering do not rerun turn-start
 injection either. They remain available for model-directed discovery and reading.
 # corki
+
+
+### 持续目标（Goal）
+
+`/goal <目标>` 为当前会话建立持续目标。Corki 在每轮结束、会话空闲时继续推进，
+直到目标完成、暂停、遇到阻塞、预算用尽或用户中断。普通聊天不会自动创建目标。
+
+| 命令 | 用途 |
+| --- | --- |
+| `/goal` | 查看目标、状态和用量 |
+| `/goal <目标>` | 创建目标；替换未完成目标前会确认 |
+| `/goal edit` | 编辑目标和 token 预算；空输入保留原值 |
+| `/goal edit <新目标>` | 更新目标，保留预算和状态 |
+| `/goal pause` | 暂停目标的后续自动执行 |
+| `/goal resume` | 恢复目标；预算已耗尽时须先提高预算 |
+| `/goal clear` | 清除目标，保留会话历史 |
+
+模型通过 `create_goal`、`get_goal`、`update_goal` 管理目标。创建和暂停需要用户明确要求；
+完成须经过实际验证。连续三次自动空响应、执行器连续异常或不可恢复的模型错误会停止续跑。
+普通命令返回非零退出码不等于 Goal 阻塞。`/plan` 模式不自动追求目标，也不计入目标用量。
+
+目标保存在会话数据库旁的 `goals_1.sqlite`（默认 `~/.corki/sessions/goals_1.sqlite`）。
+恢复会话会恢复目标；分叉复制目标状态，但先等待新用户输入。临时会话不支持持久目标。
+Ctrl+C 或 `/stop` 中断当前执行并持久化暂停目标；`/goal resume` 可以重新继续。
+仅关闭客户端不会把未完成目标标为完成；重新打开该会话时，活动目标仍可继续。
+
+可选的 `settings.json` 设置：
+
+```json
+{
+  "features": { "goals": true },
+  "goals": { "max_goal_token_budget": 200000 }
+}
+```
+
+预算统计为非缓存输入 token 加输出 token，包含已关联子代理的用量；达到预算后允许本轮收尾，
+不再启动下一轮。未配置上限时不默认添加预算。暂停不会强制杀掉已经执行中的工具。
+Goal 沿用现有权限与审批规则，不会扩大执行权限。
