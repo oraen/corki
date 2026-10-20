@@ -6,7 +6,9 @@ function ProcessGroup({
   entries,
   active,
   onError,
+  showAvatar,
 }: {
+  showAvatar: boolean;
   entries: TranscriptEntry[];
   active: boolean;
   onError: (e: unknown) => void;
@@ -14,8 +16,10 @@ function ProcessGroup({
   const [choice, setChoice] = useState<boolean | null>(null);
   const [pinned, setPinned] = useState(false);
   const open = choice ?? (active || pinned);
-  const avatar = entries.some((entry) => entry.showAvatar);
+
+  const pending = entries.filter((entry) => entry.message.role === "tool" && entry.message.streaming);
   return (
+    <>
     <details
       className="process-group"
       open={open}
@@ -33,7 +37,7 @@ function ProcessGroup({
       }}
     >
       <summary className="process-heading">
-        {avatar && (
+        {showAvatar && (
           <img
             className="avatar turn-avatar"
             src="resources/corki.png"
@@ -55,6 +59,14 @@ function ProcessGroup({
         ))}
       </div>
     </details>
+    {!open && pending.length > 0 && (
+      <div className="process-pending">
+        {pending.map((entry) => (
+          <MessageRow key={entry.message.id} {...entry} showAvatar={false} onError={onError} />
+        ))}
+      </div>
+    )}
+    </>
   );
 }
 
@@ -103,12 +115,13 @@ export function TranscriptView({
       previous.push(block);
     else groups.push([block]);
   }
-  const renderBlock = (block: (typeof blocks)[number]) => {
+  const renderBlock = (block: (typeof blocks)[number], showAvatar = false) => {
     const current = active && block.entries[0].message.turnId === latestTurn;
     return block.process ? (
       <ProcessGroup
         key={`process:${block.key}`}
         entries={block.entries}
+        showAvatar={showAvatar}
         active={current}
         onError={onError}
       />
@@ -116,6 +129,8 @@ export function TranscriptView({
       <MessageRow
         key={block.key}
         {...block.entries[0]}
+        showAvatar={showAvatar}
+        active={current}
         collapsible={!current}
         onError={onError}
       />
@@ -129,9 +144,9 @@ export function TranscriptView({
         ) : (
           <div
             className={`reply-block ${group[0].process ? "starts-with-process" : ""}`}
-            key={`reply:${group[0].key}`}
+            key={`reply:${group[0].entries[0].message.turnId || group[0].key}`}
           >
-            {group.map(renderBlock)}
+            {group.map((block, index) => renderBlock(block, index === 0 && group.some((b) => b.entries.some((entry) => entry.showAvatar))))}
           </div>
         ),
       )}

@@ -14,6 +14,7 @@ export interface Message {
   callId?: string;
   error?: boolean;
   streaming?: boolean;
+  phase?: string | null;
   completed?: boolean;
   createdAt?: string;
   contextOnly?: boolean;
@@ -56,8 +57,9 @@ export function conversationFromSnapshot(
     status: data.running ? "正在执行" : "",
   };
   if (data.running) {
+    let replay = { ...emptyConversation(), running: true };
     for (const event of data.live) {
-      view = reduceEvent(view, {
+      replay = reduceEvent(replay, {
         ...event,
         threadId: data.threadId,
         instance: data.instance,
@@ -75,13 +77,28 @@ export function conversationFromSnapshot(
         .filter((message) => message.role === "tool-result")
         .map((message) => message.callId),
     );
-    view.messages = view.messages.map((message) => {
+    // Merge in live event order, using canonical items as chronological anchors.
+    // Replaying onto the page directly appends off-page older items at the end.
+    const positions = new Map(data.messages.map((m, i) => [m.id, i]));
+    const overlap = replay.messages.some((m) => positions.has(m.id));
+    let cursor = overlap ? 0 : data.messages.length;
+    while (cursor < data.messages.length && data.messages[cursor].contextOnly) cursor++;
+    const messages: Message[] = data.messages.slice(0, cursor);
+    for (const message of replay.messages) {
+      const position = positions.get(message.id);
+      if (position !== undefined) {
+        if (position < cursor) continue;
+        messages.push(...data.messages.slice(cursor, position));
+        cursor = position + 1;
+      }
       const saved = canonical.get(message.id);
-      if (saved && saved.role !== "tool") return saved;
-      if (message.callId && finishedCalls.has(message.callId))
-        return { ...message, streaming: false };
-      return message;
-    });
+      messages.push(saved && saved.role !== "tool" ? saved :
+        message.callId && finishedCalls.has(message.callId)
+          ? { ...message, streaming: false } : message);
+    }
+    messages.push(...data.messages.slice(cursor));
+    view = { ...view, status: replay.status || view.status, messages };
+
   }
   // A submitted input is a temporary display item until canonical history owns it.
   const canonicalUserTurns = new Set(
@@ -125,6 +142,14 @@ export function mergeSnapshot(
         .filter((m) => !incomingIds.has(m.id) && !m.requestId && !m.streaming && !m.contextOnly);
       next = previous.next;
     }
+  }
+  // A paged snapshot may bring back the canonical question while the old live
+  // question was still provisional. Keep its anchor before that turn's prefix,
+  // never between two pieces of the same reply (which also duplicates React keys).
+  for (const question of incoming.messages.filter((m) => m.contextOnly && m.role === "user")) {
+    if (prefix.some((m) => m.role === "user" && m.turnId === question.turnId)) continue;
+    const start = prefix.findIndex((m) => m.turnId === question.turnId);
+    if (start >= 0) prefix.splice(start, 0, question);
   }
   const messages = [
     ...prefix,
@@ -181,6 +206,10 @@ export function reduceEvent(
       );
       break;
     case "TurnStarted":
+      if (s.messages.some((m) => m.role === "user" && m.requestId && !m.turnId))
+        s.messages = s.messages.map((m) =>
+          m.role === "user" && m.requestId && !m.turnId ? { ...m, turnId: d.turn_id } : m,
+        );
       s.running = true;
       s.status = "正在思考";
       break;
@@ -188,7 +217,7 @@ export function reduceEvent(
       const id = d.item_id || `answer:${d.turn_id}`;
       update(
         id,
-        (m) => ({ ...m, content: m.content + d.delta, streaming: true }),
+        (m) => ({ ...m, content: m.content + d.delta, phase: d.phase ?? m.phase, streaming: true }),
         { ...base, id, role: "assistant" },
       );
       s.status = "正在回复";
@@ -205,7 +234,7 @@ export function reduceEvent(
             m.id === provisional ? { ...m, id } : m,
           );
       }
-      update(id, (m) => ({ ...m, content: d.text, streaming: false, createdAt: d.createdAt || m.createdAt }), {
+      update(id, (m) => ({ ...m, content: d.text, phase: d.phase ?? m.phase, streaming: false, createdAt: d.createdAt || m.createdAt }), {
         ...base,
         id,
         role: "assistant",
@@ -311,7 +340,9 @@ export function reduceEvent(
     case "TurnCancelled":
       s.status = "回答已停止";
       s.messages = s.messages.map((m) =>
-        m.turnId === d.turn_id && m.streaming ? { ...m, streaming: false } : m,
+        m.turnId === d.turn_id && m.streaming
+          ? { ...m, streaming: false, createdAt: m.createdAt || (m.role === "assistant" ? d.createdAt : undefined) }
+          : m,
       );
       if (!s.messages.some((m) => m.id === `stopped:${d.turn_id}`))
         s.messages = [
@@ -371,7 +402,8 @@ export function awaitingFirstReply(
   for (let i = conversation.messages.length - 1; i >= 0; i--) {
     const message = conversation.messages[i];
     if (message.role === "error") return false;
-    if (message.role === "assistant" && message.content.trim()) return false;
+    if (message.role === "assistant" && message.content.trim())
+      return message.phase === "commentary" || !message.streaming;
     if (["tool", "tool-result"].includes(message.role)) return true;
     if (message.role === "user") return true;
   }

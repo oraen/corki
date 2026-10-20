@@ -107,3 +107,8 @@ test("message times use local calendar fields and omit missing or invalid values
   assert.equal(formatMessageTime(undefined), "");
   assert.equal(formatMessageTime("invalid"), "");
 });
+
+test("explicit commentary stays in execution process even before the next tool arrives",()=>{
+ const entries=transcriptEntries([row("u","user"),row("p","assistant","t",{phase:"commentary"})]);
+ assert.equal(entries[1].commentary,true);
+});

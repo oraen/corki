@@ -11,6 +11,7 @@ export function Icon({ name, size = 20 }: { name: string; size?: number }) {
         <path d="M9 9h6v6H9Z" />
       </>
     ),
+    trash: <><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5" /></>,
     plus: <path d="M12 5v14M5 12h14" />,
     send: <path d="m5 12 7-7 7 7M12 5v14" />,
     stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
@@ -221,11 +222,13 @@ export function Picker({
   );
 }
 export function Modal({
+  className = "",
   title,
   children,
   onClose,
 }: {
-  title: string;
+  className?: string;
+  title: React.ReactNode;
   children: React.ReactNode;
   onClose: () => void;
 }) {
@@ -247,7 +250,7 @@ export function Modal({
   }, []);
   return (
     <dialog
-      className="modal"
+      className={`modal ${className}`}
       ref={ref}
       onKeyDown={(event) => {
         if (event.key !== "Tab") return;
@@ -319,11 +322,13 @@ export const MessageRow = React.memo(function MessageRow({
   commentary = false,
   showAvatar = true,
   collapsible = false,
+  active = false,
 }: {
   output?: Message;
   commentary?: boolean;
   showAvatar?: boolean;
   collapsible?: boolean;
+  active?: boolean;
   message: Message;
   onError: (e: unknown) => void;
 }) {
@@ -432,7 +437,7 @@ export const MessageRow = React.memo(function MessageRow({
             {message.error || output?.error
               ? "失败"
               : message.streaming
-                ? "运行中"
+                ? "执行中"
                 : output || message.completed
                   ? "已结束"
                   : "未收到结果"}
@@ -452,14 +457,14 @@ export const MessageRow = React.memo(function MessageRow({
               执行输出
               <ExecutionDuration message={message} output={output} />
             </header>
-            {output ? (
+            {output?.content ? (
               <MessageRow
                 message={{ ...output, role: "tool-output" }}
                 onError={onError}
               />
             ) : (
               <div className="tool-empty">
-                {message.streaming ? "等待输出…" : "暂无输出"}
+                {message.streaming ? "等待中" : "暂无输出"}
               </div>
             )}
           </section>
@@ -644,7 +649,7 @@ export const MessageRow = React.memo(function MessageRow({
             {message.streaming && <span className="typing-dot" />}
           </>
         )}
-        {message.role === "assistant" && !message.streaming && (
+        {message.role === "assistant" && !message.streaming && !active && (
           <div className="assistant-message-meta">
             {message.role === "assistant" &&
               !message.streaming &&

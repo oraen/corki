@@ -172,6 +172,9 @@ try {
   });
   await page.getByRole("button", { name: "发送消息" }).click();
   await page.waitForFunction(() => typeof window.__accept === "function");
+  assert.equal(await input.inputValue(), "");
+  assert(await page.getByText("first request", {exact:true}).isVisible());
+  assert.equal(await page.evaluate(() => window.__saved.get("draft:new")?.content), "first request");
   const count = await page.evaluate(() => window.__submissions);
   await input.fill("next draft must survive");
   await input.press("Enter");

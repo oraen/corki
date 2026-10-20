@@ -206,8 +206,13 @@ function App() {
       document.removeEventListener("keydown", closeMenus);
     };
   }, []);
+  const hiddenSubmissionText = useRef(new Set<string>());
   const conversation = conversations[selected] || emptyConversation(),
     draft = drafts[selected] || freshDraft();
+  // Hide the submitted text in the same render as its optimistic message.
+  // Keep the durable draft until admission succeeds so failures lose no input.
+  const composerContent = busy[selected] && draft.request &&
+    hiddenSubmissionText.current.has(draft.request.requestId) ? "" : draft.content;
   const entries = useMemo(
     () => transcriptEntries(conversation.messages),
     [conversation.messages],
@@ -236,6 +241,8 @@ function App() {
   function editDraft(change: Partial<Draft>) {
     const key = selectedRef.current,
       value = { ...(draftRef.current[key] || freshDraft()), ...change };
+    if (change.content !== undefined && value.request)
+      hiddenSubmissionText.current.delete(value.request.requestId);
     draftRef.current = { ...draftRef.current, [key]: value };
     setDrafts(draftRef.current);
     void persistDraft(key, value);
@@ -583,7 +590,7 @@ function App() {
       input.current.style.height =
         Math.min(input.current.scrollHeight, 180) + "px";
     }
-  }, [draft.content, selected]);
+  }, [composerContent, selected]);
   async function newChat() {
     await select("new");
     input.current?.focus();
@@ -671,6 +678,7 @@ function App() {
       attachments: d.attachments,
     };
     const saved = { ...d, request };
+    hiddenSubmissionText.current.add(request.requestId);
     let acknowledged = false;
     draftRef.current = { ...draftRef.current, [key]: saved };
     setDrafts(draftRef.current);
@@ -741,6 +749,7 @@ function App() {
         report(e);
       }
     } finally {
+      hiddenSubmissionText.current.delete(request.requestId);
       admitting.current.delete(key);
       setBusy((all) => ({ ...all, [key]: false }));
     }
@@ -841,6 +850,16 @@ function App() {
       <div
         className={`thread-row ${selected === t.id ? "active" : ""}`}
         key={t.id}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          const menu = event.currentTarget.querySelector<HTMLDetailsElement>(".thread-menu");
+          if (!menu) return;
+          document.querySelectorAll<HTMLDetailsElement>(".thread-menu[open]").forEach((other) => {
+            if (other !== menu) other.open = false;
+          });
+          menu.open = true;
+          menu.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+        }}
       >
         <button
           className="thread-select"
@@ -1037,16 +1056,26 @@ function App() {
         >
           <div className="conversation-inner">
             {!ready ? (
-              <div className="welcome">
-                <span className="loading-ring" />
-                <p>正在连接 Corki…</p>
+              <div className="welcome startup-screen" role="status" aria-live="polite">
+                <div className="startup-emblem" aria-hidden="true">
+                  <div className="startup-orbit" />
+                  <Icon name="gear" size={104} />
+                </div>
+                <p>Corki启动中...</p>
               </div>
             ) : !conversation.messages.length &&
               !conversation.pending.length &&
               !thinking ? (
               <div className="welcome">
                 <img src="resources/corki.png" alt="Corki" />
-                <h1>Learning never ends</h1>
+                <h1 className="welcome-greeting" aria-label="Learning never ends">
+                  <span aria-hidden="true">{"Learning never ends".split("").map((letter, index) => (
+                    <span className="greeting-letter" key={index}
+                      style={{ "--letter-delay": `${index * 45}ms`, "--glow-delay": `${index * 20}ms` } as React.CSSProperties}>
+                      {letter}
+                    </span>
+                  ))}</span>
+                </h1>
               </div>
             ) : (
               <>
@@ -1215,7 +1244,7 @@ function App() {
               maxLength={100000}
               aria-label="消息"
               placeholder="给 Corki 一个任务…"
-              value={draft.content}
+              value={composerContent}
               onChange={(e) => editDraft({ content: e.target.value })}
               onCompositionStart={() => {
                 composing.current = true;
@@ -1439,20 +1468,30 @@ function App() {
       )}
       {(modal === "delete" || modal === "archive") && (
         <Modal
-          title={modal === "archive" ? "归档会话" : "删除会话"}
+          className={`conversation-confirm${modal === "delete" ? " delete-confirm" : ""}`}
+          title={<span className="conversation-confirm-heading"><span className="conversation-confirm-icon"><Icon name={modal === "archive" ? "folder" : "trash"} size={23} /></span>{modal === "archive" ? "归档会话" : "删除会话"}</span>}
           onClose={() => {
             if (!removing) setModal(null);
           }}
         >
           <div className="delete-conversation">
             <div className="delete-title" title={target.title}>
-              {target.title}
+              <Icon name="chat" size={18} />
+              <span>{target.title}</span>
             </div>
             <p>
               {target.running
                 ? `此会话正在执行。停止任务后才能${modal === "archive" ? "归档" : "删除"}。`
-                : "删除后无法恢复，确认删除。"}
+                : "此会话及聊天记录将被永久删除，无法恢复。"}
             </p>
+
+          </div>
+          {modalError && (
+            <div className="inline-error" role="alert">
+              {modalError}
+            </div>
+          )}
+          <footer>
             {!target.running && (
               <label className="reminder-option">
                 <input
@@ -1467,13 +1506,6 @@ function App() {
                 <span>一天内不再提醒</span>
               </label>
             )}
-          </div>
-          {modalError && (
-            <div className="inline-error" role="alert">
-              {modalError}
-            </div>
-          )}
-          <footer>
             <button disabled={removing} onClick={() => setModal(null)}>
               取消
             </button>

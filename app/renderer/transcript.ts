@@ -57,7 +57,7 @@ export function transcriptEntries(messages: Message[]): TranscriptEntry[] {
     const commentary =
       message.role === "assistant" &&
       !!message.turnId &&
-      lastActivity.get(message.turnId) !== index;
+      (message.phase === "commentary" || lastActivity.get(message.turnId) !== index);
     return [
       {
         message,

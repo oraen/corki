@@ -326,7 +326,7 @@ test("thinking is scoped to the current question and hides for replies, errors, 
         ...active,
         messages: [
           ...active.messages,
-          { id: "a", role: "assistant", content: "reply" },
+          { id: "a", role: "assistant", content: "reply", streaming: true },
         ],
       },
       false,
@@ -365,8 +365,9 @@ test("cancellation retains streamed answer and emits one stopped marker", () => 
   };
   const cancelled = reduceEvent(
     prior,
-    event("TurnCancelled", { turn_id: "t" }),
+    event("TurnCancelled", { turn_id: "t", createdAt: "2026-10-19T08:30:00Z" }),
   );
+  assert.equal(cancelled.messages[0].createdAt, "2026-10-19T08:30:00Z");
   assert.equal(cancelled.messages[0].content, "partial answer");
   assert.equal(cancelled.messages[0].streaming, false);
   assert.equal(cancelled.messages[1].content, "回答已停止");
@@ -481,4 +482,71 @@ test('refresh keeps a loaded question ahead of earlier tools instead of duplicat
   const merged=mergeSnapshot(previous,incoming);
   assert.deepEqual(merged.messages.map(m=>m.id),['u','early','tail']);
   assert.equal(merged.messages[0].contextOnly,undefined);
+});
+
+test("completed progress messages keep waiting visible until the turn finishes", async () => {
+  const { awaitingFirstReply } = await import(pathToFileURL(path.join(tmp, "state.mjs")));
+  let s = reduceEvent(emptyConversation(), event("TurnStarted", {turn_id:"t"}));
+  s = reduceEvent(s,event("AssistantMessageCompleted",{turn_id:"t",item_id:"p",text:"Checking remaining items",phase:"commentary"}));
+  assert.equal(s.messages[0].phase,"commentary");
+  assert(awaitingFirstReply(s,false));
+  s = reduceEvent(s,event("TurnCompleted",{turn_id:"t"}));
+  assert(!awaitingFirstReply(s,false));
+});
+
+test("live replay does not append older off-page progress after newer canonical history", () => {
+  const messages = [
+    {id:"middle",role:"assistant",turnId:"t",content:"middle",phase:"commentary"},
+    {id:"tool:c",role:"tool",turnId:"t",callId:"c",content:"{}",name:"test"},
+  ];
+  const live = [
+    event("TurnStarted",{turn_id:"t"}),
+    event("AssistantMessageCompleted",{turn_id:"t",item_id:"first",text:"first",phase:"commentary"}),
+    event("AssistantMessageCompleted",{turn_id:"t",item_id:"middle",text:"middle",phase:"commentary"}),
+    event("ToolCallStarted",{turn_id:"t",tool_call_id:"c",tool_name:"test",arguments_preview:"{}"}),
+    event("AssistantTextDelta",{turn_id:"t",item_id:"last",delta:"latest"}),
+  ];
+  const s=conversationFromSnapshot({...emptyConversation(),threadId:"test",instance:"test",running:true,messages,live});
+  assert.deepEqual(s.messages.map(m=>m.id),["first","middle","tool:c","last"]);
+  assert.equal(s.messages[1],messages[0]);
+});
+
+test("live-only unfinished reply follows history without overlap; question anchors stay first",()=>{
+ const history={id:"old",role:"assistant",turnId:"old",content:"old"};
+ const live=[event("AssistantTextDelta",{turn_id:"t",item_id:"new",delta:"new"})];
+ let s=conversationFromSnapshot({...emptyConversation(),threadId:"test",instance:"test",running:true,messages:[history],live});
+ assert.deepEqual(s.messages.map(m=>m.id),["old","new"]);
+ const question={id:"q",role:"user",turnId:"t",content:"q",contextOnly:true};
+ const middle={id:"m",role:"assistant",turnId:"t",content:"m"};
+ s=conversationFromSnapshot({...emptyConversation(),threadId:"test",instance:"test",running:true,messages:[question,middle],live:[
+ event("AssistantMessageCompleted",{turn_id:"t",item_id:"early",text:"early"}),
+ event("AssistantMessageCompleted",{turn_id:"t",item_id:"m",text:"m"})]});
+ assert.deepEqual(s.messages.map(m=>m.id),["q","early","m"]);
+});
+
+test("progress phase survives deltas before message completion", async()=>{
+ const {awaitingFirstReply}=await import(pathToFileURL(path.join(tmp,"state.mjs")));
+ let s=reduceEvent(emptyConversation(),event("TurnStarted",{turn_id:"t"}));
+ s=reduceEvent(s,event("AssistantTextDelta",{turn_id:"t",item_id:"p",delta:"working",phase:"commentary"}));
+ assert.equal(s.messages[0].phase,"commentary");
+ assert(awaitingFirstReply(s,false));
+ s=reduceEvent(s,event("AssistantTextDelta",{turn_id:"t",item_id:"p",delta:"…"}));
+ assert.equal(s.messages[0].phase,"commentary");
+});
+
+test("cancellation snapshot keeps canonical question ahead of an initially provisional long turn", async()=>{
+ const {mergeSnapshot}=await import(pathToFileURL(path.join(tmp,"state.mjs")));
+ let previous=reduceEvent(emptyConversation(),event("UserMessageSubmitted",{request_id:"r",text:"question"}));
+ previous=reduceEvent(previous,event("TurnStarted",{turn_id:"t"}));
+ assert.equal(previous.messages[0].turnId,"t");
+ previous.messages.push(
+  {id:"progress",role:"assistant",turnId:"t",content:"working",phase:"commentary"},
+  {id:"tool:old",role:"tool",turnId:"t",content:"{}",streaming:false},
+  {id:"tool:anchor",role:"tool",turnId:"t",content:"{}",streaming:false});
+ const incoming={...emptyConversation(),next:20,messages:[
+  {id:"canonical-question",role:"user",turnId:"t",content:"question",contextOnly:true},
+  {id:"tool:anchor",role:"tool",turnId:"t",content:"{}"},
+  {id:"stopped:t",role:"stopped",turnId:"t",content:"stopped"}]};
+ const merged=mergeSnapshot(previous,incoming);
+ assert.deepEqual(merged.messages.map(m=>m.id),["canonical-question","progress","tool:old","tool:anchor","stopped:t"]);
 });

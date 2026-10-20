@@ -1073,3 +1073,127 @@ def test_desktop_goal_continuation_and_stop(tmp_path, stop_continuation):
             await service.close()
 
     asyncio.run(check())
+
+
+def test_real_runtime_tool_start_is_delivered_while_tool_is_blocked(tmp_path):
+    from dataclasses import replace
+    from corki.core.runtime import LangGraphRuntime
+    from corki.models import ModelCompleted
+    from corki.protocol.items import ToolCallItem, new_step_id
+    from corki.protocol.tools import ToolCall, ToolSpec, ToolResult
+    from corki.tools.registry import ToolRegistry
+
+    async def check():
+        setup(tmp_path)
+        release, entered, delivered = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        events = []
+        class SlowTool:
+            spec = ToolSpec("slow_fixture", "Wait for the test gate", {"type": "object"})
+            async def execute(self, call, context):
+                entered.set()
+                await release.wait()
+                return ToolResult(call.id, call.name, "done")
+        class Model:
+            calls = 0
+            async def stream(self, request):
+                self.calls += 1
+                turn, step = request.items[-1].turn_id, new_step_id()
+                yield ModelCompleted((ToolCallItem(ToolCall("slow", "slow_fixture", {}), turn, step),) if self.calls == 1
+                                     else (AssistantMessageItem("done", turn, step),))
+            async def aclose(self):
+                pass
+        async def factory(**kw):
+            kw["settings"] = replace(kw["settings"], skills_enabled=False, memories_generate=False,
+                                     memories_use=False, tool_mode="direct", tool_search_mode="disabled")
+            registry = ToolRegistry()
+            registry.register(SlowTool())
+            return await LangGraphRuntime.acreate(**kw, model=Model(), registry=registry, load_plugins=False)
+        async def send(event):
+            events.append(event)
+            if event.get("params", {}).get("type") == "ToolCallStarted":
+                delivered.set()
+        service = Service(tmp_path, send, factory)
+        thread = str(uuid.uuid4())
+        try:
+            await service.submit(dict(requestId=str(uuid.uuid4()), threadId=thread, content="test",
+                                      provider="test", model="test-model"))
+            await asyncio.wait_for(entered.wait(), 10)
+            await asyncio.wait_for(delivered.wait(), 2)
+            assert not any(e.get("params", {}).get("type") == "ToolCallCompleted" for e in events)
+            snapshot = await service.read_thread({"threadId": thread})
+            calls = [m for m in snapshot["messages"] if m.get("callId") == "slow" and m["role"] == "tool"]
+            assert calls and calls[0]["streaming"] is True
+            release.set()
+            await asyncio.wait_for(service.tasks[thread], 10)
+            assert any(e.get("params", {}).get("type") == "ToolCallCompleted" for e in events)
+        finally:
+            release.set()
+            await service.close()
+    asyncio.run(check())
+
+
+def test_desktop_runtime_discovers_shared_skills_from_user_home(tmp_path, monkeypatch):
+    from corki.skills import SkillService
+    user_home = tmp_path / "user-home"
+    corki_home = tmp_path / "corki-home"
+    corki_home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: user_home))
+    shared = user_home / ".agents/skills/shared-fixture/SKILL.md"
+    shared.parent.mkdir(parents=True)
+    shared.write_text("---\nname: shared-fixture\ndescription: Test\n---\nGuide")
+    excluded = user_home / ".codex/skills/excluded-fixture/SKILL.md"
+    excluded.parent.mkdir(parents=True)
+    excluded.write_text("---\nname: excluded-fixture\ndescription: Test\n---\nGuide")
+    discovered = []
+
+    async def check():
+        setup(corki_home)
+        async def send(event):
+            pass
+        async def factory(**kw):
+            assert kw["compatibility_home"] == user_home
+            service = SkillService(home=kw["home_path"], project_root=kw["settings"].working_directory,
+                                   compatibility_home=kw["compatibility_home"], bundled_enabled=False)
+            discovered.extend(s.name for s in service.snapshot(kw["settings"].working_directory).skills)
+            return FakeRuntime(**kw)
+        service = Service(corki_home, send, factory)
+        try:
+            await service.submit({"requestId": str(uuid.uuid4()), "threadId": str(uuid.uuid4()),
+                                  "content": "hello", "provider": "test", "model": "test-model"})
+            await asyncio.gather(*service.tasks.values())
+            assert "shared-fixture" in discovered
+            assert "excluded-fixture" not in discovered
+        finally:
+            await service.close()
+    asyncio.run(check())
+
+
+def test_display_pages_hide_compaction_copies_and_use_original_question(tmp_path):
+    from corki.protocol.items import CompactionItem
+    async def check():
+        setup(tmp_path)
+        async def send(event):
+            pass
+        service = Service(tmp_path, send)
+        thread, turn = ThreadId(str(uuid.uuid4())), TurnId(str(uuid.uuid4()))
+        question = UserMessageItem("fixture question", turn)
+        progress = AssistantMessageItem("fixture progress", turn, new_model_step_id(), phase="commentary")
+        retained = UserMessageItem(question.content, turn, retained_from_id=question.id)
+        # The marker is outside the latest page. Its replacement span must still
+        # be honored, and the context anchor must use the original question ID.
+        replacements = [AssistantMessageItem("context copy", turn, new_model_step_id()) for _ in range(65)]
+        answer = AssistantMessageItem("fixture final answer", turn, new_model_step_id(), phase="final_answer")
+        try:
+            await service.repository.create_thread(thread, tmp_path)
+            await service.repository.save_turn(TurnRecord(turn, thread, TurnStatus.COMPLETED, question.content, answer.content))
+            await service.repository.append_items(thread, (question, progress,
+                CompactionItem("summary", progress.id, turn, replacement_item_count=len(replacements)),
+                *replacements, retained, answer))
+            page = await service.read_thread({"threadId": str(thread)})
+            assert [m["id"] for m in page["messages"]] == [str(question.id), str(answer.id)]
+            assert page["messages"][0]["contextOnly"]
+            earlier = await service.read_thread({"threadId": str(thread), "before": page["next"]})
+            assert [m["id"] for m in earlier["messages"]] == [str(question.id), str(progress.id)]
+        finally:
+            await service.close()
+    asyncio.run(check())

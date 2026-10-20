@@ -32,6 +32,7 @@ from protocol import dumps
 from state import DesktopState
 
 from corki.cli.elicitation import validate_field
+from corki.cli.history_projection import HistoryProjection
 from corki.config.settings import CorkiSettings
 from corki.core.runtime import LangGraphRuntime
 from corki.protocol.ids import ThreadId
@@ -340,7 +341,7 @@ class Service:
                 ThreadId(thread), cursor=cursor, limit=limit
             )
             rows = []
-            for item in page.items:
+            for item in HistoryProjection(page.leading_replacements).feed(page.items):
                 if not isinstance(
                     item, (UserMessageItem, AssistantMessageItem, ToolCallItem, ToolResultItem)
                 ):
@@ -362,6 +363,7 @@ class Service:
                             **base,
                             "role": "user" if isinstance(item, UserMessageItem) else "assistant",
                             "imageCount": len(message_images(item)),
+                            "phase": getattr(item, "phase", None),
                         }
                     )
                 elif isinstance(item, ToolCallItem):
@@ -395,6 +397,9 @@ class Service:
         )
         for row in rows:
             row.update(timings.get((row.get("turnId"), row.get("callId")), {}))
+            if row["role"] == "tool" and row.get("startedAt") is not None:
+                row["completed"] = row.get("elapsedSeconds") is not None
+                row["streaming"] = not row["completed"] and thread in self.tasks
         # A long tool-heavy turn can push its question outside the bounded page.
         # Include only that turn's canonical question as a display anchor; the
         # pagination cursor still covers the intervening history without gaps.
@@ -402,7 +407,8 @@ class Service:
             with closing(sqlite3.connect(self.database)) as db:
                 question = db.execute(
                     "SELECT payload_json FROM conversation_items WHERE thread_id=? "
-                    "AND turn_id=? AND kind='user_message' AND sequence < "
+                    "AND turn_id=? AND kind='user_message' "
+                    "AND json_extract(payload_json,'$.retained_from_id') IS NULL AND sequence < "
                     "(SELECT sequence FROM conversation_items WHERE thread_id=? AND id=?) "
                     "ORDER BY sequence DESC LIMIT 1",
                     (thread, rows[0]["turnId"], thread, rows[0]["sourceId"]),
@@ -427,12 +433,12 @@ class Service:
             placeholders = ",".join("?" for _ in visible_turns)
             with closing(sqlite3.connect(self.database)) as db:
                 terminal_turns = db.execute(
-                    "SELECT id,status,error FROM turns WHERE thread_id=? "
+                    "SELECT id,status,error,updated_at FROM turns WHERE thread_id=? "
                     f"AND id IN ({placeholders}) AND status IN ('cancelled','failed')",
                     (thread, *visible_turns),
                 ).fetchall()
         cancelled = {row[0] for row in terminal_turns if row[1] == "cancelled"}
-        for turn, status, error in terminal_turns:
+        for turn, status, error, _ in terminal_turns:
             if status == "failed" and error:
                 index = max(i for i, row in enumerate(rows) if row["turnId"] == turn) + 1
                 rows.insert(
@@ -446,11 +452,13 @@ class Service:
                     },
                 )
         partials = self.state.interrupted(thread, cancelled & visible_turns, PREVIEW_CHARS)
+        stopped_at = {row[0]: row[3] for row in terminal_turns if row[1] == "cancelled"}
         for turn in cancelled & visible_turns:
             index = max(i for i, row in enumerate(rows) if row["turnId"] == turn) + 1
             existing = {row["id"] for row in rows}
             additions = [
-                row for row in partials if row["turnId"] == turn and row["id"] not in existing
+                {**row, "createdAt": stopped_at[turn]}
+                for row in partials if row["turnId"] == turn and row["id"] not in existing
             ]
             additions.append(
                 {
@@ -685,6 +693,7 @@ class Service:
                     settings=settings,
                     database_path=self.database,
                     home_path=self.home,
+                    compatibility_home=Path.home(),
                     thread_id=ThreadId(thread),
                 )
                 self.runtimes[thread] = runtime
@@ -776,7 +785,7 @@ class Service:
                     if kind == "AssistantReasoningDelta" and event.channel != "summary":
                         continue
                     data = asdict(event)
-                    if kind == "AssistantMessageCompleted":
+                    if kind in ("AssistantMessageCompleted", "TurnCancelled"):
                         data["createdAt"] = datetime.now(UTC).isoformat()
                     if kind == "ToolCallStarted":
                         data["startedAt"] = int(time.time() * 1000)

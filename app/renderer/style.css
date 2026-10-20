@@ -648,8 +648,21 @@ main {
   opacity: 1;
 }
 .send-button.stop {
-  background: #eeeee7;
-  color: #5a6253;
+  background: #cf5147;
+  color: #fff;
+  transition: background 0.15s;
+}
+.send-button.stop:hover:not(:disabled) {
+  background: #bb443b;
+}
+.send-button.stop:focus-visible {
+  outline: 3px solid #f4c3bd;
+  outline-offset: 3px;
+}
+.send-button.stop:disabled {
+  background: #e8aaa4;
+  color: #fff;
+  cursor: not-allowed;
 }
 .jump-bottom {
   position: absolute;
@@ -1057,23 +1070,82 @@ main {
   opacity: 1;
 }
 
-.delete-conversation {
-  padding: 4px 0 8px;
+.conversation-confirm {
+  width: 440px;
+  padding: 26px;
+  border: 1px solid #eee5de;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 24px 80px #32201626, 0 4px 16px #3220160a;
 }
+.conversation-confirm header { margin-bottom: 22px; }
+.conversation-confirm-heading { display: flex; align-items: center; gap: 13px; color: #302d2a; }
+.conversation-confirm-icon {
+  display: grid; place-items: center; width: 46px; height: 46px;
+  border-radius: 14px; background: #fff3e9; color: #db681f;
+  border: 1px solid #ffe7d4;
+}
+.conversation-confirm header > button { color: #9a938d; }
+.delete-conversation { padding: 0; }
 .delete-title {
-  font-weight: 600;
-  font-size: 15px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  margin-bottom: 12px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 15px; border: 1px solid #eeeae5; border-radius: 11px;
+  background: #faf9f7; color: #49433d; font-weight: 500; font-size: 14px;
+  margin-bottom: 14px;
 }
-.delete-conversation p {
-  color: #716c66;
-  font-size: 14px;
-  line-height: 1.7;
-  margin: 0 0 24px;
+.delete-title > svg { flex-shrink: 0; color: #a49a90; }
+.delete-title > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.delete-conversation p { color: #81776f; font-size: 13px; line-height: 1.8; margin: 0 0 22px; }
+.conversation-confirm footer { margin-top: 26px; gap: 10px; }
+.conversation-confirm footer > button { min-width: 88px; font-size: 13px; transition: background .15s, box-shadow .15s; }
+.conversation-confirm footer > button:not(.primary):not(.danger) { background: #fff; border: 1px solid #e5dfd9; color: #655c54; }
+.conversation-confirm footer > button:not(.primary):not(.danger):hover { background: #f7f5f2; }
+.conversation-confirm .danger { background: #cf5147; box-shadow: 0 2px 4px #b4424214; }
+.conversation-confirm .danger:hover:not(:disabled) { background: #bb443b; }
+.conversation-confirm button:disabled { opacity: .5; cursor: not-allowed; }
+/* Delete confirmation: scoped refinement; other dialogs keep their styling. */
+.delete-confirm {
+  width: 480px;
+  padding: 28px 28px 0;
+  border-radius: 16px;
+  border-color: #e8e3dc;
+  box-shadow: 0 20px 64px #30251b26, 0 2px 8px #30251b0a;
 }
+.delete-confirm::backdrop { background: #29262038; backdrop-filter: blur(2px); }
+.delete-confirm header { margin-bottom: 20px; }
+.delete-confirm h2 { font-size: 19px; letter-spacing: -.3px; }
+.delete-confirm .conversation-confirm-heading { gap: 10px; }
+.delete-confirm .conversation-confirm-icon {
+  width: 24px; height: 28px; border: 0; border-radius: 0;
+  background: none; color: #c45c24;
+}
+.delete-confirm header > button { width: 30px; height: 30px; color: #80766c; }
+.delete-confirm .delete-title {
+  display: block; margin: 0 0 8px; padding: 0;
+  border: 0; background: none; color: #403a34; font-size: 15px; line-height: 1.6;
+}
+.delete-confirm .delete-title > svg { display: none; }
+.delete-confirm .delete-title > span {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  white-space: normal; overflow-wrap: anywhere;
+}
+.delete-confirm .delete-title > span::before { content: '“'; }
+.delete-confirm .delete-title > span::after { content: '”'; }
+.delete-confirm .delete-conversation p { margin: 0 0 26px; color: #756b61; font-size: 13px; }
+.delete-confirm footer {
+  align-items: center; gap: 8px; margin: 0 -28px; padding: 18px 24px;
+  background: #faf8f5; border-radius: 0 0 16px 16px;
+}
+.delete-confirm footer .reminder-option { margin-right: auto; font-size: 12px; color: #756b61; gap: 7px; }
+.delete-confirm footer > button { min-width: 72px; min-height: 36px; padding: 8px 16px; border-radius: 8px; }
+.delete-confirm footer > button:not(.primary):not(.danger) { padding: 8px 16px; background: #fff; border-color: #ded8d0; }
+.delete-confirm .danger { background: #c94d42; box-shadow: none; }
+.delete-confirm .danger:hover:not(:disabled) { background: #b64137; }
+.delete-confirm button:focus-visible { outline: 2px solid #d96b2d; outline-offset: 3px; }
+.delete-confirm .inline-error { margin: -10px 0 20px; }
+.delete-confirm .reminder-check { width: 16px; height: 16px; border-radius: 4px; flex-shrink: 0; }
+.delete-confirm .reminder-option:has(input:disabled) { opacity: .55; cursor: not-allowed; }
+
 .reminder-option {
   display: flex;
   align-items: center;
@@ -1281,7 +1353,7 @@ main {
 
 .message-time{display:block;margin-top:8px;font-size:11px;line-height:1.5;color:#99948e;font-variant-numeric:tabular-nums;font-weight:400}.message-content.is-folded .message-time{flex-shrink:0;margin-top:0}.message.user .message-time{text-align:right}
 
-.user-message-meta,.assistant-message-meta{display:flex;align-items:center;gap:12px;min-width:0}.user-message-meta{justify-content:flex-end;margin-bottom:5px}.assistant-message-meta{margin-top:8px}.user-message-meta .message-time,.assistant-message-meta .message-time{margin:0}.user-message-meta .message-fold{float:none;margin:0;order:0}.assistant-message-meta .copy-button{margin:0}.message.user .message-content.is-folded{align-items:flex-end;gap:0}.message.assistant .message-content.is-folded{flex-wrap:wrap}.message.assistant .is-folded .assistant-message-meta{flex-basis:100%}
+.user-message-meta,.assistant-message-meta{display:flex;align-items:center;gap:12px;min-width:0}.user-message-meta{justify-content:flex-end;margin-bottom:5px}.assistant-message-meta{margin-top:8px;align-items:flex-end}.user-message-meta .message-time,.assistant-message-meta .message-time{margin:0}.user-message-meta .message-fold{float:none;margin:0;order:0}.assistant-message-meta .copy-button{margin:0;line-height:1.5}.assistant-message-meta .message-time{padding:5px 0}.message.user .message-content.is-folded{align-items:flex-end;gap:0}.message.assistant .message-content.is-folded{flex-wrap:wrap}.message.assistant .is-folded .assistant-message-meta{flex-basis:100%}
 
 .topbar .app-settings,.topbar .app-restart{width:30px;height:30px;color:#9a948d;border-radius:8px;flex-shrink:0}.topbar .app-settings:hover,.topbar .app-restart:hover{color:#c96624;background:#fff1e6}.topbar .app-restart:disabled{cursor:not-allowed;opacity:.5}
 /* Reveal question time without moving the question or its fold control. */
@@ -1294,3 +1366,17 @@ main {
 .topbar .app-settings,.topbar .app-restart{width:26px}
 .topbar .app-settings + .app-restart{margin-left:-12px}
 .topbar{padding-right:20px}
+/* A quiet entrance and occasional warm highlight, without layout shifts. */
+.greeting-letter{display:inline-block;white-space:pre;animation:greeting-reveal .55s cubic-bezier(.2,.7,.3,1) var(--letter-delay) both,greeting-glow 8s ease-in-out calc(2s + var(--glow-delay)) infinite}
+@keyframes greeting-reveal{from{opacity:0;transform:translateY(7px);filter:blur(3px)}to{opacity:1;transform:translateY(0);filter:blur(0)}}
+@keyframes greeting-glow{0%,8%,100%{color:#44473e;text-shadow:none}3.5%{color:#bb8457;text-shadow:0 0 15px #f2bb8245}}
+@media(prefers-reduced-motion:reduce){.greeting-letter{animation:none;opacity:1;transform:none;filter:none}}
+
+/* Desktop startup: one quiet motion, local vector artwork. */
+.startup-screen { gap: 0; }
+.startup-emblem { position: relative; display: grid; place-items: center; width: 184px; height: 184px; margin-bottom: 20px; border-radius: 50%; background: radial-gradient(circle, #ff6a0009 0%, #ff6a0003 50%, transparent 72%); }
+.startup-emblem > svg { position: relative; color: #d58b53; stroke-width: 1.1; animation: startup-rotate 4s linear infinite; }
+.startup-orbit { position: absolute; inset: 14px; border: 1px solid #e8d7c84d; border-radius: 50%; }
+.startup-screen > p { margin: 0; color: #82796f; font-size: 15px; font-weight: 500; letter-spacing: .5px; }
+@keyframes startup-rotate { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .startup-emblem > svg { animation: none; } }

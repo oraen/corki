@@ -82,6 +82,9 @@ def test_stop_reopen_copy_followup_and_delete(tmp_path):
         assert [m["role"] for m in view["messages"]] == ["user", "assistant", "stopped"]
         assert view["messages"][1]["content"] == partial[:PREVIEW_CHARS]
         assert view["messages"][1]["truncated"]
+        assert view["messages"][1]["createdAt"]
+        restored = await service.read_thread({"threadId": thread})
+        assert restored["messages"][1]["createdAt"] == view["messages"][1]["createdAt"]
         from corki.protocol.items import AssistantMessageItem
 
         assert not any(
