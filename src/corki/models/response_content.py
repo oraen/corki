@@ -18,6 +18,7 @@ class _Content:
     parts: dict[tuple[str, int], str] = field(default_factory=dict)
     completed: AssistantMessageItem | ReasoningItem | None = None
     provider_id: str | None = None
+    phase: str | None = None
 
     def text(self) -> str:
         channels = {key[0] for key in self.parts}
@@ -56,6 +57,8 @@ class ResponseContent:
         key = self._key(item, event, kind)
         buffer = self._items.setdefault(key, _Content(kind))
         buffer.provider_id = item.get("id") or buffer.provider_id
+        if item.get("phase") in ("commentary", "final_answer"):
+            buffer.phase = item["phase"]
 
     def delta(self, event: dict[str, Any], *, reasoning: bool):
         kind = "reasoning" if reasoning else "message"
@@ -81,7 +84,7 @@ class ResponseContent:
                 section_index=index,
                 channel="summary" if summary else "raw",
             )
-        return ModelTextDelta(delta, item_id=buffer.id)
+        return ModelTextDelta(delta, item_id=buffer.id, phase=buffer.phase)
 
     def complete(self, item: dict[str, Any], event: dict[str, Any], *, synthetic: bool = False):
         kind = item["type"]
@@ -89,6 +92,8 @@ class ResponseContent:
         buffer = self._items.setdefault(key, _Content(kind))
         if not synthetic:
             buffer.provider_id = item.get("id") or buffer.provider_id
+        if item.get("phase") in ("commentary", "final_answer"):
+            buffer.phase = item["phase"]
         if buffer.kind != kind:
             raise ModelError("Responses item type changed")
         field_name = "summary" if kind == "reasoning" else "content"

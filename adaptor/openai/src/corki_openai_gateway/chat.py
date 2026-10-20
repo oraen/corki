@@ -191,3 +191,70 @@ def chat_events(lines, model: str = "unknown"):
             yield b"data: [DONE]\n\n"
             return
     raise ValueError("Codex stream ended before response.completed")
+
+
+def completed_response(lines, *, max_bytes: int = 32 * 1024 * 1024) -> dict:
+    """Wait for the authoritative completed response without retaining deltas."""
+    size = 0
+    for line in lines:
+        size += len(line.encode("utf-8"))
+        if size > max_bytes:
+            raise ValueError("Codex response exceeds the buffering limit")
+        if not line.startswith("data:"):
+            continue
+        raw = line[5:].strip()
+        if not raw or raw == "[DONE]":
+            continue
+        event = json.loads(raw)
+        if not isinstance(event, dict):
+            raise ValueError("Invalid Codex event")
+        kind = event.get("type")
+        if kind in {"response.failed", "response.incomplete", "error"}:
+            raise ValueError("Codex returned an unsuccessful response")
+        if kind == "response.completed":
+            response = event.get("response")
+            if not isinstance(response, dict) or response.get("status", "completed") != "completed":
+                raise ValueError("Codex response did not complete")
+            return response
+    raise ValueError("Codex stream ended before response.completed")
+
+
+def chat_completion(response: dict, model: str) -> dict:
+    """Reuse streaming field mapping with the final, complete response as input."""
+    import time
+
+    message = {"role": "assistant", "content": None}
+    result = {
+        "id": response.get("id", "chatcmpl-codex-gateway"),
+        "object": "chat.completion",
+        "created": response.get("created_at", int(time.time())),
+        "model": response.get("model", model),
+        "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+    }
+    event = json.dumps({"type": "response.completed", "response": response})
+    for chunk in chat_events(["data: " + event], model):
+        if chunk == b"data: [DONE]\n\n":
+            continue
+        packet = json.loads(chunk.decode()[6:])
+        choice = packet["choices"][0]
+        delta = choice["delta"]
+        if "content" in delta:
+            message["content"] = (message["content"] or "") + delta["content"]
+        if "tool_calls" in delta:
+            message["tool_calls"] = [
+                {k: v for k, v in call.items() if k != "index"} for call in delta["tool_calls"]
+            ]
+        if choice.get("finish_reason"):
+            result["choices"][0]["finish_reason"] = choice["finish_reason"]
+        if "usage" in packet:
+            result["usage"] = packet["usage"]
+    refusals = [
+        part["refusal"]
+        for item in response.get("output", [])
+        if item.get("type") == "message"
+        for part in item.get("content", [])
+        if part.get("type") == "refusal"
+    ]
+    if refusals:
+        message["refusal"] = "".join(refusals)
+    return result

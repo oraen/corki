@@ -65,3 +65,30 @@ def test_legacy_unkeyed_delta_spanning_messages_is_not_duplicated(plan_mode):
         ]
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("plan_mode", [False, True])
+def test_completed_message_preserves_phase(plan_mode):
+    async def scenario():
+        events = []
+        async def emit(event):
+            events.append(event)
+        output = ModelOutput("thread", "turn", emit, plan_mode=plan_mode)
+        item = AssistantMessageItem("Progress", "turn", "step", phase="commentary")
+        await output.complete(item)
+        completed = [e for e in events if isinstance(e, AssistantMessageCompleted)]
+        assert len(completed) == 1
+        assert completed[0].phase == "commentary"
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("plan_mode", [False, True])
+def test_progress_phase_is_available_during_streaming(plan_mode):
+    async def scenario():
+        events = []
+        async def emit(event):
+            events.append(event)
+        output = ModelOutput("thread", "turn", emit, plan_mode=plan_mode)
+        await output.delta(ModelTextDelta("Progress", item_id="message", phase="commentary"))
+        assert events and all(e.phase == "commentary" for e in events if isinstance(e, AssistantTextDelta))
+    asyncio.run(scenario())

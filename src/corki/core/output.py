@@ -80,7 +80,7 @@ class ModelOutput:
         visible = stream.filter.push(event.delta)
         if visible:
             stream.visible += visible
-            await self.emit(AssistantTextDelta(self.thread, self.turn, visible, event.item_id))
+            await self.emit(AssistantTextDelta(self.thread, self.turn, visible, event.item_id, event.phase))
 
     async def complete(self, item: AssistantMessageItem) -> None:
         if item.id in self._completed:
@@ -96,7 +96,7 @@ class ModelOutput:
         tail = stream.filter.finish()
         if tail:
             stream.visible += tail
-            await self.emit(AssistantTextDelta(self.thread, self.turn, tail, item.id))
+            await self.emit(AssistantTextDelta(self.thread, self.turn, tail, item.id, item.phase))
         if unkeyed and stream.visible.startswith(item.content):
             remaining = stream.visible[len(item.content) :]
             if remaining:
@@ -107,9 +107,9 @@ class ModelOutput:
             item.content[len(stream.visible) :] if item.content.startswith(stream.visible) else ""
         )
         if suffix:
-            await self.emit(AssistantTextDelta(self.thread, self.turn, suffix, item.id))
+            await self.emit(AssistantTextDelta(self.thread, self.turn, suffix, item.id, item.phase))
         if item.content:
             await self.emit(
-                AssistantMessageCompleted(self.thread, self.turn, item.content, item.id)
+                AssistantMessageCompleted(self.thread, self.turn, item.content, item.id, item.phase)
             )
         self._completed.add(item.id)

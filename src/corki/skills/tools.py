@@ -20,7 +20,13 @@ class SkillListTool:
             name="skill_list",
             description=(
                 "List available Corki skills using bounded name, description, "
-                "scope, and source metadata."
+                "scope, and source metadata. "
+                "Directory categories: public/shared skills are in ~/.agents/skills; "
+                "Corki extensions are in $CORKI_HOME/skills (default ~/.corki/skills); "
+                "built-in skills are in $CORKI_HOME/skills/.system. "
+                "Both public and extension skills can have user scope; distinguish them by path. "
+                "~/.codex/skills is not Corki's public skills directory. "
+                "Only currently visible skills are listed; disabled or hidden skills may still exist on disk."
             ),
             parameters={
                 "type": "object",

@@ -400,8 +400,9 @@ def test_import_preview_package_and_runtime_discovery(store):
         store.mutate({**data, "action": "validate-import"})
     with pytest.raises(ValueError, match="同名"):
         store.mutate(data)
-    store.mutate({**data, "name": "example-copy"})
-    assert (target.parent / "example-copy/SKILL.md").exists()
+    with pytest.raises(ValueError, match="自定义"):
+        store.mutate({**data, "name": "example-copy"})
+    assert not (target.parent / "example-copy").exists()
 
 
 @pytest.mark.parametrize("group", ["corki", "public"])
@@ -437,7 +438,7 @@ def test_import_skill_rejects_invalid_group(store):
 
 
 @pytest.mark.parametrize(
-    "path", ["../outside", "/outside", "foo/../../outside", "foo\\outside", ".hidden"]
+    "path", ["../outside", "/outside", "foo/../../outside", "foo\\outside"]
 )
 def test_import_rejects_unsafe_paths_without_partial_writes(store, path):
     data = skill_upload()
@@ -470,8 +471,8 @@ def test_zip_import_preserves_executable_and_rejects_symlinks(store):
     def archive(link=False):
         stream = io.BytesIO()
         with zipfile.ZipFile(stream, "w") as z:
-            z.writestr("sample/SKILL.md", "---\nname: zipped\ndescription: Zip test\n---\nRun")
-            entry = zipfile.ZipInfo("sample/scripts/run.sh")
+            z.writestr("zipped/SKILL.md", "---\nname: zipped\ndescription: Zip test\n---\nRun")
+            entry = zipfile.ZipInfo("zipped/scripts/run.sh")
             entry.external_attr = (0o120777 if link else 0o100755) << 16
             z.writestr(entry, b"#!/bin/sh\necho test")
         return base64.b64encode(stream.getvalue()).decode()
@@ -1850,21 +1851,309 @@ def test_skill_import_without_package_count_or_size_cap(store, archive):
         server.server_close()
         thread.join()
 
-@pytest.mark.parametrize("header", ["name: example", "name: >\n  example", "description: Test import"])
-def test_skill_rename_preserves_path_and_runtime_discovery(store, header):
-    from corki.skills.service import SkillService
+@pytest.mark.parametrize("header", ["name: legacy-name", "name: >\n  legacy-name", "description: Test import"])
+def test_existing_skill_name_cannot_be_changed(store, header):
     content = "---\n" + header + ("\ndescription: Test import" if "description:" not in header else "") + "\n---\nBody\n"
-    store.mutate(skill_upload([("example/SKILL.md", content.encode())]))
+    path = store.home / "skills/legacy-directory/SKILL.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(content)
     item = next(f for f in store.files() if f["kind"] == "skills")
-    old_path = Path(item["path"])
     resource = store.read_skill_resource(item["id"], "SKILL.md")
-    store.mutate(dict(kind="skills", action="rename", id=item["id"], name="renamed-skill",
-                      revision=resource["revision"]))
-    assert old_path.exists()
-    assert old_path.read_text().endswith("---\nBody\n")
-    service = SkillService(home=store.home, project_root=store.workspace,
-                           compatibility_home=store.compatibility_home, bundled_enabled=False)
-    assert any(s.name == "renamed-skill" for s in service.snapshot(store.workspace).skills)
-    with pytest.raises(ValueError, match="其他程序"):
-        store.mutate(dict(kind="skills", action="rename", id=item["id"], name="again",
-                          revision=resource["revision"]))
+    with pytest.raises(ValueError, match="不支持修改"):
+        store.mutate(dict(kind="skills", action="rename", id=item["id"], name="renamed", revision=resource["revision"]))
+    for action in ("save-resource", "save"):
+        with pytest.raises(ValueError, match="不支持修改"):
+            store.mutate(dict(kind="skills", action=action, id=item["id"], path="SKILL.md",
+                              content="---\nname: changed\ndescription: Test\n---\nBody", revision=resource["revision"]))
+    store.mutate(dict(kind="skills", action="save-resource", id=item["id"], path="SKILL.md",
+                      content=content + "Updated", revision=resource["revision"]))
+    assert path.read_text() == content + "Updated"
+
+
+def hook_change(store, **values):
+    current = store.hooks_document()
+    return store.mutate(dict(kind="hooks", revision=current["revision"],
+                             file_revision=current["file_revision"], **values))
+
+
+def test_hooks_crud_trust_and_runtime_discovery(store):
+    from corki.config.settings import CorkiSettings
+    from corki.core.stop_hooks import discover
+
+    hook_change(store, action="save", event="UserPromptSubmit", matcher="*",
+                handler={"type": "command", "command": "echo ready"}, enabled=True)
+    item = store.hooks_document()["entries"][0]
+    assert item["enabled"] and item["trusted"]
+    settings = CorkiSettings.for_directory(store.workspace, config_file=store.config)
+    commands, warnings = discover(settings.configuration, event_name="UserPromptSubmit")
+    assert len(commands) == 1 and commands[0].command == "echo ready"
+    hook_change(store, action="toggle", id=item["id"], enabled=False)
+    settings = CorkiSettings.for_directory(store.workspace, config_file=store.config)
+    assert not discover(settings.configuration, event_name="UserPromptSubmit")[0]
+    hook_change(store, action="save", id=item["id"], event="Stop", matcher="*",
+                handler={"type": "command", "command": "echo done"}, enabled=True)
+    item = store.hooks_document()["entries"][0]
+    assert item["event"] == "Stop"
+    settings = CorkiSettings.for_directory(store.workspace, config_file=store.config)
+    assert len(discover(settings.configuration, event_name="Stop")[0]) == 1
+    hook_change(store, action="delete", id=item["id"])
+    assert store.hooks_document()["entries"] == []
+    assert config(store)["unrelated"] == {"enabled": True}
+
+
+def test_hooks_json_reindex_preserves_other_trust(store):
+    from corki.config.settings import CorkiSettings
+    from corki.core.stop_hooks import discover
+    path = store.home / "hooks.json"
+    path.write_text(json.dumps({"description": "keep", "hooks": {"Stop": [{"matcher": "*", "hooks": [
+        {"type": "command", "command": "echo first"}, {"type": "command", "command": "echo second"},
+        {"type": "command", "command": "echo untrusted"}]}]}}))
+    rows = store.hooks_document()["entries"]
+    hook_change(store, action="toggle", id=rows[1]["id"], enabled=True)
+    hook_change(store, action="delete", id=rows[0]["id"])
+    rows = store.hooks_document()["entries"]
+    assert rows[0]["enabled"] and not rows[1]["trusted"]
+    assert json.loads(path.read_text())["description"] == "keep"
+    settings = CorkiSettings.for_directory(store.workspace, config_file=store.config)
+    commands, _ = discover(settings.configuration, event_name="Stop")
+    assert [c.command for c in commands] == ["echo second"]
+
+
+def test_hooks_conflicts_and_invalid_config(store):
+    snapshot = store.hooks_document()
+    hook_change(store, action="global", enabled=False)
+    with pytest.raises(ValueError, match="已更新"):
+        store.mutate(dict(kind="hooks", action="global", enabled=True,
+                          revision=snapshot["revision"], file_revision=snapshot["file_revision"]))
+    original = store.config_text()
+    for event, handler in [("PermissionRequest", {"type":"command", "command":"echo x"}),
+                           ("Stop", {"type":"command", "command":""}),
+                           ("Stop", {"type":"mcp_tool", "server":"absent", "tool":"x"})]:
+        with pytest.raises(ValueError):
+            hook_change(store, action="save", event=event, handler=handler, enabled=True)
+    assert store.config_text() == original
+    (store.home / "hooks.json").write_text('{broken')
+    with pytest.raises(ValueError):
+        store.hooks_document()
+
+
+def test_hooks_mcp_and_disabled_preserved_after_delete(store):
+    change(store, kind="tools", action="save", id="demo", values={"transport":"stdio","command":"python3"})
+    hook_change(store, action="save", event="Stop", handler={"type":"command","command":"echo x"}, enabled=True)
+    hook_change(store, action="save", event="PreToolUse", matcher="*", handler={"type":"mcp_tool","server":"demo","tool":"check","input":{}}, enabled=False)
+    rows=store.hooks_document()["entries"]
+    hook_change(store, action="delete", id=next(r["id"] for r in rows if r["event"]=="Stop"))
+    row=store.hooks_document()["entries"][0]
+    assert row["trusted"] and not row["enabled"] and row["handler"]["server"]=="demo"
+
+
+def test_manager_saved_hook_executes_with_runtime_runner(store):
+    import asyncio
+    from corki.config.settings import CorkiSettings
+    from corki.core.stop_hooks import discover, run_command
+    from corki.shell import default_user_shell
+    store.workspace.mkdir(parents=True, exist_ok=True)
+    hook_change(store, action="save", event="UserPromptSubmit", matcher="*",
+                handler={"type":"command","command":"printf hook-runtime-ok","timeout":5}, enabled=True)
+    settings = CorkiSettings.for_directory(store.workspace, config_file=store.config)
+    commands, _ = discover(settings.configuration, event_name="UserPromptSubmit")
+    result = asyncio.run(run_command(commands[0], {"hook_event_name":"UserPromptSubmit"},
+                                     shell=default_user_shell(), cwd=store.workspace, environment={}))
+    assert result["exit_code"] == 0 and result["stdout"] == "hook-runtime-ok"
+
+
+def test_private_hook_skill_upload_hidden_save_and_cleanup(store):
+    upload=skill_upload([('fixture/SKILL.md',b'---\nname: private-test\ndescription: private\n---\nRead references/guide.md'),('fixture/references/guide.md',b'guide')])
+    result=hook_change(store, action='upload-skill',upload=upload)
+    path=Path(result['path'])
+    assert path.is_file() and (path.parent/'references/guide.md').read_text()=='guide'
+    assert not any(f['name']=='private-test' for f in store.files())
+    hook_change(store,action='save',event='UserPromptSubmit',matcher='*',handler={'type':'skill','path':str(path)},enabled=True)
+    store.mutate({'kind':'hooks','action':'discard-upload','path':str(path)})
+    assert path.exists()  # Saved package cannot be removed by stale dialog cleanup.
+    item=store.hooks_document()['entries'][0]
+    hook_change(store,action='delete',id=item['id'])
+    assert not path.parent.exists()
+    result=hook_change(store,action='upload-skill',upload=upload)
+    store.mutate({'kind':'hooks','action':'discard-upload','path':result['path']})
+    assert not Path(result['path']).parent.exists()
+
+
+def test_private_hook_skill_zip_and_prompt(store):
+    import base64,io,zipfile
+    buf=io.BytesIO()
+    with zipfile.ZipFile(buf,'w') as z:
+        z.writestr('demo/SKILL.md','---\nname: zip-private\ndescription: test\n---\nInstructions')
+        z.writestr('demo/scripts/check.py','print("fixture")')
+    result=hook_change(store,action='upload-skill',upload={'archive':base64.b64encode(buf.getvalue()).decode()})
+    assert (Path(result['path']).parent/'scripts/check.py').exists()
+    hook_change(store,action='save',event='PreToolUse',matcher='*',handler={'type':'prompt','prompt':'Check facts'},enabled=True)
+    assert store.hooks_document()['entries'][0]['handler']['prompt']=='Check facts'
+    with pytest.raises(ValueError):
+        hook_change(store,action='upload-skill',upload=skill_upload([('../SKILL.md',b'bad')]))
+
+@pytest.mark.parametrize("group", ["corki", "public", "project"])
+def test_skill_permanent_delete_package(store, tmp_path, group):
+    base = {"corki": store.home / "skills", "public": store.compatibility_home / ".agents/skills",
+            "project": store.workspace / ".corki/skills"}[group]
+    package = base / "delete-fixture"
+    (package / "scripts").mkdir(parents=True)
+    (package / "SKILL.md").write_text("---\nname: delete-fixture\ndescription: fixture\n---\nGuide")
+    (package / "scripts/run.py").write_text("print('fixture')")
+    outside = tmp_path / "untouched.txt"
+    outside.write_text("keep")
+    (package / "linked.txt").symlink_to(outside)
+    item = next(f for f in store.files() if f["name"] == "delete-fixture")
+    with pytest.raises(ValueError, match="已更新"):
+        store.mutate(dict(kind="skills", action="delete", id=item["id"], revision="stale"))
+    assert package.exists()
+    store.mutate(dict(kind="skills", action="delete", id=item["id"], revision=item["revision"]))
+    assert not package.exists()
+    assert base.is_dir()
+    assert outside.read_text() == "keep"
+    assert not any(f["id"] == item["id"] for f in store.files())
+
+
+def test_skill_permanent_delete_rejects_builtin(store):
+    package = store.home / "skills/.system/protected"
+    package.mkdir(parents=True)
+    path = package / "SKILL.md"
+    path.write_text("---\nname: protected\ndescription: fixture\n---\nGuide")
+    item = next(f for f in store.files() if f["name"] == "protected")
+    with pytest.raises(ValueError, match="内置"):
+        store.mutate(dict(kind="skills", action="delete", id=item["id"], revision=item["revision"]))
+    assert path.exists()
+
+
+def test_skill_export_large_package_uses_file_stream(store, skill_package):
+    import zipfile
+    root, identity = skill_package
+    payload = root / "large.bin"
+    with payload.open("wb") as out:
+        for _ in range(33):
+            out.write(b"x" * (1024 * 1024))
+    stream, name = store.export_skill(identity, stream=True)
+    with stream:
+        assert stream.fileno() >= 0
+        with zipfile.ZipFile(stream) as archive:
+            assert archive.getinfo("workbench/large.bin").file_size == 33 * 1024 * 1024
+            assert archive.testzip() is None
+    assert stream.closed
+
+
+@pytest.mark.parametrize("existing_group", ["corki", "public", "builtin"])
+@pytest.mark.parametrize("target_group", ["corki", "public"])
+def test_skill_import_rejects_actual_name_across_groups(store, existing_group, target_group):
+    root = {"corki": store.home / "skills", "public": store.compatibility_home / ".agents/skills",
+            "builtin": store.home / "skills/.system"}[existing_group]
+    package = root / "different-directory"
+    package.mkdir(parents=True)
+    (package / "SKILL.md").write_text("---\nname: Example\ndescription: fixture\n---\nGuide")
+    data = skill_upload(group=target_group)
+    for action in ("validate-import", "import"):
+        with pytest.raises(ValueError, match="同名"):
+            store.mutate({**data, "action": action})
+    assert not (store.home / "skills/new-directory").exists()
+    assert not (store.compatibility_home / ".agents/skills/new-directory").exists()
+
+
+def test_skill_import_rechecks_name_after_preview(store):
+    data = skill_upload(group="public")
+    store.mutate({**data, "action": "validate-import"})
+    store.mutate(skill_upload(group="corki"))
+    with pytest.raises(ValueError, match="同名"):
+        store.mutate(data)
+
+
+def test_private_hook_skill_import_does_not_conflict_with_catalog(store):
+    store.mutate(skill_upload())
+    result = store.import_skill(skill_upload(name="hook-copy"), private=True)
+    assert Path(result["path"]).is_dir()
+
+
+@pytest.mark.parametrize("archive", [False, True])
+def test_skill_import_uses_metadata_for_root_package(store, archive):
+    import base64, io, zipfile
+    data = skill_upload([( "SKILL.md", b"---\nname: example\ndescription: fixture\n---\nGuide")])
+    if archive:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as zipped:
+            for entry in data.pop("files"):
+                zipped.writestr(entry["path"], base64.b64decode(entry["data"]))
+        data["archive"] = base64.b64encode(buffer.getvalue()).decode()
+    result = store.mutate({**data, "action": "validate-import"})
+    assert result["folder"] == "example"
+    assert result["name"] == "example"
+    store.mutate(data)
+    assert (store.compatibility_home / ".agents/skills/example/SKILL.md").is_file()
+
+
+@pytest.mark.parametrize("name", [".", "..", "../outside", "a/b", "a\\b", "/outside", ".hidden", "trailing."])
+def test_skill_import_rejects_unsafe_directory_names(store, name):
+    with pytest.raises(ValueError, match="目录名"):
+        store.mutate(skill_upload([("SKILL.md", f"---\nname: {name}\ndescription: fixture\n---\nGuide".encode())]))
+
+
+@pytest.mark.parametrize("name", ["CON", "con.txt", "NUL.skill", "COM1.0", "Lpt9.1", "COM¹.zip"])
+def test_skill_import_rejects_reserved_directory_names(store, name):
+    with pytest.raises(ValueError, match="保留名称"):
+        store.mutate(skill_upload([("SKILL.md", f"---\nname: {name}\ndescription: fixture\n---\nGuide".encode())]))
+
+
+
+@pytest.mark.parametrize("archive", [False, True])
+def test_skill_import_preserves_hidden_resources(store, archive):
+    import base64, io, zipfile
+    data = skill_upload()
+    data["files"] += skill_upload([
+        ("example/.oss-version", b"0.19.0"),
+        ("example/.config/options.json", b"{}"),
+        ("example/.DS_Store", b"metadata"),
+        ("example/._SKILL.md", b"metadata"),
+        ("example/.git/config", b"metadata"),
+        ("example/.manager-backups/SKILL.md.old", b"metadata"),
+        ("__MACOSX/example/._SKILL.md", b"metadata"),
+    ])["files"]
+    if archive:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as zipped:
+            for entry in data.pop("files"):
+                zipped.writestr(entry["path"], base64.b64decode(entry["data"]))
+        data["archive"] = base64.b64encode(buffer.getvalue()).decode()
+    result = store.mutate({**data, "action": "validate-import"})
+    assert {f["path"] for f in result["files"]} == {"SKILL.md", ".oss-version", ".config/options.json"}
+    store.mutate(data)
+    root = store.compatibility_home / ".agents/skills/example"
+    assert (root / ".oss-version").read_bytes() == b"0.19.0"
+    assert not (root / ".git").exists()
+    assert not (root / ".DS_Store").exists()
+
+@pytest.mark.parametrize("action", ["import", "validate-import"])
+def test_new_skill_directory_must_match_name(store, action):
+    data = skill_upload([("example-1.0/SKILL.md", b"---\nname: example\ndescription: fixture\n---\nGuide")])
+    with pytest.raises(ValueError, match="必须与"):
+        store.mutate({**data, "action": action})
+    assert not (store.compatibility_home / ".agents/skills").exists()
+
+
+def test_import_requires_explicit_name_and_rejects_override(store):
+    with pytest.raises(ValueError):
+        store.mutate(skill_upload([("SKILL.md", b"---\ndescription: fixture\n---\nGuide")]))
+    with pytest.raises(ValueError, match="自定义"):
+        store.mutate(skill_upload(name="override"))
+
+@pytest.mark.parametrize("group", ["corki", "public", "builtin"])
+def test_skill_text_is_not_redacted_and_respects_source_permissions(store, group):
+    root = {"corki": store.home / "skills", "public": store.compatibility_home / ".agents/skills",
+            "builtin": store.home / "skills/.system"}[group]
+    path = root / "fixture/SKILL.md"
+    path.parent.mkdir(parents=True)
+    content = "---\nname: fixture\ndescription: Test\n---\n认证方式 / Bearer 选择\nsk-demo-placeholder"
+    path.write_text(content)
+    item = next(f for f in store.files() if f["kind"] == "skills")
+    for result in (store.read_file(item["id"]), store.read_skill_resource(item["id"], "SKILL.md")):
+        assert result["content"] == content
+        assert result["writable"] == (group != "builtin")
+    if group != "builtin":
+        store.save_skill_resource(dict(id=item["id"], path="SKILL.md", revision=module.revision(content), content=content + "\nUpdated"))
+        assert path.read_text() == content + "\nUpdated"

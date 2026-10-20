@@ -21,7 +21,7 @@ from pathlib import Path
 import httpx
 import truststore
 
-from corki_openai_gateway.chat import chat_events, to_responses
+from corki_openai_gateway.chat import chat_completion, chat_events, completed_response, to_responses
 
 UPSTREAM = "https://chatgpt.com/backend-api/codex/responses"
 MAX_BODY = 16 * 1024 * 1024
@@ -160,8 +160,9 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(raw)
         except (ValueError, UnicodeError):
             return self.error(400, "Invalid JSON request.")
-        if not isinstance(payload, dict) or payload.get("stream") is not True:
-            return self.error(400, "A streaming Responses request is required.")
+        if not isinstance(payload, dict) or not isinstance(payload.get("stream", False), bool):
+            return self.error(400, "stream must be a boolean.")
+        streaming = payload.get("stream", False)
         if chat:
             try:
                 payload = to_responses(payload)
@@ -172,6 +173,7 @@ class Handler(BaseHTTPRequestHandler):
         # Native Codex core/client.rs sets store=false and stream=true. Preserve
         # instructions, tool definitions/results, reasoning and encrypted items.
         payload["store"] = False
+        payload["stream"] = True
         started = False
         try:
             credentials = self.server.credentials()
@@ -205,6 +207,18 @@ class Handler(BaseHTTPRequestHandler):
                     # downstream parser require response.completed as usual.
                     if content_type and not content_type.startswith("text/event-stream"):
                         return self.error(502, "Codex upstream did not return an event stream.")
+                    if not streaming:
+                        response = completed_response(r.iter_lines())
+                        result = chat_completion(response, payload["model"]) if chat else response
+                        body = json.dumps(result, ensure_ascii=False).encode("utf-8")
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json; charset=utf-8")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.send_header("Connection", "close")
+                        self.end_headers()
+                        started = True
+                        self.wfile.write(body)
+                        return
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream")
                     self.send_header("Cache-Control", "no-cache")
@@ -221,7 +235,7 @@ class Handler(BaseHTTPRequestHandler):
         except CredentialsUnavailable as exc:
             if not started:
                 self.error(401, str(exc))
-        except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as exc:
             if not started:
                 cause = exc
                 seen = set()
@@ -234,7 +248,12 @@ class Handler(BaseHTTPRequestHandler):
                             "Check the system trust store; retrying will not fix this.",
                         )
                     cause = cause.__cause__ or cause.__context__
-                self.error(502, "Cannot reach Codex upstream; check network connectivity.")
+                self.error(
+                    502,
+                    "Cannot reach Codex upstream; check network connectivity."
+                    if isinstance(exc, httpx.HTTPError)
+                    else "Codex upstream returned an invalid or incomplete response.",
+                )
             # After headers, close the incomplete SSE stream. Never synthesize
             # response.completed or retry a request that may have executed.
 

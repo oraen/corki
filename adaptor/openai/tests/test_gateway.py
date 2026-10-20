@@ -155,7 +155,7 @@ def test_rejected_requests_never_reach_upstream(tmp_path, variant, status):
     with running(tmp_path, forbidden) as (_, client, _):
         payload = body()
         if variant == "stream":
-            payload["stream"] = False
+            payload["stream"] = "false"
         if variant == "model":
             payload["model"] = ""
         result = client.post(
@@ -401,3 +401,117 @@ def test_gateway_default_client_uses_verified_system_trust(tmp_path, monkeypatch
         assert seen[0]["follow_redirects"] is False
     finally:
         server.server_close()
+
+
+@pytest.mark.parametrize(
+    "endpoint", ["/chat/completions", "/v1/chat/completions", "/responses", "/v1/responses"]
+)
+@pytest.mark.parametrize("stream", [False, None])
+def test_nonstreaming_response_and_default(tmp_path, endpoint, stream):
+    response = {
+        "id": "resp-fixture",
+        "model": "gpt-6-astra",
+        "created_at": 1234,
+        "status": "completed",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "你好"}]}],
+        "usage": {"input_tokens": 7, "output_tokens": 2, "total_tokens": 9},
+    }
+
+    def upstream(request):
+        assert json.loads(request.content)["stream"] is True
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=(
+                'data: {"type":"response.output_text.delta","delta":"你好"}\n\n'
+                + "data: "
+                + json.dumps({"type": "response.completed", "response": response})
+                + "\n\n"
+            ),
+        )
+
+    chat = endpoint.endswith("completions")
+    payload = (
+        {"model": "gpt-6-astra", "messages": [{"role": "user", "content": "你好"}]}
+        if chat
+        else body()
+    )
+    payload.pop("stream", None)
+    if stream is not None:
+        payload["stream"] = stream
+    with running(tmp_path, upstream) as (_, client, _):
+        result = client.post(endpoint, json=payload)
+        assert result.status_code == 200
+        assert result.headers["content-type"].startswith("application/json")
+        assert int(result.headers["content-length"]) == len(result.content)
+        data = result.json()
+        if chat:
+            assert data["object"] == "chat.completion"
+            assert data["created"] == 1234
+            assert data["choices"][0]["message"] == {"role": "assistant", "content": "你好"}
+            assert data["choices"][0]["finish_reason"] == "stop"
+            assert data["usage"]["total_tokens"] == 9
+        else:
+            assert data == response
+
+
+@pytest.mark.parametrize(
+    "event", ["response.failed", "response.incomplete", "error", "truncated", "malformed"]
+)
+def test_nonstream_failure_never_returns_partial_success(tmp_path, event):
+    def upstream(request):
+        tail = (
+            ""
+            if event == "truncated"
+            else "data: "
+            + ("invalid" if event == "malformed" else json.dumps({"type": event}))
+            + "\n\n"
+        )
+        return httpx.Response(
+            200, text='data: {"type":"response.output_text.delta","delta":"partial"}\n\n' + tail
+        )
+
+    with running(tmp_path, upstream) as (_, client, _):
+        result = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-6-astra",
+                "stream": False,
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+        assert result.status_code == 502
+        assert "error" in result.json()
+        assert "partial" not in result.text
+
+
+def test_nonstream_tool_calls_refusal_and_buffer_bound():
+    from corki_openai_gateway.chat import chat_completion, completed_response
+
+    response = {
+        "output": [
+            {
+                "type": "function_call",
+                "call_id": "call1",
+                "name": "lookup",
+                "arguments": '{"q":"test"}',
+            },
+            {"type": "function_call", "call_id": "call2", "name": "lookup", "arguments": "{}"},
+        ]
+    }
+    result = chat_completion(response, "test-model")
+    choice = result["choices"][0]
+    assert choice["finish_reason"] == "tool_calls"
+    assert choice["message"]["content"] is None
+    assert len(choice["message"]["tool_calls"]) == 2
+    assert choice["message"]["tool_calls"][0] == {
+        "id": "call1",
+        "type": "function",
+        "function": {"name": "lookup", "arguments": '{"q":"test"}'},
+    }
+    refusal = chat_completion(
+        {"output": [{"type": "message", "content": [{"type": "refusal", "refusal": "No"}]}]}, "test"
+    )
+    assert refusal["choices"][0]["message"]["refusal"] == "No"
+    with pytest.raises(ValueError, match="buffering limit"):
+        completed_response(["data: " + "a" * 100], max_bytes=20)

@@ -260,3 +260,12 @@ def test_steering_after_completed_message_without_tools_is_a_continuation(tmp_pa
             await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(scenario())
+
+
+def test_response_added_phase_reaches_first_text_delta():
+    from corki.models.response_content import ResponseContent
+    buffers = ResponseContent("turn", "step", "test")
+    buffers.added({"type": "message", "id": "wire-message", "phase": "commentary"}, {"output_index": 0})
+    delta = buffers.delta({"type": "response.output_text.delta", "item_id": "wire-message",
+                           "output_index": 0, "delta": "Checking"}, reasoning=False)
+    assert delta.phase == "commentary"

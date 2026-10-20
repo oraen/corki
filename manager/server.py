@@ -901,6 +901,183 @@ end run'''
         days = [(first + timedelta(days=index)).isoformat() for index in range(30)]
         return [by_day.get(day, dict(day=day, input=0, output=0, steps=0)) for day in days]
 
+    def hooks_document(self):
+        from corki.config.hooks import HOOK_EVENTS
+        from corki.core.stop_hooks import command_identity
+
+        text = self.config_text()
+        config = document.loads(text)
+        path = self.home / "hooks.json"
+        raw = path.read_text() if path.exists() else ""
+        external = json.loads(raw) if raw.strip() else {}
+        if not isinstance(external, dict) or not isinstance(external.get("hooks", {}), dict):
+            raise ValueError("hooks.json 格式无效，请先修复配置文件")
+        if not isinstance(config.get("hooks", {}), dict):
+            raise ValueError("settings.json 中 hooks 必须为对象")
+        states = config.get("hooks", {}).get("state", {})
+        if not isinstance(states, dict):
+            raise ValueError("hooks.state 必须为对象")
+        entries = []
+        for source, filename, events in [("settings", self.config, config.get("hooks", {})),
+                                          ("file", path, external.get("hooks", {}))]:
+            for event in HOOK_EVENTS:
+                groups = events.get(event, [])
+                if not isinstance(groups, list):
+                    raise ValueError(f"{event} 必须为数组")
+                for gi, group in enumerate(groups):
+                    if not isinstance(group, dict) or not isinstance(group.get("hooks", []), list):
+                        raise ValueError(f"{event} 配置组无效")
+                    for hi, handler in enumerate(group.get("hooks", [])):
+                        event_key = re.sub(r"(?<!^)(?=[A-Z])", "_", event).lower()
+                        key = f"{filename}:{event_key}:{gi}:{hi}"
+                        rule = states.get(key, states.get("file:" + key, {}))
+                        if not isinstance(rule, dict):
+                            raise ValueError("Hook 信任配置无效")
+                        error = None
+                        try:
+                            fingerprint, _ = command_identity(handler, event_name=event, matcher=group.get("matcher"))
+                            trusted = rule.get("trusted_hash") == fingerprint
+                        except (ValueError, TypeError, AttributeError) as exc:
+                            trusted = False
+                            error = str(exc)
+                        entries.append(dict(id=f"{source}:{event}:{gi}:{hi}", source=source,
+                                            event=event, matcher=group.get("matcher", "*"), handler=handler if isinstance(handler, dict) else {},
+                                            enabled=rule.get("enabled", True) is True and trusted,
+                                            trusted=trusted, error=error, key=key))
+        skill_files = [f for f in self.files() if f["kind"] == "skills" and f.get("valid", True)]
+        disabled = disabled_skill_paths(parse_skill_rules(config.get("skills", {}).get("config", []), self.home),
+                                        ((f["name"], Path(f["path"]).resolve()) for f in skill_files))
+        skills = [{"name": f["name"], "path": f["path"], "group": f.get("group", ""),
+                   "enabled": Path(f["path"]).resolve() not in disabled} for f in skill_files]
+        return dict(entries=entries, skills=skills, enabled=config.get("features", {}).get("hooks", True),
+                    revision=revision(text), file_revision=revision(raw), events=list(HOOK_EVENTS))
+
+    def discard_hook_upload(self, value):
+        if not isinstance(value, str):
+            return
+        root = self.home / "hooks" / "skills"
+        path = Path(value)
+        if path.name != "SKILL.md" or path.parent.parent != root or not re.fullmatch(r"[0-9a-f]{32}", path.parent.name):
+            return
+        def references(value):
+            if isinstance(value, dict):
+                return (value.get("type") == "skill" and value.get("path") == str(path)) or any(references(v) for v in value.values())
+            if isinstance(value, list):
+                return any(references(v) for v in value)
+            return False
+        config = document.loads(self.config_text())
+        hook_file = self.home / "hooks.json"
+        external = json.loads(hook_file.read_text()) if hook_file.exists() else {}
+        if references(config) or references(external):
+            return
+        if path.parent.is_symlink() or not path.parent.exists():
+            return
+        shutil.rmtree(path.parent)
+
+    def mutate_hooks(self, data):
+        from corki.config.hooks import HOOK_EVENTS
+        from corki.core.stop_hooks import command_identity
+
+        with LOCK:
+            if data.get("action") == "discard-upload":
+                self.discard_hook_upload(data.get("path"))
+                return {"message": "未使用的上传已清理"}
+            snapshot = self.hooks_document()
+            if data.get("revision") != snapshot["revision"] or data.get("file_revision") != snapshot["file_revision"]:
+                raise ValueError("配置已更新，请刷新后重试")
+            text = self.config_text()
+            config = document.loads(text)
+            action = data.get("action")
+            if action == "upload-skill":
+                upload = data.get("upload")
+                if not isinstance(upload, dict):
+                    raise ValueError("请选择技能文件夹、ZIP 或 SKILL.md")
+                result = self.import_skill({**upload, "name": uuid.uuid4().hex}, private=True)
+                return {"path": str(Path(result["path"]) / "SKILL.md"), "name": result["name"]}
+            if action == "global":
+                if type(data.get("enabled")) is not bool:
+                    raise ValueError("无效的开关值")
+                updated = document.set_value(text, ("features", "hooks"), data["enabled"])
+                self.write_config(updated, snapshot["revision"], "修改 Hooks 总开关")
+                return {"message": "Hooks 总开关已更新"}
+            if action not in ("save", "toggle", "delete"):
+                raise ValueError("不支持的 Hook 操作")
+            identity = data.get("id")
+            old = next((e for e in snapshot["entries"] if e["id"] == identity), None)
+            if identity and old is None:
+                raise ValueError("Hook 不存在，请刷新后重试")
+            if action != "save" and old is None:
+                raise ValueError("请选择 Hook")
+            source = old["source"] if old else "settings"
+            path = self.home / "hooks.json"
+            original = path.read_text() if path.exists() else ""
+            external = json.loads(original) if original.strip() else {}
+            hooks = config.setdefault("hooks", {})
+            events = hooks if source == "settings" else external.setdefault("hooks", {})
+            states = hooks.setdefault("state", {})
+            filename = self.config if source == "settings" else path
+            # Keep each surviving handler's original trust while numeric indices shift.
+            saved_states = {}
+            for entry in snapshot["entries"]:
+                if entry["source"] != source:
+                    continue
+                _, event, gi, hi = entry["id"].split(":")
+                handler = events[event][int(gi)]["hooks"][int(hi)]
+                saved_states[id(handler)] = copy.deepcopy(states.get(entry["key"], states.get("file:" + entry["key"], {})))
+                states.pop(entry["key"], None)
+                states.pop("file:" + entry["key"], None)
+            if old:
+                _, event, gi, hi = identity.split(":")
+                group = events[event][int(gi)]
+                handler = group["hooks"][int(hi)]
+                if action in ("delete", "save"):
+                    group["hooks"].pop(int(hi))
+                    if not group["hooks"]:
+                        events[event].pop(int(gi))
+                else:
+                    if type(data.get("enabled")) is not bool:
+                        raise ValueError("无效的开关值")
+                    rule = saved_states[id(handler)]
+                    rule["enabled"] = data["enabled"]
+                    if data["enabled"]:
+                        rule["trusted_hash"], _ = command_identity(handler, event_name=event, matcher=group.get("matcher"))
+            if action == "save":
+                event, matcher, handler = data.get("event"), data.get("matcher", "*"), data.get("handler")
+                if event not in HOOK_EVENTS or not isinstance(matcher, str) or not isinstance(handler, dict):
+                    raise ValueError("请填写有效的事件、匹配条件和处理器")
+                if type(data.get("enabled")) is not bool:
+                    raise ValueError("请选择启用状态")
+                fingerprint, _ = command_identity(handler, event_name=event, matcher=matcher)
+                if handler.get("type") == "skill":
+                    from corki.core.context_hooks import render_context
+                    render_context(handler)
+                if handler.get("type") == "mcp_tool":
+                    if handler["server"] not in config.get("mcp", {}).get("servers", {}):
+                        raise ValueError("请选择已配置的 MCP 服务")
+                events.setdefault(event, []).append({"matcher": matcher, "hooks": [handler]})
+                saved_states[id(handler)] = {"enabled": data["enabled"], "trusted_hash": fingerprint}
+            for event in HOOK_EVENTS:
+                event_key = re.sub(r"(?<!^)(?=[A-Z])", "_", event).lower()
+                for gi, group in enumerate(events.get(event, [])):
+                    for hi, handler in enumerate(group.get("hooks", [])):
+                        rule = saved_states.get(id(handler), {})
+                        if rule:
+                            states[f"{filename}:{event_key}:{gi}:{hi}"] = rule
+            updated = document.set_value(text, ("hooks",), hooks)
+            self.write_config(updated, snapshot["revision"], "更新 Hooks")
+            if source == "file":
+                try:
+                    atomic(path, document.dumps(external))
+                except OSError:
+                    atomic(self.config, text)
+                    raise
+            if old and old["handler"].get("type") == "skill" and action in ("save", "delete"):
+                try:
+                    self.discard_hook_upload(old["handler"].get("path"))
+                except OSError:
+                    pass  # Configuration is committed; cleanup must not imply save failure.
+            return {"message": "Hook 已删除" if action == "delete" else "Hook 已保存；新会话使用更新后的配置"}
+
     def snapshot(self):
         text = self.config_text()
         knowledge_text, _ = self.knowledge_state()
@@ -1030,7 +1207,7 @@ end run'''
         if item is None:
             raise ValueError("文件不存在或不属于可管理目录")
         text = Path(item["path"]).read_text()
-        redacted = self.redact(text)
+        redacted = text if item["kind"] == "skills" else self.redact(text)
         return {**item, "content": redacted, "writable": item["writable"] and redacted == text}
 
     def skill_package(self, identity):
@@ -1094,53 +1271,21 @@ end run'''
                     type="image", data="data:" + mime + ";base64," + base64.b64encode(raw).decode()
                 )
             return result
-        redacted = self.redact(content)
         return {
             **result,
             "type": "text",
-            "content": redacted,
+            "content": content,
             "revision": revision(content),
-            "writable": package["writable"] and redacted == content,
-            "redacted": redacted != content,
+            "writable": package["writable"],
+            "redacted": False,
         }
 
-    def rename_skill(self, data):
-        import yaml
-
-        name = data.get("name")
-        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 64:
-            raise ValueError("名称需为 1–64 个字符")
-        name = " ".join(name.split())
-        current = self.read_skill_resource(data.get("id"), "SKILL.md")
-        if not current["writable"]:
-            raise ValueError("此技能只读")
-        if data.get("revision") != current["revision"]:
-            raise ValueError("文件已被其他程序修改，请重新打开后重试")
-        if any(f["kind"] == "skills" and f["id"] != data.get("id")
-               and f["name"].casefold() == name.casefold() for f in self.files()):
-            raise ValueError("已存在同名技能")
-        content = current["content"]
-        header = re.match(r"^---[^\S\n]*\n(.*?)^---[^\S\n]*(?:\n|$)", content, re.M | re.S)
-        if not header:
-            raise ValueError("SKILL.md 缺少有效的元数据")
-        node = yaml.compose(header.group(1), Loader=yaml.BaseLoader)
-        fields = [(k, v) for k, v in node.value if k.value == "name"] if isinstance(node, yaml.MappingNode) else []
-        if len(fields) > 1:
-            raise ValueError("SKILL.md 包含重复的 name 字段")
-        encoded = json.dumps(name, ensure_ascii=False)
-        if fields:
-            value = fields[0][1]
-            start, end = header.start(1) + value.start_mark.index, header.start(1) + value.end_mark.index
-            suffix = "\n" if content[start:end].endswith("\n") else ""
-            content = content[:start] + encoded + suffix + content[end:]
-        else:
-            start = header.start(1)
-            content = content[:start] + "name: " + encoded + "\n" + content[start:]
-        parsed, _, _ = parse_skill(content, "skill")
-        if parsed != name:
-            raise ValueError("无法更新技能名称")
-        result = self.save_skill_resource({**data, "path": "SKILL.md", "content": content})
-        return {**result, "name": name}
+    @staticmethod
+    def validate_skill_name_unchanged(content, previous, directory):
+        name, _, _ = parse_skill(content, directory)
+        old_name, _, _ = parse_skill(previous, directory)
+        if name != old_name:
+            raise ValueError("不支持修改 Skills 名称，请保留 SKILL.md 原有的 name")
 
     def save_skill_resource(self, data):
         package, path = self.skill_resource(data.get("id"), data.get("path"))
@@ -1157,36 +1302,34 @@ end run'''
         if path.name == "SKILL.md":
             if len(content.encode()) > 128 * 1024:
                 raise ValueError("SKILL.md 不能超过 128 KB")
-            parse_skill(content, path.parent.name)
+            self.validate_skill_name_unchanged(content, current["content"], path.parent.name)
         mode = stat.S_IMODE(path.stat().st_mode)
         atomic(path, content)
         path.chmod(mode)
         return {"message": "文件已保存", "revision": revision(content)}
 
-    def export_skill(self, identity):
+    def export_skill(self, identity, *, stream=False):
         package = self.skill_package(identity)
-        files = [e for e in package["entries"] if e["type"] == "file"]
-        if sum(e["bytes"] for e in files) > 32 * 1024 * 1024:
-            raise ValueError("技能超过 32 MB，无法在线导出")
         root = Path(package["root"])
-        buffer = io.BytesIO()
-        total = 0
-        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for entry in package["entries"]:
-                if entry["type"] == "link":
-                    continue
-                if entry["type"] == "directory":
-                    archive.writestr(root.name + "/" + entry["path"] + "/", b"")
-                    continue
-                _, path = self.skill_resource(identity, entry["path"], package)
-                raw = path.read_bytes()
-                total += len(raw)
-                if total > 32 * 1024 * 1024:
-                    raise ValueError("技能超过 32 MB，无法在线导出")
-                info = zipfile.ZipInfo.from_file(path, arcname=root.name + "/" + entry["path"])
-                info.compress_type = zipfile.ZIP_DEFLATED
-                archive.writestr(info, raw)
-        return buffer.getvalue(), root.name + ".zip"
+        buffer = tempfile.TemporaryFile(prefix="corki-skill-export-", suffix=".zip")
+        try:
+            with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED,
+                                 strict_timestamps=False) as archive:
+                for entry in package["entries"]:
+                    if entry["type"] == "link":
+                        continue
+                    if entry["type"] == "directory":
+                        archive.writestr(root.name + "/" + entry["path"] + "/", b"")
+                        continue
+                    _, path = self.skill_resource(identity, entry["path"], package)
+                    archive.write(path, arcname=root.name + "/" + entry["path"])
+            buffer.seek(0)
+            if stream:
+                return buffer, root.name + ".zip"
+            return buffer.read(), root.name + ".zip"
+        finally:
+            if not stream or sys.exc_info()[0] is not None:
+                buffer.close()
 
     def cron_run(self, identity):
         row = self.cron.run(identity)
@@ -1538,6 +1681,8 @@ end run'''
         return result
 
     def mutate(self, data):
+        if data.get("kind") == "hooks":
+            return self.mutate_hooks(data)
         if data.get("kind") == "sql-workspace":
             return QueryWorkspace(self.home).mutate(data)
         if data.get("kind") == "database":
@@ -1618,8 +1763,10 @@ end run'''
                     "回滚历史版本" if action == "restore" else "编辑配置文件",
                 )
                 return {"message": "已创建并应用新版本；新 Corki 会话使用此配置"}
+            if kind == "skills" and action == "delete":
+                return self.delete_skill(data)
             if kind == "skills" and action == "rename":
-                return self.rename_skill(data)
+                raise ValueError("不支持修改 Skills 名称")
             if kind == "skills" and action == "save-resource":
                 return self.save_skill_resource(data)
             if kind == "skills" and action in ("import", "validate-import"):
@@ -1866,7 +2013,7 @@ end run'''
         ):
             raise ValueError("名称需为 1–120 个字符，不能包含路径跳转")
 
-    def import_skill(self, data, *, preview=False):
+    def import_skill(self, data, *, preview=False, private=False):
         """Validate a whole package before publishing it with an atomic directory rename."""
         entries = []
         total = 0
@@ -1878,8 +2025,11 @@ end run'''
             parts = name.split("/")
             if PurePosixPath(name).is_absolute() or any(p in ("", ".", "..") for p in parts):
                 raise ValueError("技能包含不安全路径")
-            if any(p.startswith(".") or p == "__MACOSX" for p in parts):
-                raise ValueError("请移除隐藏文件和系统文件后重新导入")
+            # A dot prefix alone does not make a file unsafe: packages can
+            # require hidden configuration/version files. Skip only metadata.
+            if any(p in {".DS_Store", "__MACOSX", ".git", ".manager-backups", "__pycache__"}
+                   or p.startswith("._") for p in parts):
+                return
             total += len(content)
             entries.append((name, content, executable))
 
@@ -1935,19 +2085,32 @@ end run'''
             raise ValueError("SKILL.md 不能超过运行时读取上限 128 KB")
         try:
             text = main.decode("utf-8")
-            name, description, _ = parse_skill(text, "imported-skill")
+            name, description, _ = parse_skill(text, "")
         except (UnicodeDecodeError, ValueError) as exc:
             raise ValueError(f"SKILL.md 格式无效：{exc}") from exc
-        folder = data.get("name") or name
-        if not isinstance(folder, str) or not re.fullmatch(r"[\w-]{1,80}", folder):
-            raise ValueError("技能目录名只允许 1–80 个文字、数字、横线和下划线")
+        if not private and "name" in data:
+            raise ValueError("不支持自定义技能目录名，导入时使用 SKILL.md 的 name")
+        if not private and prefix and PurePosixPath(prefix.rstrip("/")).name != name:
+            raise ValueError(f"技能目录名「{PurePosixPath(prefix.rstrip('/')).name}」必须与 SKILL.md 的 name「{name}」一致")
+        folder = (data.get("name") or name) if private else name
+        if (not isinstance(folder, str)
+                or not re.fullmatch(r"[\w-][\w.\-]{0,79}", folder)
+                or folder.endswith(".")):
+            raise ValueError("技能目录名需为 1–80 个文字、数字、横线、下划线或点号，不能以点号开头或结尾")
+        if re.match(r"^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)", folder, re.I):
+            raise ValueError("技能目录名不能使用 Windows 系统保留名称")
         group = data.get("group", "public")
         if group not in ("corki", "public"):
             raise ValueError("请选择扩展 Skills 或公共 Skills")
         root = self.home / "skills" if group == "corki" else self.compatibility_home / ".agents/skills"
+        if private:
+            root = self.home / "hooks" / "skills"
         target = root / folder
         if target.exists() or target.is_symlink():
-            raise ValueError("所选位置已存在同名技能，请修改 Skills 名称；不会覆盖已有文件")
+            raise ValueError("所选位置已存在同名技能，不会覆盖已有文件")
+        if not private and any(f["kind"] == "skills" and f["name"].casefold() == name.casefold()
+                               for f in self.files()):
+            raise ValueError(f"已存在同名 Skill「{name}」，不会覆盖已有技能")
         summary = dict(
             name=name,
             description=description,
@@ -1975,6 +2138,31 @@ end run'''
                 shutil.rmtree(stage)
         label = "扩展 Skills" if group == "corki" else "公共 Skills"
         return {**summary, "message": f"已导入{label}；Corki 下次发现技能时可读取"}
+
+    def delete_skill(self, data):
+        item = next((f for f in self.files()
+                     if f["kind"] == "skills" and f["id"] == data.get("id")), None)
+        if not item:
+            raise ValueError("技能不存在，请刷新列表")
+        if item["group"] == "builtin":
+            raise ValueError("内置 Skills 不可删除")
+        if data.get("revision") != item["revision"]:
+            raise ValueError("技能已更新，请刷新后重试")
+        package = Path(item["path"]).parent
+        roots = [self.home / "skills", self.compatibility_home / ".agents/skills",
+                 self.workspace / ".corki/skills", self.workspace / ".agents/skills"]
+        root = next((r for r in roots if package != r and package.is_relative_to(r)), None)
+        if root is None or not package.resolve().is_relative_to(root.resolve()):
+            raise ValueError("技能目录超出可管理范围")
+        if any(p.is_symlink() for p in [package, *package.parents] if p != root and p.is_relative_to(root)):
+            raise ValueError("不支持删除链接技能目录")
+        # Remove the entire package, including scripts/resources; rmtree does not
+        # follow symlinks inside it. Built-in packages and collection roots stay protected.
+        builtin = (self.home / "skills/.system").resolve()
+        if package.resolve() == root.resolve() or package.resolve().is_relative_to(builtin) or builtin.is_relative_to(package.resolve()):
+            raise ValueError("内置 Skills 不可删除")
+        shutil.rmtree(package)
+        return {"message": "Skill 已永久删除"}
 
     def mutate_file(self, data):
         kind, action = data["kind"], data["action"]
@@ -2017,7 +2205,7 @@ end run'''
             if not isinstance(content, str) or len(content.encode()) > LIMIT:
                 raise ValueError("文档不能超过 256 KB")
             if kind == "skills":
-                parse_skill(content, path.parent.name)
+                self.validate_skill_name_unchanged(content, item["content"], path.parent.name)
             if kind == "knowledge" and action == "save":
                 self.archive_knowledge(item, Path(path).read_text())
             atomic(path, content, backup=kind != "knowledge")
@@ -2044,9 +2232,15 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps(body, ensure_ascii=False).encode()
         if isinstance(body, str):
             body = body.encode()
+        streaming = hasattr(body, "read")
+        if streaming:
+            length = body.seek(0, os.SEEK_END)
+            body.seek(0)
+        else:
+            length = len(body)
         self.send_response(status)
         self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Length", str(length))
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.send_header("Cache-Control", "no-store")
@@ -2057,7 +2251,10 @@ class Handler(BaseHTTPRequestHandler):
             "img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'",
         )
         self.end_headers()
-        self.wfile.write(body)
+        if streaming:
+            shutil.copyfileobj(body, self.wfile, length=256 * 1024)
+        else:
+            self.wfile.write(body)
 
     def trusted(self):
         port = self.server.server_port
@@ -2072,6 +2269,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(403, {"error": "仅允许本机同源访问"})
         parsed = urlparse(self.path)
         try:
+            if parsed.path == "/api/hooks":
+                return self.respond(200, self.server.store.hooks_document())
             if parsed.path == "/api/sql-workspace":
                 params = parse_qs(parsed.query)
                 workspace = QueryWorkspace(self.server.store.home)
@@ -2109,16 +2308,12 @@ class Handler(BaseHTTPRequestHandler):
                         200,
                         self.server.store.read_skill_resource(identity, query.get("path", [""])[0]),
                     )
-                body, filename = self.server.store.export_skill(identity)
-                return self.respond(
-                    200,
-                    body,
-                    "application/zip",
-                    {
-                        "Content-Disposition": "attachment; filename*=UTF-8''"
-                        + quote(filename, safe="")
-                    },
-                )
+                body, filename = self.server.store.export_skill(identity, stream=True)
+                with body:
+                    return self.respond(
+                        200, body, "application/zip",
+                        {"Content-Disposition": "attachment; filename*=UTF-8''" + quote(filename, safe="")},
+                    )
             if parsed.path == "/api/custom-tool":
                 identity = parse_qs(parsed.query).get("id", [""])[0]
                 return self.respond(200, self.server.store.custom_tool_document(identity))
@@ -2185,12 +2380,12 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 raise ValueError("无效请求")
             if skill_import and not (
-                data.get("kind") == "skills"
-                and data.get("action") in ("import", "validate-import")
+                (data.get("kind") == "skills" and data.get("action") in ("import", "validate-import"))
+                or (data.get("kind") == "hooks" and data.get("action") == "upload-skill")
             ):
                 raise ValueError("无效的技能导入请求")
             if (
-                data.get("action") not in ("import", "validate-import", "parse-document")
+                data.get("action") not in ("import", "validate-import", "parse-document", "upload-skill")
                 and length > 2 * LIMIT
             ):
                 raise ValueError("请求体过大")

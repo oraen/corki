@@ -136,6 +136,7 @@ class ModelUsage:
 class ModelTextDelta:
     delta: str
     item_id: str | None = None
+    phase: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

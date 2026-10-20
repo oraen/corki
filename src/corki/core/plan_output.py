@@ -19,6 +19,7 @@ class _Stream:
     source: str = ""
     leading: str = ""
     visible_started: bool = False
+    phase: str | None = None
 
 
 class PlanOutput:
@@ -37,12 +38,13 @@ class PlanOutput:
                         continue
                     text, stream.leading = stream.leading, ""
                     stream.visible_started = True
-                await self.emit(AssistantTextDelta(self.thread, self.turn, text, item_id))
+                await self.emit(AssistantTextDelta(self.thread, self.turn, text, item_id, stream.phase))
             elif segment.kind in {"start", "delta"} and not self.plan_completed:
-                await self.emit(ProposedPlanDelta(self.thread, self.turn, segment.text, item_id))
+                await self.emit(ProposedPlanDelta(self.thread, self.turn, segment.text, item_id, stream.phase))
 
     async def delta(self, event):
         stream = self.streams.setdefault(event.item_id, _Stream())
+        stream.phase = event.phase or stream.phase
         text = stream.citations.push(event.delta)
         stream.source += text
         await self._segments(stream, event.item_id, stream.parser.push(text))
@@ -52,6 +54,7 @@ class PlanOutput:
         unkeyed = stream is None
         if stream is None:
             stream = self.streams.pop(None, _Stream())
+        stream.phase = item.phase or stream.phase
         tail = stream.citations.finish()
         stream.source += tail
         await self._segments(stream, item.id, stream.parser.push(tail))
@@ -70,4 +73,4 @@ class PlanOutput:
             self.plan_completed = True
             await self.emit(ProposedPlanCompleted(self.thread, self.turn, plan, item.id))
         if visible.strip():
-            await self.emit(AssistantMessageCompleted(self.thread, self.turn, visible, item.id))
+            await self.emit(AssistantMessageCompleted(self.thread, self.turn, visible, item.id, item.phase))

@@ -31,7 +31,7 @@ window.CorkiSimpleChat = (() => {
    const content=row.role==='assistant'&&!row.error?renderMarkdown(row.content):escapeHTML(row.content);
    const copy=row.role==='assistant'&&!row.error&&!row.streaming&&row.content?`<div class="simple-chat-message-actions"><button type="button" data-chat-copy="${index}" aria-label="复制回答原文" title="复制回答原文">${copyIcon}<span>复制</span></button></div>`:'';
    return `<article class="simple-chat-message ${row.role}${row.error?' error':''}"><span class="simple-chat-avatar" aria-hidden="true">${row.role==='assistant'?corkiAvatar:conversationAvatar}</span><div class="simple-chat-content"><div class="simple-chat-bubble${row.role==='assistant'&&!row.error?' simple-chat-markdown':''}">${content}${row.streaming?'<span class="simple-chat-cursor"></span>':''}</div>${copy}</div></article>`;
-  }).join(''):`<div class="simple-chat-empty"><div class="simple-chat-empty-mark">${corkiAvatar}</div><h2>${chat.context.length?'继续对话':'有什么想聊的？'}</h2><p>${chat.context.length?'发送消息，继续当前会话。':'选择模型，开始一段对话。'}</p></div>`;
+  }).join(''):`<div class="simple-chat-empty"><div class="simple-chat-empty-mark">${corkiAvatar}</div><h2>${chat.context.length?'继续对话':'今天有什么新灵感吗？'}</h2>${chat.context.length?'<p>发送消息，继续当前会话。</p>':''}</div>`;
   if(follow)list.scrollTop=list.scrollHeight;
  }
  function scheduleMessages(){if(!renderFrame)renderFrame=requestAnimationFrame(()=>{renderFrame=0;renderMessages();});}

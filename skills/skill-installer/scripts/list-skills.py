@@ -10,6 +10,7 @@ import sys
 import urllib.error
 
 from github_utils import github_api_contents_url, github_request
+from skill_catalog import local_skills
 
 DEFAULT_REPO = "openai/skills"
 DEFAULT_PATH = "skills/.curated"
@@ -31,20 +32,8 @@ def _request(url: str) -> bytes:
     return github_request(url, "corki-skill-list")
 
 
-def _corki_home() -> str:
-    return os.environ.get("CORKI_HOME", os.path.expanduser("~/.corki"))
-
-
 def _installed_skills() -> set[str]:
-    root = os.path.join(_corki_home(), "skills")
-    if not os.path.isdir(root):
-        return set()
-    entries = set()
-    for name in os.listdir(root):
-        path = os.path.join(root, name)
-        if os.path.isdir(path):
-            entries.add(name)
-    return entries
+    return {row["name"].casefold() for row in local_skills() if row["valid"]}
 
 
 def _list_skills(repo: str, path: str, ref: str) -> list[str]:
@@ -66,6 +55,7 @@ def _list_skills(repo: str, path: str, ref: str) -> list[str]:
 
 def _parse_args(argv: list[str]) -> Args:
     parser = argparse.ArgumentParser(description="List skills.")
+    parser.add_argument("--local", action="store_true", help="List installed skills without network access")
     parser.add_argument("--repo", default=DEFAULT_REPO)
     parser.add_argument(
         "--path",
@@ -85,17 +75,25 @@ def _parse_args(argv: list[str]) -> Args:
 def main(argv: list[str]) -> int:
     args = _parse_args(argv)
     try:
+        if args.local:
+            rows = local_skills()
+            if args.format == "json":
+                print(json.dumps(rows, ensure_ascii=False))
+            else:
+                for row in rows:
+                    print(f"{row['name']} [{row['scope']}] {row['path']}" + (" (invalid metadata)" if not row['valid'] else ""))
+            return 0
         skills = _list_skills(args.repo, args.path, args.ref)
         installed = _installed_skills()
         if args.format == "json":
-            payload = [{"name": name, "installed": name in installed} for name in skills]
+            payload = [{"name": name, "installed": name.casefold() in installed} for name in skills]
             print(json.dumps(payload))
         else:
             for idx, name in enumerate(skills, start=1):
-                suffix = " (already installed)" if name in installed else ""
+                suffix = " (already installed)" if name.casefold() in installed else ""
                 print(f"{idx}. {name}{suffix}")
         return 0
-    except ListError as exc:
+    except (ListError, OSError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 

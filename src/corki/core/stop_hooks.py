@@ -37,6 +37,19 @@ class StopDecision(StrEnum):
 
 def command_identity(handler, *, event_name="Stop", matcher=None):
     """Normalize the supported Stop command before canonical config hashing."""
+    if handler.get("type") in {"prompt", "skill"}:
+        from corki.core.context_hooks import normalize
+
+        normalized = normalize(handler, event_name)
+        hook_matchers.validate(matcher)
+        event_key = {"SessionStart": "session_start", "SubagentStart": "subagent_start",
+                     "UserPromptSubmit": "user_prompt_submit", "PreToolUse": "pre_tool_use",
+                     "PostToolUse": "post_tool_use"}[event_name]
+        identity = {"event_name": event_key, "hooks": [normalized]}
+        if matcher is not None:
+            identity["matcher"] = matcher
+        encoded = json.dumps(identity, sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        return "sha256:" + sha256(encoded.encode()).hexdigest(), normalized
     if event_name == "Interrupt":
         matcher = None
     if handler.get("type") == "mcp_tool":
@@ -162,8 +175,13 @@ class MCPHook(StopCommand):
     mcp: dict | None = None
 
 
+@dataclass(frozen=True)
+class ContextHook(StopCommand):
+    context: dict | None = None
+
+
 def restore_command(entry):
-    return (MCPHook if "mcp" in entry else StopCommand)(**entry)
+    return (ContextHook if "context" in entry else MCPHook if "mcp" in entry else StopCommand)(**entry)
 
 
 def discover(configuration, plugins=(), *, event_name="Stop", managed_policy=None):
@@ -302,6 +320,14 @@ def discover(configuration, plugins=(), *, event_name="Stop", managed_policy=Non
                     if not managed and approval.get("trusted_hash") != fingerprint:
                         warnings.append(f"Stop hook is untrusted or modified: {key}")
                         continue
+                    if normalized["type"] in {"prompt", "skill"}:
+                        from corki.core.context_hooks import validate_skill
+                        validate_skill(normalized)
+                        commands.append(ContextHook(
+                            key, fingerprint, "", 600, environment,
+                            normalized.get("statusMessage"), group.get("matcher"),
+                            additional_context_limit=normalized["additionalContextLimit"], context=normalized))
+                        continue
                     if normalized["type"] == "mcp_tool":
                         commands.append(
                             MCPHook(
@@ -346,6 +372,10 @@ def discover(configuration, plugins=(), *, event_name="Stop", managed_policy=Non
 
 
 async def run_command(command, payload, *, shell, cwd, environment):
+    if isinstance(command, ContextHook):
+        from corki.core.context_hooks import run
+
+        return await asyncio.to_thread(run, command.context, payload)
     if os.name != "posix":
         raise ValueError("Stop hook process containment is not implemented on this platform")
     spawn = asyncio.create_task(
@@ -471,6 +501,9 @@ def _execution_request(command, payload):
         "command": command.command,
         "payload": payload,
     }
+    if isinstance(command, ContextHook):
+        request.pop("command")
+        request["context"] = command.context
     if isinstance(command, MCPHook):
         request.pop("command")
         request["mcp"] = command.mcp

@@ -12,9 +12,11 @@ import tempfile
 import urllib.error
 import urllib.parse
 import zipfile
+from pathlib import Path
 from dataclasses import dataclass
 
 from github_utils import github_request
+from skill_catalog import corki_home, local_skills, read_metadata, validate_install_name
 
 DEFAULT_REF = "main"
 
@@ -28,6 +30,8 @@ class Args:
     dest: str | None = None
     name: str | None = None
     method: str = "auto"
+    scope: str = "corki"
+    dry_run: bool = False
 
 
 @dataclass
@@ -44,7 +48,7 @@ class InstallError(Exception):
 
 
 def _corki_home() -> str:
-    return os.environ.get("CORKI_HOME", os.path.expanduser("~/.corki"))
+    return str(corki_home())
 
 
 def _tmp_root() -> str:
@@ -116,14 +120,6 @@ def _safe_extract_zip(zip_file: zipfile.ZipFile, dest_dir: str) -> None:
 def _validate_relative_path(path: str) -> None:
     if os.path.isabs(path) or os.path.normpath(path).startswith(".."):
         raise InstallError("Skill path must be a relative path inside the repo.")
-
-
-def _validate_skill_name(name: str) -> None:
-    altsep = os.path.altsep
-    if not name or os.path.sep in name or (altsep and altsep in name):
-        raise InstallError("Skill name must be a single path segment.")
-    if name in (".", ".."):
-        raise InstallError("Invalid skill name.")
 
 
 def _git_sparse_checkout(repo_url: str, ref: str, paths: list[str], dest_dir: str) -> str:
@@ -291,7 +287,9 @@ def _parse_args(argv: list[str]) -> Args:
     )
     parser.add_argument("--ref", default=DEFAULT_REF)
     parser.add_argument("--dest", help="Destination skills directory")
-    parser.add_argument("--name", help="Destination skill name (defaults to basename of path)")
+    parser.add_argument("--name", help="Compatibility option; must equal SKILL.md name (renaming is unsupported)")
+    parser.add_argument("--scope", choices=["corki", "public"], default="corki")
+    parser.add_argument("--dry-run", action="store_true", help="Download and validate without installing")
     parser.add_argument(
         "--method",
         choices=["auto", "download", "git"],
@@ -309,31 +307,44 @@ def main(argv: list[str]) -> int:
             raise InstallError("No skill paths provided.")
         for path in source.paths:
             _validate_relative_path(path)
-        dest_root = args.dest or _default_dest()
+        dest_root = os.path.abspath(os.path.expanduser(args.dest or (
+            str(Path.home() / ".agents/skills") if args.scope == "public" else _default_dest())))
+        builtin = (corki_home() / "skills/.system").resolve()
+        if Path(dest_root).resolve().is_relative_to(builtin):
+            raise InstallError("Third-party skills cannot be installed into the built-in directory.")
         tmp_dir = tempfile.mkdtemp(prefix="skill-install-", dir=_tmp_root())
         try:
             repo_root = _prepare_repo(source, args.method, tmp_dir)
-            installed = []
+            planned = []
+            existing = {row["name"].casefold(): row["path"] for row in local_skills(Path(dest_root))}
             for path in source.paths:
-                skill_name = args.name if len(source.paths) == 1 else None
-                skill_name = skill_name or os.path.basename(path.rstrip("/"))
-                _validate_skill_name(skill_name)
-                if not skill_name:
-                    raise InstallError("Unable to derive skill name.")
-                dest_dir = os.path.join(dest_root, skill_name)
-                if os.path.exists(dest_dir):
-                    raise InstallError(f"Destination already exists: {dest_dir}")
                 skill_src = os.path.join(repo_root, path)
                 _validate_skill(skill_src, repo_root)
-                _copy_skill(skill_src, dest_dir)
-                installed.append((skill_name, dest_dir))
+                skill_name, _ = read_metadata(Path(skill_src) / "SKILL.md", required_name=True)
+                validate_install_name(skill_name)
+                # A repository-root skill has no stable enclosing archive directory name.
+                if os.path.normpath(path) != "." and os.path.basename(path.rstrip("/")) != skill_name:
+                    raise InstallError("Skill directory must match SKILL.md name: " + path)
+                if args.name is not None and (len(source.paths) != 1 or args.name != skill_name):
+                    raise InstallError("Renaming is unsupported; use the SKILL.md name.")
+                dest_dir = os.path.join(dest_root, skill_name)
+                if os.path.lexists(dest_dir):
+                    raise InstallError(f"Destination already exists: {dest_dir}")
+                if skill_name.casefold() in existing:
+                    raise InstallError(f"Skill already installed or selected: {skill_name} ({existing[skill_name.casefold()]})")
+                existing[skill_name.casefold()] = dest_dir
+                planned.append((skill_name, skill_src, dest_dir))
+            for skill_name, skill_src, dest_dir in planned:
+                if args.dry_run:
+                    print(f"Validated {skill_name}; would install to {dest_dir}")
+                else:
+                    _copy_skill(skill_src, dest_dir)
+                    print(f"Installed {skill_name} to {dest_dir}", flush=True)
         finally:
             if os.path.isdir(tmp_dir):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
-        for skill_name, dest_dir in installed:
-            print(f"Installed {skill_name} to {dest_dir}")
         return 0
-    except InstallError as exc:
+    except (InstallError, OSError, ValueError, zipfile.BadZipFile) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 

@@ -39,6 +39,7 @@ class AssistantTextDelta:
     turn_id: TurnId
     delta: str
     item_id: str | None = None
+    phase: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +98,7 @@ class AssistantMessageCompleted:
     turn_id: TurnId
     text: str
     item_id: str | None = None
+    phase: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

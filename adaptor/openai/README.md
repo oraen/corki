@@ -96,6 +96,25 @@ finally:
 包含凭据。这里只支持 Codex ChatGPT 登录 access token，不将普通 OpenAI API key
 转换成 ChatGPT 登录权限。
 
+## 流式与非流式响应
+
+`/chat/completions`、`/v1/chat/completions`、`/responses` 和 `/v1/responses`
+均接受布尔值 `stream`：`true` 返回 SSE；`false` 或省略时返回一次 JSON。
+Chat Completions 返回 `chat.completion`（包含 message、tool_calls 和 usage）；
+Responses 返回上游完成的 response 对象。
+
+网关向 Codex 上游仍使用 `stream: true`。非流式请求等待 `response.completed`
+后才发送成功响应；上游失败、未完整结束或格式异常返回 502，不返回半截成功结果。
+非流式读取的 SSE 总量上限为 32 MiB，超限返回 502。客户端需要为完整生成预留等待时间。
+流式调用行为保持不变。
+
+```bash
+curl http://127.0.0.1:17001/v1/chat/completions \
+  -H "Authorization: Bearer $(cat "$HOME/.corki/gateway/local.key")" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-6-astra","messages":[{"role":"user","content":"你好"}],"stream":false}'
+```
+
 ## 客户端与迁移
 
 客户端只需要配置网关地址（默认 `http://127.0.0.1:17001`）和本地密钥，
