@@ -10,6 +10,7 @@ export const METHODS = [
   "threads.delete",
   "threads.archive",
   "turn.submit",
+  "queue.action",
   "turn.stop",
   "request.read",
   "interaction.respond",

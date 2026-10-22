@@ -96,7 +96,9 @@ class RealtimeController:
         while not self._queue.empty():
             self._queue.get_nowait()
 
-    async def steer(self, text: str, *, mentions=(), attachments=(), image_positions=()) -> None:
+    async def steer(
+        self, text: str, *, mentions=(), attachments=(), image_positions=()
+    ) -> UserMessageItem:
         if not self.active or not self._accepting:
             raise RealtimeTurnClosedError("no realtime turn is accepting input (turn closed)")
         mentions = validate_mentions(mentions)
@@ -118,6 +120,7 @@ class RealtimeController:
         self._accepted += 1
         self._unrecorded[item.id] = item
         self._queue.put_nowait(RealtimeInput(text, item))
+        return item
 
     async def stop(self) -> None:
         if self.active and self._accepting and not self._stop_queued:

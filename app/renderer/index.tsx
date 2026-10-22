@@ -1,3 +1,4 @@
+import { FollowUps } from "./followups";
 import { TranscriptView } from "./transcript-view";
 import { transcriptEntries } from "./transcript";
 import React, {
@@ -17,6 +18,7 @@ import {
   freshDraft,
   reduceEvent,
   mergeSnapshot,
+  mergeOlderMessages,
   awaitingFirstReply,
   type Conversation,
   type Draft,
@@ -649,7 +651,6 @@ function App() {
       d = draftRef.current[key] || freshDraft();
     if (
       admitting.current.has(key) ||
-      conversationsRef.current[key]?.running ||
       d.uncertain ||
       (!d.content.trim() && !d.attachments.length)
     )
@@ -667,7 +668,9 @@ function App() {
     setBusy((all) => ({ ...all, [key]: true }));
     setError("");
     const threadId = key === "new" ? crypto.randomUUID() : key;
+    const isFollowUp = !!conversationsRef.current[key]?.running || !!conversationsRef.current[key]?.followUps.messages.length;
     const request = {
+      followUpMode: "steer",
       requestId: crypto.randomUUID(),
       threadId,
       content: d.content,
@@ -683,7 +686,7 @@ function App() {
     draftRef.current = { ...draftRef.current, [key]: saved };
     setDrafts(draftRef.current);
     follow.current = true;
-    setConversations((all) => ({
+    if (!isFollowUp) setConversations((all) => ({
       ...all,
       [key]: {
         ...(all[key] || emptyConversation()),
@@ -705,6 +708,7 @@ function App() {
       if (
         ![
           "accepted",
+          "queued",
           "running",
           "waiting",
           "completed",
@@ -804,16 +808,11 @@ function App() {
       setConversations((all) => {
         const current = all[id];
         if (!current) return all;
-        const retained = current.messages.filter((m) => !m.contextOnly);
-        const ids = new Set(retained.map((m) => m.id));
         return {
           ...all,
           [id]: {
             ...current,
-            messages: [
-              ...page.messages.filter((m: any) => !ids.has(m.id)),
-              ...retained,
-            ],
+            messages: mergeOlderMessages(current.messages, page.messages),
             next: page.next,
           },
         };
@@ -911,6 +910,14 @@ function App() {
       </div>
     );
   }
+  if (!ready) return (
+    <main className="startup-screen" aria-busy="true">
+      <div className="startup-drag" aria-hidden="true" />
+      <div className="startup-identity" role="status" aria-live="polite" aria-label="Corki 启动中">
+        <h1>Corki<span aria-hidden="true">.</span></h1>
+      </div>
+    </main>
+  );
   return (
     <div className={`desktop ${collapsed ? "collapsed" : ""}`}>
       <aside className="sidebar">
@@ -979,10 +986,7 @@ function App() {
               <Icon name="sidebar" />
             </button>
           )}
-          <span className="execution-status">
-            {conversation.running && <i className="running-dot" />}
-            {conversation.status}
-          </span>
+          <span className="topbar-spacer" aria-hidden="true" />
           <button className="icon-button app-settings" title="设置" aria-label="设置"
             onClick={() => void api.openLink("http://127.0.0.1:17002/").catch(report)}>
             <Icon name="gear" size={17} />
@@ -1055,15 +1059,7 @@ function App() {
           }}
         >
           <div className="conversation-inner">
-            {!ready ? (
-              <div className="welcome startup-screen" role="status" aria-live="polite">
-                <div className="startup-emblem" aria-hidden="true">
-                  <div className="startup-orbit" />
-                  <Icon name="gear" size={104} />
-                </div>
-                <p>Corki启动中...</p>
-              </div>
-            ) : !conversation.messages.length &&
+            {!conversation.messages.length &&
               !conversation.pending.length &&
               !thinking ? (
               <div className="welcome">
@@ -1192,6 +1188,11 @@ function App() {
             </span>
             {selected === "new" && <Icon name="chevron" size={15} />}
           </button>
+          {selected !== "new" && conversation.followUps.messages.length > 0 &&
+            <FollowUps key={selected} value={conversation.followUps} running={conversation.running}
+              act={async (action, params = {}) => {
+                return await api.request("queue.action", {threadId: selected, action, ...params});
+              }} />}
           <div
             className="composer"
             onDragOver={(e) => {
@@ -1243,7 +1244,7 @@ function App() {
               rows={2}
               maxLength={100000}
               aria-label="消息"
-              placeholder="给 Corki 一个任务…"
+              placeholder="Do anything"
               value={composerContent}
               onChange={(e) => editDraft({ content: e.target.value })}
               onCompositionStart={() => {
@@ -1261,7 +1262,7 @@ function App() {
                   e.keyCode !== 229
                 ) {
                   e.preventDefault();
-                  if (!conversation.running) void send();
+                  void send();
                 }
               }}
             />
@@ -1293,7 +1294,6 @@ function App() {
                     });
                   }}
                 />
-                <span className="picker-divider">/</span>
                 <Picker
                   label="选择模型"
                   iconFallback="model"
@@ -1323,6 +1323,12 @@ function App() {
                   />
                 )}
               </div>
+              {conversation.running && (draft.content.trim() || draft.attachments.length > 0) && (
+                <button className="send-button followup-send" aria-label="追加消息"
+                  title="追加消息"
+                  disabled={!ready || !!offline || !catalog.valid || !model || !!busy[selected] || !!draft.uncertain}
+                  onClick={() => void send()}><Icon name="send" size={18} /></button>
+              )}
               {conversation.running ? (
                 <button
                   className="send-button stop"

@@ -21,7 +21,13 @@ export interface Message {
   startedAt?: number;
   elapsedSeconds?: number;
 }
+export interface FollowUpState {
+  mode: "steer" | "queue";
+  paused: boolean;
+  messages: { id: string; content: string; attachments: string[]; state: string; error?: string }[];
+}
 export interface Conversation {
+  followUps: FollowUpState;
   messages: Message[];
   running: boolean;
   status: string;
@@ -34,6 +40,7 @@ export interface Conversation {
 export function emptyConversation(): Conversation {
   return {
     messages: [],
+    followUps: { mode: "steer", paused: false, messages: [] },
     running: false,
     status: "",
     pending: [],
@@ -122,6 +129,26 @@ export function conversationFromSnapshot(
 }
 // Preserve older pages only when they overlap the authoritative new page.
 // A disjoint page can follow rollback or a large gap: never invent continuity.
+// A context-only question is a real canonical item fetched ahead of its page.
+// Keep it until its canonical page arrives; an intervening empty/compaction page
+// must not erase it. Position it before the first visible item of its own turn.
+export function mergeOlderMessages(current: Message[], older: Message[]): Message[] {
+  const canonical = new Map([...older, ...current].filter(m => !m.contextOnly).map(m => [m.id, m]));
+  const seen = new Set<string>();
+  const combined = [...older, ...current].filter(m => {
+    if (seen.has(m.id) || (m.contextOnly && canonical.has(m.id))) return false;
+    seen.add(m.id);
+    return true;
+  });
+  const result = combined.filter(m => !m.contextOnly);
+  for (const question of combined.filter(m => m.contextOnly)) {
+    const index = result.findIndex(m => m.turnId === question.turnId);
+    if (index >= 0) result.splice(index, 0, question);
+    else result.push(question);
+  }
+  return result;
+}
+
 export function mergeSnapshot(
   previous: Conversation | undefined,
   incoming: Conversation,
@@ -139,7 +166,7 @@ export function mergeSnapshot(
       const index = previous.messages.findIndex((m) => m.id === anchor.id);
       prefix = previous.messages
         .slice(0, index)
-        .filter((m) => !incomingIds.has(m.id) && !m.requestId && !m.streaming && !m.contextOnly);
+        .filter((m) => !incomingIds.has(m.id) && !m.requestId && !m.streaming);
       next = previous.next;
     }
   }
@@ -191,15 +218,18 @@ export function reduceEvent(
   };
   const base = { turnId: d.turn_id, content: "" };
   switch (event.type) {
+    case "queue.changed":
+      s.followUps = d as FollowUpState;
+      break;
     case "UserMessageSubmitted":
       s.status = "正在思考";
       update(
-        `submitted:${d.request_id}`,
+        d.item_id || `submitted:${d.request_id}`,
         (m) => ({ ...m, content: d.text, turnId: d.turn_id || undefined }),
         {
-          id: `submitted:${d.request_id}`,
+          id: d.item_id || `submitted:${d.request_id}`,
           role: "user",
-          requestId: d.request_id,
+          requestId: d.item_id ? undefined : d.request_id,
           createdAt: d.createdAt,
           content: d.text,
         },

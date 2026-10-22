@@ -20,6 +20,10 @@ class HistoryProjection:
         for item in items:
             if self.remaining_replacements:
                 self.remaining_replacements -= 1
+                # Pre-turn compaction can append the genuinely new user input
+                # inside its replacement span. Only retained copies are hidden.
+                if isinstance(item, UserMessageItem) and item.retained_from_id is None:
+                    visible.append(item)
                 continue
             if isinstance(item, CompactionItem):
                 self.remaining_replacements = item.replacement_item_count

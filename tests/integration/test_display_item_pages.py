@@ -25,8 +25,9 @@ class NoSampling:
 @pytest.mark.parametrize("limit", [1, 2, 3, 7])
 @pytest.mark.parametrize("gaps", [False, True])
 @pytest.mark.parametrize("cold", [False, True])
+@pytest.mark.parametrize("fresh_inside_span", [False, True])
 def test_runtime_pages_bound_decoding_and_preserve_compaction_across_concurrent_append(
-    tmp_path, monkeypatch, limit, gaps, cold
+    tmp_path, monkeypatch, limit, gaps, cold, fresh_inside_span
 ):
     async def scenario():
         import corki.storage.display_pages as storage
@@ -46,7 +47,7 @@ def test_runtime_pages_bound_decoding_and_preserve_compaction_across_concurrent_
             items = (
                 user,
                 answer,
-                CompactionItem("summary", answer.id, second_turn, replacement_item_count=3),
+                CompactionItem("summary", answer.id, second_turn, replacement_item_count=4 if fresh_inside_span else 3),
                 replace(user, id=new_item_id(), retained_from_id=user.id),
                 replace(answer, id=new_item_id()),
                 CompactionItem(

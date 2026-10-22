@@ -27,6 +27,7 @@ from content import (
     read_asset,
     read_message,
 )
+from followups import FollowUps
 from live import append_event, interrupted_messages
 from protocol import dumps
 from state import DesktopState
@@ -78,6 +79,7 @@ class Service:
         self.send = send
         self.factory = factory or LangGraphRuntime.acreate
         self.runtimes = {}
+        self.active_models = {}
         self.tasks = {}
         self.admissions = {}
         self.locks = WeakValueDictionary()
@@ -93,6 +95,7 @@ class Service:
         self.secrets = set()
         self.asset_gc_at = 0.0
         self.lifecycle_revision = 0
+        self.followups = FollowUps(self)
         # A previous process may have committed a Turn but lost its reply.
         for row in self.state.unresolved():
             status = None
@@ -168,6 +171,7 @@ class Service:
             "threads.delete": self.delete,
             "threads.archive": self.archive_thread,
             "turn.submit": self.submit,
+            "queue.action": self.followups.action,
             "turn.stop": self.stop,
             "request.read": self.request_read,
             "interaction.respond": self.respond,
@@ -197,6 +201,7 @@ class Service:
         return {
             "protocolVersion": 1,
             "threadManagementVersion": 2,
+            "followUpVersion": 1,
             "instance": self.instance,
             "sequence": self.sequence,
             "defaultDirectory": str(self.home / "main/default"),
@@ -489,6 +494,7 @@ class Service:
             "running": thread in self.tasks,
             "receipt": self.state.latest_request(thread),
             "live": list(self.live.get(thread, [])),
+            "followUps": self.followups.snapshot(thread),
             "pending": [v for v in self.pending.values() if v["threadId"] == thread],
             "instance": self.instance,
             "sequence": self.sequence,
@@ -504,8 +510,11 @@ class Service:
         thread, message = text(p, "threadId"), text(p, "messageId")
         try:
             item = await asyncio.to_thread(read_message, self.database, thread, message)
-        except ValueError:
-            content = self.state.interrupted_text(thread, message)
+        except ValueError as error:
+            try:
+                content = self.state.interrupted_text(thread, message)
+            except LookupError:
+                raise error from None
         else:
             content = message_text(item)
         offset = integer(p, "offset", 0, len(content))
@@ -545,6 +554,9 @@ class Service:
             if runtime:
                 await runtime.aclose()
                 self.runtimes.pop(thread, None)
+            with closing(self.state.connect()) as db, db:
+                db.execute("DELETE FROM followups WHERE thread=?", (thread,))
+                db.execute("DELETE FROM followup_settings WHERE thread=?", (thread,))
             if archive:
                 await self.archive.archive(ThreadId(thread))
                 self.state.put("draft:" + thread, None)
@@ -561,7 +573,7 @@ class Service:
 
     async def request_read(self, p):
         identity = text(p, "requestId")
-        receipt = self.state.request(identity)
+        receipt = self.state.request(identity) or self.followups.receipt(identity)
         if receipt is None and identity in self.admissions:
             return {"id": identity, "state": "preparing"}
         return receipt
@@ -589,7 +601,7 @@ class Service:
         task.add_done_callback(settled)
         return await asyncio.shield(task)
 
-    async def _submit(self, p):
+    async def _submit(self, p, *, queued_id=None, force_steer=False):
         identity = text(p, "requestId", limit=100)
         uuid.UUID(identity)
         content = text(p, "content", limit=100000).strip()
@@ -600,7 +612,16 @@ class Service:
             raise ValueError("请输入消息")
         thread = text(p, "threadId", default="") or str(uuid.uuid4())
         digest = hashlib.sha256(dumps(p).encode()).hexdigest()
+        if queued_id is not None:
+            row = next((r for r in self.followups.rows(thread) if r["id"] == queued_id), None)
+            if row is None:
+                return self.state.request(identity)
+            digest = row["digest"]
         prior = self.state.request(identity)
+        if queued_id is None:
+            queued = self.followups.receipt(identity, digest)
+            if queued:
+                return queued
         if prior:
             if prior["digest"] != digest:
                 raise ValueError("请求 ID 已用于其他内容")
@@ -612,8 +633,9 @@ class Service:
             prior = self.state.request(identity)
             if prior:
                 return prior
-            if thread in self.tasks:
-                raise ValueError("当前会话正在运行")
+            mode = p.get("followUpMode", "steer")
+            if mode not in ("steer", "queue"):
+                raise ValueError("无效的追加方式")
             exists = await self.repository.thread_exists(ThreadId(thread))
             directory = (
                 (await self.archive.read(ThreadId(thread))).cwd
@@ -684,6 +706,13 @@ class Service:
                     parts.append(f"\n\n附件 {name}:\n" + text(entry, "data", limit=200000))
                 else:
                     raise ValueError("不支持的附件类型")
+            if thread in self.tasks or (queued_id is None and self.followups.rows(thread)):
+                if queued_id is not None and not force_steer:
+                    self.followups.mark(queued_id, "queued")
+                    return self.followups.receipt(queued_id)
+                return await self.followups.accept(
+                    p, digest, content + "".join(parts), tuple(images), force=force_steer
+                )
             runtime = self.runtimes.get(thread)
             if runtime is None:
                 settings = self.settings(
@@ -735,6 +764,8 @@ class Service:
                 [str(directory), *[x for x in recent if x != str(directory)]][:12],
             )
             self.state.admit(identity, thread, digest)
+            if queued_id is not None:
+                self.followups.remove(queued_id)
             self.live[thread] = [
                 {
                     "type": "UserMessageSubmitted",
@@ -746,6 +777,9 @@ class Service:
                     },
                 }
             ]
+            if queued_id is None:
+                self.followups.setting(thread, paused=False)
+            self.active_models[thread] = (provider, model, effort)
             self.tasks[thread] = asyncio.create_task(
                 self.run(thread, identity, runtime, content + "".join(parts), tuple(images))
             )
@@ -779,7 +813,9 @@ class Service:
     async def run(self, thread, identity, runtime, content, images):
         terminal = False
         try:
-            async with aclosing(runtime.stream(content, attachments=images)) as events:
+            async with aclosing(
+                runtime.stream(content, attachments=images, realtime=True)
+            ) as events:
                 async for event in events:
                     kind = type(event).__name__
                     if kind == "AssistantReasoningDelta" and event.channel != "summary":
@@ -819,6 +855,23 @@ class Service:
                         )
                     if kind in ("TurnCompleted", "TurnCancelled", "TurnFailed"):
                         terminal = True
+                        self.followups.settle(thread, getattr(event, "unsubmitted_inputs", ()))
+                        data.pop("unsubmitted_inputs", None)
+                        if kind != "TurnCompleted":
+                            self.followups.setting(thread, paused=True)
+                        # Steers share the canonical turn, not another model loop.
+                        for receipt in self.state.unresolved():
+                            if receipt["thread_id"] == thread and receipt["turn_id"] == str(
+                                event.turn_id
+                            ):
+                                self.state.update_request(
+                                    receipt["id"],
+                                    {
+                                        "TurnCompleted": "completed",
+                                        "TurnCancelled": "cancelled",
+                                        "TurnFailed": "failed",
+                                    }[kind],
+                                )
                         self.state.update_request(
                             identity,
                             {
@@ -835,9 +888,11 @@ class Service:
             if not terminal:
                 raise RuntimeError("执行结束但未收到完成状态，请重新打开会话核对结果")
         except asyncio.CancelledError:
+            self.followups.setting(thread, paused=True)
             # Runtime emits TurnCancelled and then cancels its iterator by design.
             # Without a terminal event, cancellation is not proof of durable completion.
             if not terminal:
+                self.followups.unknown(thread)
                 self.state.update_request(identity, "outcome-unknown")
                 await self.emit(
                     "host.error",
@@ -845,6 +900,8 @@ class Service:
                     {"message": "停止结果尚未确认，请重新打开会话核对状态。"},
                 )
         except Exception as error:
+            self.followups.unknown(thread)
+            self.followups.setting(thread, paused=True)
             message = self.safe_error(error)
             self.state.update_request(identity, "failed", error=message)
             await self.emit("host.error", thread, {"message": message})
@@ -853,13 +910,21 @@ class Service:
             try:
                 await self.retire_idle_runtimes()
             finally:
+                take_inputs = getattr(runtime, "take_unsubmitted_inputs", None)
+                if take_inputs is not None:
+                    take_inputs()
                 self.tasks.pop(thread, None)
+                self.active_models.pop(thread, None)
                 self.live.pop(thread, None)
                 self.lifecycle_revision += 1
                 await self.emit("run.settled", thread, {"requestId": identity})
+                await self.followups.changed(thread)
+                self.followups.schedule(thread)
 
     async def stop(self, p):
         thread = text(p, "threadId")
+        self.followups.setting(thread, paused=True)
+        await self.followups.changed(thread)
         runtime = self.runtimes.get(thread)
         if runtime and thread in self.tasks:
             runtime.defer_goal_continuation()
@@ -972,6 +1037,7 @@ class Service:
 
     async def close(self):
         self.stopping = True
+        await asyncio.gather(*self.followups.pumps, return_exceptions=True)
         admissions = [task for _, task in self.admissions.values()]
         for task in admissions:
             task.cancel()

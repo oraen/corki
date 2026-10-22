@@ -124,7 +124,10 @@ def prune_unused_assets(home, state_path, *, older_than):
         return 0
     references = set()
     with closing(sqlite3.connect(state_path)) as db:
-        for row in db.execute("SELECT value FROM values_store WHERE key LIKE 'draft:%'"):
+        rows = list(db.execute("SELECT value FROM values_store WHERE key LIKE 'draft:%'"))
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='followups'").fetchone():
+            rows.extend(db.execute("SELECT payload FROM followups"))
+        for row in rows:
             stack = [json.loads(row[0])]
             while stack:
                 value = stack.pop()

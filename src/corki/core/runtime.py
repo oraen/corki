@@ -230,7 +230,7 @@ class AgentRuntime(Protocol):
         mentions: tuple[InputMention, ...] = (),
         attachments=(),
         image_positions=(),
-    ) -> None: ...
+    ) -> UserMessageItem: ...
 
     def take_unsubmitted_inputs(self) -> tuple[UserMessageItem, ...]: ...
 
@@ -1610,10 +1610,10 @@ class LangGraphRuntime:
         mentions: tuple[InputMention, ...] = (),
         attachments=(),
         image_positions=(),
-    ) -> None:
+    ) -> UserMessageItem:
         """Queue an additional user message for the currently streaming turn."""
 
-        await self._realtime.steer(
+        return await self._realtime.steer(
             message, mentions=mentions, attachments=attachments, image_positions=image_positions
         )
 

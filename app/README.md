@@ -177,3 +177,23 @@ The desktop accepts `--corki-directory /absolute/workspace` on first launch and
 through its single-instance activation. The manager's desktop quick-launch mode
 uses this entry point. The path initializes a new-chat draft, never changes the
 working directory of an existing Agent session, and never submits a prompt.
+
+### 运行中追加消息
+
+桌面端复用 Runtime 的 realtime/steer 接口，不启动第二个 Agent 循环。运行期间可以继续输入并按 Enter 提交，统一补充当前任务，不展示追加方式选择，也不读取旧版保存的排队偏好。Shift+Enter 换行，中文输入法确认不会发送。
+
+参考本机 Codex 桌面包的 turn coordinator、`hasFinalAnswer` 和 queued-message-list：模型已经输出非空 `final_answer` 时，普通追加自动排队；队列的“立即补充”可以显式绕过此条件。模型未提供 phase 时，不猜测文字是否属于最终回答，按补充当前任务处理。不同模型/推理设置的消息始终等待下一轮，不修改当前执行。
+
+队列支持编辑、移除、排序和手动发送。停止、失败会暂停队列；取消前已接受但未写入核心历史的补充输入也退回暂停队列。重启后保留消息但不自动执行；发送结果未知的消息必须先核对，不能直接重试。队列存于 `app/desktop.db`，核心消息仍只有 Corki 原有会话库这一份事实来源。归档或删除会话会清除其未发送队列；排队附件不会被草稿附件清理器误删。
+
+验证命令：
+
+```sh
+# 仓库根目录
+.venv/bin/python -m pytest app/tests/test_followups.py tests/integration/test_realtime_steering.py
+# app 目录
+npm test
+node tests/electron-followups.mjs
+```
+
+Electron 测试使用独立临时 CORKI_HOME 和本机假模型，不读取真实用户配置。提取的第三方安装包、测试截图和运行日志只放系统临时目录。

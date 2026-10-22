@@ -71,3 +71,20 @@ def test_projection_rejects_invalid_boundary_state(remaining):
 
     with pytest.raises(ValueError):
         HistoryProjection(remaining)
+
+
+def test_fresh_question_inside_pre_turn_compaction_span_is_visible():
+    from corki.cli.history_projection import HistoryProjection
+
+    turn = new_turn_id()
+    prior = UserMessageItem("previous question", new_turn_id())
+    retained = replace(prior, retained_from_id=prior.id)
+    fresh = UserMessageItem("new question", turn)
+    answer = AssistantMessageItem("new answer", turn, new_step_id())
+    items = (prior, CompactionItem("summary", None, turn, replacement_item_count=2),
+             retained, fresh, answer)
+    for cut in range(len(items) + 1):
+        projection = HistoryProjection()
+        before = projection.feed(items[:cut])
+        resumed = HistoryProjection(projection.remaining_replacements)
+        assert before + resumed.feed(items[cut:]) == (prior, fresh, answer)

@@ -550,3 +550,50 @@ test("cancellation snapshot keeps canonical question ahead of an initially provi
  const merged=mergeSnapshot(previous,incoming);
  assert.deepEqual(merged.messages.map(m=>m.id),["canonical-question","progress","tool:old","tool:anchor","stopped:t"]);
 });
+
+test("older pages preserve canonical question anchors through empty pages and promote once", async () => {
+  const { mergeOlderMessages } = await import(pathToFileURL(path.join(tmp, "state.mjs")));
+  const q = { id: "question", role: "user", turnId: "turn", content: "question" };
+  const anchor = { ...q, contextOnly: true };
+  const tail = { id: "tail", role: "assistant", turnId: "turn", content: "tail" };
+  const early = { ...tail, id: "early" };
+  let messages = mergeOlderMessages([anchor, tail], []);
+  assert.deepEqual(messages, [anchor, tail]);
+  messages = mergeOlderMessages(messages, [anchor, early]);
+  assert.deepEqual(messages, [anchor, early, tail]);
+  messages = mergeOlderMessages(messages, [q]);
+  assert.deepEqual(messages, [q, early, tail]);
+});
+
+test("snapshot refresh keeps anchors belonging to earlier loaded turns", async () => {
+  const { mergeSnapshot } = await import(pathToFileURL(path.join(tmp, "state.mjs")));
+  const q = { id: "q", role: "user", turnId: "old", content: "question", contextOnly: true };
+  const old = { id: "old", role: "assistant", turnId: "old", content: "answer" };
+  const fresh = { id: "fresh", role: "user", turnId: "new", content: "new question" };
+  const previous = { ...emptyConversation(), messages: [q, old, fresh], next: 10 };
+  const incoming = { ...emptyConversation(), messages: [fresh], next: 20 };
+  assert.deepEqual(mergeSnapshot(previous, incoming).messages, [q, old, fresh]);
+});
+
+test('steering uses canonical identity across live events and snapshot recovery', () => {
+  let state = reduceEvent(emptyConversation(), event('UserMessageSubmitted', {
+    request_id:'r-steer', item_id:'canonical-steer', turn_id:'t', text:'additional question'
+  }));
+  assert.equal(state.messages[0].id, 'canonical-steer');
+  assert.equal(state.messages[0].requestId, undefined);
+  state = conversationFromSnapshot({ ...emptyConversation(), threadId:'thread', instance:'i',
+    running:true, messages:[{id:'canonical-steer',role:'user',turnId:'t',content:'additional question'}],
+    live:[{type:'UserMessageSubmitted',data:{request_id:'r-steer',item_id:'canonical-steer',turn_id:'t',text:'additional question'}}] });
+  assert.equal(state.messages.length, 1);
+});
+
+test('queue changes do not insert unsubmitted questions into transcript', () => {
+  const original = emptyConversation();
+  const next = reduceEvent(original, event('queue.changed', {
+    mode:'queue', paused:true, messages:[{id:'q',content:'later',state:'queued',attachments:[]}]
+  }));
+  assert.equal(next.followUps.messages.length,1);
+  assert.equal(next.followUps.paused,true);
+  assert.equal(next.messages.length,0);
+  assert.equal(original.followUps.messages.length,0);
+});
