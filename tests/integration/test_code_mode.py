@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -165,7 +166,7 @@ def test_real_cell_discovers_and_invokes_normal_ledger_backed_tool(
             events = [event async for event in runtime.stream("run module")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert len(calls) == 1 and len(requests) == 2
-            with sqlite3.connect(tmp_path / "sessions.db") as connection:
+            with closing(sqlite3.connect(tmp_path / "sessions.db")) as connection:
                 assert connection.execute(
                     "SELECT tool_name,status FROM tool_executions ORDER BY tool_name"
                 ).fetchall() == [("exec", "completed"), (name, "completed")]

@@ -5,6 +5,7 @@ import shlex
 import socket
 import sqlite3
 import sys
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 
@@ -280,7 +281,7 @@ def test_worker_policy_failure_isolated_and_claim_released_without_sampling(
             assert not requests, "invalid worker authority must precede model sampling"
             assert not staged, "invalid worker authority must precede copying inputs"
             assert copies and all(not copy.exists() for copy in copies)
-            with sqlite3.connect(tmp_path / "sessions.db") as connection:
+            with closing(sqlite3.connect(tmp_path / "sessions.db")) as connection:
                 row = connection.execute(
                     "SELECT status,ownership_token,lease_until,error,retry_at "
                     "FROM memory_jobs WHERE kind='memory_consolidate_global'"
@@ -362,7 +363,7 @@ def test_shutdown_during_worker_policy_preparation_joins_before_releasing_claim(
             assert memory_worker_state_dirs and all(
                 not path.exists() for path in memory_worker_state_dirs
             )
-            with sqlite3.connect(tmp_path / "sessions.db") as connection:
+            with closing(sqlite3.connect(tmp_path / "sessions.db")) as connection:
                 row = connection.execute(
                     "SELECT status,ownership_token,lease_until,error "
                     "FROM memory_jobs WHERE kind='memory_consolidate_global'"
@@ -405,6 +406,12 @@ def test_background_pass_captures_parent_before_the_scheduled_task_runs(tmp_path
         )
         service = runtime._memory_service
 
+        # Runtime initialization binds the host-owned data root before handing
+        # permissions to workers. Capture that effective policy, then verify
+        # scheduling freezes each pass before later settings changes.
+        initial_permissions = service._settings.execution_permissions
+        assert initial_permissions == replace(first, runtime_home=tmp_path.absolute())
+
         async def observed(thread, *, parent_permissions):
             seen.append(parent_permissions.parent)
             if len(seen) == 2:
@@ -418,7 +425,7 @@ def test_background_pass_captures_parent_before_the_scheduled_task_runs(tmp_path
             service._settings = replace(service._settings, execution_permissions=second)
             service.start(runtime.thread_id)
             await asyncio.wait_for(entered.wait(), 3)
-            assert seen == [first, second]
+            assert seen == [initial_permissions, second]
             release.set()
             await service.wait()
         finally:

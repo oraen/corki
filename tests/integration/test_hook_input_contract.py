@@ -2,11 +2,10 @@
 
 import asyncio
 import json
-import shlex
-import sys
 from pathlib import Path
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
@@ -40,16 +39,14 @@ def test_hook_input_uses_persisted_session_and_effective_policy(
     tmp_path, event_name, parent_exists, policy, asynchronous
 ):
     async def scenario():
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
-                "Path('input.json').write_text(json.dumps(p)); "
-                "Path('read-transcripts.json').write_text(json.dumps({"
-                "k: Path(p[k]).read_text() for k in ('transcript_path','agent_transcript_path') "
-                "if p.get(k)})); print('{}')",
-            ]
+        command = python_command(
+            tmp_path,
+            "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
+            "Path('input.json').write_text(json.dumps(p), encoding='utf-8'); "
+            "Path('read-transcripts.json').write_text(json.dumps({"
+            "k: Path(p[k]).read_text(encoding='utf-8') "
+            "for k in ('transcript_path','agent_transcript_path') "
+            "if p.get(k)}), encoding='utf-8'); print('{}')",
         )
         fingerprint, _ = command_identity(
             {"type": "command", "command": command, "async": asynchronous}, event_name=event_name
@@ -110,7 +107,7 @@ def test_hook_input_uses_persisted_session_and_effective_policy(
             async with asyncio.timeout(5):
                 while runtime._graph._stop_hooks._async._tasks:
                     await asyncio.sleep(0.01)
-            payload = json.loads((tmp_path / "input.json").read_text())
+            payload = json.loads((tmp_path / "input.json").read_text(encoding="utf-8"))
             assert payload["session_id"] == runtime.session_id == "explicit-execution-session"
             assert payload["session_id"] != runtime.thread_id
             assert payload["permission_mode"] == (
@@ -124,11 +121,13 @@ def test_hook_input_uses_persisted_session_and_effective_policy(
             else:
                 assert "agent_id" not in payload
                 transcript = Path(payload["transcript_path"])
-            rows = [json.loads(line) for line in transcript.read_text().splitlines()]
+            rows = [
+                json.loads(line) for line in transcript.read_text(encoding="utf-8").splitlines()
+            ]
             assert rows[0]["thread_id"] == runtime.thread_id
             assert rows[0]["session_id"] == runtime.session_id
             assert any(row.get("payload", {}).get("content") == "finish" for row in rows)
-            read = json.loads((tmp_path / "read-transcripts.json").read_text())
+            read = json.loads((tmp_path / "read-transcripts.json").read_text(encoding="utf-8"))
             own = "agent_transcript_path" if event_name == "SubagentStop" else "transcript_path"
             assert "finish" in read[own] and "PARENT ONLY" not in read[own]
             if parent_exists:

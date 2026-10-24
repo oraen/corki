@@ -2,6 +2,7 @@
 
 import asyncio
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -141,7 +142,7 @@ def test_provider_cannot_create_user_preview_through_model_output(tmp_path, part
         try:
             events = [event async for event in runtime.stream(" \n")]
             assert isinstance(events[-1], TurnFailed)
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection:
                 assert connection.execute(
                     "SELECT preview FROM threads WHERE id=?", (thread,)
                 ).fetchone() == ("",)

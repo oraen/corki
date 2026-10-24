@@ -13,7 +13,9 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 def main():
-    payload = json.load(sys.stdin)
+    # The parent writes UTF-8 JSON bytes. Windows pipe text streams otherwise
+    # use the user's ANSI code page and silently corrupt non-ASCII arguments.
+    payload = json.load(sys.stdin.buffer)
     headers = {"Content-Type": "application/json", "Accept": "application/json, text/plain"}
     headers.update(payload["headers"])
     method = payload.get("method", "POST")
@@ -42,10 +44,10 @@ def main():
                 raise ValueError("HTTP 返回超过 1 MB 限制")
             sys.stdout.buffer.write(data)
     except HTTPError as error:
-        print(f"HTTP 请求失败：{error.code}", file=sys.stderr)
+        sys.stderr.buffer.write(f"HTTP 请求失败：{error.code}\n".encode())
         sys.exit(1)
     except Exception as error:
-        print(f"HTTP 请求失败：{type(error).__name__}", file=sys.stderr)
+        sys.stderr.buffer.write(f"HTTP 请求失败：{type(error).__name__}\n".encode())
         sys.exit(1)
 
 

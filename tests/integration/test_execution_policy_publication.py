@@ -6,14 +6,17 @@ import shlex
 
 import pytest
 from test_execution_policy_live_inheritance import (
+    TOUCH_PREFIX,
     Model,
     child_source,
     live_policy,
     notices,
+    path_command,
     run,
     runtime_for,
 )
 from test_execution_policy_live_inheritance import compiler as compiler
+from test_execution_policy_live_inheritance import live_compiler as live_compiler
 
 from corki.config import CorkiSettings
 from corki.config.execution_requirements import ExecutionRequirementsLayer
@@ -321,11 +324,11 @@ def test_host_publication_uses_full_captured_policy_not_disk_or_model_filter(
 
 @pytest.mark.parametrize("mode", ["direct", "code_mode_only"])
 def test_missing_native_publication_ack_preserves_only_current_approval(
-    tmp_path, compiler, mode, monkeypatch
+    tmp_path, live_compiler, mode, monkeypatch
 ):
     async def scenario():
         model = Model(mode)
-        runtime = await runtime_for(tmp_path, compiler, model)
+        runtime = await runtime_for(tmp_path, live_compiler, model)
         original = rule_writer.run_owned
         writes = []
 
@@ -339,7 +342,7 @@ def test_missing_native_publication_ack_preserves_only_current_approval(
 
         async def respond(request):
             runtime.respond_execution_approval(
-                request.request_id, "accept", execpolicy_amendment=["touch"]
+                request.request_id, "accept", execpolicy_amendment=list(TOUCH_PREFIX)
             )
 
         runtime.set_execution_approval_handler(respond)
@@ -349,9 +352,9 @@ def test_missing_native_publication_ack_preserves_only_current_approval(
                 runtime,
                 model,
                 {
-                    "cmd": "touch " + shlex.quote(str(first)),
+                    "cmd": path_command(TOUCH_PREFIX, first),
                     "sandbox_permissions": "require_escalated",
-                    "prefix_rule": ["touch"],
+                    "prefix_rule": list(TOUCH_PREFIX),
                 },
             )
             assert first.exists() and len(writes) == 1
@@ -360,7 +363,7 @@ def test_missing_native_publication_ack_preserves_only_current_approval(
                 isinstance(e, WarningEvent) and "current-policy publication" in e.message
                 for e in events
             )
-            await run(runtime, model, {"cmd": "touch " + shlex.quote(str(second))})
+            await run(runtime, model, {"cmd": path_command(TOUCH_PREFIX, second)})
             assert not second.exists() and len(writes) == 1
             assert not runtime._process_manager.approvals.rules.prefixes
             assert not notices(model)
@@ -372,12 +375,12 @@ def test_missing_native_publication_ack_preserves_only_current_approval(
 
 @pytest.mark.parametrize("prefix", [[], ["touch"]])
 def test_bare_native_append_shape_retains_validation_and_write_semantics(
-    tmp_path, compiler, prefix
+    tmp_path, live_compiler, prefix
 ):
     async def scenario():
         path = tmp_path / "default.rules"
         output = await rule_writer.run_owned(
-            [str(compiler)],
+            [str(live_compiler)],
             (
                 json.dumps({"append_execpolicy": {"path": str(path), "prefix": prefix}}) + "\n"
             ).encode(),

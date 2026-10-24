@@ -12,11 +12,12 @@ import tempfile
 import urllib.error
 import urllib.parse
 import zipfile
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from dataclasses import dataclass
 
 from github_utils import github_request
-from skill_catalog import corki_home, local_skills, read_metadata, validate_install_name
+from skill_catalog import configure_stdio, corki_home, local_skills, read_metadata, validate_install_name
+from corki.platforms.paths import archive_parts, is_link_path
 
 DEFAULT_REF = "main"
 
@@ -102,14 +103,23 @@ def _download_repo_zip(owner: str, repo: str, ref: str, dest_dir: str) -> str:
 
 
 def _run_git(args: list[str]) -> None:
-    result = subprocess.run(args, capture_output=True, text=True)
+    result = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode != 0:
         raise InstallError(result.stderr.strip() or "Git command failed.")
 
 
 def _safe_extract_zip(zip_file: zipfile.ZipFile, dest_dir: str) -> None:
     dest_root = os.path.realpath(dest_dir)
+    targets = set()
     for info in zip_file.infolist():
+        try:
+            parts = archive_parts(info.filename.rstrip("/"))
+        except ValueError as error:
+            raise InstallError(f"Archive contains an invalid path: {info.filename!r}") from error
+        identity = tuple(os.path.normcase(part) for part in parts)
+        if identity in targets:
+            raise InstallError(f"Archive contains duplicate paths: {info.filename!r}")
+        targets.add(identity)
         extracted_path = os.path.realpath(os.path.join(dest_dir, info.filename))
         if extracted_path == dest_root or extracted_path.startswith(dest_root + os.sep):
             continue
@@ -118,7 +128,8 @@ def _safe_extract_zip(zip_file: zipfile.ZipFile, dest_dir: str) -> None:
 
 
 def _validate_relative_path(path: str) -> None:
-    if os.path.isabs(path) or os.path.normpath(path).startswith(".."):
+    if (os.path.isabs(path) or PureWindowsPath(path).anchor
+            or os.path.normpath(path).startswith("..")):
         raise InstallError("Skill path must be a relative path inside the repo.")
 
 
@@ -172,7 +183,7 @@ def _validate_skill(path: str, repo_root: str) -> None:
     current_path = repo_root
     for component in relative_path.split(os.path.sep):
         current_path = os.path.join(current_path, component)
-        if os.path.islink(current_path):
+        if is_link_path(Path(current_path)):
             raise InstallError(
                 "Symbolic links are not allowed in skills: "
                 f"{os.path.relpath(current_path, repo_root)}"
@@ -188,7 +199,7 @@ def _validate_skill(path: str, repo_root: str) -> None:
         for name in directories + files:
             entry_path = os.path.join(root, name)
             relative_entry = os.path.relpath(entry_path, repo_root)
-            if os.path.islink(entry_path):
+            if is_link_path(Path(entry_path)):
                 resolved_entry = os.path.realpath(entry_path)
                 try:
                     inside_skill = (
@@ -350,4 +361,5 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    configure_stdio()
     raise SystemExit(main(sys.argv[1:]))

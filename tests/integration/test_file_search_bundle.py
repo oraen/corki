@@ -16,9 +16,11 @@ ROOT = Path(__file__).resolve().parents[2]
 def bundle():
     from corki.cli.native_file_search import executable
 
-    binary = executable()
+    configured = os.environ.get("CORKI_TEST_FILE_SEARCH")
+    binary = Path(configured) if configured else executable()
     if binary is None:
         pytest.skip("build the local file search bundle first")
+    assert binary.is_absolute() and binary.is_file()
     return binary.parent
 
 
@@ -36,6 +38,8 @@ def test_installed_bundle_matches_source_platform_and_licenses(bundle):
 def test_damaged_asset_rejected_before_packaging(bundle, tmp_path, asset):
     target = tmp_path / "bundle"
     shutil.copytree(bundle, target)
+    if asset == "corki-file-search" and os.name == "nt":
+        asset += ".exe"
     with (target / asset).open("ab") as stream:
         stream.write(b"damage")
     api = runpy.run_path(str(ROOT / "native/file_search/artifact.py"))
@@ -68,15 +72,20 @@ def test_wheel_contains_executable_and_uses_it_without_test_override(tmp_path):
     installed = tmp_path / "installed"
     installed.mkdir()
     with zipfile.ZipFile(wheel) as archive:
-        binary = archive.getinfo("corki/_native/file_search/corki-file-search")
-        assert (binary.external_attr >> 16) & 0o111
-        assert "macosx" in wheel.name or "linux" in wheel.name
+        name = "corki-file-search.exe" if os.name == "nt" else "corki-file-search"
+        binary = archive.getinfo("corki/_native/file_search/" + name)
+        if os.name == "nt":
+            assert "win_" in wheel.name
+        else:
+            assert (binary.external_attr >> 16) & 0o111
+            assert ("macosx" if sys.platform == "darwin" else "linux") in wheel.name
         for entry in archive.infolist():
             path = Path(entry.filename)
             assert not path.is_absolute() and ".." not in path.parts
         archive.extractall(installed)
         # zipfile does not preserve Unix executable permission when extracting.
-        (installed / binary.filename).chmod(0o755)
+        if os.name != "nt":
+            (installed / binary.filename).chmod(0o755)
     project = tmp_path / "project"
     project.mkdir()
     (project / "中文 空目录").mkdir()

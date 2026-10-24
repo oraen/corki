@@ -1,12 +1,26 @@
 """Legacy hook snapshots preserve identity without enabling Agent Plugin overlays."""
 
 import json
+import os
+from pathlib import Path
 
 import pytest
 
 from corki.plugins.hooks import load_plugin_hooks
 from corki.plugins.installed_manifest import installed_manifest
 from corki.plugins.store import PluginId, PluginInstallation
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows path anchors")
+@pytest.mark.parametrize("selection", ["./\\escape.json", "./C:escape.json", "./Z:escape.json"])
+def test_windows_anchored_hook_path_is_rejected_before_read(tmp_path, monkeypatch, selection):
+    def unexpected_read(*args, **kwargs):
+        pytest.fail("anchored hook path must be rejected before reading")
+
+    monkeypatch.setattr(Path, "read_text", unexpected_read)
+    sources, warnings = load_plugin_hooks(tmp_path, selection)
+    assert sources == ()
+    assert warnings == ("ignoring hooks: expected a contained ./ path",)
 
 
 def test_bad_hook_file_preserves_valid_sibling(tmp_path):

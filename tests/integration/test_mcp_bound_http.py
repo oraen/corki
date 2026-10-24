@@ -151,11 +151,11 @@ def test_same_id_new_binding_switches_carrier_but_admitted_call_keeps_old_lease(
         first, second = Carrier(), Carrier("second")
         binding = MCPHTTPEnvironment("remote", first)
         runtime = await runtime_for(tmp_path, MCPRuntimeContext((binding,)))
-        await runtime._ensure_ready()
-        await runtime._mcp_manager.refresh_if_dirty()
-        manager = runtime._mcp_manager
-        old = manager._clients_by_name["docs"]
         try:
+            await runtime._ensure_ready()
+            await runtime._mcp_manager.refresh_if_dirty()
+            manager = runtime._mcp_manager
+            old = manager._clients_by_name["docs"]
             runtime.request_mcp_runtime_context(MCPRuntimeContext((binding,)))
             await runtime._refresh_tools()
             assert manager._clients_by_name["docs"].client is old.client
@@ -440,8 +440,10 @@ def test_context_replaced_during_initialization_is_not_lost(tmp_path):
             assert not runtime._mcp_manager.refresh_pending
         finally:
             release.set()
-            await startup
-            await runtime.aclose()
+            try:
+                await startup
+            finally:
+                await runtime.aclose()
         assert not first.closed and not second.closed
 
     asyncio.run(scenario())

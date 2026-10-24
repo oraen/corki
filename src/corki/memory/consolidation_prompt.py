@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from corki.platforms.paths import is_link_path
 from corki.prompting import PromptStore
 
 
@@ -33,7 +34,7 @@ def build_consolidation_prompt(store: PromptStore, root: Path, shared: bool = Fa
 def seed_extension_instructions(root: Path) -> None:
     """Install native ad-hoc interpretation guidance without replacing user edits."""
     directory = root / "extensions" / "ad_hoc"
-    if any(path.is_symlink() for path in (root, root / "extensions", directory)):
+    if any(is_link_path(path) for path in (root, root / "extensions", directory)):
         raise ValueError("memory extension directory cannot be a symbolic link")
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = directory / "instructions.md"

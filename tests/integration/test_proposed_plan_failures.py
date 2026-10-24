@@ -24,7 +24,7 @@ from corki.protocol.items import AssistantMessageItem, new_step_id
 @pytest.mark.parametrize("ending", ["failure", "cancel", "retry"])
 @pytest.mark.parametrize("commit_first", [False, True])
 def test_incomplete_plan_cleanup_and_retry_preserve_only_committed_display(
-    tmp_path, ending, commit_first
+    tmp_path, ending, commit_first, headless_terminal
 ):
     async def scenario():
         committed = asyncio.Event()
@@ -106,11 +106,13 @@ def test_incomplete_plan_cleanup_and_retry_preserve_only_committed_display(
                 yield event
 
         try:
+            # Bound deadlocks without imposing a 5s performance requirement on
+            # native admission, durable commits and retry cleanup combined.
             if ending == "cancel":
                 with pytest.raises(asyncio.CancelledError):
-                    await asyncio.wait_for(app._consume_events(events()), 5)
+                    await asyncio.wait_for(app._consume_events(events()), 30)
             else:
-                await asyncio.wait_for(app._consume_events(events()), 5)
+                await asyncio.wait_for(app._consume_events(events()), 30)
             terminal = observed[-1]
             expected = {"failure": TurnFailed, "cancel": TurnCancelled, "retry": TurnCompleted}[
                 ending

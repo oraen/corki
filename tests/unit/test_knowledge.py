@@ -24,7 +24,7 @@ def document(tmp_path, text="# Budget\n\n预算不足会导致投放受限。\n\
     store = KnowledgeStore(tmp_path)
     path = store.root / "budget.md"
     path.parent.mkdir(parents=True)
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     doc = store.sync(path, "Budget", text)
     return store, path, doc, text
 
@@ -152,7 +152,7 @@ def test_skill_execution_repairs_invalid_output_and_closes(tmp_path):
     assert not requests[0].tools
     segment = store.search("预算")["results"][0]
     assert store.read(segment["id"])["content"] == text
-    source = bundled_skills_source().joinpath("corki-text-C&E/SKILL.md").read_text()
+    source = bundled_skills_source().joinpath("corki-text-C&E/SKILL.md").read_text(encoding="utf-8")
     assert parse(source, "fallback")[0] == "corki-text-C&E"
 
 
@@ -161,7 +161,7 @@ def test_failed_batch_resume_and_pagination(tmp_path):
     store.set_enabled(doc["id"], True)
     job = store.claim(doc["id"], "fixture")
     settings = CorkiSettings(working_directory=tmp_path)
-    skill = bundled_skills_source().joinpath("corki-text-C&E/SKILL.md").read_text()
+    skill = bundled_skills_source().joinpath("corki-text-C&E/SKILL.md").read_text(encoding="utf-8")
     planned = list(request_batches(text, doc["title"], skill,
                                    settings.model_context_info(settings.model)))
     first = planned[0]

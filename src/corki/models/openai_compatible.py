@@ -26,6 +26,12 @@ from corki.models.http_stream import model_http_stream
 from corki.models.media import chat_content
 from corki.models.namespaces import request_tool_aliases
 from corki.models.request_settings import resolve_reasoning, resolve_service_tier
+from corki.models.request_watch import (
+    request_completed,
+    request_failed,
+    request_wait,
+    response_lines,
+)
 from corki.models.types import (
     ModelCompleted,
     ModelEvent,
@@ -149,6 +155,7 @@ class OpenAICompatibleModel:
                         yield event
                 return
             except ModelError as exc:
+                await request_failed(exc)
                 safe_error = sanitized_model_error(exc, self._api_key)
                 if (
                     request.harness_managed_retries
@@ -164,7 +171,7 @@ class OpenAICompatibleModel:
                 if delay is None:
                     delay = backoff(self._retry_base_seconds, attempt - 1)
                 yield ModelRetrying(attempt, self._max_retries, delay, str(safe_error))
-                await asyncio.sleep(delay)
+                await request_wait(asyncio.sleep(delay))
 
     def _build_payload(self, request: ModelRequest) -> dict[str, Any]:
         request_tool_aliases(request)
@@ -242,7 +249,7 @@ class OpenAICompatibleModel:
                 max_retries=self._request_max_retries,
                 base_seconds=self._retry_base_seconds,
             ) as response:
-                async for line in response.aiter_lines():
+                async for line in response_lines(response):
                     if not line.startswith("data:"):
                         continue
                     data = line[5:].strip()
@@ -421,6 +428,7 @@ class OpenAICompatibleModel:
             )
             for index in sorted(call_buffers)
         )
+        await request_completed()
         yield ModelCompleted(tuple(items), usage=usage, provider_metadata=provider_metadata)
 
     async def aclose(self) -> None:

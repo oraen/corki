@@ -20,8 +20,12 @@ class CustomBuildHook(BuildHookInterface):
                 search_api = runpy.run_path(str(root / "native/file_search/artifact.py"))
                 search_manifest = search_api["verify"](root, search)
                 search_tag = search_manifest["wheel_platform"]
+                search_name = (
+                    "corki-file-search.exe" if search_tag.startswith("win_")
+                    else "corki-file-search"
+                )
                 for name in (
-                    "corki-file-search",
+                    search_name,
                     "manifest.json",
                     "THIRD_PARTY.txt",
                     "RUST_COPYRIGHT.html",
@@ -57,6 +61,10 @@ class CustomBuildHook(BuildHookInterface):
                 str(provenance): "corki/_native/sandbox/manifest.json",
             }
         )
+        for helper_name in manifest.get("auxiliary_sha256", {}):
+            build_data["force_include"][str(binary.parent / helper_name)] = (
+                f"corki/_native/sandbox/{helper_name}"
+            )
         build_data["pure_python"] = False
         tag = search_tag or manifest["wheel_platform"]
         api["verify_binary_platform"](binary, tag)

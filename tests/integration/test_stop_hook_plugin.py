@@ -32,7 +32,12 @@ def test_plugin_stop_command_controls_actual_runtime(tmp_path, form, approved):
             "{'decision':'block','reason':'PLUGIN_CHECK'}))\n"
         )
         command = shlex.quote(sys.executable) + ' "${PLUGIN_ROOT}/check.py"'
-        handler = {"type": "command", "command": command}
+        powershell_python = sys.executable.replace("'", "''")
+        handler = {
+            "type": "command",
+            "command": command,
+            "commandWindows": f"& '{powershell_python}' (Join-Path $env:PLUGIN_ROOT 'check.py')",
+        }
         hooks = {"hooks": {"Stop": [{"hooks": [handler]}]}}
         (root / "hooks/hooks.json").write_text(json.dumps(hooks))
         manifest = {"name": "bundle"}

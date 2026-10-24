@@ -10,7 +10,7 @@ import sys
 import urllib.error
 
 from github_utils import github_api_contents_url, github_request
-from skill_catalog import local_skills
+from skill_catalog import configure_stdio, local_skills
 
 DEFAULT_REPO = "openai/skills"
 DEFAULT_PATH = "skills/.curated"
@@ -99,4 +99,5 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    configure_stdio()
     raise SystemExit(main(sys.argv[1:]))

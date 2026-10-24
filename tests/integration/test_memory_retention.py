@@ -4,6 +4,7 @@ import asyncio
 import json
 import sqlite3
 import threading
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -31,7 +32,7 @@ def populate(database, workspace):
         ("polluted", fresh, 1, "polluted"),
         ("valid", fresh, 0, "enabled"),
     ]
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         for thread, source, selected, mode in entries:
             connection.execute(
                 "INSERT INTO threads(id,cwd,updated_at,memory_mode) VALUES (?,?,?,?)",
@@ -116,7 +117,7 @@ def test_runtime_prunes_only_one_batch_then_consolidates_visible_inputs(tmp_path
                 report = await runtime._memory_service.wait()
                 assert report.claimed == 0 and report.failed == 0
                 assert len(memory.requests) == 1
-                with sqlite3.connect(database) as connection:
+                with closing(sqlite3.connect(database)) as connection, connection:
                     names = {
                         row[0]
                         for row in connection.execute("SELECT thread_id FROM memory_stage1_outputs")
@@ -241,7 +242,7 @@ def test_runtime_close_joins_already_started_retention_write(tmp_path):
             assert finished.is_set()
             assert runtime._memory_service._task.cancelled()
             assert not memory.requests
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 assert (
                     connection.execute("SELECT COUNT(*) FROM memory_stage1_outputs").fetchone()[0]
                     == 4

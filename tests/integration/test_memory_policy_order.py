@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 
 import pytest
@@ -96,7 +97,7 @@ def test_runtime_rejects_worker_config_before_sync_or_noop(tmp_path, monkeypatch
             assert not inputs, "native policy failure precedes DB input selection"
             assert workspace.capture(root) == before
             assert copies and all(not path.exists() for path in copies)
-            with sqlite3.connect(tmp_path / "state.db") as connection:
+            with closing(sqlite3.connect(tmp_path / "state.db")) as connection:
                 row = connection.execute(
                     "SELECT status,ownership_token,lease_until,error FROM memory_jobs "
                     "WHERE job_key='global'"

@@ -5,6 +5,7 @@
 
 use crate::exec_amendments::{self, Options};
 use codex_execpolicy::{Decision, Evaluation, MatchOptions, Policy, PolicyParser, RuleMatch};
+use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::{PermissionProfile, SandboxPermissions};
 use codex_protocol::permissions::FileSystemSandboxKind;
 use codex_protocol::protocol::AskForApproval;
@@ -83,6 +84,7 @@ pub fn check(
     approval_policy: AskForApproval,
     sandbox_permissions: SandboxPermissions,
     exec_options: &Options,
+    windows_sandbox_level: WindowsSandboxLevel,
 ) -> Result<Checked, String> {
     // Native handlers reject a disallowed override before explicit rule matching.
     // Sticky preapproved grants are a separate, not-yet-implemented path.
@@ -122,6 +124,7 @@ pub fn check(
             dangerous_command_match_for_platform(command, platform)
         };
         let unenforced_windows_restriction = cfg!(windows)
+            && windows_sandbox_level == WindowsSandboxLevel::Disabled
             && matches!(profile, PermissionProfile::Managed { .. })
             && profile.file_system_sandbox_policy().kind == FileSystemSandboxKind::Restricted
             && !profile

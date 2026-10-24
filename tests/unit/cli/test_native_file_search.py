@@ -53,3 +53,22 @@ def test_native_failure_does_not_start_fallback(tmp_path, monkeypatch):
     with pytest.raises(FileSearchUnavailable, match="failed or exceeded") as error:
         asyncio.run(reference_completion.files(tmp_path, "a"))
     assert "private" not in str(error.value)
+
+
+@pytest.mark.parametrize("path", [r"C:outside", r"\outside", r"C:\outside", r"\\server\share\x"])
+def test_windows_anchor_cannot_escape_workspace(path, monkeypatch):
+    from pathlib import PureWindowsPath
+
+    monkeypatch.setattr(native_file_search, "PurePath", PureWindowsPath)
+    with pytest.raises(ValueError, match="invalid local search"):
+        native_file_search.decode(json.dumps([{"path": path, "directory": False, "score": 1}]))
+
+
+def test_windows_relative_candidate_preserved(monkeypatch):
+    from pathlib import PureWindowsPath
+
+    monkeypatch.setattr(native_file_search, "PurePath", PureWindowsPath)
+    path = "中文 目录\\file.txt"
+    assert native_file_search.decode(json.dumps([
+        {"path": path, "directory": False, "score": 1},
+    ])) == ((path, False, 1),)

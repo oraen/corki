@@ -18,7 +18,7 @@ def inspect_worker_evidence(request):
     root = Path(re.search(r"<cwd>(.*?)</cwd>", environment.content, re.S)[1])
     sampled = workspace.capture(root)
     return {
-        "workspace_diff": (root / "phase2_workspace_diff.md").read_text(),
+        "workspace_diff": (root / "phase2_workspace_diff.md").read_text(encoding="utf-8"),
         "extension_sources": workspace.extension_sources(sampled),
         "previous_memory": workspace.text(sampled, "MEMORY.md"),
         "previous_summary": workspace.text(sampled, "memory_summary.md"),

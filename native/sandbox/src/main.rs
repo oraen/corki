@@ -30,10 +30,15 @@ mod patch_diff;
 #[path = "../reference/codex-rs/core/src/safety.rs"]
 mod patch_safety;
 mod permission_context;
+mod regular_file;
 mod requirements;
 mod retry;
 mod selection;
 mod terminal;
+mod terminal_process;
+mod windows_program;
+#[cfg(any(windows, test))]
+mod windows_sandbox;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -46,6 +51,8 @@ struct Request {
     catalog: Option<selection::Selection>,
     cwd: PathBuf,
     policy_cwd: PathBuf,
+    #[cfg(windows)]
+    runtime_home: Option<PathBuf>,
     memory_root: Option<PathBuf>,
     command: Vec<String>,
     #[serde(default)]
@@ -198,13 +205,26 @@ fn transform(mut req: Request) -> Result<Value, String> {
     let mut active = None;
     let mut roots = Vec::new();
     let mut warnings = Vec::new();
+    #[cfg(windows)]
+    let windows_level = if req.runtime_home.is_some() {
+        WindowsSandboxLevel::RestrictedToken
+    } else {
+        WindowsSandboxLevel::Disabled
+    };
+    #[cfg(not(windows))]
+    let windows_level = WindowsSandboxLevel::Disabled;
     let mut profile = match (req.profile, req.legacy, req.selection) {
         (Some(profile), None, None) => profile,
         (None, Some(legacy), None) => {
             PermissionProfile::from_legacy_sandbox_policy_for_cwd(&legacy, &req.policy_cwd)
         }
         (None, None, Some(selection)) => {
-            let resolved = selection::resolve(selection, &requirements_toml, &req.policy_cwd)?;
+            let resolved = selection::resolve(
+                selection,
+                &requirements_toml,
+                &req.policy_cwd,
+                windows_level,
+            )?;
             active = Some(resolved.active);
             roots = resolved.roots;
             warnings = resolved.warnings;
@@ -293,11 +313,15 @@ fn transform(mut req: Request) -> Result<Value, String> {
             approval_policy,
             req.sandbox_permissions,
             &req.exec_policy_options,
+            windows_level,
         )?;
         bypass_sandbox = checked.bypass_sandbox;
         exec_approval = checked.approval;
         warnings.extend(checked.warnings);
     }
+    // Review the user's command above, then add the same trusted console prelude
+    // as Codex unified_exec. Retry plans below retain the actual launch command.
+    req.command = codex_shell_command::powershell::prefix_powershell_script_with_utf8(&req.command);
     // Host approval must finish before this argv executes. This is per-command:
     // the stored profile stays unchanged, including independently denied reads.
     if req.sandbox_permissions.requires_escalated_permissions()
@@ -331,13 +355,19 @@ fn transform(mut req: Request) -> Result<Value, String> {
     };
     let required = !bypass_sandbox
         && manager.should_sandbox(execution_profile, SandboxablePreference::Auto, false);
+    #[cfg(windows)]
+    let windows_level = if required && windows_level != WindowsSandboxLevel::Disabled {
+        windows_sandbox::level_for_profile(execution_profile, &req.policy_cwd)?
+    } else {
+        windows_level
+    };
     let sandbox = if bypass_sandbox {
         SandboxType::None
     } else {
         manager.select_initial(
             execution_profile,
             SandboxablePreference::Auto,
-            WindowsSandboxLevel::Disabled,
+            windows_level,
             false,
         )
     };
@@ -370,10 +400,35 @@ fn transform(mut req: Request) -> Result<Value, String> {
             sandbox_policy_cwd: &policy_cwd,
             codex_linux_sandbox_exe: None,
             use_legacy_landlock: false,
-            windows_sandbox_level: WindowsSandboxLevel::Disabled,
+            windows_sandbox_level: windows_level,
             windows_sandbox_private_desktop: true,
         })
         .map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    let transformed = if sandbox == SandboxType::WindowsRestrictedToken {
+        let policy_root = policy_cwd.to_abs_path().map_err(|e| e.to_string())?;
+        let authority = windows_sandbox::Authority {
+            home: req
+                .runtime_home
+                .ok_or("Windows sandbox requires Corki runtime home")?,
+            cwd: req.cwd.clone(),
+            policy_cwd: policy_root.clone(),
+            workspace_roots: if roots.is_empty() {
+                vec![policy_root]
+            } else {
+                roots.clone()
+            },
+            profile: transformed.permission_profile.clone(),
+            level: windows_level,
+            command: transformed.command.clone(),
+        };
+        let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+        let mut transformed = transformed;
+        transformed.command = authority.command_args(&executable)?;
+        transformed
+    } else {
+        transformed
+    };
     let mut response = json!({"command": transformed.command, "exec_policy_checked": exec_policy_checked, "exec_policy_loaded": loaded_sources.is_some(), "exec_policy_sources": loaded_sources, "exec_policy_identity": exec_policy_identity, "exec_approval": exec_approval, "shell_approval": true, "exec_policy_amendments": true, "model_escalation": true, "managed_exec_policy": true, "full_disk_read_access": profile.file_system_sandbox_policy().has_full_disk_read_access(), "profile": profile, "sandbox": sandbox.as_metric_tag(), "revision": 1, "memory_derivation": true, "managed_requirements": true, "named_selection": true, "managed_catalog": true, "permission_constrained": permission_constrained, "active_permission_profile": active, "profile_workspace_roots": roots, "warnings": warnings});
     response["managed_approval"] = json!(true);
     response["full_disk_write_access"] = json!(
@@ -416,6 +471,27 @@ fn transform(mut req: Request) -> Result<Value, String> {
 }
 
 fn main() {
+    #[cfg(windows)]
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == windows_sandbox::ARG)
+    {
+        windows_sandbox::main();
+    }
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == windows_program::ARG)
+    {
+        windows_program::main();
+        return;
+    }
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == terminal_process::ARG)
+    {
+        terminal_process::main();
+        return;
+    }
     if std::env::args_os()
         .nth(1)
         .is_some_and(|arg| arg == fs_helper::ARG)

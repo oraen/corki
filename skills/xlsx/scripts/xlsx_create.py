@@ -252,6 +252,9 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    from _stdio import configure_stdio
+
+    configure_stdio()
     try:
         sys.exit(main())
     except Exception as exc:  # noqa: BLE001

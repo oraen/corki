@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from platform_commands import python_command
 from test_mcp_bound_http import Carrier
 from test_mcp_tool_approval import Model
 
@@ -17,6 +18,24 @@ from corki.mcp.http_redirect import MCPHttpSession
 from corki.protocol.events import TurnCompleted
 from corki.protocol.items import ToolResultItem
 from corki.tools import ToolRegistry
+
+
+def contains_cwd(value, expected):
+    """Inspect nested tool JSON without depending on Python repr path escaping."""
+    if isinstance(value, dict):
+        return value.get("cwd") == expected or any(
+            contains_cwd(item, expected) for item in value.values()
+        )
+    if isinstance(value, list):
+        return any(contains_cwd(item, expected) for item in value)
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except ValueError:
+            return False
+        if decoded != value:
+            return contains_cwd(decoded, expected)
+    return False
 
 
 @pytest.mark.parametrize("mode", ["direct", "native", "compatible", "code_mode"])
@@ -71,7 +90,11 @@ def test_plugin_source_search_call_and_cwd_are_preserved(tmp_path, mode, placeme
             events = [e async for e in runtime.stream("needle cwd")]
             assert isinstance(events[-1], TurnCompleted)
             results = [i for i in model.requests[-1].items if isinstance(i, ToolResultItem)]
-            assert str(expected.resolve()) in repr(results)
+            assert any(
+                contains_cwd(getattr(part, "text", ""), str(expected.resolve()))
+                for item in results
+                for part in item.content_items
+            )
             assert json.loads(report.read_text()) == {"cwd": str(expected.resolve()), "calls": 1}
             if mode in ("native", "compatible"):
                 assert any(i.tool_name == "tool_search" for i in results)
@@ -83,7 +106,6 @@ def test_plugin_source_search_call_and_cwd_are_preserved(tmp_path, mode, placeme
     asyncio.run(scenario())
 
 
-@pytest.mark.skipif(os.name != "posix", reason="header helper process containment is POSIX-only")
 @pytest.mark.parametrize("mode", ["direct", "native", "compatible", "code_mode"])
 def test_plugin_http_helper_executes_in_runtime_directory(tmp_path, monkeypatch, mode):
     async def scenario():
@@ -92,9 +114,12 @@ def test_plugin_http_helper_executes_in_runtime_directory(tmp_path, monkeypatch,
         root = project / ".corki" / "plugins" / "sample"
         manifest = root / ".codex-plugin" / "plugin.json"
         manifest.parent.mkdir(parents=True)
-        (project / "auth.py").write_text(
-            "import json, os\nprint(json.dumps({'x-fixture-cwd': os.getcwd()}))\n"
-        )
+        helper_source = "import json, os\nprint(json.dumps({'x-fixture-cwd': os.getcwd()}))\n"
+        if os.name == "nt":
+            helper_command = python_command(project, helper_source, name="auth.py")
+        else:
+            (project / "auth.py").write_text(helper_source, encoding="utf-8")
+            helper_command = shlex.quote(sys.executable) + " auth.py"
         manifest.write_text(
             json.dumps(
                 {
@@ -102,7 +127,7 @@ def test_plugin_http_helper_executes_in_runtime_directory(tmp_path, monkeypatch,
                     "mcpServers": {
                         "docs": {
                             "url": "https://fixture.invalid",
-                            "http_headers_helper": shlex.quote(sys.executable) + " auth.py",
+                            "http_headers_helper": helper_command,
                         }
                     },
                 }

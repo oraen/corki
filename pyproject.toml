@@ -49,6 +49,8 @@ corki = "corki.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/corki"]
+# Include reviewed assets explicitly; compiled tools use the provenance-checked hook.
+exclude = ["/src/corki/_native/**"]
 
 [tool.hatch.build.hooks.custom]
 path = "native/sandbox/hatch_build.py"
@@ -58,9 +60,16 @@ path = "native/sandbox/hatch_build.py"
 [tool.hatch.build.targets.wheel.force-include]
 "prompts" = "corki/_prompt_templates"
 "skills" = "corki/_builtin_skills"
+"src/corki/_native/mcp_regex.wasm" = "corki/_native/mcp_regex.wasm"
+"src/corki/_native/mcp_url.wasm" = "corki/_native/mcp_url.wasm"
+"src/corki/_native/HOOK_REGEX_LICENSES.txt" = "corki/_native/HOOK_REGEX_LICENSES.txt"
+"src/corki/_native/REGEX_LITE_LICENSE.txt" = "corki/_native/REGEX_LITE_LICENSE.txt"
+"src/corki/_native/MCP_URL_LICENSES.txt" = "corki/_native/MCP_URL_LICENSES.txt"
+"src/corki/_native/MCP_URL_RUST_COPYRIGHT.html" = "corki/_native/MCP_URL_RUST_COPYRIGHT.html"
 
 [tool.hatch.build.targets.sdist]
-exclude = ["/adaptor/**"]
+exclude = ["/adaptor/**", "/src/corki/_native/**"]
+
 include = [
     "src",
     "tests",
@@ -76,6 +85,14 @@ include = [
     "native/sandbox",
     "pyproject.toml",
 ]
+
+[tool.hatch.build.targets.sdist.force-include]
+"src/corki/_native/mcp_regex.wasm" = "src/corki/_native/mcp_regex.wasm"
+"src/corki/_native/mcp_url.wasm" = "src/corki/_native/mcp_url.wasm"
+"src/corki/_native/HOOK_REGEX_LICENSES.txt" = "src/corki/_native/HOOK_REGEX_LICENSES.txt"
+"src/corki/_native/REGEX_LITE_LICENSE.txt" = "src/corki/_native/REGEX_LITE_LICENSE.txt"
+"src/corki/_native/MCP_URL_LICENSES.txt" = "src/corki/_native/MCP_URL_LICENSES.txt"
+"src/corki/_native/MCP_URL_RUST_COPYRIGHT.html" = "src/corki/_native/MCP_URL_RUST_COPYRIGHT.html"
 
 [tool.pytest.ini_options]
 addopts = "-q"

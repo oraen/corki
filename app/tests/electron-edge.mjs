@@ -1,3 +1,4 @@
+import { python } from './platform.mjs';
 import {poll} from './wait.mjs';
 import {_electron as electron} from 'playwright';
 import http from 'node:http';
@@ -16,7 +17,7 @@ const server=http.createServer(async(req,res)=>{
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 let app;
 try{
- const env={...process.env,CORKI_HOME:home,CORKI_PYTHON:path.resolve('../.venv/bin/python')};delete env.ELECTRON_RUN_AS_NODE;
+ const env={...process.env,CORKI_HOME:home,CORKI_PYTHON:python};delete env.ELECTRON_RUN_AS_NODE;
  app=await electron.launch({args:[path.resolve('.')],env});
  await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1})});
  const page=await app.firstWindow();const errors=[];page.on('pageerror',e=>errors.push(e.message));

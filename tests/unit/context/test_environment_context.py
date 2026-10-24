@@ -61,13 +61,22 @@ def test_environment_changes_emit_typed_delta(tmp_path, monkeypatch, field):
 
 def test_builder_escapes_all_xml_metacharacters(tmp_path, monkeypatch):
     clock(monkeypatch)
-    path = tmp_path / "a&<b>\"'"
+    # Use a real directory legal on both Windows and macOS; exercise all XML
+    # metacharacters in the shell and directly in the path renderer below.
+    path = tmp_path / "a&中文'"
     path.mkdir()
     item = build(path, "a&<b>\"'")
     assert "a&amp;&lt;b&gt;&quot;&apos;" in item.content
     root = ElementTree.fromstring(item.content)
     assert root.findtext("cwd") == str(path)
     assert root.findtext("shell") == "a&<b>\"'"
+
+
+def test_environment_path_renderer_escapes_all_xml_metacharacters():
+    path = "a&<b>\"'"
+    body = EnvironmentSnapshot(path, None, None, None).body(include_environment=True)
+    assert "a&amp;&lt;b&gt;&quot;&apos;" in body
+    assert ElementTree.fromstring("<environment>" + body + "</environment>").findtext("cwd") == path
 
 
 @pytest.mark.parametrize("state", [None, "bad json", '{"version":99}', '{"version":true}'])

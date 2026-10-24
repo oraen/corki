@@ -179,7 +179,7 @@ def test_collision_identity_and_raw_routes_survive_catalog_delivery(
                 phase[0] = definitions
                 runtime.request_mcp_refresh()
                 await runtime._mcp_manager.start()
-                assert registry.spec("mcp__codex_apps::old") is None
+                assert registry.spec(f"mcp__{server}::old") is None
             events = [e async for e in runtime.stream("search invoices and call each tool")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert len(discovered) == 2

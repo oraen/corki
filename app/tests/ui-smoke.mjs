@@ -1,3 +1,4 @@
+import { browserLaunchOptions } from './platform.mjs';
 import { chromium } from "playwright";
 import http from "node:http";
 import { readFile, mkdtemp, rm } from "node:fs/promises";
@@ -11,7 +12,7 @@ const server = http.createServer(async (req, res) => {
       root,
       "." + new URL(req.url, "http://localhost").pathname,
     );
-    if (!p.startsWith(root + "/")) throw Error();
+    if (!p.startsWith(root + path.sep)) throw Error();
     const body = await readFile(p);
     res.setHeader(
       "Content-Type",
@@ -31,21 +32,22 @@ const server = http.createServer(async (req, res) => {
   }
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-const browser = await chromium.launch({
-  executablePath:
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  headless: true,
-});
+const browser = await chromium.launch(browserLaunchOptions);
 try {
   const page = await browser.newPage({
     viewport: { width: 1440, height: 900 },
   });
+  page.setDefaultTimeout(30_000);
   const failures = [];
   page.on("pageerror", (e) => failures.push(e.message));
   await page.addInitScript(() => {
     const state = new Map();
     window.__saved = state;
     window.__submissions = 0;
+    let configurationReads = 0;
+    const initialConfiguration = new Promise((resolve) => {
+      window.__releaseConfiguration = resolve;
+    });
     let subscriber = () => {};
     const catalog = {
       valid: true,
@@ -72,7 +74,13 @@ try {
           state.set(p.key, p.value);
           return {};
         }
-        if (method === "config.read") return catalog;
+        if (method === "config.read") {
+          if (configurationReads++ === 0) {
+            window.__configurationPending = true;
+            await initialConfiguration;
+          }
+          return catalog;
+        }
         if (method === "threads.list") return { threads: [], next: null };
         if (method === "request.read") return window.__receipt || null;
         if (method === "turn.submit") {
@@ -92,7 +100,7 @@ try {
         if (method === "threads.read") {
           if(window.__deferReads) return await new Promise(resolve=>window.__reads.push(resolve));
           return {
-            instance:"test", sequence:0,
+            instance:"test", sequence:window.__sequence || 0,
             messages: [
               { id: "u", role: "user", content: "请介绍 Corki" },
               {
@@ -111,7 +119,10 @@ try {
       },
       subscribe: (callback) => {
         subscriber = callback;
-        window.__emit = callback;
+        window.__emit = (event) => {
+          window.__sequence = Math.max(window.__sequence || 0, event.sequence);
+          callback(event);
+        };
         return () => {};
       },
       chooseDirectory: async () => "/tmp/workspace",
@@ -126,9 +137,15 @@ try {
     };
   });
   await page.goto(`http://127.0.0.1:${server.address().port}/index.html`);
+  await page.waitForFunction(() => window.__configurationPending);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert(await page.getByRole("status", { name: "Corki 启动中", exact: true }).isVisible(),
+    "Keep startup visible until the initial model catalog is known");
+  assert.equal(await page.getByText("请先在管理页面配置供应商和模型。", {exact: true}).count(), 0);
+  await page.evaluate(() => window.__releaseConfiguration());
   await page.getByRole("heading", { name: "Learning never ends" }).waitFor();
   await page.getByRole("button", { name: "选择模型", exact: true }).waitFor();
-  await page.screenshot({ path: "/tmp/corki-desktop-empty.png" });
+  await page.screenshot({ path: path.join(os.tmpdir(), 'corki-desktop-empty.png') });
   await page
     .getByRole("textbox", { name: "消息", exact: true })
     .fill("请介绍 Corki");
@@ -136,7 +153,7 @@ try {
   await page.locator(".markdown h1").waitFor();
   await page.getByRole("button", { name: "复制回答原文" }).click();
   assert((await page.evaluate(() => window.__copied)).includes("**Agent**"));
-  await page.screenshot({ path: "/tmp/corki-desktop-chat.png" });
+  await page.screenshot({ path: path.join(os.tmpdir(), 'corki-desktop-chat.png') });
   const originalText = await page.locator(".markdown").innerText();
   const selectedText = await page.evaluate(() => {
     const text = document.querySelector(".markdown h1").firstChild;
@@ -235,9 +252,13 @@ try {
   assert.equal(await input.inputValue(),'');
   await page.evaluate(()=>{
     window.__deferReads=true;window.__reads=[];
-    for(const sequence of [2,3])window.__emit({type:'threads.changed',instance:'test',sequence,threadId:window.__lastSubmission.threadId,data:{}});
+    for(const sequence of [2,3])window.__emit({type:'run.settled',instance:'test',sequence,threadId:window.__lastSubmission.threadId,data:{}});
   });
-  await page.waitForFunction(()=>window.__reads.length>=2);
+  await page.waitForFunction(()=>window.__reads.length===1);
+  await page.evaluate(()=>{
+    window.__reads[0]({threadId:window.__lastSubmission.threadId,instance:'test',sequence:2,messages:[{id:'stale',role:'assistant',content:'Stale snapshot must not replace newer content'}],turns:[],live:[],pending:[],running:false,directory:'/tmp/workspace',next:null});
+  });
+  await page.waitForFunction(()=>window.__reads.length===2);
   await page.evaluate(()=>{
     const snapshot={threadId:window.__lastSubmission.threadId,instance:'test',sequence:3,messages:[{id:'latest',role:'assistant',content:'Newest snapshot stays visible'}],turns:[],live:[],pending:[],running:false,directory:'/tmp/workspace',next:null};
     window.__reads.at(-1)(snapshot);
@@ -252,7 +273,7 @@ try {
   assert.equal(await page.locator('.markdown').filter({hasText:'Newest snapshot stays visible'}).count(),1);
   await page.evaluate(()=>{
     window.__deferReads=true;window.__reads=[];
-    window.__emit({type:'threads.changed',instance:'test',sequence:4,threadId:window.__lastSubmission.threadId,data:{}});
+    window.__emit({type:'run.settled',instance:'test',sequence:4,threadId:window.__lastSubmission.threadId,data:{}});
   });
   await page.waitForFunction(()=>window.__reads.length===1);
   await page.evaluate(()=>{
@@ -268,6 +289,27 @@ try {
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
   assert.equal(await page.locator('.markdown').filter({hasText:'ALREADY_INCLUDED'}).count(),0);
   assert.equal(await page.locator('.markdown').filter({hasText:'Complete resynchronized answer'}).count(),1);
+  const beforeModelWarning = await page.locator('.conversation-scroll').boundingBox();
+  await page.evaluate(()=>{
+    const threadId=window.__lastSubmission.threadId;
+    window.__emit({type:'TurnStarted',instance:'test',sequence:Math.max(window.__sequence,1000)+1,threadId,data:{turn_id:'failure-fixture'}});
+    window.__emit({type:'model.health',instance:'test',sequence:window.__sequence+1,threadId,data:{warning:true}});
+  });
+  const modelWarning=page.locator('.model-health-banner');
+  await modelWarning.waitFor();
+  assert(await modelWarning.evaluate(n=>n.classList.contains('banner')));
+  assert.equal(await modelWarning.evaluate(n=>getComputedStyle(n).position),'absolute');
+  assert.deepEqual(await page.locator('.conversation-scroll').boundingBox(),beforeModelWarning);
+  const warningBounds=await modelWarning.boundingBox();
+  assert.equal(warningBounds.x,beforeModelWarning.x);
+  assert.equal(warningBounds.width,beforeModelWarning.width);
+  assert.equal(warningBounds.y,beforeModelWarning.y,'Warning must start at the top of the chat area');
+  await page.screenshot({path:path.join(os.tmpdir(),'corki-model-failure-banner.png')});
+  await page.evaluate(()=>window.__emit({type:'TurnFailed',instance:'test',sequence:window.__sequence+1,threadId:window.__lastSubmission.threadId,data:{turn_id:'failure-fixture',error:'模型调用失败',createdAt:'2026-10-25T00:00:00Z'}}));
+  await page.locator('.markdown').filter({hasText:'模型调用失败'}).waitFor();
+  await modelWarning.waitFor({state:'detached'});
+  assert.equal(await page.locator('.message-error').filter({hasText:'模型调用失败'}).count(),0);
+  assert.equal(await page.locator('.thinking-indicator').count(),0);
   assert.deepEqual(failures, []);
   console.log(
     "PASS desktop layout, model selection, sending, Markdown, raw copy and streaming text selection, delayed receipts, draft preservation, lost acknowledgement reconciliation and no resubmission",

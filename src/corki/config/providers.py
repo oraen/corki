@@ -47,6 +47,7 @@ def provider_settings(provider_id, provider_values, defaults):
         api_base=provider_values.get("base_url", defaults.api_base),
         provider_name=provider_values.get("name", defaults.provider_name),
         provider_id=provider_id,
+        provider_enabled=provider_values.get("enabled", True),
         api_key=provider_values.get("api_key"),
         api_mode=provider_values.get("api_mode", defaults.api_mode),
         supports_audio_input=provider_values.get(
@@ -90,6 +91,64 @@ def provider_settings(provider_id, provider_values, defaults):
     )
 
 
+def effective_default(document):
+    """Resolve missing/unavailable defaults in declaration order, without writing."""
+    default = document.get("default", {})
+    if not isinstance(default, dict):
+        raise ValueError("default must be an object with provider and model")
+    if any(key in default and (not isinstance(default[key], str) or not default[key].strip())
+           for key in ("provider", "model")):
+        return dict(default)  # Preserve structural errors for the validator.
+    profiles = document.get("providers", {})
+    if not isinstance(profiles, dict) or not profiles:
+        return dict(default)
+    if "provider" in default:
+        identity = default["provider"]
+        if not isinstance(identity, str) or not identity.strip():
+            return dict(default)  # Preserve structural errors for the validator.
+        selected = profiles.get(identity)
+        if selected is None:
+            selected = next((profile for profile in profiles.values()
+                if isinstance(profile, dict) and identity in profile.get("aliases", [])), None)
+        if isinstance(selected, dict) and selected.get("enabled", True):
+            models = selected.get("models", {})
+            if isinstance(models, dict) and models and "model" not in default:
+                return {**default, "model": next(iter(models))}
+            if not isinstance(default.get("model"), str) or not default["model"].strip():
+                return dict(default)
+            if not models or default.get("model") in models:
+                return dict(default)
+        fallback = next(((name, profile) for name, profile in profiles.items()
+            if isinstance(profile, dict) and profile.get("enabled", True)
+            and isinstance(profile.get("models"), dict) and profile["models"]), None)
+        if fallback is None:
+            return dict(default)
+        name, profile = fallback
+        return {**default, "provider": name, "model": next(iter(profile["models"]))}
+    candidates = [
+        (name, profile) for name, profile in profiles.items() if isinstance(profile, dict)
+    ]
+    if not candidates:
+        return dict(default)
+    # Prefer enabled entries. Retain a disabled identity when all are off so the
+    # configuration remains editable; model construction still rejects it.
+    name, profile = next(
+        ((name, profile) for name, profile in candidates if profile.get("enabled", True)),
+        candidates[0],
+    )
+    models = profile.get("models", {})
+    if "model" in default:
+        model = default["model"]
+    elif isinstance(models, dict) and models:
+        model = next(iter(models))
+    else:
+        agent = document.get("agent", {})
+        if not isinstance(agent, dict):
+            raise ValueError("agent must be an object")
+        model = agent.get("model", "gpt-5")
+    return {**default, "provider": name, "model": model}
+
+
 def resolve_model_document(document, provider=None, model=None):
     """Project provider/model nesting onto the established settings parser.
 
@@ -101,7 +160,9 @@ def resolve_model_document(document, provider=None, model=None):
     from corki.config.model_context import parse_model_contexts
 
     result = deepcopy(document)
-    default = result.get("default", {})
+    default = effective_default(result)
+    if default:
+        result["default"] = default
     if not isinstance(default, dict):
         raise ValueError("default must be an object with provider and model")
     if default and not {"provider", "model"}.issubset(default):
@@ -118,6 +179,8 @@ def resolve_model_document(document, provider=None, model=None):
             raise ValueError("providers entries must be objects")
         if not isinstance(name, str) or not name.strip():
             raise ValueError("provider names must be non-empty strings")
+        if type(profile.get("enabled", True)) is not bool:
+            raise ValueError("provider.enabled must be a boolean")
         aliases = profile.get("aliases", [])
         if not isinstance(aliases, list) or any(
             not isinstance(alias, str) or not alias.strip() for alias in aliases

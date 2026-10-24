@@ -102,6 +102,8 @@ def test_grounded_citations_uses_corki_home_and_executes_end_to_end(tmp_path: Pa
         check=False,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        timeout=60,
         env=env,
     )
     added = subprocess.run(
@@ -109,6 +111,8 @@ def test_grounded_citations_uses_corki_home_and_executes_end_to_end(tmp_path: Pa
         check=False,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        timeout=60,
         env=env,
     )
     rendered = subprocess.run(
@@ -116,6 +120,8 @@ def test_grounded_citations_uses_corki_home_and_executes_end_to_end(tmp_path: Pa
         check=False,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        timeout=60,
         env=env,
     )
 

@@ -27,7 +27,6 @@ async def main():
             Path(sys.executable).resolve().parent,
             Path(sys.executable).parent,
             Path(sys.prefix) / "pyvenv.cfg",
-            Path(sysconfig.get_config_var("LIBDIR")) / sysconfig.get_config_var("LDLIBRARY"),
             *(
                 Path(sysconfig.get_path(name))
                 for name in ("stdlib", "platstdlib", "purelib", "platlib")
@@ -35,6 +34,10 @@ async def main():
             Path(backend.__file__).resolve().parents[1],
             Path(backend.__file__).resolve().parents[2],
         }
+        library_dir = sysconfig.get_config_var("LIBDIR")
+        library_name = sysconfig.get_config_var("LDLIBRARY")
+        if library_dir and library_name:
+            roots.add(Path(library_dir) / library_name)
         if sys.platform == "darwin":
             loader = ctypes.CDLL(None)
             count = loader._dyld_image_count
@@ -85,6 +88,7 @@ async def main():
                 cwd=workspace,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=5,
                 input=json.dumps(
                     {
@@ -119,7 +123,7 @@ async def main():
                 file_system_helper=True,
             )
             checked = subprocess.run(
-                direct, cwd=workspace, capture_output=True, text=True, timeout=5
+                direct, cwd=workspace, capture_output=True, text=True, encoding="utf-8", timeout=5
             )
             print(
                 json.dumps(
@@ -152,7 +156,8 @@ async def main():
             file_system_helper=True,
         )
         checked = subprocess.run(
-            command, cwd=workspace, capture_output=True, text=True, timeout=5, input=""
+            command, cwd=workspace, capture_output=True, text=True,
+            encoding="utf-8", timeout=5, input=""
         )
         print(
             json.dumps(

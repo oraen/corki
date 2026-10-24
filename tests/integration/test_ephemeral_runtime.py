@@ -185,7 +185,8 @@ def test_ephemeral_process_crash_leaves_no_canonical_history(tmp_path, phase):
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            assert await asyncio.wait_for(process.stdout.readline(), 10) == b"READY\n"
+            ready = await asyncio.wait_for(process.stdout.readline(), 10)
+            assert ready in (b"READY\n", b"READY\r\n")
             assert not (tmp_path / "state").exists()
             process.kill()
             await asyncio.wait_for(process.communicate(), 5)

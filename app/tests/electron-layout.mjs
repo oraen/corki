@@ -1,3 +1,4 @@
+import { python } from './platform.mjs';
 import {_electron as electron} from 'playwright';
 import {mkdtemp,writeFile} from 'node:fs/promises';
 import path from 'node:path';
@@ -5,7 +6,7 @@ import os from 'node:os';
 import assert from 'node:assert/strict';
 const home=await mkdtemp(path.join(os.tmpdir(),'corki-layout-'));
 await writeFile(path.join(home,'settings.json'),JSON.stringify({default:{provider:'fixture',model:'fixture'},providers:{fixture:{base_url:'http://127.0.0.1:1',api_key:'fixture-not-a-credential',models:{fixture:{context_window:262144}}}}}));
-const env={...process.env,CORKI_HOME:home,CORKI_PYTHON:path.resolve('../.venv/bin/python')};delete env.ELECTRON_RUN_AS_NODE;
+const env={...process.env,CORKI_HOME:home,CORKI_PYTHON:python};delete env.ELECTRON_RUN_AS_NODE;
 let app;
 try{
  app=await electron.launch({args:[path.resolve('.')],env});
@@ -27,18 +28,18 @@ try{
  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1));
  await input.fill('键盘测试');await input.press('End');
  await page.keyboard.insertText('附加');assert.equal(await input.inputValue(),'键盘测试附加');
- await page.keyboard.press('Meta+z');assert.equal(await input.inputValue(),'键盘测试');
- await page.keyboard.press('Meta+Shift+z');assert.equal(await input.inputValue(),'键盘测试附加');
- await page.keyboard.press('Meta+a');await page.keyboard.press('Meta+c');
+ await page.keyboard.press('ControlOrMeta+z');assert.equal(await input.inputValue(),'键盘测试');
+ await page.keyboard.press(process.platform==='win32'?'Control+y':'ControlOrMeta+Shift+z');assert.equal(await input.inputValue(),'键盘测试附加');
+ await page.keyboard.press('ControlOrMeta+a');await page.keyboard.press('ControlOrMeta+c');
  assert.equal(await app.evaluate(({clipboard})=>clipboard.readText()),'键盘测试附加');
- await page.keyboard.press('ArrowRight');await page.keyboard.press('Meta+v');
+ await page.keyboard.press('ArrowRight');await page.keyboard.press('ControlOrMeta+v');
  assert.equal(await input.inputValue(),'键盘测试附加键盘测试附加');
  await page.keyboard.press('Shift+Enter');assert((await input.inputValue()).endsWith('\n'));
  await page.getByRole('button',{name:'收起侧栏',exact:true}).click();
  await page.getByRole('button',{name:'展开侧栏',exact:true}).waitFor();
  await page.reload();await page.getByRole('button',{name:'展开侧栏',exact:true}).waitFor();
  await page.getByRole('button',{name:'展开侧栏',exact:true}).click();
- await page.keyboard.press('Meta+n');await input.waitFor();
+ await page.keyboard.press('ControlOrMeta+n');await input.waitFor();
  assert.equal((await page.evaluate(()=>window.corki.request('threads.list'))).threads.length,0);
  assert.equal((await page.evaluate(()=>window.corki.request('status'))).running.length,0);
  console.log('PASS desktop dimensions/125% zoom, native undo/redo/select/copy/paste, newline, sidebar persistence and New Chat shortcut; screenshots:',home);

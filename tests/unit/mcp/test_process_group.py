@@ -1,8 +1,14 @@
+import os
 import signal
 
 import pytest
 
 from corki.mcp import process_group as module
+
+
+pytestmark = pytest.mark.skipif(
+    os.name != "posix", reason="POSIX process-group escalation; Windows uses owned jobs"
+)
 
 
 @pytest.mark.parametrize("result", [True, False, "denied"])

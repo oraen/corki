@@ -136,14 +136,19 @@ def test_compaction_failure_closes_stream_without_committing_replacement(tmp_pat
                 pending_items=(UserMessageItem("new request", turn),),
             )
         )
-        await asyncio.wait_for(started.wait(), timeout=1)
-        if failure == "cancel":
+        try:
+            await asyncio.wait_for(started.wait(), timeout=1)
+            if failure == "cancel":
+                invocation.cancel()
+            with pytest.raises(asyncio.CancelledError if failure == "cancel" else ModelError):
+                await invocation
+            assert model.iterator.closed
+            assert len(model.requests) == 1
+            assert await repository.load_items(thread) == original
+        finally:
             invocation.cancel()
-        with pytest.raises(asyncio.CancelledError if failure == "cancel" else ModelError):
-            await invocation
-        assert model.iterator.closed
-        assert len(model.requests) == 1
-        assert await repository.load_items(thread) == original
+            await asyncio.gather(invocation, return_exceptions=True)
+            await repository.close()
 
     asyncio.run(scenario())
 

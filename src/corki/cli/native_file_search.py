@@ -27,7 +27,9 @@ def decode(data):
             not isinstance(path, str)
             or not path
             or len(path.encode("utf-8")) > 65536
-            or PurePath(path).is_absolute()
+            # Windows rooted and drive-relative paths are not is_absolute(),
+            # but joining them can still discard the selected workspace prefix.
+            or bool(PurePath(path).anchor)
             or ".." in PurePath(path).parts
             or path == "."
             or any(ord(c) < 32 or 127 <= ord(c) < 160 for c in path)

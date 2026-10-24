@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 import httpx
 import pytest
@@ -41,7 +42,7 @@ def test_mcp_pollution_requires_actual_admitted_call(tmp_path, monkeypatch, case
         should_mark = case in {"valid", "schema_mismatch", "remote_error", "timeout"}
 
         def memory_mode():
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 return db.execute("SELECT memory_mode FROM threads").fetchone()[0]
 
         def factory(settings):
@@ -204,7 +205,7 @@ def test_latest_host_metadata_controls_direct_and_nested_mcp(
                 ]
 
             async def call_tool(self, name, arguments):
-                with sqlite3.connect(database) as db:
+                with closing(sqlite3.connect(database)) as db:
                     assert db.execute("SELECT memory_mode FROM threads").fetchone()[0] == (
                         "polluted" if latest else "enabled"
                     )
@@ -332,7 +333,7 @@ def test_cancellation_before_mcp_dispatch_does_not_mark_thread(tmp_path):
                 async for event in runtime.stream("read"):
                     events.append(event)
             assert isinstance(events[-1], TurnCancelled)
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 assert db.execute("SELECT memory_mode FROM threads").fetchone()[0] == "enabled"
         finally:
             await runtime.aclose()

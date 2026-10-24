@@ -3,11 +3,10 @@
 import asyncio
 import hashlib
 import json
-import shlex
-import sys
 
 import httpx
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings, MCPServerSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
@@ -36,14 +35,11 @@ def test_trusted_compact_hook_stops_at_its_install_boundary(
             if policy == "invalid"
             else {"continue": policy != "stop", "stopReason": "COMPACT_POLICY_STOP"}
         )
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
-                f"Path({str(marker)!r}).write_text(json.dumps(p)); "
-                f"print({json.dumps(output)!r})",
-            ]
+        command = python_command(
+            tmp_path,
+            "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
+            f"Path({str(marker)!r}).write_text(json.dumps(p), encoding='utf-8'); "
+            f"print({json.dumps(output)!r})",
         )
         event_key = "pre_compact" if event == "PreCompact" else "post_compact"
         identity = {
@@ -91,7 +87,7 @@ def test_trusted_compact_hook_stops_at_its_install_boundary(
                     assert message["method"] == "tools/call"
                     assert message["params"]["_meta"]["threadId"] == str(runtime.thread_id)
                     calls.append(message)
-                    marker.write_text(json.dumps(message["params"]["arguments"]))
+                    marker.write_text(json.dumps(message["params"]["arguments"]), encoding="utf-8")
                     result = {"content": [{"type": "text", "text": json.dumps(output)}]}
                 return httpx.Response(
                     200, json={"jsonrpc": "2.0", "id": message["id"], "result": result}
@@ -185,7 +181,7 @@ def test_trusted_compact_hook_stops_at_its_install_boundary(
             if servers:
                 assert len(calls) == (0 if policy == "untrusted" else 1)
             if marker.exists():
-                payload = json.loads(marker.read_text())
+                payload = json.loads(marker.read_text(encoding="utf-8"))
                 assert payload["hook_event_name"] == event and payload["trigger"] == trigger
             stops_before = policy == "stop" and event == "PreCompact"
             assert len(summaries) == (0 if stops_before else 1)

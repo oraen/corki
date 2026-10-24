@@ -2,16 +2,15 @@
 
 import asyncio
 import json
-import os
-import shlex
-import sys
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
 from corki.core import LangGraphRuntime
 from corki.core.stop_hooks import command_identity
+from corki.platforms.liveness import process_alive
 from corki.protocol.events import TurnCancelled
 from corki.sessions import TurnStatus
 from corki.tools import ToolRegistry
@@ -20,13 +19,11 @@ from corki.tools import ToolRegistry
 @pytest.mark.parametrize("realtime", [False, True])
 def test_close_admits_then_reaps_async_interrupt(tmp_path, monkeypatch, realtime):
     async def scenario():
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "import os,time; from pathlib import Path; "
-                "Path('pid').write_text(str(os.getpid())); time.sleep(30)",
-            ]
+        command = python_command(
+            tmp_path,
+            "import os,time; from pathlib import Path; "
+            "Path('pid.tmp').write_text(str(os.getpid()), encoding='utf-8'); "
+            "Path('pid.tmp').replace('pid'); time.sleep(30)",
         )
         fingerprint, _ = command_identity(
             {"type": "command", "command": command, "async": True, "timeout": 3},
@@ -77,8 +74,8 @@ def test_close_admits_then_reaps_async_interrupt(tmp_path, monkeypatch, realtime
                 async with asyncio.timeout(2):
                     while not (tmp_path / "pid").exists():
                         await asyncio.sleep(0.01)
-                pids.append(int((tmp_path / "pid").read_text()))
-                os.kill(pids[-1], 0)
+                pids.append(int((tmp_path / "pid").read_text(encoding="utf-8")))
+                assert process_alive(pids[-1])
             await close_owner()
 
         monkeypatch.setattr(owner, "aclose", observe_close)
@@ -99,8 +96,7 @@ def test_close_admits_then_reaps_async_interrupt(tmp_path, monkeypatch, realtime
             assert finished.is_set()
             assert admitted == [True]
             assert len(pids) == 1
-            with pytest.raises(ProcessLookupError):
-                os.kill(pids[0], 0)
+            assert not process_alive(pids[0])
             assert len([event for event in events if isinstance(event, TurnCancelled)]) == 1
             assert not owner._tasks
             await runtime.aclose()

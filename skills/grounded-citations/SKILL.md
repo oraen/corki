@@ -54,6 +54,12 @@ Override per task with `--ledger <path>` or `CORKI_CITATION_LEDGER`.
 
 ## How to Run
 
+Use the installed skill directory and a detected Python 3 interpreter. The
+following assignment is POSIX shell syntax; in PowerShell use
+`$S = Join-Path '<skill_dir>' 'scripts/sources.py'`. All later `python "$S"`
+examples work with that variable too. If the interpreter is an absolute path
+in PowerShell, invoke it with `&`. Do not rely on `.py` file associations.
+
 ```bash
 S="<skill_dir>/scripts/sources.py"  # use skill_dir returned by skill_read
 

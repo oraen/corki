@@ -58,8 +58,14 @@ class ExecutionPermissions:
     approval_policy_explicit: bool = True
     requested_approval_policy_json: str | None = None
     approval_policy_constraint: str = "configured"
+    # Bound by the runtime host, never accepted from model/config arguments.
+    runtime_home: Path | None = None
 
     def __post_init__(self):
+        if self.runtime_home is not None and (
+            not isinstance(self.runtime_home, Path) or not self.runtime_home.is_absolute()
+        ):
+            raise ValueError("execution runtime home must be an absolute host path")
         object.__setattr__(
             self, "approval_policy_json", normalize_approval_policy(self.approval_policy_json)
         )

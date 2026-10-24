@@ -8,3 +8,5 @@ fi
 # Always use the gateway environment, even from an activated Corki environment.
 UV_PROJECT_ENVIRONMENT="$project_dir/.venv" uv sync --project "$project_dir" --frozen --no-dev
 echo "Gateway installed in $project_dir/.venv"
+
+"$project_dir/.venv/bin/python" -m corki_openai_gateway.control register --home "${CORKI_HOME:-$HOME/.corki}"

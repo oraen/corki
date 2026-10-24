@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 import httpx
 import pytest
@@ -114,7 +115,7 @@ def test_nullable_content_is_normalized_before_model_and_durable_result(
             events = [event async for event in runtime.stream("read")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert len(calls) == 1 and len(requests) == 2
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 (encoded,) = db.execute(
                     "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs::read'"
                 ).fetchone()

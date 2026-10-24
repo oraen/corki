@@ -2,11 +2,10 @@
 
 import asyncio
 import json
-import shlex
-import sys
 import threading
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
@@ -22,8 +21,8 @@ from corki.protocol.items import AssistantMessageItem, new_step_id
 def test_batch_admission_precedes_every_hook_effect(tmp_path, monkeypatch, ephemeral, fault):
     async def scenario():
         marker = tmp_path / "effect"
-        command = shlex.join(
-            [sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"]
+        command = python_command(
+            tmp_path, f"from pathlib import Path; Path({str(marker)!r}).touch()"
         )
         fingerprint = command_identity({"type": "command", "command": command})[0]
         source = tmp_path / "config.toml"

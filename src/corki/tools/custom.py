@@ -18,6 +18,8 @@ from urllib.parse import urlsplit
 from corki.config.shell_environment import ShellEnvironmentPolicy
 from corki.execution.backend import sandbox_command
 from corki.mcp.input_schema import normalized_input_schema
+from corki.platforms.paths import directory_error_message
+from corki.platforms.processes import close_job, create_subprocess_exec
 from corki.protocol.tools import ToolResult, ToolSpec
 from corki.tools.builtin.shell_environment import unified_exec_environment
 
@@ -148,7 +150,7 @@ class CustomTool:
         arguments = dict(call.arguments or {})
         cwd = (context.cwd / Path(data.get("cwd") or ".").expanduser()).resolve()
         if not cwd.is_dir():
-            raise ValueError("工具工作目录不存在")
+            raise ValueError(directory_error_message(cwd, "工具工作目录不存在"))
         env = unified_exec_environment(dict(os.environ), self.environment_policy)
         secrets = []
         if data["transport"] == "process":
@@ -203,7 +205,7 @@ async def run_process(argv, payload, cwd, env, timeout):
     process = None
     tasks = []
     spawn = asyncio.create_task(
-        asyncio.create_subprocess_exec(
+        create_subprocess_exec(
             *argv,
             cwd=cwd,
             env=env,
@@ -214,8 +216,6 @@ async def run_process(argv, payload, cwd, env, timeout):
         )
     )
     try:
-        process = await asyncio.shield(spawn)
-
         async def read(stream):
             chunks, size = [], 0
             while block := await stream.read(65536):
@@ -237,6 +237,7 @@ async def run_process(argv, payload, cwd, env, timeout):
                 process.stdin.close()
 
         async with asyncio.timeout(timeout):
+            process = await asyncio.shield(spawn)
             tasks = [
                 asyncio.create_task(read(process.stdout)),
                 asyncio.create_task(read(process.stderr)),
@@ -246,15 +247,35 @@ async def run_process(argv, payload, cwd, env, timeout):
             output, error, _, code = await asyncio.gather(*tasks)
             return output, error, code
     finally:
-        if process is None:
-            process = await spawn
-        if os.name == "posix":
-            with suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-        elif process.returncode is None:
-            process.kill()
-        await process.wait()
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        async def cleanup():
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            try:
+                owned = await asyncio.shield(spawn)
+            except (Exception, asyncio.CancelledError):
+                owned = None
+            if owned is not None:
+                close_job(owned)
+                if os.name == "posix":
+                    with suppress(ProcessLookupError):
+                        os.killpg(owned.pid, signal.SIGKILL)
+                elif owned.returncode is None:
+                    with suppress(ProcessLookupError):
+                        owned.kill()
+                # Cancelled or failed readers may leave full pipes. Termination
+                # alone does not release asyncio.wait() until transports close.
+                owned._transport.close()
+                await owned.wait()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        owner = asyncio.create_task(cleanup(), name="corki-custom-tool-cleanup")
+        cancelled = False
+        while not owner.done():
+            try:
+                await asyncio.shield(owner)
+            except asyncio.CancelledError:
+                cancelled = True
+        owner.result()
+        if cancelled:
+            raise asyncio.CancelledError

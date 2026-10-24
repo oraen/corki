@@ -1,5 +1,6 @@
 import asyncio
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -84,7 +85,7 @@ def test_usage_roundtrip_latest_commit_and_legacy_migration(tmp_path, empty, leg
         await repository.commit_model_step(thread, turn, 1, completed)
         assert await repository.load_model_step(thread, turn, 1) == completed
         if legacy:
-            with sqlite3.connect(path) as connection:
+            with closing(sqlite3.connect(path)) as connection, connection:
                 connection.execute("ALTER TABLE model_steps DROP COLUMN total_tokens")
                 connection.execute("ALTER TABLE model_steps DROP COLUMN usage_anchor_id")
         reopened = SQLiteSessionRepository(path)

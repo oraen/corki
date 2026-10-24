@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 import httpx
 import pytest
@@ -150,7 +151,7 @@ def test_invalid_handshake_isolated_before_catalog_with_runtime_cold_history(
             ]
             assert len(completions) == len(calls) == 1 and not completions[0].is_error
             raw = await runtime._repository.load_items(runtime._thread_id)
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 rows = db.execute(
                     "SELECT result_json FROM tool_executions WHERE tool_name='mcp__healthy::read'"
                 ).fetchall()
@@ -175,7 +176,7 @@ def test_invalid_handshake_isolated_before_catalog_with_runtime_cold_history(
             assert not any(isinstance(e, ToolCallCompleted) for e in events)
             after = await cold._repository.load_items(cold._thread_id)
             assert after[: len(raw)] == raw and len(calls) == 1
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 assert (
                     db.execute(
                         "SELECT result_json FROM tool_executions "

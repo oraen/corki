@@ -307,6 +307,15 @@ def test_refresh_failure_does_not_publish_or_follow_redirect(tmp_path, monkeypat
                 await refresh_oauth(authority, previous, settings, MCPRuntimeContext())
             assert "ROTATING_SECRET" not in str(caught.value)
         assert len(calls) == (0 if failure in {"issuer", "deleted", "newer"} else 1)
-        assert not path.exists() if failure == "deleted" else path.read_bytes() == before
+        if failure == "deleted":
+            assert not path.exists()
+        elif failure == "rejected":
+            # A definitive invalid_grant retires only the rejected refresh token.
+            # It must neither publish new access credentials nor alter other entries.
+            expected = json.loads(before)
+            expected["selected"]["refresh_token"] = None
+            assert json.loads(path.read_bytes()) == expected
+        else:
+            assert path.read_bytes() == before
 
     asyncio.run(scenario())

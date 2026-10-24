@@ -4,7 +4,7 @@
 //! bounded regular-file opening follows exec-server/regular_file.rs. The aggregate
 //! project discovery contract is Corki's context/project_instructions.py.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
@@ -136,37 +136,9 @@ struct Config {
     trust_level: Option<String>,
 }
 
-fn regular_file(path: &Path) -> io::Result<File> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK);
-    }
-    // Do not pretend the Unix open contract covers Windows devices / pipes.
-    // The current bridge has no Windows enforcement backend either.
-    #[cfg(not(unix))]
-    return Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "native filesystem helper requires Unix",
-    ));
-    #[cfg(unix)]
-    {
-        let file = options.open(path)?;
-        if !file.metadata()?.is_file() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("path `{}` is not a regular file", path.display()),
-            ));
-        }
-        Ok(file)
-    }
-}
-
 fn bounded_read(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    regular_file(path)?.take(limit).read_to_end(&mut bytes)?;
+    crate::regular_file::open(path)?.take(limit).read_to_end(&mut bytes)?;
     Ok(bytes)
 }
 

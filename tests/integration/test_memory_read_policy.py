@@ -10,6 +10,7 @@ from dataclasses import replace
 
 import httpx
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.config.model_context import parse_model_contexts
@@ -197,7 +198,7 @@ def test_read_policy_gate_reaches_wire_and_unknown_tool_observation(tmp_path, mo
                 assert "Memory skills are memory files" in content
                 assert "otherwise read the exact file beneath" in content
                 assert "even if an ordinary skill has the same name" in content
-                assert str(source_db) in content
+                assert json.dumps(str(source_db), ensure_ascii=False) in content
                 assert "conversation_items" in content and "payload_json" in content
                 assert "mode=ro" in content and "thread_id" in content
                 assert "These files are append-only `jsonl`" not in content
@@ -325,11 +326,38 @@ def test_progressive_read_uses_real_shell_for_thread_scoped_raw_archive(tmp_path
         )
         memory = f"verification evidence: thread_id: {source}\n"
         (root / "MEMORY.md").write_text(memory, encoding="utf-8")
+        search_command = (
+            python_command(
+                tmp_path,
+                "from pathlib import Path\n"
+                f"for number, line in enumerate(Path({str(root / 'MEMORY.md')!r})"
+                ".read_text(encoding='utf-8').splitlines(), 1):\n"
+                "    if 'verification' in line: print(f'{number}:{line}')\n",
+                name="search memory.py",
+            )
+            if sys.platform == "win32"
+            else shlex.join(["rg", "-n", "verification", str(root / "MEMORY.md")])
+        )
 
         class Model:
             requests = []
 
             async def stream(self, request):
+                results = [i for i in request.items if isinstance(i, ToolResultItem)]
+                if results and results[-1].tool_name in {"exec_command", "write_stdin"}:
+                    running = re.search(
+                        r"Process running with session ID ([^\s]+)", results[-1].content
+                    )
+                    if running:
+                        call = ToolCall(
+                            new_tool_call_id(),
+                            "write_stdin",
+                            {"session_id": running[1], "chars": "", "yield_time_ms": 1000},
+                        )
+                        yield ModelCompleted(
+                            (ToolCallItem(call, request.items[-1].turn_id, new_step_id()),)
+                        )
+                        return
                 self.requests.append(request)
                 index = len(self.requests)
                 turn, step = request.items[-1].turn_id, new_step_id()
@@ -343,7 +371,7 @@ def test_progressive_read_uses_real_shell_for_thread_scoped_raw_archive(tmp_path
                 assert locator is not None
                 path = json.loads(locator[1])
                 assert path == str(source_db)
-                results = [i for i in request.items if isinstance(i, ToolResultItem)]
+                output = "\n".join(result.content for result in results)
                 if index == 1:
                     if dedicated:
                         name, args = "memories::search", {"queries": ["verification"]}
@@ -351,17 +379,15 @@ def test_progressive_read_uses_real_shell_for_thread_scoped_raw_archive(tmp_path
                         name, args = (
                             "exec_command",
                             {
-                                "cmd": shlex.join(
-                                    ["rg", "-n", "verification", str(root / "MEMORY.md")]
-                                ),
+                                "cmd": search_command,
                                 "login": False,
                             },
                         )
                 elif dedicated and index == 2:
-                    assert not results[-1].is_error and str(source) in results[-1].content
+                    assert not results[-1].is_error and str(source) in output
                     name, args = "memories::read", {"path": "MEMORY.md"}
                 elif index == (3 if dedicated else 2):
-                    assert not results[-1].is_error and str(source) in results[-1].content
+                    assert not results[-1].is_error and str(source) in output
                     # Real built-in shell, real readonly SQLite connection. This
                     # is the advertised compatibility path, not a fake history tool.
                     probe = (
@@ -376,14 +402,18 @@ def test_progressive_read_uses_real_shell_for_thread_scoped_raw_archive(tmp_path
                     name, args = (
                         "exec_command",
                         {
-                            "cmd": shlex.join([sys.executable, "-I", "-S", "-c", probe]),
+                            "cmd": (
+                                python_command(tmp_path, probe, name="read archive.py")
+                                if sys.platform == "win32"
+                                else shlex.join([sys.executable, "-I", "-S", "-c", probe])
+                            ),
                             "login": False,
                             "yield_time_ms": 1000,
                         },
                     )
                 else:
                     assert index == (4 if dedicated else 3)
-                    assert not results[-1].is_error and "ARCHIVE_EXACT" in results[-1].content
+                    assert not results[-1].is_error and "ARCHIVE_EXACT" in output
                     block = (
                         "<oai-mem-citation><citation_entries>MEMORY.md:1-1|note=[source routing]"
                         f"</citation_entries><rollout_ids>{source}</rollout_ids></oai-mem-citation>"

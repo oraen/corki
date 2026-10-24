@@ -1,6 +1,7 @@
 import asyncio
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 
 import pytest
 
@@ -11,7 +12,7 @@ from corki.storage import SQLiteSessionRepository, StorageIntegrityError
 
 def test_legacy_wal_migration_is_serialized_and_preserves_thread_metadata(tmp_path):
     path = tmp_path / "old.db"
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         # Existing Corki databases use WAL before the new identity column exists.
         db.execute("PRAGMA journal_mode=WAL")
         db.execute(
@@ -33,7 +34,7 @@ def test_legacy_wal_migration_is_serialized_and_preserves_thread_metadata(tmp_pa
             session_id=new_session_id(),
             memory_mode=ThreadMemoryMode.DISABLED,
         )
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             assert db.execute(
                 "SELECT id,cwd,created_at,updated_at,memory_mode,session_id FROM threads"
             ).fetchone() == (
@@ -67,7 +68,7 @@ def test_concurrent_creation_keeps_one_complete_identity(tmp_path):
         )
         winner = await repositories[0].load_thread_session_id(thread)
         index = sessions.index(winner)
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             assert db.execute("SELECT cwd,memory_mode,session_id FROM threads").fetchone() == (
                 str(tmp_path / str(index)),
                 "disabled" if index else "enabled",
@@ -86,12 +87,12 @@ def test_corrupt_identity_is_not_replaced(tmp_path, invalid):
 
     async def scenario():
         await repository.create_thread(thread, tmp_path)
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             db.execute("UPDATE threads SET session_id=?", (invalid,))
         reopened = SQLiteSessionRepository(path)
         with pytest.raises(StorageIntegrityError, match="invalid stored"):
             await reopened.load_thread_session_id(thread)
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             assert db.execute("SELECT session_id FROM threads").fetchone() == (invalid,)
 
     asyncio.run(scenario())
@@ -105,7 +106,7 @@ def test_bad_initial_identity_fails_without_creating_thread(tmp_path, invalid):
     async def scenario():
         with pytest.raises(ValueError, match="execution identity"):
             await repository.create_thread(new_thread_id(), tmp_path, session_id=invalid)
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             assert db.execute("SELECT count(*) FROM threads").fetchone() == (0,)
 
     asyncio.run(scenario())

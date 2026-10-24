@@ -2,6 +2,7 @@
 
 import asyncio
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 
 import pytest
@@ -281,7 +282,7 @@ def test_legacy_mode_settings_migrate_and_snapshots_default_safely(tmp_path):
         payload.pop("collaboration_instructions")
         assert ModelSettingsSnapshot.from_payload(payload).collaboration_mode == "default"
         await runtime.aclose()
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection, connection:
             connection.execute("ALTER TABLE thread_model_settings DROP COLUMN collaboration_mode")
             connection.execute(
                 "ALTER TABLE thread_model_settings DROP COLUMN collaboration_instructions"

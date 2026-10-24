@@ -163,8 +163,10 @@ async def _run(workspace: Path) -> dict[str, object]:
         home_path=workspace / ".runtime",
         model=model,
     )
-    events = [event async for event in runtime.stream("use $demo-recall and all extensions")]
-    await runtime.aclose()
+    try:
+        events = [event async for event in runtime.stream("use $demo-recall and all extensions")]
+    finally:
+        await runtime.aclose()
 
     advertised = {tool.name for tool in model.requests[0].tools}
     assert {"skill_read", "plugin__demo__echo", "tool_search"} <= advertised

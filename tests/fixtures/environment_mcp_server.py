@@ -4,6 +4,10 @@ import json
 import os
 import sys
 
+# MCP stdio is UTF-8 even when Windows pipes use a legacy locale.
+for stream in (sys.stdin, sys.stdout):
+    stream.reconfigure(encoding="utf-8")
+
 for line in sys.stdin:
     message = json.loads(line)
     if "id" not in message:

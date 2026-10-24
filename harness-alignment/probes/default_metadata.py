@@ -14,6 +14,7 @@ from corki.models import ModelCompleted
 from corki.protocol.ids import new_tool_call_id
 from corki.protocol.items import ToolCallItem, new_step_id
 from corki.protocol.tools import ToolCall
+from corki.shell import ShellType, default_user_shell
 
 
 async def probe(root):
@@ -30,6 +31,13 @@ for name in ['.codex', '.corki']:
     except PermissionError:
         pass
 """
+    script_path = workspace / "metadata probe.py"
+    script_path.write_text(script, encoding="utf-8")
+    arguments = [sys.executable, "-I", str(script_path)]
+    if default_user_shell().kind == ShellType.POWERSHELL:
+        command = "& " + " ".join("'" + value.replace("'", "''") + "'" for value in arguments)
+    else:
+        command = shlex.join(arguments)
 
     class Model:
         called = False
@@ -42,14 +50,14 @@ for name in ['.codex', '.corki']:
             call = ToolCall(
                 new_tool_call_id(),
                 "exec_command",
-                {"cmd": shlex.join([sys.executable, "-I", "-c", script]), "login": False},
+                {"cmd": command, "login": False},
             )
             yield ModelCompleted((ToolCallItem(call, request.items[-1].turn_id, new_step_id()),))
 
         async def aclose(self):
             pass
 
-    runtime = LangGraphRuntime.create(
+    runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=workspace,
             skills_enabled=False,

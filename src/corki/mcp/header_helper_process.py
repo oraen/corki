@@ -12,6 +12,8 @@ import httpx
 from corki.config import MCPServerSettings
 from corki.mcp.environment import build_stdio_environment
 from corki.mcp.http_headers import _HEADER_NAME, _WHITESPACE, _value_bytes
+from corki.platforms.processes import close_job, create_subprocess_exec
+from corki.shell import default_user_shell, powershell_utf8_argv
 from corki.tools.builtin.process_groups import signal_owned_group
 
 HELPER_TIMEOUT = 10.0
@@ -76,8 +78,9 @@ async def _cleanup(spawn: asyncio.Task) -> None:
     except (Exception, asyncio.CancelledError):
         return
     try:
-        with suppress(OSError):
-            signal_owned_group(process.pid, signal.SIGKILL)
+        if not close_job(process):
+            with suppress(OSError):
+                signal_owned_group(process.pid, signal.SIGKILL)
         if process.returncode is None:
             with suppress(ProcessLookupError):
                 process.kill()
@@ -88,17 +91,17 @@ async def _cleanup(spawn: asyncio.Task) -> None:
 
 
 async def run_helper(command: str, cwd: Path) -> httpx.Headers:
-    if os.name != "posix":
-        raise ValueError("HTTP headers helper requires supported process containment")
     env = build_stdio_environment(MCPServerSettings("header-helper", "stdio", command="sh"))
+    argv = (
+        powershell_utf8_argv(default_user_shell().exec_args(command, login=False))
+        if os.name == "nt" else ["sh", "-c", command]
+    )
     spawn = asyncio.create_task(
-        asyncio.create_subprocess_exec(
-            "sh",
-            "-c",
-            command,
+        create_subprocess_exec(
+            *argv,
             cwd=cwd,
             env=env,
-            process_group=0,
+            **({"process_group": 0} if os.name == "posix" else {}),
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,

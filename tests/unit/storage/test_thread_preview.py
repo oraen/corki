@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 
 import pytest
@@ -23,7 +24,7 @@ from corki.storage.sqlite import StorageIntegrityError
 
 
 def preview(database, thread):
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         return connection.execute("SELECT preview FROM threads WHERE id=?", (thread,)).fetchone()[0]
 
 
@@ -115,7 +116,7 @@ def test_legacy_preview_backfill_preserves_raw_rows_and_source_version(tmp_path)
         )
         await repository.append_items(thread, items)
         await repository.close()
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute("ALTER TABLE threads DROP COLUMN preview")
             rows = connection.execute("SELECT * FROM conversation_items").fetchall()
             version = connection.execute("SELECT updated_at FROM threads").fetchone()[0]
@@ -123,7 +124,7 @@ def test_legacy_preview_backfill_preserves_raw_rows_and_source_version(tmp_path)
             *(asyncio.to_thread(SQLiteSessionRepository, database) for _ in range(4))
         )
         assert preview(database, thread) == "first real"
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             assert connection.execute("SELECT * FROM conversation_items").fetchall() == rows
             assert connection.execute("SELECT updated_at FROM threads").fetchone()[0] == version
         for reopened in repositories:
@@ -139,7 +140,7 @@ def test_failed_backfill_rolls_back_column_and_can_retry(tmp_path):
         thread = new_thread_id()
         await repository.create_thread(thread, tmp_path)
         await repository.append_items(thread, (UserMessageItem("request", new_turn_id()),))
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             original = connection.execute("SELECT payload_json FROM conversation_items").fetchone()[
                 0
             ]
@@ -148,7 +149,7 @@ def test_failed_backfill_rolls_back_column_and_can_retry(tmp_path):
             before = connection.execute("SELECT * FROM threads").fetchall()
         with pytest.raises(json.JSONDecodeError):
             SQLiteSessionRepository(database)
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             assert "preview" not in {
                 row[1] for row in connection.execute("PRAGMA table_info(threads)")
             }
@@ -170,7 +171,7 @@ def test_no_preview_is_excluded_before_source_scan_limit(tmp_path, monkeypatch):
         await repository.create_thread(eligible, tmp_path)
         await repository.append_items(eligible, (UserMessageItem("evidence", new_turn_id()),))
         await repository.create_thread(empty, tmp_path)
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute(
                 "UPDATE threads SET updated_at=datetime('now', '-1 day') WHERE id=?", (eligible,)
             )

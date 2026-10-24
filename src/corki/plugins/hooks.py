@@ -22,7 +22,9 @@ def load_plugin_hooks(root: Path, selection, *, data_root: Path | None = None):
     if selection is not None and values and all(isinstance(value, str) for value in values):
         for value in values:
             relative = Path(value[2:]) if value.startswith("./") else None
-            if relative is None or relative.is_absolute() or ".." in relative.parts:
+            # Windows rooted and drive-relative paths can replace part of root
+            # without being absolute. Reject them before attempting any read.
+            if relative is None or relative.anchor or ".." in relative.parts:
                 warnings.append("ignoring hooks: expected a contained ./ path")
                 continue
             paths.append(root / relative)

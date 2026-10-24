@@ -7,6 +7,7 @@ import json
 import sqlite3
 import struct
 import wave
+from contextlib import closing
 from dataclasses import dataclass, replace
 
 import pytest
@@ -207,7 +208,7 @@ def test_ordered_history_and_ledger_reopen_without_mutating_old_payloads(tmp_pat
             )
         old = replace(history, content_items=())
         assert "content_items" not in item_to_payload(old)
-        with sqlite3.connect(db.path) as conn:
+        with closing(sqlite3.connect(db.path)) as conn, conn:
             payload = json.loads(
                 conn.execute("SELECT result_json FROM tool_executions").fetchone()[0]
             )

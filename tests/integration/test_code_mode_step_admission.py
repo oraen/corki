@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 
 import pytest
@@ -188,7 +189,7 @@ def test_old_cell_new_calls_use_current_step(tmp_path, next_turn, kind, change):
                 events = [event async for event in runtime.stream("continue")]
                 assert isinstance(events[-1], TurnCompleted), events[-1]
             assert len(requests) == (4 if next_turn else 3)
-            with sqlite3.connect(tmp_path / "sessions.db") as db:
+            with closing(sqlite3.connect(tmp_path / "sessions.db")) as db:
                 rows = db.execute(
                     "SELECT status,result_json FROM tool_executions WHERE tool_name='look-up'"
                 ).fetchall()

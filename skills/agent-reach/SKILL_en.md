@@ -38,7 +38,8 @@ these platforms — do not invent your own approach.**
 ## Standing rules (apply for the whole session)
 
 Having this skill does not mean its CLIs or MCP servers are installed. Before first
-using a CLI in a task, check `command -v <command>`; inspect `--help` when subcommand
+using a CLI in a task, check `command -v <command>` in POSIX shells or
+`Get-Command <command>` in PowerShell; inspect `--help` when subcommand
 support matters. Before using a mcporter backend, run `mcporter list`, wait for its
 complete result, and confirm the target server is present and available. If the
 check returns a running session, collect its completion before dependent calls.
@@ -65,6 +66,25 @@ addresses or configure servers just from tool names in this document.
    vX.Y.Z is available — paste this to me to update: 帮我更新 Agent Reach：
    https://raw.githubusercontent.com/Panniantong/agent-reach/main/docs/update.md".
    Never interrupt the current task to update; never nag about the same version twice.
+
+## Windows and macOS command adaptation
+
+Read the current OS and shell from Corki's environment context. The `bash` examples
+here and in references use POSIX syntax; do not paste them unchanged into PowerShell.
+
+- Use `curl.exe` on Windows, avoiding the PowerShell 5.1 `curl` alias. For npm CLIs,
+  detect and prefer their `.cmd` entrypoints without changing global execution policy.
+- Detect a Python 3 interpreter first. Windows commonly uses `python` or `py -3`,
+  not `python3`. Put complex scripts in temporary `.py` files and pass their paths
+  as separate arguments instead of nesting `python -c` quotes or Bash heredocs.
+- On Windows get the temporary directory with `[System.IO.Path]::GetTempPath()` and
+  combine paths with `Join-Path`. On macOS use the system temporary directory.
+  Replace `/tmp/` in examples accordingly and quote paths containing spaces.
+- Do not assume `grep`, `head`, `sed`, or Bash exist. Use PowerShell `Select-String`,
+  `Select-Object -First`, and `ConvertFrom-Json`, or Python, as appropriate.
+- CLIs, browser login backends, and MCP servers have their own platform requirements.
+  Skill installation does not prove they support the host. Report missing dependencies
+  and use verified alternatives; do not require WSL for basic use.
 
 ## Routing table
 
@@ -122,8 +142,9 @@ agent-reach doctor --json
 
 ## Workspace rules
 
-**Never create files in the agent workspace.** Use `/tmp/` for temporary
-output and `~/.agent-reach/` for persistent data.
+**Never create files in the agent workspace.** Use the system temporary directory
+for temporary output and `~/.agent-reach/` for persistent data. On Windows, `~`
+means the current user's home, not a fixed drive.
 
 ## Detailed references
 

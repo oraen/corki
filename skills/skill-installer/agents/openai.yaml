@@ -2,4 +2,4 @@ interface:
   display_name: "Skill Installer"
   short_description: "Discover, compare, and install skills for Corki"
   icon_small: "./assets/skill-installer-small.svg"
-  icon_large: "./assets/skill-installer.png"
+  icon_large: "./assets/skill-installer-small.svg"

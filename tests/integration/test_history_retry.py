@@ -4,6 +4,7 @@ import asyncio
 import json
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 
 import httpx
@@ -323,7 +324,7 @@ def test_failure_commit_crash_preserves_history_and_retry_budget(
         if legacy_payment:
             # Emulate the old persisted 402 policy, including retryable=true,
             # after an actual process died between failure commit/checkpoint.
-            with sqlite3.connect(repository.path) as connection:
+            with closing(sqlite3.connect(repository.path)) as connection, connection:
                 row = connection.execute(
                     "SELECT payload_json FROM model_failures WHERE turn_id=? AND step_index=?",
                     (turn.id, crash_retry),

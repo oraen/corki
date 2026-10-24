@@ -165,6 +165,7 @@ class CorkiSettings:
     fast_mode: bool = True
     supports_service_tier: bool | None = None
     content_item_kinds: bool = True
+    provider_enabled: bool = True
     provider_id: str | None = None
     _provider_document: str | None = field(default=None, repr=False)
     _provider_connection: tuple | None = field(default=None, repr=False)
@@ -179,6 +180,8 @@ class CorkiSettings:
     base_instructions: str | None = None
 
     def __post_init__(self) -> None:
+        if type(self.provider_enabled) is not bool:
+            raise ValueError("provider.enabled must be a boolean")
         if type(self.personality_enabled) is not bool:
             raise ValueError("features.personality must be a boolean")
         if self.personality not in (None, "none", "friendly", "pragmatic"):
@@ -754,12 +757,14 @@ class CorkiSettings:
         choices = {
             (name, provider)
             for provider, profile in document.get("providers", {}).items()
+            if profile.get("enabled", True)
             for name in profile.get("models", {})
         }
         identity = self.provider_id or self.provider_name or "default"
         identity = self.model_provider_name(identity)
-        choices.update((info.model, identity) for info in self.model_contexts or ())
-        choices.add((self.model, identity))
+        if self.provider_enabled:
+            choices.update((info.model, identity) for info in self.model_contexts or ())
+            choices.add((self.model, identity))
         return tuple(
             sorted(choices, key=lambda pair: (pair[0].casefold(), pair[1].casefold(), pair))
         )

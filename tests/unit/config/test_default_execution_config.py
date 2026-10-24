@@ -48,7 +48,10 @@ def test_explicit_host_control_is_distinct_from_omitted_sdk_default(tmp_path, mo
 def test_default_template_does_not_block_explicit_compiler_configuration(tmp_path, monkeypatch):
     monkeypatch.setattr(policies, "bundled_compiler", lambda: pytest.fail("explicit override"))
     config = tmp_path / "config.toml"
-    config.write_text('[execution]\ncompiler="/host/compiler"\nprofile={type="disabled"}')
+    config.write_text(
+        '[execution]\ncompiler=' + json.dumps(str(tmp_path / "host compiler"))
+        + '\nprofile={type="disabled"}'
+    )
     settings = CorkiSettings.for_directory(tmp_path, config_file=config)
     assert json.loads(settings.execution_permissions.profile_json) == {"type": "disabled"}
     assert settings.execution_permissions.approval_policy_json == '"on-request"'

@@ -1,5 +1,7 @@
 """Native skill rules come from user/session authority, not project policy."""
 
+import json
+
 import pytest
 
 from corki.config import CorkiSettings
@@ -14,7 +16,7 @@ def test_project_cannot_override_user_skill_rules(tmp_path):
     (project / ".git/HEAD").write_text("ref: refs/heads/main\n")
     user = tmp_path / "config.toml"
     user.write_text(
-        f'[projects."{project}"]\ntrust_level="trusted"\n'
+        f'[projects.{json.dumps(str(project))}]\ntrust_level="trusted"\n'
         '[[skills.config]]\nname="private"\nenabled=false\n'
     )
     (project / ".corki/config.toml").write_text('[[skills.config]]\nname="private"\nenabled=true\n')

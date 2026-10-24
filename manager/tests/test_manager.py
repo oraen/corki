@@ -2,7 +2,9 @@
 
 import importlib.util
 import json
+import os
 import threading
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -16,6 +18,27 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 
+def assert_private_file(path):
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
+        return
+    from corki.platforms.windows_acl import WindowsPrivateACL
+    from corki.platforms.windows_file_handles import WindowsFiles
+
+    files = WindowsFiles()
+    handle = files.open(path, access=0x20000)
+    try:
+        WindowsPrivateACL().verify(handle)
+    finally:
+        files.close(handle)
+
+
+def test_snapshot_supplies_host_interpreter_for_process_examples(store):
+    import sys
+
+    assert store.snapshot()["runtime"]["python"] == sys.executable
+
+
 @pytest.fixture
 def store(tmp_path):
     home = tmp_path / "home"
@@ -24,7 +47,7 @@ def store(tmp_path):
 {"default":{"provider":"local","model":"model-a"},
  "providers":{"local":{"base_url":"http://127.0.0.1:17001","api_key":"private-token-123","api_mode":"responses","models":{"model-a":{"context_window":131072,"extra":"preserved"}}}},
  "unrelated":{"enabled":true}}
-""")
+""", encoding="utf-8")
     return module.Store(home, tmp_path / "work", tmp_path / "compat")
 
 
@@ -50,7 +73,7 @@ def test_provider_edit_preserves_secret_models_comments_and_backup(store):
     assert "// keep this comment" in store.config_text()
     assert config(store)["unrelated"]["enabled"]
     assert list((store.home / ".manager-backups").iterdir())
-    assert store.config.stat().st_mode & 0o777 == 0o600
+    assert_private_file(store.config)
 
 
 def test_snapshot_does_not_expose_api_keys(store):
@@ -62,7 +85,7 @@ def test_snapshot_does_not_expose_api_keys(store):
 
 def test_concurrent_config_edit_is_rejected(store):
     rev = module.revision(store.config_text())
-    store.config.write_text(store.config_text() + "\n")
+    store.config.write_text(store.config_text() + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="更新"):
         store.mutate({"revision": rev, "kind": "providers", "action": "delete", "id": "other"})
 
@@ -126,7 +149,7 @@ def test_knowledge_groups_toggle_and_delete_cleanup(store):
     change(store, kind="knowledge", action="create", name="notes", content="# Notes\nhello")
     builtin = store.home / "manager/knowledge/.system/guide.md"
     builtin.parent.mkdir(parents=True, exist_ok=True)
-    builtin.write_text("# Guide\nBuilt-in reference")
+    builtin.write_text("# Guide\nBuilt-in reference", encoding="utf-8")
     files = {f["group"]: f for f in store.files() if f["kind"] == "knowledge"}
     assert files["user"]["writable"] and not files["user"]["enabled"]
     assert not files["builtin"]["writable"] and not files["builtin"]["enabled"]
@@ -140,7 +163,7 @@ def test_knowledge_groups_toggle_and_delete_cleanup(store):
         "knowledge_revision": original_revision, "values": {"enabled": False},
     })
     assert not next(f for f in store.files() if f["id"] == files["user"]["id"])["enabled"]
-    assert (store.home / "manager/knowledge-state.json").read_text().find("notes.md") >= 0
+    assert (store.home / "manager/knowledge-state.json").read_text(encoding="utf-8").find("notes.md") >= 0
     with pytest.raises(ValueError, match="刷新"):
         store.mutate({
             "kind": "knowledge", "action": "toggle", "id": files["builtin"]["id"],
@@ -162,17 +185,17 @@ def test_knowledge_groups_toggle_and_delete_cleanup(store):
         "kind": "knowledge", "action": "delete", "id": user["id"],
         "revision": user["revision"],
     })
-    assert "notes.md" not in (store.home / "manager/knowledge-state.json").read_text()
+    assert "notes.md" not in (store.home / "manager/knowledge-state.json").read_text(encoding="utf-8")
 
 
 def test_short_gateway_key_does_not_hide_user_document_or_make_it_readonly(store):
     store.config.write_text(json.dumps({
         "providers": {"local": {"base_url": "http://127.0.0.1:17001", "api_key": "note"}}
-    }))
+    }), encoding="utf-8")
     change(store, kind="knowledge", action="create", name="note", content="# note\nnote123")
     item = next(f for f in store.snapshot()["files"] if f["kind"] == "knowledge" and f["group"] == "user")
     assert item["name"] == "note"
-    assert item["path"].endswith("/note.md")
+    assert Path(item["path"]).name == "note.md"
     assert item["writable"]
     detail = store.read_file(item["id"])
     assert detail["content"] == "# note\nnote123"
@@ -189,7 +212,7 @@ def test_shared_skill_edit_and_toggle_is_local(store):
     path = store.compatibility_home / ".agents/skills/shared/SKILL.md"
     path.parent.mkdir(parents=True)
     content = "---\nname: shared\ndescription: Shared skill\n---\nContent"
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
     file = store.files()[0]
     assert file["group"] == "public"
     assert store.read_file(file["id"])["writable"]
@@ -203,14 +226,14 @@ def test_shared_skill_edit_and_toggle_is_local(store):
     )
     change(store, kind="skills", action="toggle", id=file["id"], values={"enabled": False})
     assert not store.snapshot()["files"][0]["enabled"]
-    assert path.read_text().endswith("changed")
+    assert path.read_text(encoding="utf-8").endswith("changed")
     assert not (store.compatibility_home / ".agents/settings.json").exists()
 
 
 def test_memory_with_secret_is_redacted_and_readonly(store):
     path = store.home / "memories/MEMORY.md"
     path.parent.mkdir()
-    path.write_text("token private-token-123")
+    path.write_text("token private-token-123", encoding="utf-8")
     file = store.read_file(next(f for f in store.files() if f["kind"] == "memories")["id"])
     assert file["content"] == "token [已隐藏]"
     assert not file["writable"]
@@ -295,7 +318,8 @@ def test_config_versions_save_rollback_and_corki_loader(store):
     change(store, kind="config", action="restore", id=first["versions"][0]["id"])
     assert store.config_text() == original
     assert len(store.config_document()["versions"]) == 3
-    assert all(p.stat().st_mode & 0o777 == 0o600 for p in store.config_versions().glob("*.json"))
+    for path in store.config_versions().glob("*.json"):
+        assert_private_file(path)
 
 
 @pytest.mark.parametrize(
@@ -310,7 +334,7 @@ def test_invalid_config_never_changes_active_file(store, content):
 
 def test_history_detects_external_edits_and_conflicts(store):
     first = store.config_document()
-    store.config.write_text(store.config_text() + "\n")
+    store.config.write_text(store.config_text() + "\n", encoding="utf-8")
     assert len(store.config_document()["versions"]) == 2
     with pytest.raises(ValueError, match="冲突"):
         store.mutate(
@@ -345,7 +369,7 @@ def test_skills_excludes_codex_and_hidden_backups_but_lists_corki_system(store):
     for root in roots:
         path = root / "sample/SKILL.md"
         path.parent.mkdir(parents=True)
-        path.write_text("---\nname: sample\ndescription: Example\n---\nContent")
+        path.write_text("---\nname: sample\ndescription: Example\n---\nContent", encoding="utf-8")
     files = [f for f in store.files() if f["kind"] == "skills"]
     assert len(files) == 1
     assert files[0]["path"] == str(store.home / "skills/.system/sample/SKILL.md")
@@ -481,7 +505,9 @@ def test_zip_import_preserves_executable_and_rejects_symlinks(store):
         store.mutate(dict(kind="skills", action="import", archive=archive(True)))
     store.mutate(dict(kind="skills", action="import", archive=archive()))
     script = store.compatibility_home / ".agents/skills/zipped/scripts/run.sh"
-    assert script.stat().st_mode & 0o100
+    assert script.read_bytes() == b"#!/bin/sh\necho test"
+    if os.name != "nt":  # NTFS has no POSIX executable bit for shell scripts.
+        assert script.stat().st_mode & 0o100
 
 
 def test_three_skill_groups_are_distinct(store):
@@ -491,7 +517,7 @@ def test_three_skill_groups_are_distinct(store):
         store.compatibility_home / ".agents/skills/public",
     ):
         path.mkdir(parents=True)
-        (path / "SKILL.md").write_text(f"---\nname: {path.name}\ndescription: Test\n---\nBody")
+        (path / "SKILL.md").write_text(f"---\nname: {path.name}\ndescription: Test\n---\nBody", encoding="utf-8")
     files = [f for f in store.files() if f["kind"] == "skills"]
     assert {f["name"]: f["group"] for f in files} == {
         "builtin": "builtin",
@@ -508,10 +534,10 @@ def skill_package(store):
     (root / "references/nested").mkdir(parents=True)
     (root / "SKILL.md").write_text(
         "---\nname: workbench\ndescription: Package test\n---\n# Guide\n"
-    )
+    , encoding="utf-8")
     (root / "scripts/run.py").write_bytes(b'#!/usr/bin/env python3\r\nprint("hello")\r\n')
     (root / "scripts/run.py").chmod(0o755)
-    (root / "references/nested/guide.md").write_text("# Reference\n\n**Important**")
+    (root / "references/nested/guide.md").write_text("# Reference\n\n**Important**", encoding="utf-8")
     (root / "asset.bin").write_bytes(b"\x00\xff\x80")
     return root, store.files()[0]["id"]
 
@@ -542,7 +568,8 @@ def test_skill_package_read_save_conflict_export(store, skill_package):
         )
     )
     assert (root / "scripts/run.py").read_bytes() == edited.encode()
-    assert (root / "scripts/run.py").stat().st_mode & 0o111 == 0o111
+    if os.name != "nt":
+        assert (root / "scripts/run.py").stat().st_mode & 0o111 == 0o111
     with pytest.raises(ValueError, match="修改"):
         store.mutate(
             dict(
@@ -559,7 +586,8 @@ def test_skill_package_read_save_conflict_export(store, skill_package):
     with zipfile.ZipFile(io.BytesIO(body)) as archive:
         assert archive.read("workbench/scripts/run.py") == edited.encode()
         assert archive.read("workbench/asset.bin") == b"\x00\xff\x80"
-        assert archive.getinfo("workbench/scripts/run.py").external_attr >> 16 & 0o111
+        if os.name != "nt":
+            assert archive.getinfo("workbench/scripts/run.py").external_attr >> 16 & 0o111
         assert not any(".manager-backups" in n for n in archive.namelist())
         assert (
             archive.read("workbench/references/nested/guide.md")
@@ -601,8 +629,8 @@ def test_skill_resources_block_links_and_invalid_main(store, skill_package):
 def test_builtin_resource_readonly_even_through_alias(store):
     root = store.home / "skills/.system/native"
     (root / "scripts").mkdir(parents=True)
-    (root / "SKILL.md").write_text("---\nname: native\ndescription: Native\n---\n# Guide")
-    (root / "scripts/run.sh").write_text("echo native")
+    (root / "SKILL.md").write_text("---\nname: native\ndescription: Native\n---\n# Guide", encoding="utf-8")
+    (root / "scripts/run.sh").write_text("echo native", encoding="utf-8")
     (store.home / "skills/alias").symlink_to(root, target_is_directory=True)
     item = store.files()[0]
     assert not item["writable"] and item["group"] == "builtin"
@@ -686,7 +714,7 @@ def test_provider_rename_preserves_runtime_compatibility(store):
 def test_provider_rename_rejects_collision_and_invalid_name(store, name):
     current = config(store)
     current["providers"]["occupied"] = {"aliases": ["reserved"]}
-    store.config.write_text(json.dumps(current))
+    store.config.write_text(json.dumps(current), encoding="utf-8")
     before = store.config_text()
     with pytest.raises(ValueError):
         change(
@@ -702,7 +730,7 @@ def test_provider_rename_rejects_collision_and_invalid_name(store, name):
 def test_provider_rename_updates_legacy_inline_identity(store):
     current = config(store)
     current["provider"] = {"name": "local", "thinking": True}
-    store.config.write_text(json.dumps(current))
+    store.config.write_text(json.dumps(current), encoding="utf-8")
     change(
         store,
         kind="providers",
@@ -723,7 +751,7 @@ def test_provider_save_as_default(store, shared_model):
         "api_key": "target-secret",
         "models": {target_model: {"context_window": 262144}},
     }
-    store.config.write_text(json.dumps(current))
+    store.config.write_text(json.dumps(current), encoding="utf-8")
     change(
         store,
         kind="providers",
@@ -806,10 +834,10 @@ def test_config_history_returns_latest_twenty_without_removing_archives(store):
 def skill_toggle_fixture(store, rules):
     path = store.home / "skills/.system/skill-creator/SKILL.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("---\nname: skill-creator\ndescription: fixture\n---\nBody")
+    path.write_text("---\nname: skill-creator\ndescription: fixture\n---\nBody", encoding="utf-8")
     value = config(store)
     value["skills"] = {"config": rules(path)}
-    store.config.write_text(json.dumps(value))
+    store.config.write_text(json.dumps(value), encoding="utf-8")
     return next(f for f in store.files() if f["path"] == str(path)), path
 
 
@@ -848,7 +876,7 @@ def test_skill_enable_preserves_extra_fields_without_enabled(store):
     from corki.config.skills import disabled_skill_paths, parse_skill_rules
 
     disabled = disabled_skill_paths(parse_skill_rules(rules, store.home), ())
-    assert Path("/unrelated/SKILL.md") in disabled
+    assert Path("/unrelated/SKILL.md").resolve() in disabled
     assert path not in disabled
     change(store, kind="skills", action="toggle", id=item["id"], values={"enabled": False})
     assert config(store)["skills"]["config"][-1] == {
@@ -906,7 +934,7 @@ def test_knowledge_document_import_formats(store):
         assert result == {"name": "说明", "content": expected}
     assert not list((store.home / "manager/knowledge").glob("*.md"))
     store.mutate({"kind": "knowledge", "action": "create", **result})
-    assert (store.home / "manager/knowledge/说明.md").read_text() == expected
+    assert (store.home / "manager/knowledge/说明.md").read_text(encoding="utf-8") == expected
     with pytest.raises(ValueError, match="同名"):
         store.mutate({"kind": "knowledge", "action": "create", **result})
 
@@ -1013,7 +1041,7 @@ def test_mcp_stdio_editor_preserves_advanced_settings(store):
     change(store, kind="tools", action="save", id="local-tool", values=values, is_new=True)
     settings = config(store)
     settings["mcp"]["servers"]["local-tool"]["disabled_tools"] = ["danger"]
-    store.config.write_text(json.dumps(settings))
+    store.config.write_text(json.dumps(settings), encoding="utf-8")
     change(
         store,
         kind="tools",
@@ -1106,7 +1134,7 @@ for line in sys.stdin:
  elif packet['method']=='tools/list': result={'tools':json.loads(sys.argv[2])}
  else: raise RuntimeError('unexpected tool execution')
  print(json.dumps({'jsonrpc':'2.0','id':packet['id'],'result':result}),flush=True)
-""")
+""", encoding="utf-8")
     values = {
         "transport": "stdio",
         "command": sys.executable,
@@ -1128,7 +1156,7 @@ for line in sys.stdin:
         assert result["tool_count"] == 1
     else:
         assert "校验返回格式" in result["error"]
-    assert trace.read_text().splitlines() == [
+    assert trace.read_text(encoding="utf-8").splitlines() == [
         "initialize",
         "notifications/initialized",
         "tools/list",
@@ -1277,7 +1305,8 @@ def test_custom_tool_crud_is_separate_and_loadable(store):
         }
     )
     path = store.home / "tools/custom/query.json"
-    assert path.is_file() and path.stat().st_mode & 0o777 == 0o600
+    assert path.is_file()
+    assert_private_file(path)
     assert "secret-custom" not in json.dumps(store.snapshot())
     registry = ToolRegistry()
     register_custom_tools(registry, store.home)
@@ -1379,7 +1408,7 @@ def test_custom_tool_import_preserves_complete_definition(store):
         }
     )
     path = store.home / "tools/custom/imported.json"
-    before = path.read_text()
+    before = path.read_text(encoding="utf-8")
     assert json.loads(before) == value
     registry = ToolRegistry()
     register_custom_tools(registry, store.home)
@@ -1395,7 +1424,7 @@ def test_custom_tool_import_preserves_complete_definition(store):
                 "revision": None,
             }
         )
-    assert path.read_text() == before
+    assert path.read_text(encoding="utf-8") == before
 
 
 def custom_probe(store, script, **options):
@@ -1484,7 +1513,7 @@ def test_custom_tool_probe_saved_revision_and_credentials(store):
         }
     )
     path = store.home / "tools/custom/saved.json"
-    before = path.read_text()
+    before = path.read_text(encoding="utf-8")
     result = store.mutate(
         {
             "kind": "custom-tools",
@@ -1496,7 +1525,7 @@ def test_custom_tool_probe_saved_revision_and_credentials(store):
     )
     assert result["ok"], result
     assert "test-private-token" not in json.dumps(result)
-    assert path.read_text() == before
+    assert path.read_text(encoding="utf-8") == before
     with pytest.raises(ValueError, match="已更新"):
         store.mutate(
             {
@@ -1628,7 +1657,7 @@ def test_knowledge_enable_extract_reuse_and_edit(store, monkeypatch):
 
 
 def test_knowledge_missing_default_rolls_back_enable(store):
-    store.config.write_text('{}')
+    store.config.write_text('{}', encoding="utf-8")
     change(store, kind="knowledge", action="create", name="guide", content="hello")
     item = next(f for f in store.files() if f["kind"] == "knowledge" and f["group"] == "user")
     with pytest.raises(ValueError, match="默认"):
@@ -1668,7 +1697,7 @@ def test_cron_crud_versions_and_separate_storage(store, monkeypatch):
 def test_database_admin_http(store):
     import sqlite3
 
-    with sqlite3.connect(store.home / "fixture.db") as db:
+    with closing(sqlite3.connect(store.home / "fixture.db")) as db, db:
         db.execute("CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
     server = ThreadingHTTPServer(("127.0.0.1", 0), module.Handler)
     server.store = store
@@ -1701,7 +1730,7 @@ def test_cron_failed_detail_recovers_session_error(store):
     store.cron.start_run(identity)
     store.cron.finish(identity, 'failed', error='Agent 执行失败')
     store.database.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(store.database) as db:
+    with closing(sqlite3.connect(store.database)) as db, db:
         db.execute('CREATE TABLE turns(thread_id TEXT, error TEXT, updated_at TEXT)')
         db.execute('INSERT INTO turns VALUES(?,?,?)', (
             identity, 'HTTP 401: private-token-123', '2026-01-01 12:00',
@@ -1724,7 +1753,7 @@ def test_knowledge_versions_external_changes_retention_and_readonly(store):
     assert len(current["versions"]) == 20
     assert current["versions"][0]["content"] == current["content"]
     assert not current["enabled"]
-    Path(current["path"]).write_text("# External\nchanged")
+    Path(current["path"]).write_text("# External\nchanged", encoding="utf-8")
     external = store.knowledge_document(item["id"])
     assert external["versions"][0]["content"] == "# External\nchanged"
     assert len(external["versions"]) == 20
@@ -1801,7 +1830,7 @@ def test_monthly_usage_has_30_local_dates_and_zero_fills_gaps(store):
 
     assert len(store.monthly_usage(date(2026, 10, 17))) == 30
     store.database.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(store.database) as db:
+    with closing(sqlite3.connect(store.database)) as db, db:
         db.execute('CREATE TABLE model_steps(created_at TEXT,input_tokens INTEGER,output_tokens INTEGER)')
         for day, value in [('2026-09-17', 999), ('2026-09-18', 10),
                            ('2026-10-17', 20), ('2026-10-18', 999)]:
@@ -1856,7 +1885,7 @@ def test_existing_skill_name_cannot_be_changed(store, header):
     content = "---\n" + header + ("\ndescription: Test import" if "description:" not in header else "") + "\n---\nBody\n"
     path = store.home / "skills/legacy-directory/SKILL.md"
     path.parent.mkdir(parents=True)
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
     item = next(f for f in store.files() if f["kind"] == "skills")
     resource = store.read_skill_resource(item["id"], "SKILL.md")
     with pytest.raises(ValueError, match="不支持修改"):
@@ -1867,7 +1896,7 @@ def test_existing_skill_name_cannot_be_changed(store, header):
                               content="---\nname: changed\ndescription: Test\n---\nBody", revision=resource["revision"]))
     store.mutate(dict(kind="skills", action="save-resource", id=item["id"], path="SKILL.md",
                       content=content + "Updated", revision=resource["revision"]))
-    assert path.read_text() == content + "Updated"
+    assert path.read_text(encoding="utf-8") == content + "Updated"
 
 
 def hook_change(store, **values):
@@ -1907,13 +1936,13 @@ def test_hooks_json_reindex_preserves_other_trust(store):
     path = store.home / "hooks.json"
     path.write_text(json.dumps({"description": "keep", "hooks": {"Stop": [{"matcher": "*", "hooks": [
         {"type": "command", "command": "echo first"}, {"type": "command", "command": "echo second"},
-        {"type": "command", "command": "echo untrusted"}]}]}}))
+        {"type": "command", "command": "echo untrusted"}]}]}}), encoding="utf-8")
     rows = store.hooks_document()["entries"]
     hook_change(store, action="toggle", id=rows[1]["id"], enabled=True)
     hook_change(store, action="delete", id=rows[0]["id"])
     rows = store.hooks_document()["entries"]
     assert rows[0]["enabled"] and not rows[1]["trusted"]
-    assert json.loads(path.read_text())["description"] == "keep"
+    assert json.loads(path.read_text(encoding="utf-8"))["description"] == "keep"
     settings = CorkiSettings.for_directory(store.workspace, config_file=store.config)
     commands, _ = discover(settings.configuration, event_name="Stop")
     assert [c.command for c in commands] == ["echo second"]
@@ -1932,7 +1961,7 @@ def test_hooks_conflicts_and_invalid_config(store):
         with pytest.raises(ValueError):
             hook_change(store, action="save", event=event, handler=handler, enabled=True)
     assert store.config_text() == original
-    (store.home / "hooks.json").write_text('{broken')
+    (store.home / "hooks.json").write_text('{broken', encoding="utf-8")
     with pytest.raises(ValueError):
         store.hooks_document()
 
@@ -1954,19 +1983,22 @@ def test_manager_saved_hook_executes_with_runtime_runner(store):
     from corki.shell import default_user_shell
     store.workspace.mkdir(parents=True, exist_ok=True)
     hook_change(store, action="save", event="UserPromptSubmit", matcher="*",
-                handler={"type":"command","command":"printf hook-runtime-ok","timeout":5}, enabled=True)
+                handler={"type":"command","command":
+                         "Write-Output hook-runtime-ok" if os.name == "nt" else "printf hook-runtime-ok",
+                         "timeout":60 if os.name == "nt" else 5}, enabled=True)
     settings = CorkiSettings.for_directory(store.workspace, config_file=store.config)
     commands, _ = discover(settings.configuration, event_name="UserPromptSubmit")
     result = asyncio.run(run_command(commands[0], {"hook_event_name":"UserPromptSubmit"},
-                                     shell=default_user_shell(), cwd=store.workspace, environment={}))
-    assert result["exit_code"] == 0 and result["stdout"] == "hook-runtime-ok"
+                                     shell=default_user_shell(), cwd=store.workspace,
+                                     environment=dict(os.environ)))
+    assert result["exit_code"] == 0 and result["stdout"].strip() == "hook-runtime-ok"
 
 
 def test_private_hook_skill_upload_hidden_save_and_cleanup(store):
     upload=skill_upload([('fixture/SKILL.md',b'---\nname: private-test\ndescription: private\n---\nRead references/guide.md'),('fixture/references/guide.md',b'guide')])
     result=hook_change(store, action='upload-skill',upload=upload)
     path=Path(result['path'])
-    assert path.is_file() and (path.parent/'references/guide.md').read_text()=='guide'
+    assert path.is_file() and (path.parent/'references/guide.md').read_text(encoding="utf-8")=='guide'
     assert not any(f['name']=='private-test' for f in store.files())
     hook_change(store,action='save',event='UserPromptSubmit',matcher='*',handler={'type':'skill','path':str(path)},enabled=True)
     store.mutate({'kind':'hooks','action':'discard-upload','path':str(path)})
@@ -1998,10 +2030,10 @@ def test_skill_permanent_delete_package(store, tmp_path, group):
             "project": store.workspace / ".corki/skills"}[group]
     package = base / "delete-fixture"
     (package / "scripts").mkdir(parents=True)
-    (package / "SKILL.md").write_text("---\nname: delete-fixture\ndescription: fixture\n---\nGuide")
-    (package / "scripts/run.py").write_text("print('fixture')")
+    (package / "SKILL.md").write_text("---\nname: delete-fixture\ndescription: fixture\n---\nGuide", encoding="utf-8")
+    (package / "scripts/run.py").write_text("print('fixture')", encoding="utf-8")
     outside = tmp_path / "untouched.txt"
-    outside.write_text("keep")
+    outside.write_text("keep", encoding="utf-8")
     (package / "linked.txt").symlink_to(outside)
     item = next(f for f in store.files() if f["name"] == "delete-fixture")
     with pytest.raises(ValueError, match="已更新"):
@@ -2010,7 +2042,7 @@ def test_skill_permanent_delete_package(store, tmp_path, group):
     store.mutate(dict(kind="skills", action="delete", id=item["id"], revision=item["revision"]))
     assert not package.exists()
     assert base.is_dir()
-    assert outside.read_text() == "keep"
+    assert outside.read_text(encoding="utf-8") == "keep"
     assert not any(f["id"] == item["id"] for f in store.files())
 
 
@@ -2018,7 +2050,7 @@ def test_skill_permanent_delete_rejects_builtin(store):
     package = store.home / "skills/.system/protected"
     package.mkdir(parents=True)
     path = package / "SKILL.md"
-    path.write_text("---\nname: protected\ndescription: fixture\n---\nGuide")
+    path.write_text("---\nname: protected\ndescription: fixture\n---\nGuide", encoding="utf-8")
     item = next(f for f in store.files() if f["name"] == "protected")
     with pytest.raises(ValueError, match="内置"):
         store.mutate(dict(kind="skills", action="delete", id=item["id"], revision=item["revision"]))
@@ -2048,7 +2080,7 @@ def test_skill_import_rejects_actual_name_across_groups(store, existing_group, t
             "builtin": store.home / "skills/.system"}[existing_group]
     package = root / "different-directory"
     package.mkdir(parents=True)
-    (package / "SKILL.md").write_text("---\nname: Example\ndescription: fixture\n---\nGuide")
+    (package / "SKILL.md").write_text("---\nname: Example\ndescription: fixture\n---\nGuide", encoding="utf-8")
     data = skill_upload(group=target_group)
     for action in ("validate-import", "import"):
         with pytest.raises(ValueError, match="同名"):
@@ -2149,11 +2181,29 @@ def test_skill_text_is_not_redacted_and_respects_source_permissions(store, group
     path = root / "fixture/SKILL.md"
     path.parent.mkdir(parents=True)
     content = "---\nname: fixture\ndescription: Test\n---\n认证方式 / Bearer 选择\nsk-demo-placeholder"
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
     item = next(f for f in store.files() if f["kind"] == "skills")
     for result in (store.read_file(item["id"]), store.read_skill_resource(item["id"], "SKILL.md")):
         assert result["content"] == content
         assert result["writable"] == (group != "builtin")
     if group != "builtin":
         store.save_skill_resource(dict(id=item["id"], path="SKILL.md", revision=module.revision(content), content=content + "\nUpdated"))
-        assert path.read_text() == content + "\nUpdated"
+        assert path.read_text(encoding="utf-8") == content + "\nUpdated"
+
+
+def test_atomic_text_is_utf8_without_platform_newline_translation(tmp_path):
+    path = tmp_path / "配置.json"
+    content = '{"描述":"你好"}\n'
+    module.atomic(path, content)
+    assert path.read_bytes() == content.encode("utf-8")
+
+
+@pytest.mark.parametrize("name", ["CON", "NUL", "COM1", "lpt9"])
+def test_windows_reserved_names_rejected_before_filesystem_write(store, monkeypatch, name):
+    from corki.platforms.paths import archive_parts
+
+    monkeypatch.setattr(module, "archive_parts", lambda value: archive_parts(value, windows=True))
+    with pytest.raises(ValueError, match="Windows"):
+        store.custom_tool_path(name)
+    with pytest.raises(ValueError, match="Windows"):
+        store.mutate_file({"kind": "knowledge", "action": "create", "name": name, "content": "test"})

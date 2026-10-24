@@ -1,10 +1,10 @@
 import asyncio
 import json
 import os
-import shlex
 import sys
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -17,10 +17,12 @@ from corki.protocol.tools import ToolCall
 
 def settings(tmp_path, configuration):
     compiler = os.environ.get("CORKI_TEST_SANDBOX_COMPILER")
-    if not compiler or sys.platform != "darwin":
-        pytest.skip("requires built sandbox compiler and macOS")
+    if not compiler or sys.platform not in {"darwin", "win32"}:
+        pytest.skip("requires built sandbox compiler and macOS or Windows")
     path = tmp_path / "config.toml"
-    path.write_text(configuration + "\n[execution]\ncompiler=" + json.dumps(compiler))
+    path.write_text(
+        configuration + "\n[execution]\ncompiler=" + json.dumps(compiler), encoding="utf-8"
+    )
     return CorkiSettings.for_directory(tmp_path, config_file=path)
 
 
@@ -42,13 +44,14 @@ for name in ['allowed/inside.txt', 'outside.txt', 'extra/allowed/inside.txt']:
     except OSError:
         print(name + '=denied')
 """
+    command = python_command(tmp_path, script, name="named permission fixture.py")
 
     class Model:
         async def stream(self, request):
             requests.append(request)
             turn, step = request.items[-1].turn_id, new_step_id()
             if len(requests) % 2:
-                args = {"cmd": shlex.join([sys.executable, "-I", "-c", script]), "login": False}
+                args = {"cmd": command, "login": False}
                 call = (
                     ToolCall(new_tool_call_id(), "exec_command", args)
                     if not nested
@@ -277,15 +280,17 @@ def test_cancel_during_selection_does_not_publish_or_start_runtime(tmp_path, mon
             return [event async for event in runtime.stream("cancel me")]
 
         task = asyncio.create_task(consume())
-        await asyncio.wait_for(entered.wait(), 2)
-        task.cancel()
         try:
+            await asyncio.wait_for(entered.wait(), 2)
+            task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
             assert cleaned.is_set()
             assert not runtime._thread_created
             assert runtime._graph._settings.execution_permissions.needs_resolution
         finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
             await runtime.aclose()
 
     asyncio.run(scenario())

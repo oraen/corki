@@ -13,7 +13,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from identifier_validation import validate_marketplace_name
+from identifier_validation import configure_stdio, validate_marketplace_name
 
 MAX_PLUGIN_NAME_LENGTH = 64
 DEFAULT_INSTALL_POLICY = "AVAILABLE"
@@ -38,6 +38,8 @@ def normalize_plugin_name(plugin_name: str) -> str:
 def validate_plugin_name(plugin_name: str) -> None:
     if not plugin_name:
         raise ValueError("Plugin name must include at least one letter or digit.")
+    if re.fullmatch(r"con|prn|aux|nul|com[1-9]|lpt[1-9]", plugin_name, re.IGNORECASE):
+        raise ValueError("Plugin name is reserved by Windows; choose another name.")
     if len(plugin_name) > MAX_PLUGIN_NAME_LENGTH:
         raise ValueError(
             f"Plugin name '{plugin_name}' is too long ({len(plugin_name)} characters). "
@@ -97,7 +99,7 @@ def build_marketplace_entry(
 
 
 def load_json(path: Path) -> dict[str, Any]:
-    with path.open() as handle:
+    with path.open(encoding="utf-8-sig") as handle:
         return json.load(handle)
 
 
@@ -187,7 +189,7 @@ def write_json(path: Path, data: dict, force: bool) -> None:
     if path.exists() and not force:
         raise FileExistsError(f"{path} already exists. Use --force to overwrite.")
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w") as handle:
+    with path.open("w", encoding="utf-8") as handle:
         json.dump(data, handle, indent=2)
         handle.write("\n")
 
@@ -196,7 +198,7 @@ def create_stub_file(path: Path, payload: dict, force: bool) -> None:
     if path.exists() and not force:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w") as handle:
+    with path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
         handle.write("\n")
 
@@ -266,6 +268,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    configure_stdio()
     args = parse_args()
     raw_plugin_name = args.plugin_name
     plugin_name = normalize_plugin_name(raw_plugin_name)

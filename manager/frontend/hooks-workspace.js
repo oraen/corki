@@ -17,7 +17,7 @@ const typeLabels = {
 const summary = (h) =>
   h.command ||
   h.prompt ||
-  h.path?.split("/").slice(-2, -1)[0] ||
+  h.path?.split(/[\\/]/).slice(-2, -1)[0] ||
   `${h.server} / ${h.tool}`;
 const labels = {
   SessionStart: ["会话开始", "启动或恢复会话时"],

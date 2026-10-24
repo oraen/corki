@@ -27,6 +27,7 @@
     "electron": "44.8.0",
     "esbuild": "0.28.2",
     "playwright": "1.58.2",
+    "png-to-ico": "3.0.2",
     "prettier": "^3.6.2",
     "typescript": "5.9.3"
   }

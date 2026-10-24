@@ -7,7 +7,7 @@ import uuid
 from importlib.resources import files
 from pathlib import Path
 
-from corki.knowledge.store import KnowledgeStore, digest
+from corki.knowledge.store import KnowledgeStore, digest, document_by_path
 
 
 def bundled_document():
@@ -34,7 +34,7 @@ def install_builtin_knowledge(home: Path):
     fingerprint = digest(content)
     with store.connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        old = db.execute("SELECT * FROM documents WHERE path=?", (relative,)).fetchone()
+        old = document_by_path(db, relative)
         try:
             matches = destination.read_text(encoding="utf-8") == content
         except FileNotFoundError:

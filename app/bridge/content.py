@@ -39,7 +39,7 @@ def read_asset(home, identity):
     if not isinstance(identity, str) or not re.fullmatch("[a-f0-9]{64}", identity):
         raise ValueError("附件标识无效")
     root = Path(home) / "app/attachments"
-    meta = json.loads((root / (identity + ".json")).read_text())
+    meta = json.loads((root / (identity + ".json")).read_text(encoding="utf-8"))
     if meta.get("version") != 1 or meta.get("mime") not in MIMES:
         raise ValueError("附件记录无效")
     file = root / (identity + ".bin")

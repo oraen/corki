@@ -234,3 +234,28 @@ def test_exec_overlay_wins_and_plugin_output_is_removed(platform):
     else:
         expected["codex_plugin_metrics_output"] = "lower"
     assert result == expected
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32"])
+def test_runtime_overlay_has_no_windows_case_aliases(platform):
+    from corki.protocol.execution_identity import ExecutionIdentity
+
+    inherited = {
+        "term": "old-terminal",
+        "No_Color": "old-color",
+        "codex_thread_id": "outer-thread",
+        "Codex_Session_Id": "outer-session",
+    }
+    result = unified_exec_environment(
+        inherited, ShellEnvironmentPolicy(), platform=platform,
+        identity=ExecutionIdentity("current-thread", "current-session"),
+    )
+    assert result["TERM"] == "dumb"
+    assert result["NO_COLOR"] == "1"
+    assert result["CODEX_THREAD_ID"] == "current-thread"
+    assert result["CODEX_SESSION_ID"] == "current-session"
+    if platform == "win32":
+        assert not set(inherited).intersection(result)
+        assert len({key.lower() for key in result}) == len(result)
+    else:
+        assert all(result[key] == value for key, value in inherited.items())

@@ -24,11 +24,15 @@ they are not on PATH. `--offline` uses previously downloaded dependencies. The
 installer builds locked sources, collects dependency and Rust library notices,
 checks hashes and the binary platform, then publishes the complete directory.
 It never replaces an existing bundle. Host artifacts are Git-ignored.
+The Windows MSVC settings use the pinned Codex stack size and static CRT flags.
+Cargo runs from the crate directory so those settings apply, and the source
+receipt includes the configuration file. Rebuild older bundles before packaging.
 
 For a standalone executable without installation:
 
 ```sh
-cargo build --locked --release --manifest-path native/file_search/Cargo.toml
+cd native/file_search
+cargo build --locked --release
 ```
 
 The program reads one JSON request from stdin (`query`, optional `limit` between
@@ -45,8 +49,9 @@ different scoring). A standard wheel includes a verified installed bundle and
 receives a native platform tag. Build the bundle before building a release wheel.
 `CORKI_TEST_FILE_SEARCH_WHEEL` enables wheel extraction/default-entry tests.
 
-Build-time platform validation currently supports macOS/Linux; only macOS arm64
-execution and wheel tests have been run. Windows native packaging and Linux ABI
+Build-time platform validation includes macOS/Linux and Windows PE architecture
+and wheel tags; only macOS arm64 execution and wheel tests have been run.
+Windows native packaging and Linux ABI
 compatibility are not verified. Do not treat the local wheel as a published,
 cross-platform release. The helper is one-shot per query, unlike Codex's reusable
 index session, with an explicit three-second scan limit.

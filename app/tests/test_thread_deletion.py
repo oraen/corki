@@ -48,10 +48,8 @@ def test_archive_then_physical_delete(tmp_path):
             service.state.put("ui", {"selected": thread, "collapsed": True})
             project = tmp_path / "main/default/keep.txt"
             project.write_text("workspace untouched")
-            transcript_root = service.database.with_name("corki.db.transcripts")
-            transcript_root.mkdir(exist_ok=True)
-            transcript = transcript_root / transcript_name(thread)
-            transcript.write_text("transcript body")
+            transcript = await service.repository.materialize_transcript(ThreadId(thread))
+            assert transcript is not None
             with closing(sqlite3.connect(service.database)) as db:
                 turn = db.execute("SELECT id FROM turns WHERE thread_id=?", (thread,)).fetchone()[0]
             for file, tables in (

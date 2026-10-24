@@ -258,6 +258,8 @@ async def _compile(
         "command": argv,
         "file_system_helper": file_system_helper,
     }
+    if sys.platform == "win32" and permissions.runtime_home is not None:
+        request["runtime_home"] = str(permissions.runtime_home)
     if native_file_system_helper:
         if not file_system_helper:
             raise ValueError("native filesystem entrypoint requires file_system_helper")

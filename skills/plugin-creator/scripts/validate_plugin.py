@@ -15,7 +15,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from identifier_validation import validate_plugin_identifier
+from identifier_validation import configure_stdio, validate_plugin_identifier
 
 
 TODO_MARKER = "[TODO:"
@@ -37,6 +37,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    configure_stdio()
     args = parse_args()
     plugin_root = Path(args.plugin_path).expanduser().resolve()
     errors = validate_plugin(plugin_root)
@@ -65,7 +66,7 @@ def load_json_object(path: Path, errors: list[str]) -> dict[str, Any] | None:
         errors.append("missing `.codex-plugin/plugin.json`")
         return None
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
     except OSError:
         errors.append("unable to read `.codex-plugin/plugin.json`")
         return None
@@ -401,7 +402,7 @@ def load_companion_json_object(
         errors.append(f"{label} is required when its plugin.json field is present")
         return None
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
         errors.append(f"{label} must contain valid JSON")
         return None
@@ -437,7 +438,7 @@ def validate_skill_manifest(skill_root: Path, errors: list[str]) -> None:
         errors.append(f"skill `{skill_root.name}` is missing `SKILL.md`")
         return
     try:
-        contents = skill_md_path.read_text(encoding="utf-8")
+        contents = skill_md_path.read_text(encoding="utf-8-sig")
     except OSError:
         errors.append(f"unable to read skill `{skill_root.name}`")
         return
@@ -491,7 +492,7 @@ def validate_skill_agent_manifest(
     errors: list[str],
 ) -> None:
     try:
-        payload = yaml.safe_load(agent_yaml_path.read_text(encoding="utf-8"))
+        payload = yaml.safe_load(agent_yaml_path.read_text(encoding="utf-8-sig"))
     except OSError:
         errors.append(f"unable to read skill `{skill_root.name}` agent YAML")
         return

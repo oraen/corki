@@ -371,7 +371,11 @@ def test_external_writer_blocks_archive_then_crash_archive_restore_does_not_repl
                 return ToolResult(call.id, call.name, "incorrect replay")
 
         try:
-            assert await asyncio.wait_for(process.stdout.readline(), 10) == b"READY\n"
+            assert (
+                await asyncio.wait_for(
+                    process.stdout.readline(), 30 if sys.platform == "win32" else 10
+                )
+            ).strip() == b"READY"
             host = await runtime_for(tmp_path, thread_id=thread)
             with pytest.raises(RuntimeError, match="active writer"):
                 await host.archive()

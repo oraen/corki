@@ -2,7 +2,6 @@
 
 import ctypes
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -121,31 +120,6 @@ def _darwin_timezone() -> str:
 
 
 def _windows_timezone() -> str:
-    # Same WinRT API as iana-time-zone. A fixed, bounded PowerShell adapter avoids
-    # adding an ABI-specific COM implementation or a global Windows→IANA mapping.
-    system = Path(os.environ.get("SYSTEMROOT", r"C:\Windows"))
-    executable = system / "System32/WindowsPowerShell/v1.0/powershell.exe"
-    shell = str(executable) if executable.is_file() else shutil.which("powershell.exe")
-    if shell is None:
-        raise OSError("Windows timezone adapter unavailable")
-    result = subprocess.run(
-        [
-            shell,
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "[Windows.Globalization.Calendar,Windows.Globalization,ContentType=WindowsRuntime]"
-            "::new().GetTimeZone()",
-        ],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        timeout=2,
-        check=True,
-        encoding="utf-8",
-    )
-    name = result.stdout.strip()
-    if not name:
-        raise ValueError("empty Windows timezone name")
-    return name
+    from corki.platforms.windows_timezone import timezone_name as windows_timezone_name
+
+    return windows_timezone_name()

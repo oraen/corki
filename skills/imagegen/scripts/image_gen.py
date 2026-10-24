@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -59,9 +60,10 @@ def _dependency_hint(package: str, *, upgrade: bool = False) -> str:
     command = f"uv pip install {'-U ' if upgrade else ''}{package}"
     return (
         "Activate the repo-selected environment first, then install it with "
-        f"`{command}`. If this repo uses a local virtualenv, start with "
-        "`source .venv/bin/activate`; otherwise use this repo's configured shared fallback "
-        "environment. If your project declares dependencies, prefer that project's normal "
+        f"`{command}` or run the selected Python interpreter with "
+        f"`-m pip install {'-U ' if upgrade else ''}{package}`. "
+        "For a local virtualenv the interpreter is `.venv/Scripts/python.exe` on Windows "
+        "and `.venv/bin/python` on macOS. If your project declares dependencies, prefer its "
         "`uv sync` flow."
     )
 
@@ -911,17 +913,18 @@ class _FileBundle:
     def __init__(self, paths: List[Path]):
         self._paths = paths
         self._handles: List[object] = []
+        self._stack = ExitStack()
 
     def __enter__(self):
-        self._handles = [p.open("rb") for p in self._paths]
+        try:
+            self._handles = [self._stack.enter_context(p.open("rb")) for p in self._paths]
+        except BaseException:
+            self._stack.close()
+            raise
         return self._handles
 
     def __exit__(self, exc_type, exc, tb):
-        for handle in self._handles:
-            try:
-                handle.close()
-            except Exception:
-                pass
+        self._stack.close()
         return False
 
 
@@ -1027,4 +1030,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     raise SystemExit(main())

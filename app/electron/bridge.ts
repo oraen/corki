@@ -140,7 +140,10 @@ export class Bridge extends EventEmitter {
         this.fail(new Error("运行服务已断开；未自动重发任务。"));
       }
     });
-    const result = await this.raw("initialize", { protocolVersion: 1 }, 30000);
+    // Cold Python environments load the full Agent before accepting requests.
+    // Give only process startup extra time; ordinary RPC deadlines stay bounded
+    // independently so a slow startup is not mistaken for a disconnected host.
+    const result = await this.raw("initialize", { protocolVersion: 1 }, 120000);
     if (result.protocolVersion !== 1) throw new Error("运行服务版本不兼容");
   }
   private fail(error: Error) {

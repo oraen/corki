@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from platform_commands import python_command
 from test_named_execution_permissions import run
 
 from corki.config.managed_mcp import MCPRequirementsLayer, compose_mcp_requirements
@@ -148,8 +149,6 @@ allowed="write"
 
 def test_worker_override_keeps_catalog_without_reselecting_parent(tmp_path):
     import json
-    import shlex
-    import sys
     from dataclasses import replace
 
     from test_named_execution_permissions import settings
@@ -192,14 +191,11 @@ user-read=true
             turn, step = request.items[-1].turn_id, new_step_id()
             results = [item for item in request.items if isinstance(item, ToolResultItem)]
             if not results:
-                command = shlex.join(
-                    [
-                        sys.executable,
-                        "-I",
-                        "-c",
-                        "from pathlib import Path; Path('worker-ok.txt').write_text('owned'); "
-                        "print('WORKER_WRITE_OK')",
-                    ]
+                command = python_command(
+                    tmp_path,
+                    "from pathlib import Path; Path('worker-ok.txt').write_text('owned'); "
+                    "print('WORKER_WRITE_OK')",
+                    name="worker permission fixture.py",
                 )
                 item = ToolCallItem(
                     ToolCall(new_tool_call_id(), "exec_command", {"cmd": command, "login": False}),

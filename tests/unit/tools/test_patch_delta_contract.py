@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from types import SimpleNamespace
 
 import pytest
@@ -29,13 +30,16 @@ from corki.storage import SQLiteSessionRepository
         },
     ],
 )
-def test_ordered_repeated_paths_are_not_deduplicated(change):
+def test_ordered_repeated_paths_are_not_deduplicated(tmp_path, change):
+    change = dict(change)
+    if change.get("move_path") is not None:
+        change["move_path"] = str(tmp_path / "b")
     value = {
         "version": 1,
         "exact": True,
         "changes": [
-            {"path": "/a", "change": change},
-            {"path": "/a", "change": change},
+            {"path": str(tmp_path / "a"), "change": change},
+            {"path": str(tmp_path / "a"), "change": change},
         ],
     }
     assert parse_patch_delta(json.dumps(value)) == value
@@ -74,14 +78,14 @@ def test_cold_claim_preserves_delta_without_rewriting_legacy_rows(tmp_path, pres
             patch_delta_json=('{"version":1,"exact":false,"changes":[]}' if present else None),
         )
         await repository.complete_tool_call(thread, turn, result)
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             before = db.execute("SELECT result_json FROM tool_executions").fetchone()[0]
         assert ("patch_delta_json" in json.loads(before)) is present
         reopened = SQLiteSessionRepository(path)
         cached = await reopened.claim_tool_call(thread, turn, call)
         assert cached == result
         await reopened.complete_tool_call(thread, turn, cached)
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             assert db.execute("SELECT result_json FROM tool_executions").fetchone()[0] == before
 
     asyncio.run(scenario())

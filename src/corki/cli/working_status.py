@@ -5,6 +5,8 @@ from time import monotonic
 
 from rich.cells import cell_len, set_cell_size
 
+from corki.cli.theme import PROMPT_ACCENT
+
 
 def format_elapsed(seconds):
     seconds = max(0, int(seconds))
@@ -87,7 +89,7 @@ class WorkingStatus:
             hint = ""
         # Preserve time before spending narrow-terminal width on the label.
         header = set_cell_size(header, max(0, min(cell_len(header), width - cell_len(duration))))
-        result = [("bold fg:ansicyan", header), ("bold", duration)]
+        result = [(f"bold {PROMPT_ACCENT}", header), ("bold", duration)]
         if cell_len(header + duration) > width:
             return [("bold", set_cell_size(duration.strip(), max(0, width)).rstrip())]
         if hint:

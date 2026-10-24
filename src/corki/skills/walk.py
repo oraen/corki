@@ -6,6 +6,7 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
+from corki.platforms.paths import is_link_metadata
 from corki.skills.io import check_skill_io
 from corki.skills.models import SkillDiscoveryMode, SkillLoadError
 
@@ -65,7 +66,7 @@ def walk_skill_files(
 
     try:
         metadata = root.lstat()
-        linked = stat.S_ISLNK(metadata.st_mode)
+        linked = is_link_metadata(metadata)
         if linked:
             metadata = root.stat()
         if not stat.S_ISDIR(metadata.st_mode) or (linked and not follow_directory_links):
@@ -92,9 +93,15 @@ def walk_skill_files(
                 for entry in entries:
                     check_skill_io()
                     try:
-                        linked = entry.is_symlink()
+                        linked = entry.is_symlink() or (
+                            os.name == "nt"
+                            and is_link_metadata(entry.stat(follow_symlinks=False))
+                        )
                         if linked:
-                            entry.stat(follow_symlinks=True)
+                            # DirEntry can reuse junction metadata as a regular
+                            # directory on Windows. Resolve the target explicitly
+                            # so dangling junctions, like broken symlinks, are skipped.
+                            Path(entry.path).stat()
                     except OSError:
                         continue
                     names.append(entry.name)
@@ -110,7 +117,7 @@ def walk_skill_files(
             path = directory / name
             try:
                 metadata = path.lstat()
-                linked = stat.S_ISLNK(metadata.st_mode)
+                linked = is_link_metadata(metadata)
                 if linked:
                     metadata = path.stat()
                 is_directory = stat.S_ISDIR(metadata.st_mode)

@@ -2,11 +2,9 @@
 
 import asyncio
 import json
-import os
-import shlex
-import sys
 
 import pytest
+from platform_commands import python_command
 from test_code_mode import request_call
 
 from corki.config import CorkiSettings
@@ -15,6 +13,7 @@ from corki.core import LangGraphRuntime
 from corki.core.stop_hooks import command_identity
 from corki.models import ModelCompleted, ModelError, ModelErrorKind
 from corki.models.types import ModelUsage
+from corki.platforms.liveness import process_alive
 from corki.protocol.events import HookCompleted, HookStarted, TurnCompleted, TurnFailed
 from corki.protocol.items import (
     AssistantMessageItem,
@@ -44,22 +43,20 @@ from corki.tools import ToolRegistry
 )
 def test_async_pre_executes_without_waiting_or_rewriting(tmp_path, nested, delivery):
     async def scenario():
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                (
-                    "import json,os,sys,time; from pathlib import Path; p=json.load(sys.stdin); "
-                    "assert p['tool_input']=={'value':'original'}; "
-                    "assert 'tool_response' not in p; "
-                    "Path('started').write_text(str(os.getpid())); "
-                    "Path('count').open('a').write('once\\n'); "
-                    "exec(\"while not Path('release').exists(): time.sleep(0.01)\"); "
-                    "print(json.dumps({'hookSpecificOutput':{'hookEventName':'PreToolUse',"
-                    "'permissionDecision':'allow','updatedInput':{'value':'changed'},"
-                    "'additionalContext':'ASYNC_PRE_CONTEXT'}}))"
-                ),
-            ]
+        command = python_command(
+            tmp_path,
+            (
+                "import json,os,sys,time; from pathlib import Path; p=json.load(sys.stdin); "
+                "assert p['tool_input']=={'value':'original'}; "
+                "assert 'tool_response' not in p; "
+                "Path('started').write_text(str(os.getpid())); "
+                "\nwith Path('count').open('a', encoding='utf-8') as output:\n"
+                "    output.write('once\\n')\n"
+                "exec(\"while not Path('release').exists(): time.sleep(0.01)\"); "
+                "print(json.dumps({'hookSpecificOutput':{'hookEventName':'PreToolUse',"
+                "'permissionDecision':'allow','updatedInput':{'value':'changed'},"
+                "'additionalContext':'ASYNC_PRE_CONTEXT'}}))"
+            ),
         )
         fingerprint, _ = command_identity(
             {"type": "command", "command": command, "async": True},
@@ -215,8 +212,7 @@ def test_async_pre_executes_without_waiting_or_rewriting(tmp_path, nested, deliv
                 assert not owner._tasks
                 if delivery == "cold_unknown":
                     assert not committed.is_set()
-                    with pytest.raises(ProcessLookupError):
-                        os.kill(int((tmp_path / "started").read_text()), 0)
+                    assert not process_alive(int((tmp_path / "started").read_text()))
                     (tmp_path / "release").touch()
 
                 async def reopen():

@@ -1,3 +1,4 @@
+import { python } from './platform.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import { build } from "esbuild";
@@ -16,7 +17,7 @@ await build({
 const { Bridge } = await import(
   pathToFileURL(path.join(directory, "bridge.mjs"))
 );
-const python = path.resolve("../.venv/bin/python");
+
 const fixture = path.join(directory, "fixture.py");
 await writeFile(
   fixture,

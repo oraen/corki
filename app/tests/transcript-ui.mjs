@@ -1,3 +1,4 @@
+import { browserLaunchOptions } from './platform.mjs';
 import { chromium } from "playwright";
 import http from "node:http";
 import { readFile, mkdtemp, rm } from "node:fs/promises";
@@ -11,7 +12,7 @@ const server = http.createServer(async (req, res) => {
       root,
       "." + new URL(req.url, "http://localhost").pathname,
     );
-    if (!p.startsWith(root + "/")) throw Error();
+    if (!p.startsWith(root + path.sep)) throw Error();
     const body = await readFile(p);
     res.setHeader(
       "Content-Type",
@@ -31,11 +32,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-const browser = await chromium.launch({
-  executablePath:
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  headless: true,
-});
+const browser = await chromium.launch(browserLaunchOptions);
 try {
   const page = await browser.newPage({
     viewport: { width: 1440, height: 900 },
@@ -129,11 +126,8 @@ try {
   await page.goto(`http://127.0.0.1:${server.address().port}/index.html`);
   await page.locator(".thinking-indicator").waitFor();
   assert.match(await page.locator('.message.user time').first().innerText(), /^2026-10-17 \d{2}:00$/);
-  { const userAligned = await page.locator('.user-message-meta').first().evaluate(n => {
-    const a=n.querySelector('time').getBoundingClientRect(), b=n.querySelector('button').getBoundingClientRect();
-    return Math.abs((a.top+a.bottom)-(b.top+b.bottom))<3;
-  });
-  assert(userAligned); }
+  assert.equal(await page.locator('.user-message-meta .message-fold').count(), 0);
+  assert.equal(await page.locator('.user-message-meta time').count(), 1);
 
   assert.equal(await page.getByRole("button", {name:"最近会话", exact:true}).locator(":scope > svg").count(), 1);
   assert.equal(await page.locator(".message-error").count(), 1);
@@ -162,11 +156,8 @@ try {
   await page.locator(".tool-activity").waitFor();
   await page.locator(".thinking-indicator").waitFor();
   assert.match(await page.locator('.message.user time').first().innerText(), /^2026-10-17 \d{2}:00$/);
-  { const userAligned = await page.locator('.user-message-meta').first().evaluate(n => {
-    const a=n.querySelector('time').getBoundingClientRect(), b=n.querySelector('button').getBoundingClientRect();
-    return Math.abs((a.top+a.bottom)-(b.top+b.bottom))<3;
-  });
-  assert(userAligned); }
+  assert.equal(await page.locator('.user-message-meta .message-fold').count(), 0);
+  assert.equal(await page.locator('.user-message-meta time').count(), 1);
 
   assert.equal(await page.locator(".agent-progress").count(), 1);
   assert.equal(await page.locator('.thinking-indicator img').count(), 0);
@@ -235,19 +226,18 @@ try {
     order.indexOf("synthetic HTTP 400") < order.indexOf("请查询公开统计数据"),
   );
   assert.deepEqual(failures, []);
-  await page.screenshot({ path: "/tmp/corki-transcript-1440.png" });
+  await page.screenshot({ path: path.join(os.tmpdir(), 'corki-transcript-1440.png') });
   await page.setViewportSize({ width: 1280, height: 800 });
   assert(
     await page
       .locator(".tool-activity")
       .evaluate((n) => n.getBoundingClientRect().right <= window.innerWidth),
   );
-  await page.screenshot({ path: "/tmp/corki-transcript-1280.png" });
+  await page.screenshot({ path: path.join(os.tmpdir(), 'corki-transcript-1280.png') });
   // Explicitly opened child remains visible when the turn finishes.
   assert(await page.locator('.process-group').evaluate(n=>n.open));
-  await page.getByRole('button',{name:'收起提问',exact:true}).last().click();
-  assert.equal(await page.locator('.message.user .is-folded').count(),1);
-  await page.getByRole('button',{name:'展开提问',exact:true}).click();
+  // Both fixture questions fit on a single rendered line.
+  assert.equal(await page.getByRole('button',{name:'收起提问',exact:true}).count(),0);
   assert(await page.getByRole('button',{name:'收起回答',exact:true}).evaluate(button=>{
     const heading=button.closest('.reply-block').querySelector('.process-heading').getBoundingClientRect();
     const box=button.getBoundingClientRect();
@@ -267,6 +257,7 @@ try {
   assert(await page.locator('.process-group').evaluate(n=>n.open));
   await page.evaluate(()=>{
     window.emit('AssistantMessageCompleted',{turn_id:'current',item_id:'final',text:'查询完成',createdAt:'2026-10-17T05:01:00Z'});
+    window.emit('ToolCallCompleted',{turn_id:'current',tool_call_id:'c',is_error:false});
     window.emit('TurnCompleted',{turn_id:'current'});
   });
   await page.waitForFunction(()=>!document.querySelector('.process-group').open);
@@ -277,8 +268,12 @@ try {
   }));
 
   assert.equal(await page.locator('.tool-activity:visible').count(),0);
-  await page.screenshot({path:'/tmp/corki-process-folded.png'});
+  await page.screenshot({path:path.join(os.tmpdir(), 'corki-process-folded.png')});
+  await page.locator('.process-heading img[alt="Corki"]').click();
+  assert.equal(await page.locator('.process-group').evaluate(n=>n.open),false);
   await page.locator('.process-heading').click();
+  await page.locator('.process-heading img[alt="Corki"]').click();
+  assert.equal(await page.locator('.process-group').evaluate(n=>n.open),true);
   assert.equal(await page.locator('.tool-activity:visible').count(),1);
   assert.equal(await page.locator('.process-heading img[alt="Corki"]').count(),1);
   assert.equal(await page.locator('.process-body img[alt="Corki"]').count(),0);

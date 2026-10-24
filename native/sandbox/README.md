@@ -5,7 +5,7 @@ and `codex-config`, with `codex-execpolicy` / `codex-shell-command` for rule adm
 from Codex commit `ddf04ad26789d040f9ef6a96736f76602e35a6cc`. It does not execute
 model commands. Corki owns command startup, I/O, cancellation and cleanup.
 
-Build with Rust 1.95.0, Git and tar; the reference checkout is read-only:
+Build with Rust 1.95.0 and Git; the reference checkout is read-only:
 
 ```sh
 python native/sandbox/build.py /path/to/codex /absolute/host-owned/bin/corki-sandbox
@@ -13,7 +13,9 @@ python native/sandbox/build.py /path/to/codex /absolute/host-owned/bin/corki-san
 
 The output and its `.json` receipt must not already exist. `--cargo` selects a Cargo/rustup proxy and
 `--offline` requires an already populated dependency cache. `CARGO_TARGET_DIR`
-may select an existing build cache. The build exports the pinned commit to a
+may select an existing build cache. `--jobs` controls compilation concurrency
+(default: 4); use `--jobs 1` on memory-constrained build machines. Archive extraction
+uses Python and does not require a system `tar` command. The build exports the pinned commit to a
 temporary directory, uses the committed lockfile and never builds in the reference
 checkout. Cargo's artifact event identifies the actual output, including target-dir
 and cross-target overrides; the receipt binds the compiled Rust-source snapshot,
@@ -21,11 +23,61 @@ pinned reference, binary digest, native format/architecture and platform wheel t
 Keep the executable and Corki installation outside model-writable
 directories, just like other host executable code.
 
+On Windows, choose an `.exe` output name. The build also emits
+`codex-command-runner.exe` and `codex-windows-sandbox-setup.exe` next to it;
+these filenames follow the pinned native library's lookup contract. All three
+output filenames must be unused. The Windows version-2 receipt records and
+verifies every executable's digest and native architecture. Source installation
+and wheel packaging include both helpers; moving only the compiler is invalid.
+macOS retains its version-1 single-executable receipt. This packaging contract
+does not by itself establish Windows sandbox runtime acceptance.
+
+For a native Windows build, use an x64 Visual Studio Developer PowerShell with
+the MSVC C++ tools and Windows SDK available, plus Python, Git and Rust 1.95.0.
+From the Corki repository root, the equivalent build command is:
+
+```powershell
+python native/sandbox/build.py "C:\source\codex" "C:\host-tools\corki-sandbox.exe" --jobs 1
+```
+
+Use your own checkout and output paths; the build creates the output directory if needed.
+The output directory must be trusted host storage, outside Agent-writable workspaces.
+No WSL or Unix shell is required by this build entrypoint.
+
+Windows selects the backend before command launch using the pinned native policy
+validators. Ordinary read-only/workspace policies use the restricted-token backend.
+Policies that it cannot enforce are admitted only if the elevated backend validates
+them; otherwise the command fails before launch. Elevated setup provisions a separate
+restricted identity and can require Windows administrator consent on first use.
+The model command itself is not elevated. Setup failure never retries unrestricted.
+The helper bundle and restricted-token selection have passed focused native Windows 11
+tests, including a non-administrator workspace. The complete policy matrix and Windows 10
+still require separate acceptance.
+
 For a **local platform-wheel verification build**, supply the fresh artifact:
+
+Build and install the [file-search bundle](../file_search/README.md) as well
+before assembling a complete CLI wheel. Build the wheel directly; a source
+archive deliberately omits generated file-search assets. The commands below
+use the `build` frontend (`python -m pip install build` if it is not installed).
 
 ```sh
 CORKI_BUILD_SANDBOX_COMPILER=/absolute/host-owned/bin/corki-sandbox \
-  python -m build
+  python -m build --wheel
+```
+
+In PowerShell, set the environment variable separately (a Unix inline assignment
+does not work), then restore its previous value after the verification build:
+
+```powershell
+$previousCompiler = $env:CORKI_BUILD_SANDBOX_COMPILER
+try {
+    $env:CORKI_BUILD_SANDBOX_COMPILER = 'C:\host-tools\corki-sandbox.exe'
+    python -m build --wheel
+    if ($LASTEXITCODE -ne 0) { throw 'Corki wheel build failed' }
+} finally {
+    $env:CORKI_BUILD_SANDBOX_COMPILER = $previousCompiler
+}
 ```
 
 The Hatch hook verifies the receipt and current bridge source, then includes the
@@ -94,9 +146,27 @@ uses bounded input/output and nonblocking regular-file reads; image validation
 processes the returned bytes in the host. Its release environment allowlist is
 PATH/TMPDIR/TMP/TEMP plus the macOS CoreFoundation startup variable, captured per
 invocation (not yet the native runner's construction-time environment snapshot).
-The current regular-file bridge is Unix-only and has real enforcement tests only
-on macOS. Project discovery retains override/fallback, ancestry, byte-budget and
+The regular-file bridge has Unix and Windows implementations; macOS has broad native
+coverage and selected Windows 11 paths have passed. Project discovery retains override/fallback, ancestry, byte-budget and
 all-candidates-before-reads behavior, tested against the Python path.
+
+Windows builds also apply `patches/windows-product-isolation.patch` to the exported
+reference tree. It assigns Corki-specific sandbox accounts, groups, setup/read ACL
+mutexes, private desktop names, provisioning endpoints, firewall rule names and
+WFP provider/sublayer/filter GUIDs. Setup and cleanup use the same identities so
+they do not modify a separate Codex installation's machine-wide objects. Keep
+these GUIDs stable across Corki releases; changing them can orphan existing rules.
+This patch is included in compiler provenance. Its presence alone does not mean
+that Windows sandbox execution or installation has passed runtime acceptance.
+
+`patches/windows-drive-root.patch` backports Codex commit `9545947c6d`
+(Windows 10 drive-letter opens) onto the pinned reference. Windows 10 can reject
+the Object Manager drive alias itself under `OBJ_DONT_REPARSE`. Filesystem opens
+retry relative to a verified physical volume-root handle, retaining strict checks
+for all components below it. Sandbox directory provisioning resolves only the DOS
+drive alias to a physical disk volume; filesystem paths are never canonicalized
+to bypass junction checks. The patch retains the pinned Windows API types and
+dependencies, and participates in the compiler source digest.
 
 Configured `apply_patch` now requires the separate `native_patch` compiler capability
 and runs pinned `codex-apply-patch` parsing, whole-patch verification, core safety
@@ -177,7 +247,7 @@ profiles retain their declared authority. Linux patch application is checked, no
 equivalent to Linux OS execution proof. Existing runtimes should be closed before
 replacing their compiler; retained terminal evidence is not retroactively upgraded.
 
-Bundled executable validation currently covers thin 64-bit macOS and Linux formats; actual bundled
+Bundled executable validation covers thin 64-bit macOS, Linux and Windows PE formats; actual bundled
 OS-effect proof is macOS only. macOS 11+ tags use `major_0` and may not understate
 the binary's recorded minimum OS. Linux libc compatibility, Windows packaging,
 lower-OS execution, signing and complete redistribution notices remain unverified.
@@ -474,13 +544,14 @@ Owned filesystem helpers and memory profile derivation do not enter the model
 command gate. The bridge's existing 4 MB response limit also bounds returned rule
 snapshots; it does not silently truncate a policy.
 
-Only macOS Seatbelt enforcement has been integrated/tested. Linux/Windows managed
-backends are not delivered; requests needing an unavailable backend fail closed.
+macOS Seatbelt enforcement has passed integration tests. The Windows managed
+adapter and helper packaging are implemented but still undergoing native acceptance;
+Linux runtime enforcement remains unverified. Requests needing an unavailable backend fail closed.
 Disabled/External preserve native ownership semantics, but External requires the
 caller to provide real isolation. A restricted External network value does not
 create an additional local sandbox by itself.
 
-Missing `[execution]` retains Corki's old unrestricted local execution behavior.
+Missing `[execution]` selects the bundled native default described above.
 Background memory passes capture the admitted parent's explicit execution settings,
 separately from the memory service's base configuration. Before sampling, the native
 compiler derives the worker profile: Disabled/External retain their enforcement;
@@ -548,7 +619,7 @@ Selection checks canonical then logical cwd keys, followed by the verified Git
 trust root. Linked worktrees require metadata/backlink/common-directory ownership
 checks. An empty cwd project entry masks the root entry. Settings capture this
 decision at parsing, without rereading it for each tool workdir.
-Without `[execution]`, the legacy host path remains. This is not the separate
+Only an explicit SDK `execution_permissions=None` selects the legacy host path. This is not the separate
 project-config layer trust gate. Corki's local loader separately admits
 `.corki/config.toml` and rules only from trusted layers; full system/cloud/MDM/
 session layering and legacy sandbox selection syntax remain incomplete.

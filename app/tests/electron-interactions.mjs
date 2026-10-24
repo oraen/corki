@@ -1,3 +1,4 @@
+import { python, fixtureCommand } from './platform.mjs';
 import { _electron as electron } from "playwright";
 import http from "node:http";
 import { mkdtemp, mkdir, writeFile, readFile, access } from "node:fs/promises";
@@ -8,7 +9,7 @@ import { randomUUID } from "node:crypto";
 const home = await mkdtemp(
   path.join(os.tmpdir(), "corki-desktop-interactions-"),
 );
-const python = path.resolve("../.venv/bin/python");
+
 const mcp = path.join(home, "fixture_mcp.py");
 await writeFile(
   mcp,
@@ -83,7 +84,7 @@ const server = http.createServer(async (req, res) => {
               arguments: JSON.stringify(
                 mcpMode
                   ? (text.includes("MCP url") ? {mode:"url"} : {})
-                  : patchMode ? {patch: "*** Begin Patch\n*** Add File: " + (text.includes("patch accept") ? "patch-accepted.txt" : "patch-declined.txt") + "\n+DESKTOP_PATCH_FIXTURE\n*** End Patch"} : { cmd: "printf DESKTOP_TOOL_FIXTURE", login: false },
+                  : patchMode ? {patch: "*** Begin Patch\n*** Add File: " + (text.includes("patch accept") ? "patch-accepted.txt" : "patch-declined.txt") + "\n+DESKTOP_PATCH_FIXTURE\n*** End Patch"} : fixtureCommand(python, ['-c', "print('DESKTOP_TOOL_FIXTURE', end='')"]),
               ),
             },
           },
@@ -167,7 +168,7 @@ try {
   assert(
     (await review.locator(".approval-details").innerText()).includes("argv"),
   );
-  await page.screenshot({ path: "/tmp/corki-desktop-execution-approval.png" });
+  await page.screenshot({ path: path.join(home, "execution-approval.png") });
   const scope = review.getByRole("button", { name: "批准范围", exact: true });
   await scope.focus();
   await scope.press("ArrowDown");
@@ -208,7 +209,7 @@ try {
     .filter({ hasText: "次数 的值不符合要求" })
     .waitFor();
   await review.getByRole("spinbutton", { name: "次数", exact: true }).fill("2");
-  await page.screenshot({ path: "/tmp/corki-desktop-mcp-form.png" });
+  await page.screenshot({ path: path.join(home, "mcp-form.png") });
   await review.getByRole("button", { name: "确认", exact: true }).click();
   await page
     .locator(".markdown")

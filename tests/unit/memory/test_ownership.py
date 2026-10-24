@@ -4,6 +4,7 @@ import asyncio
 import json
 import sqlite3
 import threading
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -59,7 +60,7 @@ def test_stale_owner_does_not_overwrite_new_owner_artifacts(tmp_path):
     async def scenario():
         class Model:
             async def stream(self, request):
-                with sqlite3.connect(database) as connection:
+                with closing(sqlite3.connect(database)) as connection, connection:
                     connection.execute("UPDATE memory_jobs SET lease_until=0")
                 replacement = await repository.claim_consolidation(lease_seconds=60)
                 assert replacement is not None
@@ -275,7 +276,7 @@ def test_heartbeat_is_owner_scoped_and_extends_lease(tmp_path):
         assert old is not None
         assert await repository.heartbeat_consolidation(old, lease_seconds=60)
         assert await repository.claim_consolidation(lease_seconds=60) is None
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute("UPDATE memory_jobs SET lease_until=0")
         new = await repository.claim_consolidation(lease_seconds=60)
         assert new is not None and old != new
@@ -287,28 +288,43 @@ def test_heartbeat_is_owner_scoped_and_extends_lease(tmp_path):
 
 def test_running_consolidation_renews_more_than_once(tmp_path):
     async def scenario():
-        renewed = asyncio.Event()
+        renewed, entered, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
 
         class Repository(SQLiteMemoryRepository):
             beats = 0
+            model_start_beats = None
 
             async def heartbeat_consolidation(self, claim, *, lease_seconds):
                 result = await super().heartbeat_consolidation(claim, lease_seconds=lease_seconds)
                 self.beats += 1
-                if self.beats >= 2:
+                if self.model_start_beats is not None and self.beats >= self.model_start_beats + 2:
                     renewed.set()
                 return result
 
         class Model:
             async def stream(self, request):
-                await renewed.wait()
+                repository.model_start_beats = repository.beats
+                entered.set()
+                await release.wait()
                 yield _completion(request)
 
         service, repository, _, _ = _service(tmp_path, Model(), Repository)
-        report = await asyncio.wait_for(service.run_once(new_thread_id()), timeout=2)
-        assert report.consolidated
-        assert repository.beats >= 2
-        assert not service.warnings
+        work = asyncio.create_task(service.run_once(new_thread_id()))
+        try:
+            # Git preparation/publication are not the heartbeat interval being tested.
+            await asyncio.wait_for(entered.wait(), timeout=10)
+            await asyncio.wait_for(renewed.wait(), timeout=2)
+            assert not work.done()
+            release.set()
+            report = await asyncio.wait_for(work, timeout=10)
+            assert report.consolidated
+            assert repository.beats >= repository.model_start_beats + 2
+            assert not service.warnings
+        finally:
+            release.set()
+            work.cancel()
+            await asyncio.gather(work, return_exceptions=True)
+            await service.aclose()
 
     asyncio.run(scenario())
 
@@ -320,7 +336,7 @@ def test_consolidation_marks_only_the_exact_selected_source_version(tmp_path):
         await SQLiteSessionRepository(database).create_thread(thread, tmp_path)
         old_version = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
         new_version = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute(
                 "INSERT INTO memory_stage1_outputs "
                 "(thread_id, source_updated_at, cwd, raw_memory, rollout_summary) "
@@ -332,12 +348,12 @@ def test_consolidation_marks_only_the_exact_selected_source_version(tmp_path):
         assert claim is not None
         selected = await repository.load_consolidation_inputs(limit=10, max_unused_days=30)
         assert len(selected) == 1 and selected[0].source_updated_at == old_version
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute(
                 "UPDATE memory_stage1_outputs SET source_updated_at=?", (new_version,)
             )
         assert await repository.complete_consolidation(claim, selected)
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             row = connection.execute(
                 "SELECT selected_for_phase2, selected_source_updated_at FROM memory_stage1_outputs"
             ).fetchone()

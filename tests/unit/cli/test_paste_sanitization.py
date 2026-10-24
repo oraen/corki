@@ -71,7 +71,7 @@ def test_clean_before_fold_submit_and_image_position_tracking(tmp_path, monkeypa
                     value = await task
                     kwargs = input_image_kwargs(value)
                     assert kwargs["image_positions"] == (length,)
-                    assert "\x1b" not in (tmp_path / "history").read_text()
+                    assert "\x1b" not in (tmp_path / "history").read_text(encoding="utf-8")
                     assert ui._composer_paste.timer is None
                     assert not ui._composer_paste.state.active
             finally:

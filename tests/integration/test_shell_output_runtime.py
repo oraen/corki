@@ -1,10 +1,10 @@
 import asyncio
 import json
-import shlex
 import sqlite3
 import sys
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -19,6 +19,9 @@ from corki.protocol.tools import ToolCall
 @pytest.mark.parametrize("poll", [False, True])
 @pytest.mark.parametrize("requested", [None, 4, 0])
 def test_shell_actual_process_runtime_budget_and_cold_history(tmp_path, nested, poll, requested):
+    if poll and sys.platform == "win32":
+        pytest.skip("Unix tty fixture; Windows interactive output is tested with ConPTY")
+
     async def scenario():
         raw = "HEAD" + "字" * 20000 + "TAIL"
         script = (
@@ -30,8 +33,13 @@ def test_shell_actual_process_runtime_budget_and_cold_history(tmp_path, nested, 
             )
             + "sys.stdout.write('HEAD'+'字'*20000+'TAIL')"
         )
-        command = shlex.join([sys.executable, "-c", script])
-        args = {"cmd": command, "login": False, "tty": poll, "yield_time_ms": 50 if poll else 1000}
+        command = python_command(tmp_path, script)
+        args = {
+            "cmd": command,
+            "login": False,
+            "tty": poll,
+            "yield_time_ms": 50 if poll else (30000 if sys.platform == "win32" else 1000),
+        }
         if poll:
             args["max_output_tokens"] = 1
         elif requested is not None:

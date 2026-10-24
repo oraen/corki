@@ -2,11 +2,10 @@
 
 import asyncio
 import json
-import shlex
-import sys
 from dataclasses import replace
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings, MCPServerSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
@@ -81,15 +80,12 @@ def test_stop_hook_cold_recovery_never_replays_unknown_or_completed_command(
     )
 
     async def scenario():
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
-                "Path('hook-calls').open('a').write(str(p['stop_hook_active'])+'\\n'); "
-                "print(json.dumps({} if p['stop_hook_active'] else "
-                "{'decision':'block','reason':'CHECK_ONCE'}))",
-            ]
+        command = python_command(
+            tmp_path,
+            "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
+            "Path('hook-calls').open('a').write(str(p['stop_hook_active'])+'\\n'); "
+            "print(json.dumps({} if p['stop_hook_active'] else "
+            "{'decision':'block','reason':'CHECK_ONCE'}))",
         )
         handler = {"type": "command", "command": command}
         if kind == "mcp_tool":
@@ -397,13 +393,10 @@ def test_concurrent_batch_cold_recovery_validates_all_results_before_replay(
         definition = f"[[hooks.{event_name}]]\n"
         approvals = ""
         for index in range(count):
-            command = shlex.join(
-                [
-                    sys.executable,
-                    "-c",
-                    "import json,sys; from pathlib import Path; json.load(sys.stdin); "
-                    f"Path('effect-{index}').open('a').write('executed\\n'); print('{{}}')",
-                ]
+            command = python_command(
+                tmp_path,
+                "import json,sys; from pathlib import Path; json.load(sys.stdin); "
+                f"Path('effect-{index}').open('a').write('executed\\n'); print('{{}}')",
             )
             fingerprint, _ = command_identity(
                 {"type": "command", "command": command}, event_name=event_name

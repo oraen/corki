@@ -59,6 +59,26 @@ function App() {
   const [skipDeleteReminder, setSkipDeleteReminder] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [managerState, setManagerState] = useState<"closed" | "starting" | "failed">("closed");
+  const [managerError, setManagerError] = useState("");
+  const [openingManager, setOpeningManager] = useState(false);
+  const openingManagerRef = useRef(false);
+  async function openManager() {
+    if (openingManagerRef.current) return;
+    openingManagerRef.current = true;
+    setOpeningManager(true);
+    setManagerError("");
+    try {
+      await api.openManager(() => setManagerState("starting"));
+      setManagerState("closed");
+    } catch (error) {
+      setManagerError(error instanceof Error ? error.message : "请稍后重试");
+      setManagerState("failed");
+    } finally {
+      openingManagerRef.current = false;
+      setOpeningManager(false);
+    }
+  }
   const removingRef = useRef(false);
   async function removeThread(thread: any, archive = false, skip = false) {
     if (removingRef.current) return;
@@ -153,6 +173,8 @@ function App() {
   }
   const [atBottom, setAtBottom] = useState(true),
     [loadingOlder, setLoadingOlder] = useState<string | null>(null);
+  const [historyReached, setHistoryReached] = useState<string | null>(null);
+  const [historyScrollable, setHistoryScrollable] = useState(false);
   const olderRequest = useRef<string | null>(null);
   const selectedRef = useRef(selected),
     draftRef = useRef(drafts),
@@ -327,8 +349,10 @@ function App() {
     setConversations((all) => ({ ...all, [id]: mergeSnapshot(all[id], view) }));
     return data;
   }
-  async function select(id: string) {
+  async function select(id: string, reloadConfiguration = id === "new") {
     const generation = ++loading.current;
+    setHistoryReached(null);
+    setHistoryScrollable(false);
     setSelected(id);
     selectedRef.current = id;
     setError("");
@@ -347,15 +371,25 @@ function App() {
         (await api.request("state.read", { key: "draft:" + id })) ||
         freshDraft();
       const directory = data?.directory || stored.directory || "";
-      const result = await api.request<Catalog>("config.read", { directory });
+      const result = reloadConfiguration
+        ? await api.request<Catalog>("config.read", { directory })
+        : catalogRef.current;
       if (generation !== loading.current) return;
-      setCatalog(result);
-      catalogRef.current = result;
+      if (reloadConfiguration) {
+        setCatalog(result);
+        catalogRef.current = result;
+      }
       // Typing can start before the directory/configuration request returns.
       const latestDraft = draftRef.current[id];
       if (latestDraft) stored = { ...stored, ...latestDraft };
-      if (!stored.provider) {
-        const choice = data?.model || result.default;
+      if (!stored.provider || !result.providers.some(
+        provider => provider.id === stored.provider && provider.models.some(model => model.id === stored.model)
+      )) {
+        const historical = data?.model;
+        const historyAvailable = historical && result.providers.some(
+          provider => provider.id === historical.provider && provider.models.some(model => model.id === historical.model)
+        );
+        const choice = !stored.provider && historyAvailable ? historical : result.default;
         stored = {
           ...stored,
           directory,
@@ -425,9 +459,9 @@ function App() {
       setCollapsed(!!ui?.collapsed);
       setRecent(dirs || []);
       await list();
-      setReady(true);
-      await select(ui?.selected || "new");
+      await select(ui?.selected || "new", true);
       await acceptLaunchDirectory();
+      setReady(true);
     } catch (e) {
       setOffline(e instanceof Error ? e.message : String(e));
       setReady(true);
@@ -543,26 +577,16 @@ function App() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
-  useEffect(() => {
-    if (!ready) return;
-    const handler = () => {
-      const current = draftRef.current[selectedRef.current];
-      const id = selectedRef.current;
-      void api
-        .request<Catalog>("config.read", {
-          directory: current?.directory || "",
-        })
-        .then((result) => {
-          if (selectedRef.current === id) {
-            setCatalog(result);
-            catalogRef.current = result;
-          }
-        })
-        .catch(report);
-    };
-    window.addEventListener("focus", handler);
-    return () => window.removeEventListener("focus", handler);
-  }, [ready]);
+  // Restore the composer's height before measuring the available history area.
+  // Otherwise its expansion can turn the initial bottom scroll into an apparent
+  // upward read before ResizeObserver gets a chance to follow the new size.
+  useLayoutEffect(() => {
+    if (input.current) {
+      input.current.style.height = "auto";
+      input.current.style.height =
+        Math.min(input.current.scrollHeight, 180) + "px";
+    }
+  }, [composerContent, selected, ready]);
   useLayoutEffect(() => {
     const node = scroll.current;
     const anchor = historyAnchor.current;
@@ -575,24 +599,18 @@ function App() {
       }
     }
     if (node && follow.current) node.scrollTop = node.scrollHeight;
-  }, [conversation.messages, conversation.pending, selected]);
+  }, [conversation.messages, conversation.pending, selected, ready]);
   useEffect(() => {
     const node = scroll.current;
     if (!node) return;
     const observer = new ResizeObserver(() => {
+      setHistoryScrollable(node.scrollHeight > node.clientHeight + 2);
       if (follow.current) node.scrollTop = node.scrollHeight;
     });
     observer.observe(node);
     if (node.firstElementChild) observer.observe(node.firstElementChild);
     return () => observer.disconnect();
-  }, [selected]);
-  useLayoutEffect(() => {
-    if (input.current) {
-      input.current.style.height = "auto";
-      input.current.style.height =
-        Math.min(input.current.scrollHeight, 180) + "px";
-    }
-  }, [composerContent, selected]);
+  }, [selected, ready]);
   async function newChat() {
     await select("new");
     input.current?.focus();
@@ -772,11 +790,13 @@ function App() {
   async function older() {
     const id = selectedRef.current;
     const snapshot = conversationsRef.current[id];
+    const node = scroll.current;
+    if (!node || node.scrollHeight <= node.clientHeight + 2 || !snapshot?.loaded || id === "new")
+      return;
+    setHistoryReached(id);
     if (
       olderRequest.current ||
-      !snapshot?.loaded ||
-      snapshot.next === null ||
-      id === "new"
+      snapshot.next === null
     )
       return;
     olderRequest.current = id;
@@ -943,7 +963,7 @@ function App() {
         <button className="new-chat" onClick={() => void newChat()}>
           <Icon name="chat" />
           <span>新会话</span>
-          <span className="shortcut">⌘ N</span>
+          <span className="shortcut">{navigator.platform.startsWith("Mac") ? "⌘" : "Ctrl"} N</span>
         </button>
         <nav className="thread-list" aria-label="会话导航">
           <HistorySection name="最近会话" initiallyOpen>
@@ -988,7 +1008,7 @@ function App() {
           )}
           <span className="topbar-spacer" aria-hidden="true" />
           <button className="icon-button app-settings" title="设置" aria-label="设置"
-            onClick={() => void api.openLink("http://127.0.0.1:17002/").catch(report)}>
+            disabled={openingManager} onClick={() => void openManager()}>
             <Icon name="gear" size={17} />
           </button>
           <button className="icon-button app-restart" title="重启应用" aria-label="重启应用"
@@ -1032,16 +1052,11 @@ function App() {
             </button>
           </div>
         )}
-        {ready &&
-          !offline &&
-          catalog.valid &&
-          draft.provider &&
-          draft.model &&
-          !model && (
-            <div className="banner" role="status">
-              当前选择的供应商或模型已不可用，请重新选择。
-            </div>
-          )}
+        {conversation.running && conversation.modelWarning && (
+          <div className="banner model-health-banner" role="status" aria-live="polite">
+            <span>模型调用失败，重试中</span>
+          </div>
+        )}
         <div
           className="conversation-scroll"
           ref={scroll}
@@ -1075,7 +1090,9 @@ function App() {
               </div>
             ) : (
               <>
-                {conversation.loaded && conversation.messages.length > 0 && (
+                {conversation.loaded && conversation.messages.length > 0 &&
+                  (loadingOlder === selected || (historyScrollable &&
+                    (conversation.next !== null || historyReached === selected))) && (
                   <div
                     className="history-loading"
                     role="status"
@@ -1377,6 +1394,21 @@ function App() {
           ) : (
             <pre className="text-preview">{attachmentPreview.data}</pre>
           )}
+        </Modal>
+      )}
+      {managerState !== "closed" && (
+        <Modal className="manager-launch" title={managerState === "starting" ? "正在开启 Corki 管理服务…" : "无法打开管理页面"}
+          onClose={() => setManagerState("closed")}>
+          {managerState === "starting" ? (
+            <div className="manager-launch-progress" role="status" aria-live="polite">
+              <span className="manager-launch-gear"><Icon name="gear" size={38}/></span>
+              <span>准备就绪后将自动打开</span>
+            </div>
+          ) : <>
+            <p className="manager-launch-error" role="alert">{managerError}</p>
+            <footer><button onClick={() => setManagerState("closed")}>关闭</button>
+              <button className="primary" onClick={() => void openManager()}>重试</button></footer>
+          </>}
         </Modal>
       )}
       {modal === "directory" && (

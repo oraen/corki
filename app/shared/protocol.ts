@@ -59,6 +59,7 @@ export interface DesktopAPI {
   chooseFiles(): Promise<Attachment[]>;
   importFiles(files: File[]): Promise<Attachment[]>;
   copy(text: string): Promise<void>;
+  openManager(onStarting: () => void): Promise<void>;
   openLink(url: string): Promise<void>;
   restartBackend(): Promise<void>;
   restartApp(): Promise<boolean>;

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sys
 from dataclasses import replace
 
 import pytest
@@ -46,7 +47,8 @@ def test_denied_patch_retries_only_after_fresh_host_review(
                 assert (root / "first.txt").read_text() == "first\n"
                 assert not outside.exists()
                 evidence = meta["patch_retry"]
-                assert evidence["sandbox"] == "seatbelt"
+                expected_sandbox = "windows_sandbox" if sys.platform == "win32" else "seatbelt"
+                assert evidence["sandbox"] == expected_sandbox
                 assert evidence["execution"]["exit_code"] == 1
                 assert evidence["execution"]["sandbox_denied"] is True
                 assert "Failed to write file" in evidence["execution"]["stderr"]

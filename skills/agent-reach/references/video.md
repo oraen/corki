@@ -2,6 +2,16 @@
 
 YouTube、B站、小宇宙播客的字幕和转录。
 
+Windows 下先按主技能的命令适配规则检测 CLI。以下 Bash 示例中的 `/tmp/`、
+反斜杠续行和环境变量赋值不能直接用于 PowerShell。字幕路径可这样构造：
+
+```powershell
+$subtitlePath = Join-Path ([System.IO.Path]::GetTempPath()) '%(id)s'
+yt-dlp --write-sub --write-auto-sub --sub-lang 'zh-Hans,zh,en' --skip-download -o $subtitlePath 'URL'
+```
+
+使用 `curl.exe`；示例中的 `/dev/null` 在 Windows 下改为 `NUL`。
+
 ## YouTube (yt-dlp)
 
 ### 获取视频元数据
@@ -105,6 +115,11 @@ curl -s -b /tmp/bili_ck.txt -A "$UA" -e "https://www.bilibili.com/" \
 > 转写 prompt 已要求 Whisper 输出中文标点；若标点效果仍不理想，可加 `--polish` 用 Groq 上免费的 Llama 3.3 70B 补标点+合理分段（9 分钟播客约多 ~7 秒）。每次转写多一轮 LLM 调用，按需使用。
 
 ### 前置要求
+
+本节 `transcribe.sh` 是 Bash 脚本；`brew` 安装命令适用于 macOS。
+原生 Windows 不假设可运行此脚本，也不默认安装 Bash 或 WSL。先检查
+`agent-reach transcribe --help` 是否提供当前环境可用的替代入口；否则选择已安装的
+转写后端，或明确告知该脚本所缺少的依赖。不能把本节脚本描述为 Windows 已验证能力。
 
 1. **ffmpeg**: `brew install ffmpeg`
 2. **Groq API Key** (免费): https://console.groq.com/keys

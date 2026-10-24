@@ -42,8 +42,10 @@ def main():
                 "--message-format=json-render-diagnostics",
             ],
             check=True,
+            cwd=source,
             stdout=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
         )
         binaries = set()
         for line in result.stdout.splitlines():
@@ -59,7 +61,9 @@ def main():
         metadata = json.loads(
             subprocess.check_output(
                 [args.cargo, "metadata", *common, "--format-version", "1"],
+                cwd=source,
                 text=True,
+                encoding="utf-8",
             )
         )
         licenses = []
@@ -88,12 +92,13 @@ def main():
                 raise ValueError(f"missing license texts for {package['name']}")
             licenses.append(f"{package['name']} {package['version']} ({package.get('license')})\n")
             for path in files:
-                licenses.append(path.name + "\n" + path.read_text() + "\n")
+                licenses.append(path.name + "\n" + path.read_text(encoding="utf-8") + "\n")
         system, machine = platform.system().lower(), platform.machine().lower()
         sysroot = Path(
             subprocess.check_output(
                 [os.environ.get("RUSTC", "rustc"), "--print", "sysroot"],
                 text=True,
+                encoding="utf-8",
             ).strip()
         )
         rust_notice = sysroot / "share/doc/rust/COPYRIGHT-library.html"
@@ -104,13 +109,19 @@ def main():
             tag = f"macosx_{major}_0_{machine}"
         elif system == "linux":
             tag = f"linux_{machine}"
+        elif system == "windows" and machine in ("amd64", "x86_64", "arm64", "aarch64"):
+            tag = "win_amd64" if machine in ("amd64", "x86_64") else "win_arm64"
         else:
-            raise ValueError("native search packaging currently supports macOS/Linux only")
+            raise ValueError("unsupported native search build platform")
+        executable_name = "corki-file-search.exe" if system == "windows" else "corki-file-search"
         output.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix=".search-install-", dir=output.parent) as staging:
-            bundle = Path(staging) / "bundle"
+        # Reuse native asset staging: Windows mkdtemp's protected ACL must not
+        # become the published bundle's ACL after an elevated build.
+        installer = runpy.run_path(str(root / "native/sandbox/install.py"))
+        with installer["staging_directory"](output.parent) as staging:
+            bundle = staging / "bundle"
             bundle.mkdir()
-            shutil.copy2(binaries.pop(), bundle / "corki-file-search")
+            shutil.copy2(binaries.pop(), bundle / executable_name)
             shutil.copyfile(rust_notice, bundle / "RUST_COPYRIGHT.html")
             (bundle / "THIRD_PARTY.txt").write_text("\n".join(licenses), encoding="utf-8")
             manifest = {
@@ -119,7 +130,7 @@ def main():
                 "wheel_platform": tag,
                 "files": {
                     name: api["digest"](bundle / name)
-                    for name in ("corki-file-search", "THIRD_PARTY.txt", "RUST_COPYRIGHT.html")
+                    for name in (executable_name, "THIRD_PARTY.txt", "RUST_COPYRIGHT.html")
                 },
             }
             (bundle / "manifest.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")

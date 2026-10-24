@@ -15,13 +15,14 @@ from corki.protocol.items import AssistantMessageItem, ToolCallItem, ToolResultI
 from corki.protocol.tools import ToolCall
 from corki.tools.builtin.process import ProcessManager, _ProcessSession
 
-pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX owned child groups")
+posix_processes = pytest.mark.skipif(os.name == "nt", reason="POSIX owned child groups")
 
 
 def test_default_resumable_lifetime_has_no_kill_timer(tmp_path):
     assert CorkiSettings(working_directory=tmp_path).command_timeout_seconds is None
 
 
+@posix_processes
 def test_real_65th_process_retires_oldest_session(tmp_path):
     async def scenario():
         manager = ProcessManager()
@@ -53,6 +54,7 @@ def test_real_65th_process_retires_oldest_session(tmp_path):
 @pytest.mark.parametrize("nested", [False, True])
 @pytest.mark.parametrize("explicit_cap", [False, True])
 @pytest.mark.parametrize("preload", [False, True])
+@posix_processes
 def test_runtime_lifetime_across_turns_and_explicit_timeout(
     tmp_path, nested, explicit_cap, preload
 ):
@@ -199,6 +201,7 @@ def test_generated_config_has_no_implicit_cap_and_old_explicit_config_is_retaine
     assert CorkiSettings.for_directory(tmp_path, config_file=old).command_timeout_seconds == 120
 
 
+@posix_processes
 def test_failed_eviction_reclaims_new_spawn_before_reporting(tmp_path, monkeypatch):
     async def scenario():
         manager = ProcessManager()

@@ -15,7 +15,18 @@ else:
 
 def open_lock(path: Path) -> BinaryIO:
     """Open a regular, non-inheritable lock file without truncating existing data."""
-    descriptor = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    if os.name == "nt":
+        from corki.platforms.windows_file_handles import WindowsFiles
+
+        files = WindowsFiles()
+        handle = files.open(path.absolute(), access=0xC0000000, disposition=3)
+        try:
+            descriptor = msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY)
+        except BaseException:
+            files.close(handle)
+            raise
+    else:
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise OSError(f"writer lock is not a regular file: {path}")
@@ -27,12 +38,12 @@ def open_lock(path: Path) -> BinaryIO:
 
 def try_lock(file: BinaryIO, *, shared: bool = False) -> bool:
     """Return False only for actual kernel lock contention."""
+    if os.name == "nt":
+        from corki.platforms.windows_file_lock import try_lock as windows_try_lock
+
+        return windows_try_lock(file.fileno(), shared=shared)
     try:
-        if os.name == "nt":
-            file.seek(0)
-            msvcrt.locking(file.fileno(), msvcrt.LK_NBRLCK if shared else msvcrt.LK_NBLCK, 1)
-        else:
-            fcntl.flock(file.fileno(), (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+        fcntl.flock(file.fileno(), (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
         return True
     except OSError as error:
         if error.errno in {errno.EACCES, errno.EAGAIN}:
@@ -55,8 +66,9 @@ def unlock_and_close(file: BinaryIO) -> None:
     """Always close the descriptor even if an explicit unlock reports an error."""
     try:
         if os.name == "nt":
-            file.seek(0)
-            msvcrt.locking(file.fileno(), msvcrt.LK_UNLCK, 1)
+            from corki.platforms.windows_file_lock import unlock
+
+            unlock(file.fileno())
         else:
             fcntl.flock(file.fileno(), fcntl.LOCK_UN)
     finally:

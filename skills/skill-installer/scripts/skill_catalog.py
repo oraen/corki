@@ -3,7 +3,18 @@ from __future__ import annotations
 
 import os
 import re
+import sys
+from contextlib import suppress
 from pathlib import Path
+
+from corki.platforms.paths import is_link_path
+
+
+def configure_stdio() -> None:
+    """Skill names and paths use UTF-8 even through Windows ANSI pipes."""
+    for stream in (sys.stdout, sys.stderr):
+        with suppress(AttributeError, OSError, ValueError):
+            stream.reconfigure(encoding="utf-8")
 
 
 def corki_home() -> Path:
@@ -39,9 +50,9 @@ def local_skills(extra_root: Path | None = None) -> list[dict]:
             continue
         for directory, children, files in os.walk(root, followlinks=False):
             children[:] = sorted(n for n in children if not n.startswith('.')
-                                 and n != '__pycache__' and not (Path(directory) / n).is_symlink())
+                                 and n != '__pycache__' and not is_link_path(Path(directory) / n))
             path = Path(directory) / 'SKILL.md'
-            if 'SKILL.md' not in files or path.is_symlink() or path.resolve() in seen:
+            if 'SKILL.md' not in files or is_link_path(path) or path.resolve() in seen:
                 continue
             seen.add(path.resolve())
             try:

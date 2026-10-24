@@ -5,6 +5,7 @@ import os from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
+import pngToIco from "png-to-ico";
 const exec = promisify(execFile);
 // Stage only the allowlisted application payload. Never package a working tree,
 // Python environment, user settings, test profiles, or the development node_modules.
@@ -48,6 +49,12 @@ try {
     icon = path.join(stage, "Corki.icns");
     await exec("iconutil", ["-c", "icns", iconset, "-o", icon]);
     await rm(iconset, { recursive: true });
+  } else if (process.platform === "win32") {
+    icon = path.join(stage, "Corki.ico");
+    // Windows shell extraction needs bitmap icon resources; PNG-only ICOs can
+    // fall back to the generic executable icon despite a valid source image.
+    // The build-time converter supplies 16/32/48/256px bitmap frames locally.
+    await writeFile(icon, await pngToIco(path.resolve("resources/corki.png")));
   }
   const electronZipDir = process.env.ELECTRON_ZIP_DIR;
   if (electronZipDir) {
@@ -81,12 +88,16 @@ try {
           platform === "darwin" || platform === "mas"
             ? path.join(buildPath, "Corki.app", "Contents", "Resources")
             : path.join(buildPath, "resources");
+        await mkdir(path.join(resources, "manager"), { recursive: true });
+        await cp("../manager/server.py", path.join(resources, "manager", "server.py"));
+        await cp("../manager/templates", path.join(resources, "manager", "templates"), { recursive: true });
+        await cp("../manager/static", path.join(resources, "manager", "static"), { recursive: true });
         await cp(path.join(stage, "bridge"), path.join(resources, "bridge"), {
           recursive: true,
         });
       },
     ],
-    ignore: [/\.map$/, /^\/bridge($|\/)/, /Corki\.icns$/],
+    ignore: [/\.map$/, /^\/bridge($|\/)/, /Corki\.(icns|ico)$/],
     osxSign: false,
   });
   console.log(output.join("\n"));

@@ -138,7 +138,9 @@ def test_stream_storage_and_parallel_tool_replay_are_scoped():
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("bad", [123, "", "x" * (SIGNATURE_LIMIT + 1)])
+@pytest.mark.parametrize(
+    "bad", [123, "", "x" * (SIGNATURE_LIMIT + 1)], ids=["number", "empty", "oversized"]
+)
 def test_invalid_signatures_are_protocol_errors(bad):
     async def run():
         async with httpx.AsyncClient(

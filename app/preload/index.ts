@@ -33,6 +33,12 @@ const api: DesktopAPI = {
       files.map((file) => webUtils.getPathForFile(file)),
     ),
   copy: (text) => invoke("corki:copy", text),
+  async openManager(onStarting) {
+    const listener = () => onStarting();
+    ipcRenderer.on("corki:manager-starting", listener);
+    try { await invoke("corki:manager-open"); }
+    finally { ipcRenderer.removeListener("corki:manager-starting", listener); }
+  },
   openLink: (url) => invoke("corki:link", url),
   restartBackend: () => invoke("corki:restart"),
   restartApp: () => invoke("corki:restart-app"),

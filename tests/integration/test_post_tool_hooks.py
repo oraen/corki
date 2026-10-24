@@ -2,10 +2,9 @@
 
 import asyncio
 import json
-import shlex
-import sys
 
 import pytest
+from platform_commands import python_command
 from test_code_mode import request_call
 
 from corki.config import CorkiSettings
@@ -53,16 +52,13 @@ def test_post_feedback_preserves_actual_tool_fact(tmp_path, nested, action):
                 output["suppressOutput"] = True
         elif action == "invalid_wire":
             output["suppressOutput"] = 0
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
-                "assert Path('effect.txt').read_text()=='original effect'; "
-                "Path('post-input.json').write_text(json.dumps(p)); "
-                "Path('post-count').open('a').write('run\\n'); "
-                f"print(json.dumps({output!r})); sys.exit({1 if action == 'hook_error' else 0})",
-            ]
+        command = python_command(
+            tmp_path,
+            "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
+            "assert Path('effect.txt').read_text()=='original effect'; "
+            "Path('post-input.json').write_text(json.dumps(p)); "
+            "Path('post-count').open('a').write('run\\n'); "
+            f"print(json.dumps({output!r})); sys.exit({1 if action == 'hook_error' else 0})",
         )
         source = tmp_path / "config.toml"
         fingerprint = command_identity(

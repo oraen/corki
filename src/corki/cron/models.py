@@ -11,7 +11,7 @@ def validate_model(home, provider, model):
     ):
         raise ValueError("请选择模型供应商和运行模型")
     try:
-        config = loads((home / "settings.json").read_text())
+        config = loads((home / "settings.json").read_text(encoding="utf-8"))
         _, profile = select_provider(config, provider)
         models = profile.get("models", {})
         if not isinstance(models, dict) or model not in models:

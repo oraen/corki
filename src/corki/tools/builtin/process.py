@@ -17,6 +17,7 @@ from corki.config.permissions import ExecutionPermissions
 from corki.config.shell_environment import ShellEnvironmentPolicy
 from corki.execution.approvals import ExecutionApprovals, SandboxPermissions
 from corki.execution.backend import sandbox_command
+from corki.execution.bundled import bundled_compiler
 from corki.execution.retry import SandboxAdmission
 from corki.execution.terminal import (
     TerminalSnapshot,
@@ -24,9 +25,11 @@ from corki.execution.terminal import (
     owned_terminal_review,
     unrestricted_terminal,
 )
+from corki.platforms.processes import close_job, create_subprocess_exec
+from corki.platforms.terminal import spawn_terminal
 from corki.protocol.execution_identity import ExecutionIdentity
 from corki.protocol.terminals import BackgroundTerminalInfo
-from corki.shell import Shell, default_user_shell
+from corki.shell import Shell, default_user_shell, powershell_utf8_argv
 from corki.tools.builtin.process_groups import signal_owned_group
 from corki.tools.builtin.process_io import read_pty, write_pty
 from corki.tools.builtin.process_retention import select_prunable
@@ -400,7 +403,19 @@ class ProcessManager:
             1, min(max_output_bytes or self._output_limit_bytes, self._output_limit_bytes)
         )
         master_fd: int | None = None
-        if tty and os.name != "nt" and pty is not None:
+        if tty and os.name == "nt":
+            compiler = bundled_compiler()
+            if compiler is None:
+                raise ValueError(
+                    "Windows interactive commands require the bundled Corki terminal helper"
+                )
+            argv = (
+                prepared_argv
+                if prepared_argv is not None
+                else powershell_utf8_argv((shell or self.shell).exec_args(command, login=login))
+            )
+            process = await spawn_terminal(compiler, argv, cwd=cwd, env=env)
+        elif tty and pty is not None:
             master_fd, slave_fd = pty.openpty()
             try:
                 try:
@@ -439,7 +454,7 @@ class ProcessManager:
             process,
             output_limit,
             pty_master_fd=master_fd,
-            tty=master_fd is not None,
+            tty=master_fd is not None or (tty and os.name == "nt"),
             terminal_info=BackgroundTerminalInfo(item_id, session_id, command, cwd),
         )
         session.reader_task = asyncio.create_task(
@@ -447,6 +462,8 @@ class ProcessManager:
         )
         if master_fd is not None:
             session.writer_task = asyncio.create_task(self._write_pty_input(session))
+        elif session.tty:
+            session.writer_task = asyncio.create_task(self._write_terminal_pipe_input(session))
         if timeout_seconds is not None:
             session.timeout_task = asyncio.create_task(
                 self._enforce_timeout(session, timeout_seconds)
@@ -539,7 +556,7 @@ class ProcessManager:
         self, session: _ProcessSession, chars: str, yield_seconds: float
     ) -> ProcessObservation:
         if session.failure is None and chars:
-            if session.pty_master_fd is not None:
+            if session.tty:
                 if session.process.returncode is None:
                     try:
                         await self._enqueue_pty_input(session, chars.encode())
@@ -758,6 +775,15 @@ class ProcessManager:
             await write_pty(descriptor, data)
 
     @staticmethod
+    async def _write_terminal_pipe_input(session: _ProcessSession) -> None:
+        # The pipe carries raw terminal bytes to ConPTY, not ordinary command stdin.
+        assert session.process.stdin is not None
+        while True:
+            data = await session.input_queue.get()
+            session.process.stdin.write(data)
+            await session.process.stdin.drain()
+
+    @staticmethod
     async def _enqueue_pty_input(session: _ProcessSession, data: bytes) -> None:
         writer = session.writer_task
         if writer is None or writer.done():
@@ -788,6 +814,11 @@ class ProcessManager:
 
     @staticmethod
     async def _terminate(process: asyncio.subprocess.Process) -> None:
+        if close_job(process):
+            await ProcessManager._wait_at_most(process, _TERMINATE_GRACE_SECONDS)
+            if process.returncode is None:
+                raise TimeoutError("owned Windows job did not exit after termination")
+            return
         if process.returncode is not None:
             if os.name != "nt":
                 signal_owned_group(process.pid, signal.SIGKILL)
@@ -843,7 +874,7 @@ async def _spawn(
     argv = (
         prepared_argv
         if prepared_argv is not None
-        else (shell or default_user_shell()).exec_args(command, login=login)
+        else powershell_utf8_argv((shell or default_user_shell()).exec_args(command, login=login))
     )
     if os.name != "nt" and type(stdin) is int and stdin >= 0 and stdin == stdout == stderr:
         return await spawn_pty(
@@ -861,4 +892,4 @@ async def _spawn(
         "start_new_session": os.name != "nt",
         "env": env,
     }
-    return await asyncio.create_subprocess_exec(*argv, **options)
+    return await create_subprocess_exec(*argv, **options)

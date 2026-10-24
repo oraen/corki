@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 from corki.memory.artifacts import ensure_memory_layout
 from corki.memory.inputs import truncate_memory_text
 from corki.memory.repository import MemoryRepository
+from corki.platforms.paths import archive_parts, is_link_metadata
 
 AD_HOC_FILENAME_PATTERN = (
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-[a-z0-9][a-z0-9-]{0,79}\.md"
@@ -59,6 +60,7 @@ class LocalMemoryBackend:
             }
             for item, info in paths
             if not item.name.startswith(".")
+            and not is_link_metadata(info)
             and (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode))
         ]
         if cursor > len(entries):
@@ -203,6 +205,13 @@ class LocalMemoryBackend:
     def _resolve(self, relative: str | None) -> Path:
         if relative in {None, ""}:
             return self.root
+        if os.name == "nt":
+            if "\0" in relative:
+                raise OSError(errno.EINVAL, "embedded NUL in memory path")
+            try:
+                archive_parts(relative, windows=True)
+            except ValueError as exc:
+                raise MemoryPathError("memory path must stay within the memory root") from exc
         logical = PurePosixPath(relative)
         if logical.is_absolute() or any(part in {"", ".", ".."} for part in logical.parts):
             raise MemoryPathError("memory path must stay within the memory root")
@@ -232,7 +241,7 @@ def _metadata_or_none(path: Path) -> os.stat_result | None:
 
 
 def _reject_symlink(metadata: os.stat_result) -> None:
-    if stat.S_ISLNK(metadata.st_mode):
+    if is_link_metadata(metadata):
         raise MemoryPathError("memory paths must not traverse symbolic links")
 
 
@@ -274,7 +283,7 @@ def _search_files(start: Path, metadata: os.stat_result) -> Iterator[Path]:
             if path.name.startswith("."):
                 continue
             current = _metadata_or_none(path)
-            if current is None or stat.S_ISLNK(current.st_mode):
+            if current is None or is_link_metadata(current):
                 continue
             if stat.S_ISDIR(current.st_mode):
                 pending.append(path)

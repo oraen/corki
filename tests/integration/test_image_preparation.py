@@ -5,6 +5,7 @@ import base64
 import io
 import json
 import sqlite3
+from contextlib import closing
 
 import httpx
 import pytest
@@ -219,7 +220,7 @@ def test_real_view_image_reaches_wire_resized_but_js_and_ledger_keep_typed_origi
                 image = next(p for p in parts if p["type"] == "input_image")
                 url, detail = image["image_url"], image["detail"]
             assert decoded_size(url) == (1600, 1600) and detail == "high"
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection:
                 rows = connection.execute(
                     "SELECT status, result_json FROM tool_executions WHERE tool_name='view_image'"
                 ).fetchall()

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 import httpx
 import pytest
@@ -185,7 +186,7 @@ def test_handshake_controls_search_catalog_and_cold_history(
             events = [event async for event in runtime.stream("read")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             history = await runtime._repository.load_items(thread)
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 ledger = db.execute(
                     "SELECT result_json FROM tool_executions WHERE tool_name=?", (name,)
                 ).fetchall()
@@ -200,7 +201,7 @@ def test_handshake_controls_search_catalog_and_cold_history(
             assert len(calls) == 1
             restored = await runtime._repository.load_items(thread)
             assert restored[: len(history)] == history
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 assert (
                     db.execute(
                         "SELECT result_json FROM tool_executions WHERE tool_name=?", (name,)

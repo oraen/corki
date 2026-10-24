@@ -31,7 +31,11 @@ class CronService:
         kwargs = (
             {"start_new_session": True}
             if os.name != "nt"
-            else {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+            # A new process group still shares the parent's console. Detach so
+            # closing that console does not terminate an independently owned run.
+            else {"creationflags": (
+                subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+            )}
         )
         self.children.append(
             subprocess.Popen(

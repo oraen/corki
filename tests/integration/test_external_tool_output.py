@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -91,7 +92,7 @@ def test_external_result_fact_reaches_memory_policy_and_ledger(
             await runtime.set_thread_memory_mode("enabled")
             assert isinstance([e async for e in runtime.stream("fetch data")][-1], TurnCompleted)
             assert external.calls == 1
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection:
                 assert connection.execute("SELECT memory_mode FROM threads").fetchone()[0] == (
                     "polluted" if flag and enabled else "enabled"
                 )
@@ -157,7 +158,7 @@ def test_empty_tool_search_result_marks_thread(tmp_path):
         )
         try:
             assert isinstance([e async for e in runtime.stream("find a tool")][-1], TurnCompleted)
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection:
                 assert (
                     connection.execute("SELECT memory_mode FROM threads").fetchone()[0]
                     == "polluted"
@@ -229,7 +230,7 @@ def test_cold_resume_marks_cached_external_result_without_reexecuting(tmp_path):
         try:
             assert isinstance([e async for e in runtime.resume_pending()][-1], TurnCompleted)
             assert tool.calls == 0
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection:
                 assert (
                     connection.execute("SELECT memory_mode FROM threads").fetchone()[0]
                     == "polluted"

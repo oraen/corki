@@ -6,7 +6,8 @@ import asyncio
 import json
 import logging
 import sqlite3
-from contextlib import AbstractContextManager
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from dataclasses import asdict
 from hashlib import sha256
 from pathlib import Path
@@ -71,6 +72,7 @@ from corki.storage.display_pages import (
     read_display_items_page,
     read_display_turns_page,
 )
+from corki.storage.file_lock import lock, open_lock, unlock_and_close
 from corki.storage.preview import migrate_thread_previews, user_preview
 
 
@@ -84,23 +86,45 @@ class SQLiteSessionRepository:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._path = path
-        self._create_schema()
+        # WAL selection and CREATE/ALTER statements are separate SQLite writes.
+        # Coordinate first openers across processes for the whole migration, not
+        # only the later BEGIN IMMEDIATE section.
+        schema_lock = open_lock(path.with_name(path.name + ".schema.lock"))
+        held = False
+        try:
+            lock(schema_lock)
+            held = True
+            self._create_schema()
+        finally:
+            if held:
+                unlock_and_close(schema_lock)
+            else:
+                schema_lock.close()
         self._path.chmod(0o600)
 
     @property
     def path(self) -> Path:
         return self._path
 
-    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
-        connection = sqlite3.connect(self._path, timeout=10)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA busy_timeout=10000")
-        return connection
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        # Connection.__exit__ commits/rolls back but does not close the handle.
+        # Close after the transaction even on errors; Windows cannot remove an
+        # open database, and GC is not a connection ownership policy.
+        with closing(sqlite3.connect(self._path, timeout=10)) as connection:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("PRAGMA busy_timeout=10000")
+            with connection:
+                yield connection
 
     def _create_schema(self) -> None:
         with self._connect() as connection:
-            connection.execute("PRAGMA journal_mode=WAL")
+            # Reopening an existing WAL database need not request a journal
+            # transition while another process is writing to it.
+            journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+            if journal_mode.lower() != "wal":
+                connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA synchronous=NORMAL")
             quick_check = connection.execute("PRAGMA quick_check").fetchone()[0]
             if quick_check != "ok":

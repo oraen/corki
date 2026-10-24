@@ -16,9 +16,25 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+
+
+def attachment_name(name: str) -> str:
+    """Flatten either path grammar without emitting a device name or NTFS stream."""
+    filename = PureWindowsPath(name).name or "attachment.bin"
+    stem = filename.partition(".")[0].rstrip(" .").upper()
+    reserved = {"CON", "PRN", "AUX", "NUL"} | {
+        prefix + number for prefix in ("COM", "LPT") for number in "123456789¹²³"
+    }
+    if (
+        filename in {".", ".."}
+        or filename.endswith((".", " "))
+        or any(ord(char) < 32 or char in '<>:"/\\|?*' for char in filename)
+        or stem in reserved
+    ):
+        raise ValueError(f"Attachment name is not a portable filename: {name!r}")
+    return filename
 
 
 def main() -> int:
@@ -68,8 +84,10 @@ def main() -> int:
         written = []
         for name, contents in reader.attachments.items():
             data = contents[0] if isinstance(contents, list) else contents
-            safe = os.path.basename(name) or "attachment.bin"
+            safe = attachment_name(name)
             target = out_dir / safe
+            if not target.resolve().is_relative_to(out_dir.resolve()):
+                raise ValueError(f"Attachment destination escapes output directory: {name!r}")
             with open(target, "wb") as fh:
                 fh.write(bytes(data))
             written.append(str(target))
@@ -113,4 +131,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

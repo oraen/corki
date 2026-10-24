@@ -3549,6 +3549,15 @@ python -m venv .venv
 .venv/bin/mini-agent
 ```
 
+Windows PowerShell 中使用虚拟环境的 `Scripts` 目录：
+
+```powershell
+py -3 -m venv .venv
+& .\.venv\Scripts\python.exe -m pip install -e '.[dev]'
+& .\.venv\Scripts\python.exe -m pytest -q
+& .\.venv\Scripts\mini-agent.exe
+```
+
 这个版本故意没有 SQLite、真实 Provider、Context contributor、跨 Turn Memory 和进程管理；它的目的
 是先跑通可取消、可关闭、有预算的 ReAct 执行骨架，而不是冒充完整五组件。接下来每个 Milestone 都
 在现有 port/state 上替换 adapter 或增加能力，不是推倒重写。

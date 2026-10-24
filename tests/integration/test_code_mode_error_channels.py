@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -103,7 +104,7 @@ def test_invalid_nested_result_does_not_poison_parallel_sibling(tmp_path, flavor
             events = [event async for event in runtime.stream("parallel invalid result")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert len(requests) == len(calls) == 2
-            with sqlite3.connect(tmp_path / "sessions.db") as db:
+            with closing(sqlite3.connect(tmp_path / "sessions.db")) as db:
                 rows = db.execute(
                     "SELECT status,result_json FROM tool_executions WHERE tool_name='probe'"
                 ).fetchall()
@@ -275,7 +276,7 @@ def test_nested_error_channels_reach_js_and_durable_ledger(
             ]
             expected_calls = 2 if replay and (caught or flavor == "error_value") else 1
             assert len(nested) == expected_calls and all(event.is_error for event in nested)
-            with sqlite3.connect(tmp_path / "sessions.db") as db:
+            with closing(sqlite3.connect(tmp_path / "sessions.db")) as db:
                 rows = db.execute(
                     "SELECT status,result_json FROM tool_executions WHERE tool_name='probe'"
                 ).fetchall()
@@ -355,7 +356,7 @@ def test_broken_nested_commit_cannot_be_hidden_by_js_catch(
             assert "ledger commit fixture" in events[-1].error
             assert len(requests) == len(calls) == 1
             assert not runtime._code_mode.cells
-            with sqlite3.connect(tmp_path / "sessions.db") as db:
+            with closing(sqlite3.connect(tmp_path / "sessions.db")) as db:
                 status, payload = db.execute(
                     "SELECT status,result_json FROM tool_executions WHERE tool_name='probe'"
                 ).fetchone()
@@ -407,7 +408,7 @@ def test_broken_nested_commit_cannot_be_hidden_by_js_catch(
             assert isinstance(cold_events[-1], TurnCompleted)
             assert len(cold_requests) == 1
             assert len(calls) == 1
-            with sqlite3.connect(tmp_path / "sessions.db") as db:
+            with closing(sqlite3.connect(tmp_path / "sessions.db")) as db:
                 assert db.execute(
                     "SELECT status,result_json FROM tool_executions WHERE tool_name='probe'"
                 ).fetchall() == [(status, payload)]

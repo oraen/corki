@@ -2,12 +2,11 @@
 
 import asyncio
 import json
-import shlex
-import sys
 from hashlib import sha256
 
 import httpx
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings, MCPServerSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
@@ -292,16 +291,14 @@ def test_interrupt_hook_runs_before_terminal_only_for_interrupted_root(
             if asynchronous
             else ""
         )
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "import json,sys; from pathlib import Path; p=json.load(sys.stdin)\n"
-                + gate
-                + "Path('interrupt.jsonl').open('a').write(json.dumps({'payload':p,"
-                "'transcript':Path(p['transcript_path']).read_text()})+'\\n'); "
-                "print(json.dumps({'systemMessage':'INTERRUPT_DIAGNOSTIC'}))",
-            ]
+        command = python_command(
+            tmp_path,
+            "import json,sys; from pathlib import Path; p=json.load(sys.stdin)\n"
+            + gate
+            + "with Path('interrupt.jsonl').open('a', encoding='utf-8') as output:\n"
+            "    output.write(json.dumps({'payload':p,"
+            "'transcript':Path(p['transcript_path']).read_text(encoding='utf-8')})+'\\n')\n"
+            "print(json.dumps({'systemMessage':'INTERRUPT_DIAGNOSTIC'}))",
         )
         # The async subprocess is deliberately held until after the terminal;
         # give that test the maximum supported Interrupt hook deadline so
@@ -410,7 +407,9 @@ def test_interrupt_hook_runs_before_terminal_only_for_interrupted_root(
                     assert isinstance(hooks[1], HookCompleted)
                     assert hooks[1].run.status == "completed"
                     assert hooks[0].turn_id == hooks[1].turn_id == events[-1].turn_id
-                records = [json.loads(line) for line in log.read_text().splitlines()]
+                records = [
+                    json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()
+                ]
                 assert len(records) == 1
                 payload = records[0]["payload"]
                 assert set(payload) == {
@@ -435,7 +434,7 @@ def test_interrupt_hook_runs_before_terminal_only_for_interrupted_root(
             await runtime.cancel_active()
             await runtime.aclose()
             if expected:
-                assert len(log.read_text().splitlines()) == 1
+                assert len(log.read_text(encoding="utf-8").splitlines()) == 1
         finally:
             await runtime.aclose()
             await asyncio.gather(consumer, return_exceptions=True)

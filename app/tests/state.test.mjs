@@ -15,12 +15,34 @@ await build({
 });
 const { reduceEvent, emptyConversation, conversationFromSnapshot } =
   await import(pathToFileURL(path.join(tmp, "state.mjs")));
-process.on("exit", () => {
-  void rm(tmp, { recursive: true, force: true });
-});
+test.after(() => rm(tmp, { recursive: true, force: true }));
 function event(type, data) {
   return { type, data, threadId: "test", instance: "test", sequence: 1 };
 }
+test("model failure warning is replayable and clears on every terminal", () => {
+  const warned = reduceEvent(emptyConversation(), event("model.health", { warning: true }));
+  assert.equal(warned.modelWarning, true);
+  for (const type of ["TurnFailed", "TurnCompleted", "TurnCancelled", "host.error", "run.settled"]) {
+    assert.equal(reduceEvent(warned, event(type, { turn_id: "t", error: "模型调用失败" })).modelWarning, false);
+  }
+  const restored = conversationFromSnapshot({
+    threadId: "test", running: true, messages: [], pending: [],
+    live: [{ type: "model.health", data: { warning: true } }],
+  });
+  assert.equal(restored.modelWarning, true);
+});
+test("model failure budget is displayed as a normal reply without changing failed status", () => {
+  const failed = reduceEvent(emptyConversation(), event("TurnFailed", {
+    turn_id: "t", error: "模型调用失败", createdAt: "2026-10-25T00:00:00Z",
+  }));
+  const reply = failed.messages.at(-1);
+  assert.equal(reply.role, "assistant");
+  assert.equal(reply.content, "模型调用失败");
+  assert.equal(reply.phase, "final_answer");
+  assert.equal(reply.error, false);
+  assert.equal(failed.status, "执行失败");
+  assert.equal(failed.modelWarning, false);
+});
 test("incremental assistant completion replaces partial content without duplicate", () => {
   let s = emptyConversation();
   s = reduceEvent(s, event("TurnStarted", { turn_id: "t" }));

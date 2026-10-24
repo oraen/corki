@@ -265,13 +265,15 @@ for line in sys.stdin:
     manager = MCPManager((settings,), registry)
 
     async def scenario() -> str:
-        await manager.start()
-        result = await ToolExecutor(registry, output_char_budget=1_000).execute(
-            ToolCall(ToolCallId("stdio-1"), "mcp__fixture::echo", {"text": "hello"}),
-            ToolContext(cwd=tmp_path),
-        )
-        await manager.aclose()
-        return result.content
+        try:
+            await manager.start()
+            result = await ToolExecutor(registry, output_char_budget=1_000).execute(
+                ToolCall(ToolCallId("stdio-1"), "mcp__fixture::echo", {"text": "hello"}),
+                ToolContext(cwd=tmp_path),
+            )
+            return result.content
+        finally:
+            await manager.aclose()
 
     assert asyncio.run(scenario()).split("\nOutput:\n", 1)[1] == "hello"
     assert manager.warnings == ()

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 import httpx
 import pytest
@@ -225,7 +226,7 @@ def test_raw_catalog_controls_search_call_and_cold_history(
             assert methods.count(("subject", "tools/list")) == (2 if variant == "cursor" else 1)
             assert methods.count(("subject", "notifications/initialized")) == 1
             history = await runtime._repository.load_items(thread)
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 ledger = db.execute(
                     "SELECT result_json FROM tool_executions WHERE tool_name=?", (name,)
                 ).fetchall()
@@ -240,7 +241,7 @@ def test_raw_catalog_controls_search_call_and_cold_history(
             assert len(calls) == 1
             restored = await runtime._repository.load_items(thread)
             assert restored[: len(history)] == history
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 assert (
                     db.execute(
                         "SELECT result_json FROM tool_executions WHERE tool_name=?", (name,)

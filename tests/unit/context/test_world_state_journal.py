@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 
 import pytest
@@ -241,7 +242,7 @@ def test_old_database_projection_does_not_rewrite_legacy_payloads(tmp_path):
         await repository.close()
 
         def payloads():
-            with sqlite3.connect(path) as connection:
+            with closing(sqlite3.connect(path)) as connection, connection:
                 return connection.execute(
                     "SELECT payload_json FROM conversation_items ORDER BY sequence"
                 ).fetchall()

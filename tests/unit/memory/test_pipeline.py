@@ -5,6 +5,7 @@ import json
 import re
 import sqlite3
 from collections.abc import AsyncIterator
+from contextlib import closing
 from pathlib import Path
 
 from corki.config import CorkiSettings
@@ -133,7 +134,7 @@ def test_two_phase_pipeline_extracts_consolidates_redacts_and_skips_unchanged(
         )
         assert all("Run pytest." not in i.content for i in model.requests[1].items)
 
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute("UPDATE memory_jobs SET finished_at=0 WHERE job_key='global'")
         second = await service.run_once(new_thread_id())
         assert second.claimed == 0

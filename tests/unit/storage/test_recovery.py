@@ -1,6 +1,8 @@
 import asyncio
+import os
 import sqlite3
 import stat
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 
@@ -19,7 +21,10 @@ def test_model_step_and_items_commit_atomically_and_load_idempotently(
 ) -> None:
     async def scenario() -> None:
         repository = SQLiteSessionRepository(tmp_path / "sessions.db")
-        assert stat.S_IMODE(repository.path.stat().st_mode) == 0o600
+        # Windows reports DOS read/write attributes here, not the file's DACL.
+        # Keep the POSIX assertion without skipping the actual recovery test.
+        if os.name == "posix":
+            assert stat.S_IMODE(repository.path.stat().st_mode) == 0o600
         thread_id, turn_id = new_thread_id(), new_turn_id()
         await repository.create_thread(thread_id, tmp_path)
         completed = ModelCompleted(
@@ -68,7 +73,7 @@ def test_legacy_model_steps_gain_nullable_continuation_without_changing_old_resu
 ) -> None:
     database = tmp_path / "legacy-model.db"
     thread, turn = new_thread_id(), new_turn_id()
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute("""
             CREATE TABLE model_steps (
                 step_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, turn_id TEXT NOT NULL,
@@ -157,7 +162,7 @@ def test_tool_ledger_reuses_completed_result_and_refuses_id_collision(
 def test_legacy_message_schema_migrates_once(tmp_path: Path) -> None:
     path = tmp_path / "legacy.db"
     thread_id, turn_id = new_thread_id(), new_turn_id()
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.executescript(
             """
             CREATE TABLE threads (
@@ -192,7 +197,7 @@ def test_legacy_message_schema_migrates_once(tmp_path: Path) -> None:
     assert isinstance(items[0], UserMessageItem)
     assert items[0].content == "legacy text"
     assert repeated == items
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         assert (
             connection.execute(
                 "SELECT COUNT(*) FROM schema_migrations "

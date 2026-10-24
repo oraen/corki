@@ -138,6 +138,8 @@ def test_native_image_read_denies_outside_workspace(tmp_path, compiler, alias):
 def test_native_image_read_is_bounded_and_regular(tmp_path, compiler, kind):
     path = tmp_path / "input"
     if kind == "fifo":
+        if not hasattr(os, "mkfifo"):
+            pytest.skip("POSIX filesystem FIFOs are not available on native Windows")
         os.mkfifo(path)
     elif kind == "directory":
         path.mkdir()
@@ -236,7 +238,9 @@ def test_native_helper_uses_only_allowlisted_environment(tmp_path, compiler, mon
     )
     assert base64.b64decode(encoded) == data
     assert len(calls) == 1 and "CORKI_FS_TEST_SECRET" not in calls[0]
-    assert set(calls[0]) <= {"PATH", "TMPDIR", "TMP", "TEMP", "__CF_USER_TEXT_ENCODING"}
+    allowed = {"PATH", "TMPDIR", "TMP", "TEMP", "__CF_USER_TEXT_ENCODING"}
+    keys = {key.upper() if os.name == "nt" else key for key in calls[0]}
+    assert keys <= allowed
 
 
 def test_old_compiler_rejects_native_helper_contract(tmp_path):

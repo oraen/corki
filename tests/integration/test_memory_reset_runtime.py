@@ -4,6 +4,7 @@ import asyncio
 import json
 import sqlite3
 import threading
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -76,7 +77,7 @@ def test_runtime_reset_preserves_history_and_revokes_old_claim(tmp_path, enabled
             )
             assert not (root / ".git").exists(), "reset must also erase old content objects"
             assert await runtime._repository.load_items(runtime.thread_id) == before
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 assert db.execute("SELECT count(*) FROM memory_jobs").fetchone() == (0,)
                 assert db.execute(
                     "SELECT memory_mode FROM threads WHERE id=?", (str(runtime.thread_id),)
@@ -258,7 +259,7 @@ def test_reset_while_consolidator_is_sampling_prevents_late_publication(
             else:
                 assert not (root / "MEMORY.md").exists()
                 assert not (root / ".git").exists()
-            with sqlite3.connect(tmp_path / "history.db") as db:
+            with closing(sqlite3.connect(tmp_path / "history.db")) as db:
                 if new_owner:
                     assert db.execute(
                         "SELECT status,error FROM memory_jobs "

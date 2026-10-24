@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 
 import httpx
@@ -301,7 +302,7 @@ def test_memory_generation_rules_through_startup_and_cold_recall(
                 assert (
                     len(extract_systems[0].encode()) + len(extract_inputs[0].encode())
                 ) // 4 > 3200
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection:
                 row = connection.execute(
                     "SELECT raw_memory,rollout_summary,rollout_slug "
                     "FROM memory_stage1_outputs WHERE thread_id=?",

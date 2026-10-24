@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -21,8 +22,8 @@ from corki.storage.sqlite import _result_from_json
 @pytest.mark.parametrize("case", ["overwrite", "move", "ordered", "partial"])
 def test_actual_delta_reaches_host_and_cold_ledger_not_model(tmp_path, compiler, mode, case):
     async def scenario():
-        (tmp_path / "a.txt").write_text("source-before\n")
-        (tmp_path / "b.txt").write_text("target-before\n")
+        (tmp_path / "a.txt").write_text("source-before\n", encoding="utf-8", newline="\n")
+        (tmp_path / "b.txt").write_text("target-before\n", encoding="utf-8", newline="\n")
         (tmp_path / "directory").mkdir()
         bodies = {
             "overwrite": "*** Add File: b.txt\n+after",
@@ -93,7 +94,7 @@ def test_actual_delta_reaches_host_and_cold_ledger_not_model(tmp_path, compiler,
             assert all("target-before" not in repr(result) for result in results)
         finally:
             await runtime.aclose()
-        with sqlite3.connect(tmp_path / "state.db") as database:
+        with closing(sqlite3.connect(tmp_path / "state.db")) as database:
             rows = database.execute("SELECT result_json FROM tool_executions").fetchall()
         persisted = [_result_from_json(row[0]) for row in rows]
         record = next(result for result in persisted if result.tool_name == "apply_patch")
@@ -126,7 +127,7 @@ def test_oversized_native_delta_is_unknown_after_actual_write(tmp_path, compiler
     from corki.execution.backend import patch_operation
 
     target = tmp_path / "a.txt"
-    target.write_text("previous content\n" * 1000)
+    target.write_text("previous content\n" * 1000, encoding="utf-8", newline="\n")
     result = asyncio.run(
         patch_operation(
             workspace_policy(compiler, tmp_path),

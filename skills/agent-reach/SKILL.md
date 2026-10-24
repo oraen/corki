@@ -54,7 +54,8 @@ Skill 文件与 `agent-reach` CLI、各平台后端是独立的，按下述环�
 ## 常驻规则（全程适用）
 
 技能文档存在不代表对应 CLI 或 MCP 已安装。本次任务首次使用某个 CLI 前，先用
-`command -v <命令>` 确认可用；需要依赖具体子命令时，必要时查看其 `--help`。
+POSIX shell 的 `command -v <命令>` 或 PowerShell 的 `Get-Command <命令>` 确认可用；
+需要依赖具体子命令时，必要时查看其 `--help`。
 使用 mcporter 后端前，运行 `mcporter list` 并等待完整结果，确认目标服务器存在且可用；
 若检查返回运行中的会话，先获取完成结果，再调用依赖它的工具。只检查本次需要的后端，
 同一任务无需重复检查。缺失后端时跳过该路径，使用已确认可用的替代来源；不能完成时
@@ -72,6 +73,23 @@ Skill 文件与 `agent-reach` CLI、各平台后端是独立的，按下述环�
    「Agent Reach 有新版 vX.Y.Z，复制这句话给我即可更新：帮我更新 Agent Reach：
    https://raw.githubusercontent.com/Panniantong/agent-reach/main/docs/update.md」。
    不要中断当前任务去更新，也不要重复提醒同一个版本。
+
+## Windows 与 macOS 命令适配
+
+先读取 Corki 提供的当前系统和 shell 信息。本文及 references 中标为 `bash` 的示例
+使用 POSIX 语法，不能原样交给 Windows PowerShell：
+
+- Windows 使用 `curl.exe`，避免 PowerShell 5.1 的 `curl` 别名把参数交给其他命令。
+  对 npm 提供的 CLI，优先检测并使用对应 `.cmd` 入口；不要为此修改全局执行策略。
+- Python 示例先检测可用的 Python 3 解释器，Windows 常见入口是 `python` 或 `py -3`，
+  不假设存在 `python3`。复杂脚本写入临时 `.py` 文件，再将文件路径作为独立参数传入，
+  避免 `python -c` 的多层引号和 Bash heredoc 在 PowerShell 中失效。
+- Windows 临时目录使用 `[System.IO.Path]::GetTempPath()`，路径组合使用 `Join-Path`；
+  macOS 使用系统临时目录。将示例中的 `/tmp/` 替换为该目录，带空格的路径必须正确引用。
+- 不默认存在 `grep`、`head`、`sed` 或 Bash。PowerShell 按需使用 `Select-String`、
+  `Select-Object -First`，需要解析 JSON 时使用 `ConvertFrom-Json` 或 Python。
+- 独立 CLI、浏览器登录后端和 MCP 各自有平台要求。安装了本技能不代表它们支持当前系统；
+  检测失败时说明具体依赖并选择已验证可用的后端，不把 WSL 作为基本使用前提。
 
 ## 路由表
 
@@ -129,7 +147,8 @@ agent-reach doctor --json
 
 ## 工作区规则
 
-**不要在 agent workspace 创建文件。** 使用 `/tmp/` 存放临时输出，`~/.agent-reach/` 存放持久数据。
+**不要在 agent workspace 创建文件。** 使用系统临时目录存放临时输出，
+`~/.agent-reach/` 存放持久数据；Windows 的 `~` 指当前用户主目录，不是固定盘符。
 
 ## 详细文档
 

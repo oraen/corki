@@ -2,11 +2,10 @@
 
 import asyncio
 import json
-import shlex
-import sys
 from hashlib import sha256
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
@@ -45,7 +44,7 @@ def test_subagent_stop_runs_only_for_matching_independently_approved_child(
         "print(json.dumps({} if p['stop_hook_active'] else "
         "{'decision':'block','reason':'CHILD_VERIFY'}))"
     )
-    command = shlex.join([sys.executable, "-c", script])
+    command = python_command(tmp_path, script)
     handler = {"type": "command", "command": command, "timeout": 600, "async": False}
     identity = {"event_name": "stop" if trust == "stop" else "subagent_stop", "hooks": [handler]}
     if matcher is not None:

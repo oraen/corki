@@ -273,41 +273,43 @@ def test_continuation_survives_committed_step_and_real_checkpoint_recovery(
             entered_evaluate.set()
             await asyncio.Event().wait()
 
-        if checkpoint:
-            # Block after call_model's durable result and graph state are committed.
-            first._graph._evaluate = blocked_evaluate
-        await first._ensure_ready()
-        turn = new_turn_id()
-        user = UserMessageItem("continue after restart", turn)
-        await repository.save_turn(
-            TurnRecord(turn, first.thread_id, TurnStatus.RUNNING, user.content)
-        )
-        await repository.append_items(first.thread_id, (user,))
-        completed = ModelCompleted(
-            () if empty else (AssistantMessageItem("interim", turn, new_step_id()),),
-            end_turn=False,
-        )
-        await repository.commit_model_step(first.thread_id, turn, 0, completed)
-        if checkpoint:
-            invocation = asyncio.create_task(
-                first._compiled.ainvoke(
-                    _initial_state(first.thread_id, turn, settings, user),
-                    context=GraphRunContext(events=NullSink()),
-                    config=first._graph_config(turn),
-                )
+        try:
+            if checkpoint:
+                # Block after call_model's durable result and graph state are committed.
+                first._graph._evaluate = blocked_evaluate
+            await first._ensure_ready()
+            turn = new_turn_id()
+            user = UserMessageItem("continue after restart", turn)
+            await repository.save_turn(
+                TurnRecord(turn, first.thread_id, TurnStatus.RUNNING, user.content)
             )
-            try:
-                await asyncio.wait_for(entered_evaluate.wait(), timeout=3)
-            finally:
-                invocation.cancel()
-                await asyncio.gather(invocation, return_exceptions=True)
-            # The graph joins asynchronous checkpoint writes on exit. Entering
-            # evaluate alone does not guarantee its predecessor's write finished.
-            saved = await first._checkpointer.aget_tuple(first._graph_config(turn))
-            assert saved.checkpoint["channel_values"]["model_end_turn"] is False
-            assert saved.checkpoint["channel_values"]["step_count"] == 1
-        assert first_model.requests == []
-        await first.aclose()
+            await repository.append_items(first.thread_id, (user,))
+            completed = ModelCompleted(
+                () if empty else (AssistantMessageItem("interim", turn, new_step_id()),),
+                end_turn=False,
+            )
+            await repository.commit_model_step(first.thread_id, turn, 0, completed)
+            if checkpoint:
+                invocation = asyncio.create_task(
+                    first._compiled.ainvoke(
+                        _initial_state(first.thread_id, turn, settings, user),
+                        context=GraphRunContext(events=NullSink()),
+                        config=first._graph_config(turn),
+                    )
+                )
+                try:
+                    await asyncio.wait_for(entered_evaluate.wait(), timeout=3)
+                finally:
+                    invocation.cancel()
+                    await asyncio.gather(invocation, return_exceptions=True)
+                # The graph joins asynchronous checkpoint writes on exit. Entering
+                # evaluate alone does not guarantee its predecessor's write finished.
+                saved = await first._checkpointer.aget_tuple(first._graph_config(turn))
+                assert saved.checkpoint["channel_values"]["model_end_turn"] is False
+                assert saved.checkpoint["channel_values"]["step_count"] == 1
+            assert first_model.requests == []
+        finally:
+            await first.aclose()
         model = AnswerModel()
         resumed = await LangGraphRuntime.acreate(
             settings=settings,

@@ -131,7 +131,7 @@ def test_gateway_replaces_auth_and_preserves_responses_payload(tmp_path):
 
     with running(tmp_path, upstream) as (_, client, auth):
         original = auth.read_bytes()
-        result = client.post("/v1/responses", json=body())
+        result = client.post("/openai/v1/responses", json=body())
         assert result.status_code == 200
         assert "response.completed" in result.text
         assert auth.read_bytes() == original
@@ -159,7 +159,7 @@ def test_rejected_requests_never_reach_upstream(tmp_path, variant, status):
         if variant == "model":
             payload["model"] = ""
         result = client.post(
-            "/unsupported" if variant == "path" else "/v1/responses",
+            "/unsupported" if variant == "path" else "/openai/v1/responses",
             headers={"Authorization": "Bearer wrong"} if variant == "unauthorized" else {},
             content=b"invalid" if variant == "json" else json.dumps(payload).encode(),
         )
@@ -178,7 +178,7 @@ def test_reload_rotated_token_once_on_401_without_refreshing(tmp_path):
         return sse()
 
     with running(tmp_path, upstream) as (_, client, _):
-        assert client.post("/v1/responses", json=body()).status_code == 200
+        assert client.post("/openai/v1/responses", json=body()).status_code == 200
     assert len(requests) == 2
 
 
@@ -188,7 +188,7 @@ def test_account_change_does_not_forward_new_account(tmp_path):
 
     with running(tmp_path, forbidden) as (_, client, auth):
         write_auth(auth, account="account-b")
-        result = client.post("/v1/responses", json=body())
+        result = client.post("/openai/v1/responses", json=body())
         assert result.status_code == 401
         assert "account changed" in result.text
 
@@ -204,7 +204,7 @@ def test_errors_are_bounded_and_do_not_leak_upstream_secrets(tmp_path, status):
         )
 
     with running(tmp_path, upstream) as (_, client, _):
-        result = client.post("/v1/responses", json=body())
+        result = client.post("/openai/v1/responses", json=body())
         assert result.status_code == (502 if status == 302 else status)
         assert "oauth-secret" not in result.text
         assert "account-a" not in result.text
@@ -219,9 +219,9 @@ def test_reload_credentials_between_requests(tmp_path):
         return sse()
 
     with running(tmp_path, upstream) as (_, client, auth):
-        assert client.post("/v1/responses", json=body()).status_code == 200
+        assert client.post("/openai/v1/responses", json=body()).status_code == 200
         write_auth(auth, token="renewed-token")
-        assert client.post("/v1/responses", json=body()).status_code == 200
+        assert client.post("/openai/v1/responses", json=body()).status_code == 200
     assert seen == ["Bearer oauth-secret", "Bearer renewed-token"]
 
 
@@ -241,15 +241,15 @@ def test_environment_provider_rotates_token_and_fails_closed(tmp_path, monkeypat
         return environment_credentials("GATEWAY_TEST_TOKEN", "GATEWAY_TEST_ACCOUNT")
 
     with running(tmp_path, upstream, credential_provider=provider) as (_, client, _):
-        assert client.post("/responses", json=body()).status_code == 200
+        assert client.post("/openai/responses", json=body()).status_code == 200
         monkeypatch.setenv("GATEWAY_TEST_TOKEN", "second-token")
-        assert client.post("/responses", json=body()).status_code == 200
+        assert client.post("/openai/responses", json=body()).status_code == 200
         monkeypatch.delenv("GATEWAY_TEST_TOKEN")
         # A valid auth.json exists, but an explicitly selected provider never falls back.
-        assert client.post("/responses", json=body()).status_code == 401
+        assert client.post("/openai/responses", json=body()).status_code == 401
         monkeypatch.setenv("GATEWAY_TEST_TOKEN", "third-token")
         monkeypatch.setenv("GATEWAY_TEST_ACCOUNT", "account-b")
-        result = client.post("/responses", json=body())
+        result = client.post("/openai/responses", json=body())
         assert result.status_code == 401
         assert "account changed" in result.text
     assert seen == ["Bearer first-token", "Bearer second-token"]
@@ -404,7 +404,13 @@ def test_gateway_default_client_uses_verified_system_trust(tmp_path, monkeypatch
 
 
 @pytest.mark.parametrize(
-    "endpoint", ["/chat/completions", "/v1/chat/completions", "/responses", "/v1/responses"]
+    "endpoint",
+    [
+        "/openai/chat/completions",
+        "/openai/v1/chat/completions",
+        "/openai/responses",
+        "/openai/v1/responses",
+    ],
 )
 @pytest.mark.parametrize("stream", [False, None])
 def test_nonstreaming_response_and_default(tmp_path, endpoint, stream):
@@ -473,7 +479,7 @@ def test_nonstream_failure_never_returns_partial_success(tmp_path, event):
 
     with running(tmp_path, upstream) as (_, client, _):
         result = client.post(
-            "/v1/chat/completions",
+            "/openai/v1/chat/completions",
             json={
                 "model": "gpt-6-astra",
                 "stream": False,
@@ -515,3 +521,38 @@ def test_nonstream_tool_calls_refusal_and_buffer_bound():
     assert refusal["choices"][0]["message"]["refusal"] == "No"
     with pytest.raises(ValueError, match="buffering limit"):
         completed_response(["data: " + "a" * 100], max_bytes=20)
+
+
+@pytest.mark.parametrize(
+    "path,message",
+    [
+        ("/", "路径需要加入服务商"),
+        ("/v1/responses", "路径需要加入服务商"),
+        ("/responses", "路径需要加入服务商"),
+        ("/claude/v1/responses", "暂时不支持的供应商"),
+        ("/qoder/responses", "暂时不支持的供应商"),
+    ],
+)
+def test_provider_namespace_required_and_no_upstream_call(tmp_path, path, message):
+    def upstream(request):
+        pytest.fail("unsupported provider must never reach upstream")
+
+    with running(tmp_path, upstream) as (_, client, _):
+        for method in ("GET", "POST"):
+            response = client.request(method, path, json={"model": "fixture", "input": "fixture"})
+            assert response.status_code == 404
+            assert message in response.json()["error"]["message"]
+
+
+def test_health_contains_no_login_material(tmp_path):
+    with running(tmp_path, lambda request: pytest.fail()) as (server, client, _):
+        response = client.get("/__corki_gateway/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["service"] == "corki-adaptor" and data["version"] == 2
+        assert data["providers"] == ["openai"]
+        assert "oauth-secret" not in response.text and "account-a" not in response.text
+        assert (
+            client.post("/__corki_gateway/stop", headers={"X-Corki-Control": "wrong"}).status_code
+            == 403
+        )

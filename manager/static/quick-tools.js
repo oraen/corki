@@ -8,6 +8,10 @@ function quickToolsCards(){
  ].map(([id,title,note,i])=>`<button type="button" class="quick-tool-card" data-action="quick-${id}"><span class="quick-tool-icon">${icon(i)}</span><span><strong>${title}</strong><small>${note}</small></span>${icon('arrow')}</button>`).join('')}</div></section>`;
 }
 
+function toolboxCards(){
+ return `<section class="panel quick-tools-panel" aria-labelledby="toolbox-title"><div class="panel-head"><h2 id="toolbox-title">工具箱</h2></div><div class="quick-tools-grid"><button type="button" class="quick-tool-card toolbox-card" data-action="open-adaptor"><span class="quick-tool-icon">${icon('providers')}</span><strong>套餐转发</strong>${icon("arrow")}</button></div></section>`;
+}
+
 function guidePage(){
  const steps=[
   ['01','准备密钥','从你想使用的模型供应商获取 API Key。这里以 DeepSeek 为例；密钥只需在下一步填入管理页。',''],

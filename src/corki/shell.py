@@ -7,6 +7,32 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
+POWERSHELL_UTF8_PREFIX = (
+    "try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n"
+)
+
+
+def powershell_utf8_argv(argv: list[str]) -> list[str]:
+    """Match Codex's best-effort UTF-8 prefix for recognized script invocations.
+
+    Use only at execution, after approval. Do not rewrite arbitrary PowerShell
+    flags, encoded scripts or file invocations.
+    """
+    if len(argv) < 3 or detect_shell_type(argv[0]) is not ShellType.POWERSHELL:
+        return argv
+    for index in range(1, len(argv) - 1):
+        flag = argv[index].lower()
+        if flag not in {"-nologo", "-noprofile", "-command", "-c"}:
+            return argv
+        if flag in {"-command", "-c"}:
+            if index + 2 != len(argv):
+                return argv
+            script = argv[-1]
+            if script.lstrip().startswith(POWERSHELL_UTF8_PREFIX):
+                return argv
+            return [*argv[:-1], POWERSHELL_UTF8_PREFIX + script]
+    return argv
+
 
 class ShellType(StrEnum):
     ZSH = "zsh"
@@ -36,6 +62,8 @@ class Shell:
 def detect_shell_type(path: str | Path) -> ShellType | None:
     """Recognize type by recursively stripping path/stem, without executing it."""
     name = str(path)
+    if sys.platform == "win32":
+        name = name.lower()
     while True:
         if name == "pwsh":
             return ShellType.POWERSHELL
@@ -89,11 +117,13 @@ def get_shell(kind: ShellType) -> Shell | None:
         return _resolve(
             kind,
             "pwsh",
-            (r"C:\Program Files\PowerShell\7\pwsh.exe" if windows else "/usr/local/bin/pwsh",),
+            (str(PureWindowsPath(os.environ.get("PROGRAMFILES", r"C:\Program Files"))
+                 / "PowerShell/7/pwsh.exe") if windows else "/usr/local/bin/pwsh",),
         ) or _resolve(
             kind,
             "powershell",
-            ((r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",) if windows else ()),
+            ((str(PureWindowsPath(os.environ.get("SYSTEMROOT", r"C:\Windows"))
+                  / "System32/WindowsPowerShell/v1.0/powershell.exe"),) if windows else ()),
         )
     fallbacks = {
         ShellType.ZSH: ("/bin/zsh",),

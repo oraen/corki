@@ -4,9 +4,11 @@ import os
 import shlex
 import sqlite3
 import sys
+from contextlib import closing
 from dataclasses import FrozenInstanceError
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -16,15 +18,17 @@ from corki.protocol.ids import new_tool_call_id
 from corki.protocol.items import AssistantMessageItem, ToolCallItem, ToolResultItem, new_step_id
 from corki.protocol.tools import ToolCall
 
-pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX process/PTY fixtures")
-
 
 @pytest.mark.parametrize("route", ["completed", "streaming", "nested"])
 def test_interrupt_keeps_initial_terminal_and_next_turn_reuses_it(tmp_path, route):
     async def scenario():
         started, children, requests, events = asyncio.Event(), [], [], []
         script = "print('READY',flush=True); print('ANSWER:'+input(),flush=True)"
-        command = "exec " + shlex.join([sys.executable, "-c", script])
+        command = (
+            python_command(tmp_path, script)
+            if os.name == "nt"
+            else "exec " + shlex.join([sys.executable, "-c", script])
+        )
         terminal_id = None
 
         class Model:
@@ -111,7 +115,7 @@ def test_interrupt_keeps_initial_terminal_and_next_turn_reuses_it(tmp_path, rout
             info = terminals[0]
             assert info.process_id == terminal_id and info.command == command
             assert info.cwd == tmp_path and info.item_id
-            with sqlite3.connect(tmp_path / "retained.db") as db:
+            with closing(sqlite3.connect(tmp_path / "retained.db")) as db:
                 assert db.execute(
                     "SELECT call_id FROM tool_executions WHERE tool_name='exec_command'"
                 ).fetchall() == [(info.item_id,)]
@@ -160,6 +164,11 @@ def test_interrupt_keeps_initial_terminal_and_next_turn_reuses_it(tmp_path, rout
 def test_interrupt_keeps_previous_turn_terminal(tmp_path, route, phase):
     async def scenario():
         mode, terminal_id = "launch", None
+        command = (
+            python_command(tmp_path, "import time; time.sleep(60)")
+            if os.name == "nt"
+            else "exec sleep 60"
+        )
         started, children, events = asyncio.Event(), [], []
 
         class Model:
@@ -173,7 +182,7 @@ def test_interrupt_keeps_previous_turn_terminal(tmp_path, route, phase):
                     name, args = (
                         (
                             "exec_command",
-                            {"cmd": "exec sleep 60", "login": False, "yield_time_ms": 0},
+                            {"cmd": command, "login": False, "yield_time_ms": 0},
                         )
                         if mode == "launch"
                         else ("write_stdin", {"session_id": terminal_id, "yield_time_ms": 30000})

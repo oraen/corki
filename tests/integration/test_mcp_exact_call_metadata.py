@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from copy import deepcopy
 
 import httpx
@@ -197,7 +198,7 @@ def test_exact_binding_controls_visibility_approval_and_account(
             assert len(prompts) == int(denied)
             if calls:
                 assert calls[0]["name"] == "Gmail_Read" and calls[0]["arguments"] == arguments
-            with sqlite3.connect(tmp_path / "metadata.db") as db:
+            with closing(sqlite3.connect(tmp_path / "metadata.db")) as db:
                 rows = db.execute(
                     "SELECT status,result_json FROM tool_executions WHERE tool_name LIKE 'mcp__%'"
                 ).fetchall()

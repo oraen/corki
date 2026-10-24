@@ -218,11 +218,12 @@ def test_real_stdio_initialization_contract(tmp_path, kind):
                 "assert reply == {'jsonrpc':'2.0',"
                 "'error':{'code':-32600,'message':'Invalid request'}}\n"
             )
+        wire_response = (prefix + json.dumps(packet) + "\n").encode("utf-8")
         script = (
             "import json,sys,time\n"
             "request=json.loads(sys.stdin.readline())\n"
             + handshake_error
-            + f"sys.stdout.write({prefix + json.dumps(packet) + chr(10)!r})\n"
+            + f"sys.stdout.buffer.write({wire_response!r})\n"
             "sys.stdout.flush()\n"
             "for line in sys.stdin: pass\n"
         )
@@ -233,7 +234,9 @@ def test_real_stdio_initialization_contract(tmp_path, kind):
                 command=sys.executable,
                 args=("-u", "-c", script),
                 cwd=tmp_path,
-                timeout_seconds=0.5,
+                # A real interpreter must start before the protocol assertions.
+                # This is not a startup latency test (e.g. emulated Windows CI).
+                timeout_seconds=30,
             )
         )
         try:

@@ -2,12 +2,12 @@
 
 import asyncio
 import json
-import shlex
 import sqlite3
-import sys
+from contextlib import closing
 from dataclasses import replace
 
 import pytest
+from platform_commands import python_command
 from test_code_mode import request_call
 
 from corki.config import CorkiSettings
@@ -44,18 +44,16 @@ def test_cold_model_checkpoint_receives_completed_async_context(
     tmp_path, monkeypatch, event_name, projection_interrupted
 ):
     async def scenario():
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                (
-                    "import json,time; from pathlib import Path; "
-                    "Path('count').open('a').write('once\\n'); "
-                    "exec(\"while not Path('release').exists(): time.sleep(0.01)\"); "
-                    f"print(json.dumps({{'hookSpecificOutput':{{'hookEventName':'{event_name}',"
-                    "'additionalContext':'CHECKPOINT_ASYNC'}}))"
-                ),
-            ]
+        command = python_command(
+            tmp_path,
+            (
+                "import json,time; from pathlib import Path; "
+                "\nwith Path('count').open('a', encoding='utf-8') as output:\n"
+                "    output.write('once\\n')\n"
+                "exec(\"while not Path('release').exists(): time.sleep(0.01)\"); "
+                f"print(json.dumps({{'hookSpecificOutput':{{'hookEventName':'{event_name}',"
+                "'additionalContext':'CHECKPOINT_ASYNC'}}))"
+            ),
         )
         fingerprint = command_identity(
             {"type": "command", "command": command, "async": True},
@@ -294,7 +292,7 @@ def test_cold_model_checkpoint_receives_completed_async_context(
             assert (tmp_path / "count").read_text() == "once\n"
         finally:
             await cold.aclose()
-            with sqlite3.connect(tmp_path / "state.db") as db:
+            with closing(sqlite3.connect(tmp_path / "state.db")) as db:
                 assert db.execute(
                     "SELECT memory_mode FROM threads WHERE id=?", (thread,)
                 ).fetchone() == ("enabled",)

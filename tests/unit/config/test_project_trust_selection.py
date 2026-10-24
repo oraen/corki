@@ -181,6 +181,7 @@ def test_exact_metadata_limit_and_logical_main_alias(tmp_path):
     assert trust_git_root(checkout) == alias
 
 
+@pytest.mark.skipif(os.name == "nt", reason="WSL uses POSIX paths and case semantics")
 @pytest.mark.parametrize("canonical_exists", [False, True])
 def test_wsl_folds_only_successfully_canonicalized_drive_paths(monkeypatch, canonical_exists):
     path = Path("/mnt/C/Project")

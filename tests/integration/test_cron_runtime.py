@@ -2,11 +2,13 @@
 
 import asyncio
 import json
+import os
 from dataclasses import replace
 
 from test_thread_settings_update import settings
 
 from corki.core.runtime import LangGraphRuntime
+from corki.cron.locking import FileLock
 from corki.cron.store import CronStore
 from corki.cron.worker import supervise
 from corki.models import ModelCompleted
@@ -99,7 +101,7 @@ def test_detached_worker_finishes_after_launcher_exit(tmp_path):
             request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             assert request["model"] == "task-model"
             entered.set()
-            release.wait(10)
+            release.wait(60 if os.name == "nt" else 10)
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
@@ -156,10 +158,10 @@ def test_detached_worker_finishes_after_launcher_exit(tmp_path):
             [sys.executable, "-c", script, str(tmp_path), job],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=60 if os.name == "nt" else 10,
         )
         assert result.returncode == 0, result.stderr
-        assert entered.wait(10)
+        assert entered.wait(60 if os.name == "nt" else 10), store.history(job)
         # Launcher has exited, but a live worker lock prevents a replacement ticker retiring it.
         from corki.cron.service import CronService
 
@@ -167,7 +169,7 @@ def test_detached_worker_finishes_after_launcher_exit(tmp_path):
         replacement.recover(now=time.time() + 100)
         assert store.history(job)[0]["status"] == "running"
         release.set()
-        for _ in range(100):
+        for _ in range(600 if os.name == "nt" else 100):
             row = store.history(job)[0]
             if row["status"] not in {"claimed", "running"}:
                 break
@@ -177,5 +179,25 @@ def test_detached_worker_finishes_after_launcher_exit(tmp_path):
         assert len(store.history(job)) == 1
     finally:
         release.set()
-        server.shutdown()
-        server.server_close()
+        try:
+            # A failed assertion must also cancel this isolated occurrence.
+            # Closing the HTTP server alone does not stop a detached worker.
+            current = next(item for item in store.list()["jobs"] if item["id"] == job)
+            store.change(job, "stop", version=current["version"])
+            deadline = time.monotonic() + 30
+            while True:
+                rows = store.history(job)
+                released = True
+                for row in rows:
+                    lock = FileLock(store.root / "locks" / (row["id"] + ".lock"))
+                    try:
+                        released = lock.acquire() and released
+                    finally:
+                        lock.close()
+                if released and all(row["status"] not in {"claimed", "running"} for row in rows):
+                    break
+                assert time.monotonic() < deadline, "detached fixture worker did not stop"
+                time.sleep(0.05)
+        finally:
+            server.shutdown()
+            server.server_close()

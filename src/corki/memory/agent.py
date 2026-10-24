@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import shutil
 import tempfile
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, nullcontext
@@ -24,6 +23,8 @@ from corki.memory.consolidation_prompt import build_consolidation_prompt
 from corki.memory.permissions import MemoryPermissionSnapshot
 from corki.memory.workspace_lease import WorkspaceLeases
 from corki.models.types import ModelCompleted, ModelItemCompleted
+from corki.platforms.cleanup import remove_owned_tree
+from corki.platforms.paths import is_link_path
 from corki.prompting import PromptStore
 from corki.protocol.events import TurnCompleted
 from corki.protocol.ids import new_session_id
@@ -129,7 +130,7 @@ async def prepare_agent(
     prepared = None
     try:
         if shared:
-            if not root.is_absolute() or root.is_symlink() or not root.is_dir():
+            if not root.is_absolute() or is_link_path(root) or not root.is_dir():
                 raise ValueError("shared memory root must be an existing absolute directory")
             if prepare_shared is None:
                 await _blocking(git_baseline.prepare, root)
@@ -169,7 +170,7 @@ async def prepare_agent(
         if prepared is None or not prepared.retained:
             if prepared is not None and prepared.execution_lease is not None:
                 prepared.execution_lease.close()
-            await _blocking(shutil.rmtree, temporary)
+            await _blocking(remove_owned_tree, temporary)
 
 
 async def run_agent(
@@ -248,7 +249,7 @@ async def _run_prepared_agent(
     async def retained_cleanup():
         if prepared.execution_lease is not None:
             prepared.execution_lease.close()
-        await _blocking(shutil.rmtree, temporary)
+        await _blocking(remove_owned_tree, temporary)
 
     try:
         if prepared.shared:

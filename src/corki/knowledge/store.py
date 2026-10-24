@@ -5,12 +5,12 @@ import json
 import os
 import re
 import sqlite3
-import sys
 import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from corki.platforms.liveness import process_alive
 from corki.tools.bm25 import BM25Scorer
 from corki.tools.tokenizer import tokenize
 
@@ -21,19 +21,15 @@ def digest(text):
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def process_alive(pid):
-    if not pid:
-        return False
-    # Windows os.kill is not a portable existence probe; use lease expiry there.
-    if sys.platform == "win32":
-        return True
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
+def document_by_path(db, relative):
+    row = db.execute("SELECT * FROM documents WHERE path=?", (relative,)).fetchone()
+    if row is None and os.name == "nt" and "/" in relative:
+        legacy = relative.replace("/", "\\")
+        row = db.execute("SELECT * FROM documents WHERE path=?", (legacy,)).fetchone()
+        if row is not None:
+            db.execute("UPDATE documents SET path=? WHERE id=?", (relative, row["id"]))
+            row = db.execute("SELECT * FROM documents WHERE id=?", (row["id"],)).fetchone()
+    return row
 
 
 def tokens(text):
@@ -80,9 +76,16 @@ class KnowledgeStore:
                     PRIMARY KEY(document_id,batch)
                 );
             """)
-            columns = {r[1] for r in db.execute("PRAGMA table_info(documents)")}
-            if "owner_pid" not in columns:
-                db.execute("ALTER TABLE documents ADD COLUMN owner_pid INTEGER NOT NULL DEFAULT 0")
+            # Serialize legacy schema inspection and ALTER across CLI, manager
+            # and background workers. Release this transaction before yielding
+            # so callers may start their own explicit transaction.
+            with db:
+                db.execute("BEGIN IMMEDIATE")
+                columns = {r[1] for r in db.execute("PRAGMA table_info(documents)")}
+                if "owner_pid" not in columns:
+                    db.execute(
+                        "ALTER TABLE documents ADD COLUMN owner_pid INTEGER NOT NULL DEFAULT 0"
+                    )
             self.path.chmod(0o600)
             with db:
                 yield db
@@ -96,10 +99,12 @@ class KnowledgeStore:
         return path
 
     def sync(self, path, title, content):
-        relative = str(Path(path).resolve().relative_to(self.root.resolve()))
+        # Persist portable separators, matching built-in document identities.
+        # Windows backslashes would create a second row for the same document.
+        relative = Path(path).resolve().relative_to(self.root.resolve()).as_posix()
         fingerprint = digest(content)
         with self.connect() as db:
-            row = db.execute("SELECT * FROM documents WHERE path=?", (relative,)).fetchone()
+            row = document_by_path(db, relative)
             if row is None:
                 identity = uuid.uuid4().hex
                 db.execute(
@@ -183,7 +188,7 @@ class KnowledgeStore:
             doc = db.execute("SELECT * FROM documents WHERE id=?", (identity,)).fetchone()
             if doc is None or doc["job"] != job or doc["hash"] != fingerprint:
                 return False
-            if digest(self.source(doc["path"]).read_text()) != fingerprint:
+            if digest(self.source(doc["path"]).read_text(encoding="utf-8")) != fingerprint:
                 raise ValueError("文档已变化，请重新处理")
             db.execute("DELETE FROM segments WHERE document_id=?", (identity,))
             for ordinal, row in enumerate(rows):
@@ -221,7 +226,7 @@ class KnowledgeStore:
 
     def _live(self, doc):
         try:
-            return digest(self.source(doc["path"]).read_text()) == doc["hash"]
+            return digest(self.source(doc["path"]).read_text(encoding="utf-8")) == doc["hash"]
         except (OSError, ValueError):
             return False
 

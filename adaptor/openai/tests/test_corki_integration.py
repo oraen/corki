@@ -28,7 +28,7 @@ def test_real_responses_adapter_can_consume_gateway_stream(tmp_path, content_typ
     with running(tmp_path, upstream) as (server, _, _):
 
         async def scenario():
-            url = f"http://127.0.0.1:{server.server_port}/v1"
+            url = f"http://127.0.0.1:{server.server_port}/openai/v1"
             async with httpx.AsyncClient(trust_env=False) as client:
                 model = OpenAIResponsesModel(
                     api_key="local-secret",
@@ -66,7 +66,7 @@ def test_interrupted_upstream_is_not_reported_as_completed(tmp_path):
     with running(tmp_path, upstream) as (server, _, _):
 
         async def scenario():
-            url = f"http://127.0.0.1:{server.server_port}/v1"
+            url = f"http://127.0.0.1:{server.server_port}/openai/v1"
             async with httpx.AsyncClient(trust_env=False) as client:
                 model = OpenAIResponsesModel(
                     api_key="local-secret",
@@ -157,7 +157,7 @@ def test_chat_gateway_tool_roundtrip_and_usage(tmp_path):
     with running(tmp_path, upstream) as (server, _, _):
 
         async def scenario():
-            url = f"http://127.0.0.1:{server.server_port}"
+            url = f"http://127.0.0.1:{server.server_port}/openai"
             async with httpx.AsyncClient(trust_env=False) as client:
                 adapter = OpenAICompatibleModel(
                     api_key="local-secret",
@@ -217,7 +217,7 @@ def test_real_runtime_grouped_instructions_reach_gateway(tmp_path):
     with running(tmp_path, upstream) as (server, _, _):
 
         async def scenario():
-            url = f"http://127.0.0.1:{server.server_port}"
+            url = f"http://127.0.0.1:{server.server_port}/openai"
             settings = CorkiSettings(
                 working_directory=tmp_path,
                 model="deepseek-flash",
@@ -273,7 +273,7 @@ def test_configured_model_and_effort_reach_upstream(tmp_path, model, effort):
             convert_toml(f'''[agent]
 model = "{model}"
 [provider]
-base_url = "http://127.0.0.1:{server.server_port}"
+base_url = "http://127.0.0.1:{server.server_port}/openai"
 api_key = "local-secret"
 api_mode = "responses"
 reasoning_effort = "{effort}"
@@ -325,7 +325,7 @@ def test_certificate_failure_is_not_retried_by_responses_adapter(tmp_path):
     with running(tmp_path, upstream) as (server, _, _):
 
         async def scenario():
-            url = f"http://127.0.0.1:{server.server_port}"
+            url = f"http://127.0.0.1:{server.server_port}/openai"
             async with httpx.AsyncClient(trust_env=False) as client:
                 adapter = OpenAIResponsesModel(
                     api_key="local-secret",

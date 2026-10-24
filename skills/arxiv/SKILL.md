@@ -15,6 +15,27 @@ metadata:
 
 Search and retrieve academic papers from arXiv via their free REST API. No API key, no dependencies — just curl.
 
+## Host shell and paths
+
+Use the OS and shell reported by Corki. Prefer the bundled Python helper for searches;
+resolve `scripts/search_arxiv.py` relative to this skill's actual directory, not the
+project working directory. Detect Python 3 first (`python3`/`python` on macOS,
+`python` or `py -3` on Windows), and quote the script's absolute path.
+
+The `bash` examples below use POSIX shell syntax. In Windows PowerShell:
+
+- Use `curl.exe` rather than the `curl` alias, and detect commands with `Get-Command`.
+- Do not paste Bash backslash continuations or nested multi-line `python -c` examples.
+  Use the helper, or save the Python snippet to a temporary UTF-8 `.py` file.
+- Save downloaded XML to a file and parse it directly, avoiding PowerShell 5.1's
+  text-pipeline re-encoding of non-ASCII abstracts and author names.
+- For POST examples, write the JSON to a UTF-8 file and pass `--data-binary '@path'`,
+  rather than relying on nested JSON quotes surviving Windows command argument parsing.
+- Use the system temporary directory (`[System.IO.Path]::GetTempPath()` and `Join-Path`)
+  for scratch files. No Bash, WSL, `grep`, or `sed` installation is required.
+
+These adjustments apply to the Semantic Scholar examples as well.
+
 ## Quick Reference
 
 | Action | Command |

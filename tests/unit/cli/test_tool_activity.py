@@ -9,6 +9,19 @@ from corki.cli.terminal import TerminalUI
 from corki.cli.tool_activity import Activity, classify, summary_rows
 
 
+@pytest.fixture(autouse=True)
+def posix_command_display(monkeypatch):
+    # The examples below are POSIX shell syntax; exercise that parser on either OS.
+    # Windows-path cases override this facade and verify raw display instead.
+    monkeypatch.setattr("corki.cli.tool_activity.os", SimpleNamespace(name="posix"))
+
+
+@pytest.mark.parametrize("command", [r"cat C:\资料\说明.txt", r'cat "C:\My Files\notes.txt"'])
+def test_windows_paths_keep_original_tool_display(monkeypatch, command):
+    monkeypatch.setattr("corki.cli.tool_activity.os", SimpleNamespace(name="nt"))
+    assert classify("exec_command", json.dumps({"cmd": command})) == ()
+
+
 @pytest.mark.parametrize(
     "command,expected",
     [

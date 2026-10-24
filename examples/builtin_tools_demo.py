@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import shlex
-import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+from _commands import python_script_command
 
 from PIL import Image
 
@@ -46,8 +46,9 @@ def _completed_call(
 class BuiltinToolModel:
     """Drive deterministic calls while still consuming real prior tool output."""
 
-    def __init__(self) -> None:
+    def __init__(self, workspace: Path) -> None:
         self.requests: list[ModelRequest] = []
+        self.workspace = workspace
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelEvent]:
         self.requests.append(request)
@@ -76,11 +77,11 @@ class BuiltinToolModel:
             )
         elif step == 3:
             code = "import sys;print('ready',flush=True);print(sys.stdin.readline().strip())"
-            command = f"{shlex.quote(sys.executable)} -u -c {shlex.quote(code)}"
+            command = python_script_command(self.workspace, "demo-input.py", code)
             yield _completed_call(
                 request,
                 "exec_command",
-                {"cmd": command, "login": False, "tty": True, "yield_time_ms": 50},
+                {**command, "tty": True, "yield_time_ms": 50},
             )
         elif step == 4:
             last_result = next(
@@ -115,7 +116,7 @@ async def _run(workspace: Path) -> dict[str, object]:
     # A valid 1x1 transparent PNG keeps the visual-tool exercise deterministic.
     with Image.new("RGBA", (1, 1)) as pixel:
         pixel.save(workspace / "pixel.png")
-    model = BuiltinToolModel()
+    model = BuiltinToolModel(workspace)
     runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=workspace,
@@ -128,8 +129,10 @@ async def _run(workspace: Path) -> dict[str, object]:
         home_path=workspace / ".runtime",
         model=model,
     )
-    events = [event async for event in runtime.stream("exercise every default tool")]
-    await runtime.aclose()
+    try:
+        events = [event async for event in runtime.stream("exercise every default tool")]
+    finally:
+        await runtime.aclose()
 
     advertised = {tool.name for tool in model.requests[0].tools}
     expected = {"exec_command", "write_stdin", "apply_patch", "update_plan", "view_image"}

@@ -419,23 +419,28 @@ def test_parallel_runtimes_persist_the_same_rule_without_duplicate_lines(tmp_pat
     async def scenario():
         (tmp_path / "home").mkdir()
         targets = [tmp_path / "one", tmp_path / "two"]
-        runtimes = [
-            await runtime_for(
-                tmp_path,
-                compiler,
-                Model(
-                    "direct",
-                    [
-                        {
-                            "cmd": "touch " + shlex.quote(str(target)),
-                            "sandbox_permissions": "require_escalated",
-                            "prefix_rule": ["touch"],
-                        }
-                    ],
-                ),
-            )
-            for target in targets
-        ]
+        runtimes = []
+        try:
+            for target in targets:
+                runtimes.append(
+                    await runtime_for(
+                        tmp_path,
+                        compiler,
+                        Model(
+                            "direct",
+                            [
+                                {
+                                    "cmd": "touch " + shlex.quote(str(target)),
+                                    "sandbox_permissions": "require_escalated",
+                                    "prefix_rule": ["touch"],
+                                }
+                            ],
+                        ),
+                    )
+                )
+        except BaseException:
+            await asyncio.gather(*(runtime.aclose() for runtime in runtimes))
+            raise
         ready, prompts = asyncio.Event(), []
 
         for runtime in runtimes:

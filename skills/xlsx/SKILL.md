@@ -45,8 +45,21 @@ scripts are argparse CLIs that print JSON and use explicit UTF-8 I/O.
 
 ## How to Run
 
-Run the helper scripts with the `exec_command` tool from this skill's
-`scripts/` directory (every script supports `--help`):
+Resolve helper paths against this skill's installed directory. The examples
+below assume that directory is the working directory; otherwise pass the helper's
+quoted absolute path to a detected Python 3 interpreter. Every script supports `--help`.
+
+On Windows, detect `python` or `py -3` rather than assuming a `python3` executable.
+PowerShell expands `$` inside double quotes: use literal single quotes for formulas,
+for example `--set 'A1==SUM($B$2:$B$9)'`. For complex JSON, prefer a UTF-8 specification
+file and `xlsx_create.py`, or a Python wrapper that passes an argument list; do not
+paste Bash quoting into Windows PowerShell 5.1. Keep workbook paths as separate arguments.
+
+Close the target workbook in Excel before replacing it on Windows. If it is locked,
+use `--out` to write a distinct file where the helper supports that option, or ask the
+user to close it; never terminate their spreadsheet application. Optional LibreOffice
+recalculation requires `soffice` on PATH on either OS; check the returned `recalculated`
+field rather than treating exit code 0 as proof that formulas were evaluated.
 
 ```bash
 python scripts/xlsx_create.py spec.json report.xlsx   # build from JSON spec
@@ -194,4 +207,3 @@ LibreOffice or hand the file to the user unconverted.
   where expected.
 - For a full visual check, open in LibreOffice:
   `soffice --headless --convert-to pdf out.xlsx` and inspect the PDF.
-

@@ -1,0 +1,4 @@
+# Keep the standalone Windows helper independent of an installed VC runtime.
+# These are the MSVC flags used by the pinned Codex build.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "link-arg=/STACK:8388608", "-C", "target-feature=+crt-static"]

@@ -1,6 +1,8 @@
 // Read-only browser regression. Use a disposable manager home.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 
 const base=process.env.MANAGER_TEST_URL||'http://127.0.0.1:17004';
 const debug=process.env.CHROME_DEBUG_PORT||'9227';
@@ -71,7 +73,7 @@ try{
   assert(await evaluate('document.querySelector(".manual-detail").textContent.includes("Responses")'));
   assert(await evaluate('JSON.parse(document.querySelector(".manual-example").textContent).providers.demo.api_mode==="chat_completions"'));
   const image=await cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
-  fs.writeFileSync('/tmp/corki-config-manual.png',Buffer.from(image.data,'base64'));
+  fs.writeFileSync(join(tmpdir(),'corki-config-manual.png'),Buffer.from(image.data,'base64'));
   await click('[data-manual-field="skills"]');
   await click('[data-manual-field="skills.config"]');
   await click('[data-manual-field="skills.config.[0]"]');

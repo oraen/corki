@@ -29,9 +29,9 @@ def _die(message: str, code: int = 1) -> None:
 def _dependency_hint(package: str) -> str:
     return (
         "Activate the repo-selected environment first, then install it with "
-        f"`uv pip install {package}`. If this repo uses a local virtualenv, start with "
-        "`source .venv/bin/activate`; otherwise use this repo's configured shared fallback "
-        "environment."
+        f"`uv pip install {package}` or the selected Python interpreter with "
+        f"`-m pip install {package}`. A local virtualenv uses `.venv/Scripts/python.exe` "
+        "on Windows and `.venv/bin/python` on macOS."
     )
 
 
@@ -446,4 +446,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     main()

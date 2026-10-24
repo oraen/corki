@@ -7,6 +7,8 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
+from corki.platforms.processes import close_job, create_subprocess_exec
+
 
 async def _cleanup(spawn: asyncio.Task) -> None:
     try:
@@ -14,6 +16,7 @@ async def _cleanup(spawn: asyncio.Task) -> None:
     except (Exception, asyncio.CancelledError):
         return
     try:
+        close_job(process)
         if os.name == "posix":
             from corki.tools.builtin.process_groups import signal_owned_group
 
@@ -43,7 +46,7 @@ async def run_owned(
     if len(data) > 8_000_000:
         raise ValueError("sandbox helper input exceeds its limit")
     spawn = asyncio.create_task(
-        asyncio.create_subprocess_exec(
+        create_subprocess_exec(
             *argv,
             cwd=cwd,
             env=env,

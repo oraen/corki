@@ -9,6 +9,7 @@ import pytest
 from test_execution_approval_cancel import observe
 from test_execution_policy_live_inheritance import Model, run, runtime_for
 from test_execution_policy_live_inheritance import compiler as compiler
+from test_execution_policy_live_inheritance import live_compiler as live_compiler
 
 from corki.config import CorkiSettings
 from corki.config.execution_requirements import ExecutionRequirementsLayer
@@ -33,9 +34,9 @@ from corki.protocol.items import ToolResultItem
     ],
 )
 def test_pinned_denial_predicate_preserves_order_and_backend_identity(
-    tmp_path, compiler, sandbox, code, output, expected
+    tmp_path, live_compiler, sandbox, code, output, expected
 ):
-    permissions = ExecutionPermissions(compiler, tmp_path, '{"type":"read-only"}')
+    permissions = ExecutionPermissions(live_compiler, tmp_path, '{"type":"read-only"}')
     assert asyncio.run(is_sandbox_denial(permissions, sandbox, code, output)) is expected
 
 

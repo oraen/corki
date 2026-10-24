@@ -29,6 +29,12 @@ from corki.models.openai_compatible import (
 )
 from corki.models.request_metadata import filter_request_metadata
 from corki.models.request_settings import resolve_reasoning, resolve_service_tier
+from corki.models.request_watch import (
+    request_completed,
+    request_failed,
+    request_wait,
+    response_lines,
+)
 from corki.models.response_completion import parse_response_completion
 from corki.models.response_content import ResponseContent
 from corki.models.response_errors import failed_response, incomplete_response
@@ -152,6 +158,7 @@ class OpenAIResponsesModel:
                         yield event
                 return
             except ModelError as exc:
+                await request_failed(exc)
                 safe_error = sanitized_model_error(exc, self._api_key)
                 if (
                     request.harness_managed_retries
@@ -167,7 +174,7 @@ class OpenAIResponsesModel:
                 if delay is None:
                     delay = backoff(self._retry_base_seconds, attempt - 1)
                 yield ModelRetrying(attempt, self._max_retries, delay, str(safe_error))
-                await asyncio.sleep(delay)
+                await request_wait(asyncio.sleep(delay))
 
     def _build_payload(self, request: ModelRequest) -> dict[str, Any]:
         request_tool_aliases(request)
@@ -254,7 +261,7 @@ class OpenAIResponsesModel:
                 base_seconds=self._retry_base_seconds,
                 encode_json=dumps_wire,
             ) as response:
-                async for line in response.aiter_lines():
+                async for line in response_lines(response):
                     if not line.startswith("data:"):
                         continue
                     data = line[5:].strip()
@@ -525,6 +532,7 @@ class OpenAIResponsesModel:
                 finished_items.append(pending)
                 yield ModelItemCompleted(pending)
         # Added/delta buffers are previews, not completed executable tool calls.
+        await request_completed()
         yield ModelCompleted(
             tuple(finished_items), usage=usage, provider_metadata=metadata, end_turn=end_turn
         )

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 from corki.protocol.ids import new_thread_id, new_turn_id
 from corki.protocol.items import AssistantMessageItem, new_step_id
@@ -16,7 +17,7 @@ def test_old_message_without_phase_can_be_idempotently_appended(tmp_path):
         await repository.create_thread(thread, tmp_path)
         item = AssistantMessageItem("old", turn, new_step_id())
         await repository.append_items(thread, (item,))
-        with sqlite3.connect(repository.path) as connection:
+        with closing(sqlite3.connect(repository.path)) as connection, connection:
             payload = json.loads(
                 connection.execute("SELECT payload_json FROM conversation_items").fetchone()[0]
             )

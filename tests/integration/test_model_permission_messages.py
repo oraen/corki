@@ -9,6 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from platform_commands import python_command
 
 from corki.code_mode.service import CodeModeService
 from corki.config import CorkiSettings
@@ -44,8 +45,8 @@ def test_catalog_messages_are_used_by_runtime_context(tmp_path, mode, native, va
         if mode != "direct" and not CodeModeService.available():
             pytest.skip("install corki[code-mode]")
         compiler = os.environ.get("CORKI_TEST_SANDBOX_COMPILER")
-        if native and (not compiler or sys.platform != "darwin"):
-            pytest.skip("requires explicit native compiler and macOS")
+        if native and not compiler:
+            pytest.skip("requires explicit native compiler")
         sandbox = {
             "custom": "catalog network={{ network_access }} compact={{network_access}} #{literal}",
             "empty": "",
@@ -153,7 +154,7 @@ def test_bundled_auto_review_model_suppresses_default_permission_sections(tmp_pa
         if mode != "direct" and not CodeModeService.available():
             pytest.skip("install corki[code-mode]")
         compiler = os.environ.get("CORKI_TEST_SANDBOX_COMPILER")
-        if native and (not compiler or sys.platform != "darwin"):
+        if native and not compiler:
             pytest.skip("requires native compiler")
         model = Model()
         runtime = await LangGraphRuntime.acreate(
@@ -201,7 +202,7 @@ def test_step_switch_keeps_turn_messages_but_next_turn_uses_new_model(tmp_path, 
         if mode != "direct" and not CodeModeService.available():
             pytest.skip("install corki[code-mode]")
         compiler = os.environ.get("CORKI_TEST_SANDBOX_COMPILER")
-        if native and (not compiler or sys.platform != "darwin"):
+        if native and not compiler:
             pytest.skip("requires native compiler")
         entered, release = asyncio.Event(), asyncio.Event()
 
@@ -370,14 +371,19 @@ def test_empty_model_messages_do_not_disable_execution_gate(tmp_path, mode, nati
         if mode != "direct" and not CodeModeService.available():
             pytest.skip("install corki[code-mode]")
         compiler = os.environ.get("CORKI_TEST_SANDBOX_COMPILER")
-        if native and (not compiler or sys.platform != "darwin"):
-            pytest.skip("requires native compiler and macOS")
+        if native and not compiler:
+            pytest.skip("requires native compiler")
         target = tmp_path / "must-not-execute"
+        command = (
+            python_command(tmp_path, f"from pathlib import Path\nPath({str(target)!r}).touch()\n")
+            if os.name == "nt"
+            else "touch " + shlex.quote(str(target))
+        )
         model = CommandModel(
             mode,
             [
                 {
-                    "cmd": "touch " + shlex.quote(str(target)),
+                    "cmd": command,
                     "sandbox_permissions": "require_escalated",
                 }
             ],

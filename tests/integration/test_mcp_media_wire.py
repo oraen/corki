@@ -4,6 +4,7 @@ import io
 import json
 import sqlite3
 import wave
+from contextlib import closing
 from dataclasses import replace
 
 import httpx
@@ -179,7 +180,7 @@ def test_mcp_ordered_media_and_cipher_reach_model_without_leaking_into_logs(
                 assert parts[3] == TextContent(
                     "<audio content omitted because you do not support audio input>"
                 )
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 (value,) = db.execute(
                     "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs::read'"
                 ).fetchone()

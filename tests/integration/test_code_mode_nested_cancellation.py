@@ -2,6 +2,7 @@
 
 import asyncio
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -100,7 +101,7 @@ def test_independent_nested_cancellation_settles_promise(tmp_path, self_cancel, 
             assert len(requests) == 2 and len(calls) == 1 and finalized.is_set()
             assert not runtime._code_mode.cells
             assert all(task.done() for task in runtime._code_mode.calls)
-            with sqlite3.connect(tmp_path / "sessions.db") as db:
+            with closing(sqlite3.connect(tmp_path / "sessions.db")) as db:
                 rows = db.execute(
                     "SELECT status,result_json FROM tool_executions WHERE tool_name='probe'"
                 ).fetchall()

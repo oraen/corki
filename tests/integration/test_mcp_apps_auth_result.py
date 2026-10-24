@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 import httpx
 import pytest
@@ -172,7 +173,7 @@ def test_opaque_apps_result_is_durable_without_authorization_or_rpc_replay(
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert rpc == ["Mail_Read"] and not prompts and len(clients) == 1
             assert not runtime._mcp_manager.elicitations._pending
-            with sqlite3.connect(tmp_path / "auth.db") as db:
+            with closing(sqlite3.connect(tmp_path / "auth.db")) as db:
                 rows = db.execute(
                     "SELECT status,result_json FROM tool_executions WHERE tool_name LIKE 'mcp__%'"
                 ).fetchall()

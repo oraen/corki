@@ -1,3 +1,4 @@
+import { python } from './platform.mjs';
 import {poll} from './wait.mjs';
 import {_electron as electron} from 'playwright';
 import http from 'node:http';
@@ -8,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 const home=await mkdtemp(path.join(os.tmpdir(),'corki-attachments-'));
-const python=path.resolve('../.venv/bin/python');
+
 const imagePath=path.join(home,'原图 测试.png'),textPath=path.join(home,'说明 文本.md'),badPath=path.join(home,'损坏.png');
 execFileSync(python,['-c','import os,sys;from PIL import Image;Image.frombytes("RGB",(500,500),os.urandom(750000)).save(sys.argv[1])',imagePath]);
 const original=await readFile(imagePath);assert(original.length>500000 && original.length<1000000);
@@ -80,7 +81,7 @@ try{
  await page.getByRole('button',{name:'复制回答原文'}).filter({hasText:'已复制'}).waitFor();
  assert.equal(await app.evaluate(({clipboard})=>clipboard.readText()),reply);
  await page.getByRole('button',{name:'查看图片 1'}).click();await page.locator('.image-preview').waitFor();
- await page.screenshot({path:'/tmp/corki-attachment-history.png'});
+ await page.screenshot({path:path.join(home,'attachment-history.png')});
  assert.deepEqual(errors,[]);
  console.log('PASS large image reference draft/reload, actual drag/drop, text preview, model rejection, malformed image, full original input, lazy history image and full Unicode answer copy');
 }catch(error){if(app)console.error((await (await app.firstWindow()).locator('body').innerText()).slice(-2500));throw error}

@@ -111,7 +111,8 @@ def test_server_request_is_replied_without_consuming_same_id_outbound_rpc(wire, 
                     "stdio",
                     command=sys.executable,
                     args=("-u", str(FIXTURE)),
-                    timeout_seconds=0.3,
+                    # Protocol behavior must not depend on interpreter startup speed.
+                    timeout_seconds=30,
                 )
             )
             if wire == "stdio"
@@ -158,7 +159,7 @@ def test_remote_cancellation_is_rpc_error_not_local_cancel_control_flow(wire):
                     "stdio",
                     command=sys.executable,
                     args=("-u", str(FIXTURE)),
-                    timeout_seconds=0.3,
+                    timeout_seconds=30,
                 )
             )
             if wire == "stdio"

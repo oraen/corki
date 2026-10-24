@@ -2,10 +2,9 @@
 
 import asyncio
 import json
-import shlex
-import sys
 
 import pytest
+from platform_commands import python_command
 from test_bundled_execution import compiler as compiler
 from test_stdin_approval import Model, call
 
@@ -20,16 +19,13 @@ from corki.core.stop_hooks import command_identity
 @pytest.mark.parametrize("poll", [False, True])
 def test_real_terminal_continuation_skips_pre_hook(tmp_path, compiler, mode, poll):
     async def scenario():
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
-                "f=Path('stdin-hooks.jsonl'); "
-                "f.open('a').write(json.dumps(p)+'\\n'); "
-                "print(json.dumps({} if p['tool_name']=='Bash' else "
-                "{'decision':'block','reason':'unexpected second pre hook'}))",
-            ]
+        command = python_command(
+            tmp_path,
+            "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
+            "f=Path('stdin-hooks.jsonl'); "
+            "f.open('a').write(json.dumps(p)+'\\n'); "
+            "print(json.dumps({} if p['tool_name']=='Bash' else "
+            "{'decision':'block','reason':'unexpected second pre hook'}))",
         )
         source = tmp_path / "config.toml"
         # Match Bash and write_stdin but not the outer Code Mode exec wrapper.

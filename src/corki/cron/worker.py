@@ -6,6 +6,8 @@ from contextlib import aclosing, suppress
 from dataclasses import replace
 from pathlib import Path
 
+from corki.platforms.paths import directory_error_message
+
 from .diagnostics import exception_log
 from .locking import FileLock
 from .models import validate_model
@@ -48,7 +50,7 @@ async def execute(store, identity, *, factory=None, settings_factory=None, idle_
     if workdir == store.home / "main/default":
         workdir.mkdir(parents=True, exist_ok=True)
     if not workdir.is_dir():
-        raise JobFailed("工作目录不存在，请编辑任务")
+        raise JobFailed(directory_error_message(workdir, "工作目录不存在，请编辑任务"))
     try:
         overrides = {}
         if job.get("provider") or job.get("model"):

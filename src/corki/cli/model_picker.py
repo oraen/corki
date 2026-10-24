@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.text import Text
 
 from corki.cli.menu_overlay import MenuOverlay
+from corki.cli.theme import PROMPT_ACCENT
 from corki.protocol.settings import UNSET, UnsetSetting
 
 BACK = object()
@@ -270,7 +271,7 @@ async def choose_model(
                 wrapped = Text(label).wrap(console, max(1, width - 2))
             result = [
                 (
-                    "fg:ansicyan bold" if selected == index else "",
+                    f"{PROMPT_ACCENT} bold" if selected == index else "",
                     ("› " if selected == index and row == 0 else "  ") + line.plain + "\n",
                 )
                 for row, line in enumerate(wrapped)

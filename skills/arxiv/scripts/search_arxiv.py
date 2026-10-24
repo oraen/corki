@@ -82,6 +82,9 @@ def search(query=None, author=None, category=None, ids=None, max_results=5, sort
 
 
 if __name__ == "__main__":
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     args = sys.argv[1:]
     if not args or args[0] in {"-h", "--help"}:
         print(__doc__)

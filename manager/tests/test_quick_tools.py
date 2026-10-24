@@ -3,6 +3,7 @@
 import asyncio
 import importlib.util
 import json
+import os
 import shlex
 import subprocess
 from dataclasses import replace
@@ -19,7 +20,7 @@ spec.loader.exec_module(module)
 def store(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
-    (home / "settings.json").write_text('{"old_setting":true,"providers":{"old":{"models":{}}}}')
+    (home / "settings.json").write_text('{"old_setting":true,"providers":{"old":{"models":{}}}}', encoding="utf-8")
     return module.Store(home, tmp_path)
 
 
@@ -40,7 +41,7 @@ def configured_launch(store):
         "default": {"provider": "fixture", "model": "demo"},
         "providers": {"fixture": {"base_url": "https://example.test/v1", "api_key": "fixture-key",
                                    "api_mode": "chat_completions", "models": {"demo": {}}}},
-    }))
+    }), encoding="utf-8")
 
 
 def test_template_replaces_config_and_selects_default(store):
@@ -51,15 +52,26 @@ def test_template_replaces_config_and_selects_default(store):
     assert "old_setting" not in config and list(config["providers"]) == ["qwen"]
     assert config["default"] == {"provider": "qwen", "model": "qwen3.8-flash"}
     assert list(config["providers"]["qwen"]["models"]) == ["qwen3.8-flash"]
-    assert store.config.stat().st_mode & 0o777 == 0o600
-    assert any(json.loads(p.read_text())["content"] == old for p in store.config_versions().glob("*.json"))
+    if os.name == "nt":
+        from corki.platforms.windows_acl import WindowsPrivateACL
+        from corki.platforms.windows_file_handles import WindowsFiles
+
+        files = WindowsFiles()
+        handle = files.open(store.config, access=0x20000)
+        try:
+            WindowsPrivateACL().verify(handle)
+        finally:
+            files.close(handle)
+    else:
+        assert store.config.stat().st_mode & 0o777 == 0o600
+    assert any(json.loads(p.read_text(encoding="utf-8"))["content"] == old for p in store.config_versions().glob("*.json"))
     assert "fixture-" not in json.dumps(store.snapshot())
 
 
 def test_quick_add_preserves_existing_config_and_default(store):
     configured_launch(store)
     original = '// keep this comment\n' + store.config_text()
-    store.config.write_text(original)
+    store.config.write_text(original, encoding="utf-8")
     store.mutate(add_payload(store, models=["qwen3.8-flash", "qwen3.8-max"]))
     config = module.document.loads(store.config_text())
     assert config["default"] == {"provider": "fixture", "model": "demo"}
@@ -67,7 +79,7 @@ def test_quick_add_preserves_existing_config_and_default(store):
     assert set(config["providers"]["qwen"]["models"]) == {"qwen3.8-flash", "qwen3.8-max"}
     assert config["providers"]["qwen"]["models"]["qwen3.8-flash"]["context_window"] == 262144
     assert "// keep this comment" in store.config_text()
-    assert any(json.loads(p.read_text())["content"] == original for p in store.config_versions().glob("*.json"))
+    assert any(json.loads(p.read_text(encoding="utf-8"))["content"] == original for p in store.config_versions().glob("*.json"))
     saved_key = config["providers"]["qwen"]["api_key"]
     store.mutate(add_payload(store, models=["qwen3.7-plus", "qwen3.7-max"], key=""))
     config = module.document.loads(store.config_text())
@@ -77,7 +89,7 @@ def test_quick_add_preserves_existing_config_and_default(store):
 
 
 def test_quick_add_first_provider_sets_default(store):
-    store.config.write_text("{}")
+    store.config.write_text("{}", encoding="utf-8")
     store.mutate(add_payload(store))
     config = module.document.loads(store.config_text())
     assert config["default"] == {"provider": "qwen", "model": "qwen3.8-flash"}
@@ -92,7 +104,7 @@ def test_quick_add_rejects_duplicate_and_stale_revision(store):
     with pytest.raises(ValueError, match="密钥"):
         store.mutate(add_payload(store, models=["qwen3.7-plus"], key="replacement"))
     stale = add_payload(store, models=["qwen3.7-plus"], key="")
-    store.config.write_text(store.config_text() + "\n")
+    store.config.write_text(store.config_text() + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="更新"):
         store.mutate(stale)
     assert module.document.loads(store.config_text()) == module.document.loads(original)
@@ -193,7 +205,7 @@ def test_client_cannot_override_template_connection_or_default(store):
 
 def test_stale_setup_does_not_overwrite_external_edit(store):
     data = payload(store)
-    store.config.write_text('{"external":true}')
+    store.config.write_text('{"external":true}', encoding="utf-8")
     with pytest.raises(ValueError, match="冲突"):
         store.mutate(data)
     assert store.config_text() == '{"external":true}'
@@ -253,19 +265,19 @@ def test_default_directory_created_and_missing_custom_directory_rejected(store, 
 
 
 def test_directory_picker_cancel_is_not_an_error(store, monkeypatch):
+    monkeypatch.setattr(module.sys, "platform", "darwin")
     monkeypatch.setattr(store, "desktop_script", lambda *a, **k: None)
     assert store.choose_launch_directory() == {"path": None, "cancelled": True}
 
 
 @pytest.mark.parametrize("content", [
     "{not valid json", "{}",
-    json.dumps({"providers": {"fixture": {"models": {"demo": {}}}}}),
     json.dumps({"default": {"provider": "missing", "model": "demo"}, "providers": {}}),
     json.dumps({"default": {"provider": "fixture", "model": "missing"},
                 "providers": {"fixture": {"models": {"demo": {}}}}}),
 ])
 def test_launch_rejects_invalid_or_incomplete_config_before_side_effects(store, monkeypatch, content):
-    store.config.write_text(content)
+    store.config.write_text(content, encoding="utf-8")
     monkeypatch.setattr(module.sys, "platform", "darwin")
     monkeypatch.setattr(module.shutil, "which", lambda _: "/fixture/bin/corki")
     monkeypatch.setattr(store, "desktop_script", lambda *a, **k: pytest.fail("Opened terminal"))
@@ -274,25 +286,66 @@ def test_launch_rejects_invalid_or_incomplete_config_before_side_effects(store, 
     assert not (store.home / "main/default").exists()
 
 
-def test_desktop_launch_passes_directory_and_home_without_shell(store, monkeypatch, tmp_path):
+@pytest.mark.parametrize("platform", ["darwin", "win32"])
+def test_desktop_launch_passes_directory_and_home_without_shell(store, monkeypatch, tmp_path, platform):
     configured_launch(store)
     folder = tmp_path / "中文 项目 $(not-a-command)"
     folder.mkdir()
-    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(module.sys, "platform", platform)
     monkeypatch.setattr(store, "desktop_application", lambda: Path("/fixture/Corki.app/Contents/MacOS/Corki"))
     calls = []
     monkeypatch.setattr(module.subprocess, "Popen", lambda args, **kw: calls.append((args, kw)))
     monkeypatch.setenv("ELECTRON_RUN_AS_NODE", "1")
     result = store.quick_launch({"mode": "desktop", "directory": str(folder)})
     args, options = calls[0]
-    assert args == ["/fixture/Corki.app/Contents/MacOS/Corki", "--corki-directory", str(folder)]
+    assert args == [str(Path("/fixture/Corki.app/Contents/MacOS/Corki")), "--corki-directory", str(folder)]
     assert options["env"]["CORKI_HOME"] == str(store.home)
     assert "ELECTRON_RUN_AS_NODE" not in options["env"]
     assert options["cwd"] == str(folder)
-    assert options["start_new_session"]
+    assert options["start_new_session"] == (platform != "win32")
     assert result["mode"] == "desktop"
 
 
 def test_invalid_launch_mode_rejected(store):
     with pytest.raises(ValueError, match="启动方式"):
         store.quick_launch({"mode": "arbitrary-command"})
+
+
+def test_windows_launch_uses_platform_adapter_after_config_validation(store, monkeypatch):
+    configured_launch(store)
+    monkeypatch.setattr(module.sys, "platform", "win32")
+    calls = []
+    monkeypatch.setattr(module.windows_desktop, "launch_cli", lambda *args: calls.append(args))
+    result = store.quick_launch({"mode": "cli"})
+    assert calls == [(store.home / "main/default", store.home)]
+    assert result["terminal"] == "Windows"
+
+
+def test_windows_directory_picker_cancel(store, monkeypatch):
+    monkeypatch.setattr(module.sys, "platform", "win32")
+    monkeypatch.setattr(module.windows_desktop, "choose_directory", lambda: None)
+    assert store.choose_launch_directory() == {"path": None, "cancelled": True}
+
+
+def test_desktop_launcher_supplies_its_packaged_executable(store, monkeypatch, tmp_path):
+    executable = tmp_path / "Corki app" / "Corki"
+    executable.parent.mkdir()
+    executable.write_text("fixture", encoding="utf-8")
+    monkeypatch.setenv("CORKI_DESKTOP_EXECUTABLE", str(executable))
+    assert store.desktop_application() == executable
+    executable.unlink()
+    with pytest.raises(ValueError, match="完整路径"):
+        store.desktop_application()
+
+
+def test_launch_accepts_implicit_first_provider_default(store, monkeypatch):
+    store.config.write_text(json.dumps({"providers": {"fixture": {"models": {"demo": {}}}}}))
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(module.shutil, "which", lambda _: "/fixture/bin/corki")
+    calls = []
+    monkeypatch.setattr(store, "desktop_script", lambda *args, **kwargs: calls.append(args))
+    from types import SimpleNamespace
+    monkeypatch.setattr(module.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=1))
+    assert store.quick_launch({})["terminal"] == "Terminal"
+    assert len(calls) == 1
+    assert store.snapshot()["default"] == {"provider": "fixture", "model": "demo"}

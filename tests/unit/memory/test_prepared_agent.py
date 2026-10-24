@@ -209,6 +209,8 @@ def test_cancel_input_load_reclaims_state_not_memory(
                 not path.exists() for path in memory_worker_state_dirs
             )
         finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
             await instance.aclose()
 
     asyncio.run(scenario())

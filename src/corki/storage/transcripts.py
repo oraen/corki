@@ -42,6 +42,20 @@ def _lines(connection, thread_id):
         yield (prefix[:-1] + ', "payload": ' + row["payload_json"] + "}\n").encode()
 
 
+def _append_verified(connection, thread_id, descriptor):
+    with os.fdopen(descriptor, "r+b", closefd=False) as output:
+        for expected in _lines(connection, thread_id):
+            actual = output.read(len(expected))
+            if not expected.startswith(actual):
+                raise OSError("transcript contents differ from canonical history")
+            if len(actual) != len(expected):
+                output.write(expected[len(actual) :])
+        if output.read(1):
+            raise OSError("transcript contains noncanonical trailing data")
+        output.flush()
+        os.fsync(descriptor)
+
+
 def flush_transcript(repository, thread_id):
     """Append only a verified canonical suffix, including recovery of a partial line.
 
@@ -50,8 +64,8 @@ def flush_transcript(repository, thread_id):
     unrelated content is never truncated or overwritten. A reader holding the
     file open continues to observe new appended records on the same inode.
     """
-    if os.name != "posix":
-        raise OSError("secure local transcript publication requires POSIX")
+    if os.name not in {"posix", "nt"}:
+        raise OSError("secure local transcript publication requires POSIX or Windows")
     root = repository.path.with_name(repository.path.name + ".transcripts").absolute()
     name = transcript_name(thread_id)
     with repository._connect() as connection:
@@ -61,6 +75,16 @@ def flush_transcript(repository, thread_id):
             is None
         ):
             raise ValueError("transcript thread does not exist")
+        if os.name == "nt":
+            from corki.platforms.windows_transcripts import private_transcript
+
+            with private_transcript(root, name) as (descriptor, verify):
+                _append_verified(connection, thread_id, descriptor)
+                verify()
+                connection.execute(
+                    "DELETE FROM transcript_pending WHERE thread_id=?", (str(thread_id),)
+                )
+            return root / name
         root.mkdir(mode=0o700, exist_ok=True)
         directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
@@ -82,17 +106,7 @@ def flush_transcript(repository, thread_id):
                     or stat.S_IMODE(info.st_mode) & 0o077
                 ):
                     raise OSError("transcript file is not a private regular file")
-                with os.fdopen(descriptor, "r+b", closefd=False) as output:
-                    for expected in _lines(connection, thread_id):
-                        actual = output.read(len(expected))
-                        if not expected.startswith(actual):
-                            raise OSError("transcript contents differ from canonical history")
-                        if len(actual) != len(expected):
-                            output.write(expected[len(actual) :])
-                    if output.read(1):
-                        raise OSError("transcript contains noncanonical trailing data")
-                    output.flush()
-                    os.fsync(descriptor)
+                _append_verified(connection, thread_id, descriptor)
                 # Do not return a path which was swapped out while writing.
                 current = os.stat(name, dir_fd=directory, follow_symlinks=False)
                 if (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino):

@@ -23,7 +23,7 @@ def test_source_only_and_stable_install(tmp_path):
     doc = install_builtin_knowledge(tmp_path)
     store = KnowledgeStore(tmp_path)
     assert doc["enabled"] == 0 and doc["status"] == "pending"
-    assert store.source(doc["path"]).read_text() == content
+    assert store.source(doc["path"]).read_text(encoding="utf-8") == content
     assert install_builtin_knowledge(tmp_path) == doc
     assert store.search()["results"] == []
     assert not (Path(__file__).parents[2] / "scripts/build_builtin_knowledge.py").exists()
@@ -145,7 +145,7 @@ def test_manual_json_examples_load_without_network(tmp_path):
             assert validate_custom_tool(data)["name"] == "echo_text"
         else:
             config = tmp_path / "settings.json"
-            config.write_text(raw)
+            config.write_text(raw, encoding="utf-8")
             CorkiSettings.for_directory(tmp_path, config_file=config)
 
 
@@ -153,3 +153,34 @@ def test_ephemeral_registration_does_not_create_storage(tmp_path):
     home = tmp_path / "home"
     register_knowledge_tools(ToolRegistry(), home, install_builtin=False)
     assert not home.exists()
+
+
+def test_sync_preserves_installed_builtin_identity(tmp_path):
+    original = install_builtin_knowledge(tmp_path)
+    store = KnowledgeStore(tmp_path)
+    synced = store.sync(store.source(original["path"]), original["title"], bundled_document())
+    assert synced["id"] == original["id"]
+    assert synced["path"] == ".system/corki_docs.md"
+    with store.connect() as db:
+        assert db.execute("SELECT count(*) FROM documents").fetchone()[0] == 1
+
+
+def test_legacy_windows_path_keeps_identity_and_disabled_state(tmp_path, monkeypatch):
+    import os
+    from types import SimpleNamespace
+
+    import corki.knowledge.store as module
+
+    original = install_builtin_knowledge(tmp_path)
+    store = KnowledgeStore(tmp_path)
+    with store.connect() as db:
+        db.execute("UPDATE documents SET path=? WHERE id=?",
+                   (".system\\corki_docs.md", original["id"]))
+    # Exercise only the path compatibility branch, not Windows filesystem APIs.
+    monkeypatch.setattr(module, "os", SimpleNamespace(name="nt", getpid=os.getpid))
+    restored = install_builtin_knowledge(tmp_path)
+    assert restored["id"] == original["id"]
+    assert restored["path"] == ".system/corki_docs.md"
+    assert restored["enabled"] == 0
+    with store.connect() as db:
+        assert db.execute("SELECT count(*) FROM documents").fetchone()[0] == 1

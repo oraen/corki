@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { useMessageLines } from "./message-lines";
 import { markdown, highlightedText } from "./markdown";
 import { toolTitle, formatToolText, formatElapsed, formatMessageTime } from "./transcript";
 import { defaults, choices, formContent } from "./interactions";
@@ -333,7 +334,6 @@ export const MessageRow = React.memo(function MessageRow({
   onError: (e: unknown) => void;
 }) {
   const [folded, setFolded] = useState(false);
-  const isFolded = collapsible && folded;
   const [expanded, setExpanded] = useState<{
     base: string;
     content: string;
@@ -345,6 +345,16 @@ export const MessageRow = React.memo(function MessageRow({
     expanded?.base === message.content ? expanded.content : message.content;
   const next =
     expanded?.base === message.content ? expanded.next : message.nextText;
+  const { body, multiline } = useMessageLines(
+    collapsible && !commentary && ["user", "assistant"].includes(message.role),
+    visible,
+    message.imageCount,
+  );
+  const canFold = collapsible && multiline;
+  const isFolded = canFold && folded;
+  useEffect(() => {
+    if (!multiline) setFolded(false);
+  }, [multiline]);
   async function loadMore() {
     if (expanding || next == null || !message.sourceId) return;
     setExpanding(true);
@@ -595,7 +605,7 @@ export const MessageRow = React.memo(function MessageRow({
                 {formatMessageTime(message.createdAt)}
               </time>
             )}
-            {collapsible && (
+            {canFold && (
           <button
             className="message-fold"
             aria-expanded={!isFolded}
@@ -609,7 +619,7 @@ export const MessageRow = React.memo(function MessageRow({
           </div>
         ) : (
           <>
-        {collapsible && (
+        {canFold && (
           <button
             className="message-fold"
             aria-expanded={!isFolded}
@@ -622,17 +632,21 @@ export const MessageRow = React.memo(function MessageRow({
         )}
           </>
         )}
-        {isFolded ? (
+        {isFolded && (
           <button className="folded-preview" onClick={() => setFolded(false)}>
             {visible.trim().replace(/\s+/g, " ") || "附件消息"}
           </button>
-        ) : (
+        )}
+        <div ref={body} className={`message-body${isFolded ? " folded-body" : ""}`}
+          aria-hidden={isFolded || undefined} inert={isFolded}>
+          {message.role === "user" ? (
+            <div className="user-text">{visible}</div>
+          ) : (
+            <MarkdownBody content={visible} onError={onError} />
+          )}
+        </div>
+        {!isFolded && (
           <>
-            {message.role === "user" ? (
-              <div className="user-text">{visible}</div>
-            ) : (
-              <MarkdownBody content={visible} onError={onError} />
-            )}
             {!!message.imageCount && message.sourceId && message.threadId && (
               <div className="message-images">
                 {Array.from({ length: message.imageCount }, (_, index) => (

@@ -15,6 +15,8 @@ from pathlib import Path
 
 from corki.mcp.environment import NON_INHERITABLE
 from corki.memory import workspace
+from corki.platforms.cleanup import remove_owned_tree
+from corki.platforms.paths import is_link_metadata, is_link_path
 
 _MARKER = "corki-memory-baseline-v1\n"
 _LEGACY = ".consolidation-baseline.json"
@@ -22,7 +24,7 @@ _MESSAGE = b"Initialize Corki git baseline\n"
 
 
 def _root(root: Path) -> Path:
-    if not root.is_absolute() or root.is_symlink():
+    if not root.is_absolute() or is_link_path(root):
         raise ValueError("memory Git baseline requires a non-symlink absolute root")
     resolved = root.resolve()
     if resolved.parent == resolved or resolved == Path.home().resolve():
@@ -60,15 +62,23 @@ def _git(root: Path, *args: str, data: bytes | None = None) -> bytes:
         f"safe.directory={root}",
         *args,
     ]
-    result = subprocess.run(
-        command,
-        cwd=root,
-        env=env,
-        input=data,
-        capture_output=True,
-        timeout=30,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            cwd=root,
+            env=env,
+            input=data,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except FileNotFoundError as error:
+        if root.is_dir() and shutil.which("git", path=env.get("PATH", os.defpath)) is None:
+            raise RuntimeError(
+                "memory consolidation requires Git; install Git and make git available "
+                "on PATH, then restart Corki"
+            ) from error
+        raise
     if result.returncode:
         raise RuntimeError(
             "memory Git baseline failed: " + result.stderr.decode("utf-8", "replace")
@@ -84,7 +94,10 @@ def capture(root: Path) -> workspace.Snapshot:
         for path in pending.pop().iterdir():
             if path.name == ".git":
                 continue
-            mode = path.lstat().st_mode
+            metadata = path.lstat()
+            mode = metadata.st_mode
+            if is_link_metadata(metadata) and not stat.S_ISLNK(mode):
+                raise ValueError("memory Git baseline cannot traverse a directory junction")
             if stat.S_ISDIR(mode):
                 pending.append(path)
                 continue
@@ -133,9 +146,9 @@ def read(root: Path) -> workspace.Snapshot:
 
 def _owned_metadata(root: Path) -> None:
     metadata = root / ".git"
-    if not metadata.exists() and not metadata.is_symlink():
+    if not metadata.exists() and not is_link_path(metadata):
         return
-    if metadata.is_symlink() or not metadata.is_dir():
+    if is_link_path(metadata) or not metadata.is_dir():
         raise ValueError("refusing unowned memory .git metadata")
     marker = metadata / "corki-memory-baseline"
     if marker.is_file() and not marker.is_symlink() and marker.read_text() == _MARKER:
@@ -191,7 +204,7 @@ def reset(root: Path, *, snapshot: workspace.Snapshot | None = None) -> None:
     current = capture(root) if snapshot is None else snapshot
     metadata = root / ".git"
     if metadata.is_dir():
-        shutil.rmtree(metadata)
+        remove_owned_tree(metadata)
     metadata.mkdir(mode=0o700)
     (metadata / "corki-memory-baseline").write_text(_MARKER)
     _git(root, "init", "-q", "--template=", "--initial-branch=main", "--object-format=sha1")

@@ -2,12 +2,11 @@
 
 import asyncio
 import json
-import shlex
-import sys
 from dataclasses import replace
 from hashlib import sha256
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
@@ -39,16 +38,13 @@ def test_session_start_precedes_first_input(
                 },
             }
         )
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "import json,sys; from pathlib import Path; "
-                "payload=json.load(sys.stdin); "
-                "log=Path('start-inputs.jsonl'); "
-                "log.open('a').write(json.dumps(payload)+'\\n'); "
-                f"print({output!r})",
-            ]
+        command = python_command(
+            tmp_path,
+            "import json,sys; from pathlib import Path; "
+            "payload=json.load(sys.stdin); "
+            "log=Path('start-inputs.jsonl'); "
+            "log.open('a').write(json.dumps(payload)+'\\n'); "
+            f"print({output!r})",
         )
         identity = {
             "event_name": "session_start",

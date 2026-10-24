@@ -14,6 +14,7 @@
   --muted: #969995;
   --line: #e9e8e3;
   --soft: #fff2e7;
+  --topbar-height: 66px;
 }
 * {
   box-sizing: border-box;
@@ -265,7 +266,7 @@ main {
   background: #fcfcfa;
 }
 .topbar {
-  height: 66px;
+  height: var(--topbar-height);
   padding: 0 30px;
   display: flex;
   align-items: center;
@@ -1388,3 +1389,23 @@ main {
 .followup-send { margin-right: 8px; }
 
 .queue-up { display: inline-flex; transform: rotate(180deg); }
+
+.manager-launch{width:430px;padding:28px;border-radius:20px}
+.manager-launch h2{font-size:18px;letter-spacing:0}
+.manager-launch-progress{display:flex;align-items:center;gap:18px;padding:24px 0 8px;color:#82776d;font-size:13px}
+.manager-launch-gear{display:flex;color:#ed701e;animation:manager-rotate 2.5s linear infinite}
+.manager-launch-error{overflow-wrap:anywhere;max-height:200px;overflow:auto;line-height:1.7}
+.app-settings:disabled{opacity:.5;cursor:wait}
+@keyframes manager-rotate{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.manager-launch-gear{animation:none}}
+
+/* Keep the full text laid out while folded, so resizing can measure its real
+   line count without cloning Markdown or losing text/selection state. */
+.message-body{min-width:0;max-width:100%;width:100%}
+.message.user .message-body{width:fit-content}
+.message-body.folded-body{max-height:0;overflow:hidden;visibility:hidden;pointer-events:none;flex-basis:100%}
+.message-content.is-folded{row-gap:0}
+
+.process-heading > .turn-avatar{cursor:default}
+
+.model-health-banner{position:absolute;top:var(--topbar-height);left:0;right:0;z-index:80;margin:0;border-radius:0;border-left:0;border-right:0;pointer-events:none}

@@ -2,12 +2,11 @@
 
 import asyncio
 import json
-import shlex
-import sys
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from platform_commands import python_command
 from test_code_mode import request_call
 
 from corki.config import CorkiSettings
@@ -36,15 +35,12 @@ def test_cold_pre_hook_recovery_never_replays_claimed_effects(
     tmp_path, monkeypatch, window, remove_configuration, limit, nested, legacy
 ):
     async def scenario():
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "from pathlib import Path; import json; "
-                "Path('hook-calls').open('a').write('once\\n'); "
-                "print(json.dumps({'hookSpecificOutput': "
-                "{'additionalContext': 'CHECK_ONCE'*2000}}))",
-            ]
+        command = python_command(
+            tmp_path,
+            "from pathlib import Path; import json; "
+            "Path('hook-calls').open('a').write('once\\n'); "
+            "print(json.dumps({'hookSpecificOutput': "
+            "{'additionalContext': 'CHECK_ONCE'*2000}}))",
         )
         source = tmp_path / "config.toml"
         fingerprint = command_identity(

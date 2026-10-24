@@ -8,6 +8,7 @@ import pytest
 from corki.protocol.ids import new_tool_call_id
 from corki.protocol.tools import ToolCall
 from corki.protocol.truncation import TruncationPolicy
+from corki.shell import ShellType, default_user_shell
 from corki.tools.base import ToolContext
 from corki.tools.builtin.process import ProcessManager, _ProcessSession
 from corki.tools.builtin.shell import ExecCommandTool, WriteStdinTool
@@ -130,8 +131,18 @@ def test_real_process_collection_cap_reports_original_bytes(tmp_path):
         processes = ProcessManager()
         try:
             script = "import sys; sys.stdout.write('HEAD'+'x'*1100000+'TAIL')"
+            script_path = tmp_path / "output fixture.py"
+            script_path.write_text(script, encoding="utf-8")
+            shell = default_user_shell()
+            argv = [sys.executable, str(script_path)]
+            command = (
+                "& " + " ".join("'" + part.replace("'", "''") + "'" for part in argv)
+                if shell.kind == ShellType.POWERSHELL
+                else shlex.join(argv)
+            )
             observation = await processes.execute(
-                shlex.join([sys.executable, "-c", script]),
+                command,
+                shell=shell,
                 cwd=tmp_path,
                 yield_seconds=2,
                 timeout_seconds=5,

@@ -139,7 +139,7 @@ def test_history_navigation_preserves_typed_draft_and_restores_attachment(tmp_pa
                     await asyncio.gather(task, return_exceptions=True)
 
         asyncio.run(scenario())
-        assert "base64" not in (tmp_path / "history").read_text()
+        assert "base64" not in (tmp_path / "history").read_text(encoding="utf-8")
 
 
 def test_mixed_rich_submission_restores_exact_local_draft(tmp_path, monkeypatch):

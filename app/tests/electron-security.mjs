@@ -1,3 +1,4 @@
+import { python } from './platform.mjs';
 import { _electron as electron } from 'playwright';
 import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
@@ -5,7 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 
 const home = await mkdtemp(path.join(os.tmpdir(), 'corki-desktop-ipc-'));
-const env = { ...process.env, CORKI_HOME: home, CORKI_PYTHON: path.resolve('../.venv/bin/python') };
+const env = { ...process.env, CORKI_HOME: home, CORKI_PYTHON: python };
 delete env.ELECTRON_RUN_AS_NODE;
 let app;
 try {

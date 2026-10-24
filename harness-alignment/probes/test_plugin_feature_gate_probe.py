@@ -70,7 +70,7 @@ def test_plugin_feature_gate_precedes_python_registration_and_skill_discovery(tm
             tool_mode="code_mode_only" if mode == "code_mode" else "direct",
         )
         registry = ToolRegistry()
-        runtime = LangGraphRuntime.create(
+        runtime = await LangGraphRuntime.acreate(
             settings=settings,
             registry=registry,
             model=Model(),

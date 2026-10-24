@@ -8,6 +8,10 @@ import sys
 import time
 from pathlib import Path
 
+# MCP stdio is UTF-8 even when Windows pipes use a legacy locale.
+for stream in (sys.stdin, sys.stdout):
+    stream.reconfigure(encoding="utf-8")
+
 if sys.argv[1] == "child":
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     pid_path = Path(sys.argv[2])

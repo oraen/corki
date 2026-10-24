@@ -27,10 +27,30 @@ from corki.protocol.tools import ToolCall
 
 @pytest.fixture
 def compiler():
+    # Other suites import this fixture and still have POSIX command fixtures.
+    # Opt this suite into Windows separately rather than silently enabling them.
     value = os.environ.get("CORKI_TEST_SANDBOX_COMPILER")
     if not value or sys.platform != "darwin":
         pytest.skip("requires explicit native compiler and macOS")
     return Path(value)
+
+
+@pytest.fixture
+def live_compiler():
+    value = os.environ.get("CORKI_TEST_SANDBOX_COMPILER")
+    if not value or sys.platform not in {"darwin", "win32"}:
+        pytest.skip("requires explicit native compiler and macOS or Windows")
+    return Path(value)
+
+
+TOUCH_PREFIX = ("New-Item", "-ItemType", "File") if sys.platform == "win32" else ("touch",)
+MKDIR_PREFIX = ("New-Item", "-ItemType", "Directory") if sys.platform == "win32" else ("mkdir",)
+
+
+def path_command(prefix, path):
+    if sys.platform == "win32":
+        return " ".join(prefix) + " -Path '" + str(path).replace("'", "''") + "'"
+    return shlex.join([*prefix, str(path)])
 
 
 class Model:
@@ -120,7 +140,7 @@ def approve(runtime, scope):
             request.request_id,
             "accept",
             remember=scope == "session",
-            execpolicy_amendment=["touch"] if scope == "rule" else None,
+            execpolicy_amendment=list(TOUCH_PREFIX) if scope == "rule" else None,
         )
 
     runtime.set_execution_approval_handler(respond)
@@ -132,17 +152,17 @@ def approve(runtime, scope):
 @pytest.mark.parametrize("publisher", ["parent", "child"])
 @pytest.mark.parametrize("close_publisher", [False, True])
 def test_initialized_relatives_share_saved_rules_but_not_consent(
-    tmp_path, compiler, mode, scope, publisher, close_publisher
+    tmp_path, live_compiler, mode, scope, publisher, close_publisher
 ):
     async def scenario():
         parent_model, child_model = Model(mode), Model(mode)
-        parent = await runtime_for(tmp_path, compiler, parent_model)
+        parent = await runtime_for(tmp_path, live_compiler, parent_model)
         child = None
         try:
             await run(parent, parent_model)
             child = await runtime_for(
                 tmp_path,
-                compiler,
+                live_compiler,
                 child_model,
                 name="child",
                 settings=parent._settings,
@@ -161,19 +181,19 @@ def test_initialized_relatives_share_saved_rules_but_not_consent(
                 owner,
                 owner_model,
                 {
-                    "cmd": "touch " + shlex.quote(str(approved)),
+                    "cmd": path_command(TOUCH_PREFIX, approved),
                     "sandbox_permissions": "require_escalated",
-                    "prefix_rule": ["touch"],
+                    "prefix_rule": list(TOUCH_PREFIX),
                 },
             )
             assert approved.exists() and len(prompts) == 1
             assert not [event.message for event in owner_events if isinstance(event, WarningEvent)]
             if scope == "rule":
-                assert owner._process_manager.approvals.rules.prefixes == (("touch",),)
+                assert owner._process_manager.approvals.rules.prefixes == (TOUCH_PREFIX,)
                 assert 'decision="allow"' in (tmp_path / "home/rules/default.rules").read_text()
             if close_publisher:
                 await owner.aclose()
-            await run(consumer, consumer_model, {"cmd": "touch " + shlex.quote(str(subsequent))})
+            await run(consumer, consumer_model, {"cmd": path_command(TOUCH_PREFIX, subsequent)})
             assert subsequent.exists() is (scope == "rule"), (
                 consumer._process_manager.approvals.rules.prefixes,
                 [
@@ -200,18 +220,18 @@ def test_initialized_relatives_share_saved_rules_but_not_consent(
 @pytest.mark.parametrize("mode", ["direct", "code_mode_only"])
 @pytest.mark.parametrize("closing", ["parent", "child"])
 def test_closing_relative_does_not_cancel_another_sessions_pending_approval(
-    tmp_path, compiler, mode, closing
+    tmp_path, live_compiler, mode, closing
 ):
     async def scenario():
         parent_model, child_model = Model(mode), Model(mode)
-        parent = await runtime_for(tmp_path, compiler, parent_model)
+        parent = await runtime_for(tmp_path, live_compiler, parent_model)
         child, task = None, None
         entered, release = asyncio.Event(), asyncio.Event()
         try:
             await run(parent, parent_model)
             child = await runtime_for(
                 tmp_path,
-                compiler,
+                live_compiler,
                 child_model,
                 name="child",
                 settings=parent._settings,
@@ -229,7 +249,7 @@ def test_closing_relative_does_not_cancel_another_sessions_pending_approval(
                 entered.set()
                 await release.wait()
                 owner.respond_execution_approval(
-                    request.request_id, "accept", execpolicy_amendment=["touch"]
+                    request.request_id, "accept", execpolicy_amendment=list(TOUCH_PREFIX)
                 )
 
             owner.set_execution_approval_handler(respond)
@@ -239,9 +259,9 @@ def test_closing_relative_does_not_cancel_another_sessions_pending_approval(
                     owner,
                     model,
                     {
-                        "cmd": "touch " + shlex.quote(str(target)),
+                        "cmd": path_command(TOUCH_PREFIX, target),
                         "sandbox_permissions": "require_escalated",
-                        "prefix_rule": ["touch"],
+                        "prefix_rule": list(TOUCH_PREFIX),
                     },
                 )
             )
@@ -252,7 +272,7 @@ def test_closing_relative_does_not_cancel_another_sessions_pending_approval(
             release.set()
             await asyncio.wait_for(task, 5)
             assert target.exists()
-            assert owner._process_manager.approvals.rules.prefixes == (("touch",),)
+            assert owner._process_manager.approvals.rules.prefixes == (TOUCH_PREFIX,)
             assert not owner._process_manager.approvals.router._pending
         finally:
             release.set()
@@ -269,14 +289,14 @@ def test_closing_relative_does_not_cancel_another_sessions_pending_approval(
 @pytest.mark.parametrize("mode", ["direct", "code_mode_only"])
 @pytest.mark.parametrize("variant", ["review", "compact"])
 def test_explicit_delegate_handle_survives_bad_user_rule_fallback(
-    tmp_path, compiler, mode, variant
+    tmp_path, live_compiler, mode, variant
 ):
     async def scenario():
         rules = tmp_path / "home/rules"
         rules.mkdir(parents=True)
         (rules / "bad.rules").write_text("not valid rules !")
         parent_model, child_model = Model(mode), Model(mode)
-        parent = await runtime_for(tmp_path, compiler, parent_model)
+        parent = await runtime_for(tmp_path, live_compiler, parent_model)
         child = None
         try:
             events = await run(parent, parent_model)
@@ -285,7 +305,7 @@ def test_explicit_delegate_handle_survives_bad_user_rule_fallback(
             )
             child = await runtime_for(
                 tmp_path,
-                compiler,
+                live_compiler,
                 child_model,
                 name="delegate",
                 settings=parent._settings,
@@ -298,13 +318,13 @@ def test_explicit_delegate_handle_survives_bad_user_rule_fallback(
                 parent,
                 parent_model,
                 {
-                    "cmd": "touch " + shlex.quote(str(tmp_path / "approved")),
+                    "cmd": path_command(TOUCH_PREFIX, tmp_path / "approved"),
                     "sandbox_permissions": "require_escalated",
-                    "prefix_rule": ["touch"],
+                    "prefix_rule": list(TOUCH_PREFIX),
                 },
             )
             target = tmp_path / "delegate-allowed"
-            await run(child, child_model, {"cmd": "touch " + shlex.quote(str(target))})
+            await run(child, child_model, {"cmd": path_command(TOUCH_PREFIX, target)})
             assert target.exists() and notices(child_model)
         finally:
             if child is not None:
@@ -315,16 +335,16 @@ def test_explicit_delegate_handle_survives_bad_user_rule_fallback(
 
 
 @pytest.mark.parametrize("mode", ["direct", "code_mode_only"])
-def test_failed_save_does_not_publish_to_initialized_child(tmp_path, compiler, mode):
+def test_failed_save_does_not_publish_to_initialized_child(tmp_path, live_compiler, mode):
     async def scenario():
         parent_model, child_model = Model(mode), Model(mode)
-        parent = await runtime_for(tmp_path, compiler, parent_model)
+        parent = await runtime_for(tmp_path, live_compiler, parent_model)
         child = None
         try:
             await run(parent, parent_model)
             child = await runtime_for(
                 tmp_path,
-                compiler,
+                live_compiler,
                 child_model,
                 name="child",
                 settings=parent._settings,
@@ -339,9 +359,9 @@ def test_failed_save_does_not_publish_to_initialized_child(tmp_path, compiler, m
                 parent,
                 parent_model,
                 {
-                    "cmd": "touch " + shlex.quote(str(approved)),
+                    "cmd": path_command(TOUCH_PREFIX, approved),
                     "sandbox_permissions": "require_escalated",
-                    "prefix_rule": ["touch"],
+                    "prefix_rule": list(TOUCH_PREFIX),
                 },
             )
             assert approved.exists()
@@ -349,7 +369,7 @@ def test_failed_save_does_not_publish_to_initialized_child(tmp_path, compiler, m
                 isinstance(e, WarningEvent) and "Failed to apply" in e.message for e in events
             )
             target = tmp_path / "no-grant"
-            await run(child, child_model, {"cmd": "touch " + shlex.quote(str(target))})
+            await run(child, child_model, {"cmd": path_command(TOUCH_PREFIX, target)})
             assert not target.exists() and not notices(child_model)
             assert not parent._process_manager.approvals.rules.prefixes
             assert not child._process_manager.approvals.rules.prefixes
@@ -362,10 +382,10 @@ def test_failed_save_does_not_publish_to_initialized_child(tmp_path, compiler, m
 
 
 @pytest.mark.parametrize("mode", ["direct", "code_mode_only"])
-def test_cross_event_loop_live_inheritance_rejected_before_sampling(tmp_path, compiler, mode):
+def test_cross_event_loop_live_inheritance_rejected_before_sampling(tmp_path, live_compiler, mode):
     async def capture():
         model = Model(mode)
-        parent = await runtime_for(tmp_path, compiler, model)
+        parent = await runtime_for(tmp_path, live_compiler, model)
         try:
             with pytest.raises(RuntimeError, match="ready"):
                 live_policy(parent)
@@ -380,7 +400,7 @@ def test_cross_event_loop_live_inheritance_rejected_before_sampling(tmp_path, co
         model = Model(mode)
         child = await runtime_for(
             tmp_path,
-            compiler,
+            live_compiler,
             model,
             name="child",
             settings=settings,
@@ -399,16 +419,16 @@ def test_cross_event_loop_live_inheritance_rejected_before_sampling(tmp_path, co
 
 
 @pytest.mark.parametrize("mode", ["direct", "code_mode_only"])
-def test_concurrent_relatives_preserve_both_rule_updates(tmp_path, compiler, mode):
+def test_concurrent_relatives_preserve_both_rule_updates(tmp_path, live_compiler, mode):
     async def scenario():
         parent_model, child_model = Model(mode), Model(mode)
-        parent = await runtime_for(tmp_path, compiler, parent_model)
+        parent = await runtime_for(tmp_path, live_compiler, parent_model)
         child = None
         try:
             await run(parent, parent_model)
             child = await runtime_for(
                 tmp_path,
-                compiler,
+                live_compiler,
                 child_model,
                 name="child",
                 settings=parent._settings,
@@ -435,23 +455,26 @@ def test_concurrent_relatives_preserve_both_rule_updates(tmp_path, compiler, mod
                     parent,
                     parent_model,
                     {
-                        "cmd": "touch " + shlex.quote(str(file)),
+                        "cmd": path_command(TOUCH_PREFIX, file),
                         "sandbox_permissions": "require_escalated",
-                        "prefix_rule": ["touch"],
+                        "prefix_rule": list(TOUCH_PREFIX),
                     },
                 ),
                 run(
                     child,
                     child_model,
                     {
-                        "cmd": "mkdir " + shlex.quote(str(directory)),
+                        "cmd": path_command(MKDIR_PREFIX, directory),
                         "sandbox_permissions": "require_escalated",
-                        "prefix_rule": ["mkdir"],
+                        "prefix_rule": list(MKDIR_PREFIX),
                     },
                 ),
             )
             assert file.is_file() and directory.is_dir()
-            assert set(parent._process_manager.approvals.rules.prefixes) == {("touch",), ("mkdir",)}
+            assert set(parent._process_manager.approvals.rules.prefixes) == {
+                TOUCH_PREFIX,
+                MKDIR_PREFIX,
+            }
             assert (
                 child._process_manager.approvals.rules.prefixes
                 == parent._process_manager.approvals.rules.prefixes
@@ -460,8 +483,8 @@ def test_concurrent_relatives_preserve_both_rule_updates(tmp_path, compiler, mod
             assert len(saved) == 2 and all('decision="allow"' in line for line in saved)
             child_target, parent_target = tmp_path / "other-file", tmp_path / "other-directory"
             await asyncio.gather(
-                run(child, child_model, {"cmd": "touch " + shlex.quote(str(child_target))}),
-                run(parent, parent_model, {"cmd": "mkdir " + shlex.quote(str(parent_target))}),
+                run(child, child_model, {"cmd": path_command(TOUCH_PREFIX, child_target)}),
+                run(parent, parent_model, {"cmd": path_command(MKDIR_PREFIX, parent_target)}),
             )
             assert child_target.is_file() and parent_target.is_dir()
         finally:
@@ -473,10 +496,12 @@ def test_concurrent_relatives_preserve_both_rule_updates(tmp_path, compiler, mod
 
 
 @pytest.mark.parametrize("invalid", ["root", "custom-lookalike", "unconfigured"])
-def test_live_handle_cannot_bypass_non_root_configured_host_boundary(tmp_path, compiler, invalid):
+def test_live_handle_cannot_bypass_non_root_configured_host_boundary(
+    tmp_path, live_compiler, invalid
+):
     async def scenario():
         model = Model("direct")
-        parent = await runtime_for(tmp_path, compiler, model)
+        parent = await runtime_for(tmp_path, live_compiler, model)
         try:
             await run(parent, model)
             settings = parent._settings
@@ -485,7 +510,7 @@ def test_live_handle_cannot_bypass_non_root_configured_host_boundary(tmp_path, c
             with pytest.raises(ValueError, match="configured non-root host"):
                 await runtime_for(
                     tmp_path,
-                    compiler,
+                    live_compiler,
                     Model("direct"),
                     name="invalid",
                     settings=settings,
@@ -510,11 +535,11 @@ def test_live_handle_cannot_bypass_non_root_configured_host_boundary(tmp_path, c
     "isolation", ["home", "managed", "declared", "guardian", "memory", "snapshot"]
 )
 def test_incompatible_or_independent_children_do_not_receive_live_updates(
-    tmp_path, compiler, mode, isolation
+    tmp_path, live_compiler, mode, isolation
 ):
     async def scenario():
         parent_model, child_model = Model(mode), Model(mode)
-        parent = await runtime_for(tmp_path, compiler, parent_model)
+        parent = await runtime_for(tmp_path, live_compiler, parent_model)
         child = None
         try:
             await run(parent, parent_model)
@@ -555,7 +580,7 @@ def test_incompatible_or_independent_children_do_not_receive_live_updates(
                 )
             child = await runtime_for(
                 tmp_path,
-                compiler,
+                live_compiler,
                 child_model,
                 name="child",
                 settings=settings,
@@ -581,13 +606,13 @@ def test_incompatible_or_independent_children_do_not_receive_live_updates(
                 parent,
                 parent_model,
                 {
-                    "cmd": "touch " + shlex.quote(str(tmp_path / "approved")),
+                    "cmd": path_command(TOUCH_PREFIX, tmp_path / "approved"),
                     "sandbox_permissions": "require_escalated",
-                    "prefix_rule": ["touch"],
+                    "prefix_rule": list(TOUCH_PREFIX),
                 },
             )
             target = tmp_path / "must-stay-sandboxed"
-            await run(child, child_model, {"cmd": "touch " + shlex.quote(str(target))})
+            await run(child, child_model, {"cmd": path_command(TOUCH_PREFIX, target)})
             assert not target.exists()
             assert not notices(child_model)
         finally:

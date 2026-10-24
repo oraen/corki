@@ -8,6 +8,7 @@ import httpx
 
 from corki.models.backoff import backoff
 from corki.models.http_errors import http_error
+from corki.models.request_watch import request_failed, request_started, request_wait
 from corki.models.retry_after import retry_after_header
 
 wait_http_retry = asyncio.sleep
@@ -24,6 +25,7 @@ async def model_http_stream(
     base_seconds,
     encode_json=None,
 ):
+    request_started()
     request_body = {"json": payload}
     if encode_json is not None:
         request_body = {"content": encode_json(payload).encode("utf-8")}
@@ -39,12 +41,12 @@ async def model_http_stream(
                 headers=headers,
                 **request_body,
             )
-            response = await client.send(request, stream=True)
+            response = await request_wait(client.send(request, stream=True))
             if response.is_success:
                 break
             retry_deadline = retry_after_header(response.headers)
             try:
-                body = (await response.aread()).decode("utf-8", errors="replace")
+                body = (await request_wait(response.aread())).decode("utf-8", errors="replace")
             except Exception:
                 # The reference transport keeps the status even if reading its
                 # diagnostic body fails. In particular, a 429 must not become
@@ -65,6 +67,7 @@ async def model_http_stream(
                         "Model HTTP error response cleanup failed", exc_info=True
                     )
             error = http_error(response, body, retry_deadline=retry_deadline)
+            await request_failed(error)
             if response.status_code == 429 and not error.retryable:
                 raise error
             if not (
@@ -72,7 +75,8 @@ async def model_http_stream(
                 or response.status_code == 429 and retry_deadline is not None
             ) or attempt == max_retries:
                 raise error
-        except httpx.TransportError:
+        except httpx.TransportError as error:
+            await request_failed(error)
             if response is not None:
                 await response.aclose()
             if attempt == max_retries:
@@ -86,7 +90,7 @@ async def model_http_stream(
             "Retrying model HTTP request",
             extra={"retry_attempt": attempt + 1, "retry_delay": delay, "retry_layer": "http"},
         )
-        await wait_http_retry(delay)
+        await request_wait(wait_http_retry(delay))
         response = None
     # Keep the yielded reader outside the retry catch: body failures belong to
     # sampling, whose next request must be rebuilt from the updated history.

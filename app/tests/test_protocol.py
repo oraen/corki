@@ -15,6 +15,10 @@ SCRIPT = """
 import asyncio, sys
 sys.path.insert(0, sys.argv[1])
 from protocol import Transport
+if len(sys.argv) > 2:
+    import protocol
+    from types import SimpleNamespace
+    protocol.os = SimpleNamespace(name="nt")
 class Service:
     stopping = False
     async def dispatch(self, method, params):
@@ -30,9 +34,9 @@ asyncio.run(main())
 """
 
 
-def launch():
+def launch(thread_reader=False):
     return subprocess.Popen(
-        [sys.executable, "-u", "-c", SCRIPT, BRIDGE],
+        [sys.executable, "-u", "-c", SCRIPT, BRIDGE, *(["thread-reader"] if thread_reader else [])],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -78,9 +82,9 @@ def test_split_utf8_contiguous_frames_and_invalid_json():
         process.wait()
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX failed pipe lifecycle")
-def test_closed_output_exits_even_when_parent_keeps_input_open():
-    process = launch()
+@pytest.mark.parametrize("thread_reader", [False, True])
+def test_closed_output_exits_even_when_parent_keeps_input_open(thread_reader):
+    process = launch(thread_reader)
     try:
         process.stdout.close()
         process.stdin.write(b'{"jsonrpc":"2.0","id":1,"method":"echo"}\n')

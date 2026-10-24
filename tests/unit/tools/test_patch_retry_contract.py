@@ -12,7 +12,7 @@ from corki.execution.patch_result import PatchResult
 from corki.execution.patch_retry import PatchRetryPlan, parse_patch_retry
 
 
-def outcome(*, denied=True):
+def outcome(root, *, denied=True):
     return {
         "version": 2,
         "success": False,
@@ -28,7 +28,7 @@ def outcome(*, denied=True):
             "exact": False,
             "changes": [
                 {
-                    "path": "/first",
+                    "path": str(root / "first"),
                     "change": {"kind": "add", "content": "one", "overwritten_content": None},
                 },
             ],
@@ -46,8 +46,8 @@ def outcome(*, denied=True):
         ("sandbox_denied", 1),
     ],
 )
-def test_malformed_execution_evidence_cannot_authorize_retry(field, value):
-    raw = outcome()
+def test_malformed_execution_evidence_cannot_authorize_retry(tmp_path, field, value):
+    raw = outcome(tmp_path)
     raw["execution"][field] = value
     with pytest.raises(ValueError, match="execution evidence"):
         PatchResult.parse(json.dumps(raw))
@@ -105,17 +105,19 @@ def test_retry_failure_preserves_prefix_and_never_attempts_a_third_time(
                     "requires_approval": False,
                     "patch": "normalized",
                     "cwd": str(tmp_path),
-                    "files": ["/first"],
-                    "changes": [{"path": "/first", "change": {"kind": "add", "content": "one"}}],
+                    "files": [str(tmp_path / "first")],
+                    "changes": [
+                        {"path": str(tmp_path / "first"), "change": {"kind": "add", "content": "one"}},
+                    ],
                 }
             elif not args["retry"]:
-                raw = outcome()
+                raw = outcome(tmp_path)
             else:
                 assert argv == ["fixed-helper"] and args["approved"] is True
                 assert args["patch"] == "normalized"
                 if failure is not None:
                     raise failure
-                raw = outcome()  # Even a second classified denial cannot loop.
+                raw = outcome(tmp_path)  # Even a second classified denial cannot loop.
             return json.dumps({"ok": json.dumps(raw)}).encode()
 
         class Approvals:
@@ -135,14 +137,14 @@ def test_retry_failure_preserves_prefix_and_never_attempts_a_third_time(
             )
             delta = json.loads(result.delta_json)
             assert result.success is False and delta["exact"] is False
-            assert delta["changes"][0]["path"] == "/first"
+            assert delta["changes"][0]["path"] == str(tmp_path / "first")
             if failure is not None:
                 assert "Do not automatically retry" in result.output
                 assert len(delta["changes"]) == 1
             else:
                 assert len(delta["changes"]) == 2
         assert len(reviews) == 1 and len(calls) == 3
-        assert reviews[0]["retry"]["committed_delta"] == outcome()["delta"]
+        assert reviews[0]["retry"]["committed_delta"] == outcome(tmp_path)["delta"]
 
     asyncio.run(scenario())
 
@@ -158,10 +160,10 @@ def test_session_cache_cannot_replace_fresh_retry_consent():
     asyncio.run(scenario())
 
 
-def test_combined_delta_overflow_is_explicitly_inexact(monkeypatch):
+def test_combined_delta_overflow_is_explicitly_inexact(tmp_path, monkeypatch):
     from corki.protocol import patches
 
-    raw = outcome()
+    raw = outcome(tmp_path)
     raw["delta"]["exact"] = True
     raw["delta"]["changes"][0]["change"]["content"] = "x" * 200
     first = PatchResult.parse(json.dumps(raw))

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from corki.platforms.paths import is_link_metadata
 from corki.protocol.wire_json import loads_wire, materialize
 
 AGENT_SCHEMA_PREFIX = "https://agent-plugins.org/schemas/"
@@ -60,7 +61,8 @@ def find_manifest(root: Path, *, native_only: bool = False) -> ManifestSource | 
             continue
         candidate = root / relative
         try:
-            if not stat.S_ISDIR(candidate.parent.lstat().st_mode):
+            metadata = candidate.parent.lstat()
+            if is_link_metadata(metadata) or not stat.S_ISDIR(metadata.st_mode):
                 return None
             return (
                 ManifestSource(candidate, root) if stat.S_ISREG(candidate.lstat().st_mode) else None

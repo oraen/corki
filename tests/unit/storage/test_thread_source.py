@@ -2,6 +2,7 @@
 
 import asyncio
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -18,7 +19,7 @@ def test_concurrent_legacy_source_migration_preserves_original_rows(tmp_path):
         thread = new_thread_id()
         await repository.create_thread(thread, tmp_path)
         await repository.append_items(thread, (UserMessageItem("request", new_turn_id()),))
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             db.execute("ALTER TABLE threads DROP COLUMN source")
             before = db.execute("SELECT * FROM threads").fetchall()
             history = db.execute("SELECT * FROM conversation_items").fetchall()
@@ -26,7 +27,7 @@ def test_concurrent_legacy_source_migration_preserves_original_rows(tmp_path):
             *(asyncio.to_thread(SQLiteSessionRepository, path) for _ in range(4))
         )
         assert await reopened[0].load_thread_source(thread) == SessionSource()
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             assert [row[:-1] for row in db.execute("SELECT * FROM threads")] == before
             assert db.execute("SELECT * FROM conversation_items").fetchall() == history
         for owner in reopened:
@@ -52,7 +53,7 @@ def test_source_filter_precedes_scan_limit_and_retains_legacy_bare_values(
         )
         for thread in (eligible, excluded):
             await sessions.append_items(thread, (UserMessageItem("request", new_turn_id()),))
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             db.execute(
                 "UPDATE threads SET source=?, updated_at=datetime('now','-1 day') WHERE id=?",
                 (stored, eligible),
@@ -86,7 +87,7 @@ def test_different_resuming_host_cannot_overwrite_historical_source(tmp_path):
             thread, tmp_path, session_source=SessionSource.internal("guardian")
         )
         assert await reopened.load_thread_source(thread) == original
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             assert db.execute("SELECT source FROM threads").fetchone() == ("exec",)
         await reopened.close()
         await repository.close()

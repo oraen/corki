@@ -25,7 +25,7 @@ else:
         return subprocess.check_output(
             [sys.executable, "-c", program, str(root)],
             text=True,
-            timeout=10,
+            timeout=120,  # Includes a cold Python/import startup on emulated Windows.
         ).strip()
 
     owned = WorkspaceLeases((root,))

@@ -2,12 +2,11 @@
 
 import asyncio
 import json
-import shlex
 import sqlite3
-import sys
 from dataclasses import replace
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
@@ -30,15 +29,10 @@ def test_pending_input_does_not_bypass_prior_hook_claim(
     tmp_path, monkeypatch, committed, late_input, change, handlers, corruption=None
 ):
     async def scenario():
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                (
-                    "from pathlib import Path; Path('calls').open('a').write('once\\n'); "
-                    "print('{\"continue\": false}')"
-                ),
-            ]
+        command = python_command(
+            tmp_path,
+            "from pathlib import Path; Path('calls').open('a').write('once\\n'); "
+            "print('{\"continue\": false}')",
         )
         fingerprint = command_identity({"type": "command", "command": command})[0]
         source = tmp_path / "config.toml"

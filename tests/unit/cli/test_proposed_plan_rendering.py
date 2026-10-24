@@ -192,3 +192,4 @@ def test_plan_table_tail_is_preview_only_and_disappears_on_interruption(
     assert ui._stream_tail_fragments() == []
     assert "alpha" not in ui._transcript.render(40)
     assert "alpha" not in "".join(part[1] for part in ui._history_view.text())
+    ui._history_view.close()

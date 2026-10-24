@@ -42,7 +42,7 @@ def test_long_model_menu_fits_and_scrolls_selected_item(width, height, compact):
                         assert "Enter confirm" in text and "Esc cancel" in text
                         if width == 40 and index == 0 and not compact:
                             snapshot = Path(__file__).with_name("snapshots") / "model_picker_40.txt"
-                            assert text.rstrip() == snapshot.read_text().rstrip()
+                            assert text.rstrip() == snapshot.read_text(encoding="utf-8").rstrip()
                     pipe.send_text("\r")
                     assert await task == models[10]
             finally:

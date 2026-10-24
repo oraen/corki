@@ -961,6 +961,14 @@ class LangGraphRuntime:
                 disabled_plugins = configured_disabled
         start_source = "resume" if thread_id is not None else "startup"
         thread_id = thread_id or new_thread_id()
+        capability_home = (home_path or _capability_home(database_path)).absolute()
+        if settings.execution_permissions is not None:
+            settings = replace(
+                settings,
+                execution_permissions=replace(
+                    settings.execution_permissions, runtime_home=capability_home
+                ),
+            )
         process_manager = ProcessManager(environment_policy=settings.shell_environment_policy)
         construction.append(process_manager.terminate_all)
         actual_registry = registry or _default_registry(settings, process_manager)
@@ -971,7 +979,6 @@ class LangGraphRuntime:
         )
         if repository is None and actual_repository is not None:
             construction.append(actual_repository.close)
-        capability_home = home_path or _capability_home(database_path)
         process_manager.approvals.rules.path = (
             capability_home.absolute() / "rules" / "default.rules"
         )
@@ -3288,6 +3295,8 @@ def _capability_home(database_path: Path) -> Path:
 
 
 def _create_model(settings: CorkiSettings, capabilities: ProviderCapabilities) -> ModelPort:
+    if not settings.provider_enabled:
+        raise ValueError("供应商已关闭，请开启供应商或选择其他模型")
     common = {
         "api_key": settings.api_key,
         "base_url": settings.api_base,

@@ -11,7 +11,7 @@ import time
 import uuid
 from collections import deque
 from contextlib import aclosing, closing, suppress
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from weakref import WeakValueDictionary
@@ -29,6 +29,7 @@ from content import (
 )
 from followups import FollowUps
 from live import append_event, interrupted_messages
+from model_watch import ModelCallWatch
 from protocol import dumps
 from state import DesktopState
 
@@ -36,6 +37,8 @@ from corki.cli.elicitation import validate_field
 from corki.cli.history_projection import HistoryProjection
 from corki.config.settings import CorkiSettings
 from corki.core.runtime import LangGraphRuntime
+from corki.models.request_watch import request_observer
+from corki.platforms.paths import directory_error_message
 from corki.protocol.ids import ThreadId
 from corki.protocol.items import (
     AssistantMessageItem,
@@ -79,6 +82,7 @@ class Service:
         self.send = send
         self.factory = factory or LangGraphRuntime.acreate
         self.runtimes = {}
+        self.loaded_settings = {}
         self.active_models = {}
         self.tasks = {}
         self.admissions = {}
@@ -124,13 +128,20 @@ class Service:
         if directory == default:
             directory.mkdir(parents=True, exist_ok=True)
         if not directory.is_dir() or not os.access(directory, os.R_OK | os.X_OK):
-            raise ValueError("工作目录不存在或不可访问")
+            raise ValueError(directory_error_message(directory, "工作目录不存在或不可访问"))
         return directory
 
-    def settings(self, directory, **overrides):
-        settings = CorkiSettings.for_directory(
-            directory, config_file=self.home / "settings.json", **overrides
-        )
+    def settings(self, directory, *, refresh=False, **overrides):
+        key = str(Path(directory).resolve())
+        if refresh or key not in self.loaded_settings:
+            self.loaded_settings.pop(key, None)
+            self.loaded_settings[key] = CorkiSettings.for_directory(
+                directory, config_file=self.home / "settings.json"
+            )
+        settings = self.loaded_settings[key]
+        if overrides:
+            settings = settings.for_model(overrides.pop("provider"), overrides.pop("model"))
+            settings = replace(settings, **overrides)
         if settings.api_key:
             self.secrets.add(settings.api_key)
         return settings
@@ -209,6 +220,7 @@ class Service:
 
     async def catalog(self, p):
         directory = self.directory(text(p, "directory", default=""))
+        self.loaded_settings.pop(str(Path(directory).resolve()), None)
         if not (self.home / "settings.json").is_file():
             return {
                 "valid": False,
@@ -216,7 +228,7 @@ class Service:
                 "providers": [],
             }
         try:
-            settings = self.settings(directory)
+            settings = self.settings(directory, refresh=True)
             # The authoritative parser validates all known fields and project layers.
             document = json.loads(settings._provider_document or "{}")
             configured = document.get("providers", {})
@@ -224,6 +236,8 @@ class Service:
                 raise ValueError("配置中没有供应商和模型")
             providers = []
             for name, profile in configured.items():
+                if not profile.get("enabled", True):
+                    continue
                 models = []
                 for model in profile.get("models", {}):
                     selected = settings.for_model(name, model)
@@ -270,7 +284,9 @@ class Service:
         limit = integer(p, "limit", 40, 100)
         titles = self.state.titles()
         directory = text(p, "directory") if "directory" in p else None
-        with closing(sqlite3.connect(self.database)) as db:
+        # URI support must be enabled on the main connection for ATTACH's
+        # read-only file URI to work on Windows as well as macOS.
+        with closing(sqlite3.connect(self.database.as_uri() + "?mode=rw", uri=True)) as db:
             db.row_factory = sqlite3.Row
             # Filter before pagination and grouping, without hiding or deleting history.
             visible = "archived_at IS NULL AND source != ? "
@@ -442,37 +458,31 @@ class Service:
                     f"AND id IN ({placeholders}) AND status IN ('cancelled','failed')",
                     (thread, *visible_turns),
                 ).fetchall()
-        cancelled = {row[0] for row in terminal_turns if row[1] == "cancelled"}
-        for turn, status, error, _ in terminal_turns:
-            if status == "failed" and error:
-                index = max(i for i, row in enumerate(rows) if row["turnId"] == turn) + 1
-                rows.insert(
-                    index,
-                    {
-                        "id": f"error:{turn}",
-                        "turnId": turn,
-                        "role": "error",
-                        "content": error[:2000],
-                        "error": True,
-                    },
-                )
-        partials = self.state.interrupted(thread, cancelled & visible_turns, PREVIEW_CHARS)
-        stopped_at = {row[0]: row[3] for row in terminal_turns if row[1] == "cancelled"}
-        for turn in cancelled & visible_turns:
+        interrupted = {row[0] for row in terminal_turns} & visible_turns
+        partials = self.state.interrupted(thread, interrupted, PREVIEW_CHARS)
+        for turn, status, error, finished_at in terminal_turns:
+            if turn not in visible_turns:
+                continue
             index = max(i for i, row in enumerate(rows) if row["turnId"] == turn) + 1
             existing = {row["id"] for row in rows}
             additions = [
-                {**row, "createdAt": stopped_at[turn]}
+                {**row, "createdAt": finished_at}
                 for row in partials if row["turnId"] == turn and row["id"] not in existing
             ]
-            additions.append(
-                {
-                    "id": f"stopped:{turn}",
-                    "turnId": turn,
-                    "role": "stopped",
-                    "content": "回答已停止",
-                }
-            )
+            if status == "failed" and error:
+                model_failure = error == "模型调用失败"
+                additions.append({
+                    "id": f"error:{turn}", "turnId": turn,
+                    "role": "assistant" if model_failure else "error",
+                    "content": error[:2000], "error": not model_failure,
+                    "phase": "final_answer" if model_failure else None,
+                    "createdAt": finished_at,
+                })
+            elif status == "cancelled":
+                additions.append({
+                    "id": f"stopped:{turn}", "turnId": turn,
+                    "role": "stopped", "content": "回答已停止",
+                })
             rows[index:index] = additions
         model = await self.repository.load_thread_model_settings(ThreadId(thread))
         return {
@@ -642,26 +652,13 @@ class Service:
                 if exists
                 else self.directory(text(p, "directory", default=""))
             )
-            catalog = await self.catalog({"directory": str(directory)})
-            if not catalog["valid"]:
-                raise ValueError(catalog["error"])
             provider = text(p, "provider")
             model = text(p, "model")
-            selected = next(
-                (
-                    m
-                    for v in catalog["providers"]
-                    if v["id"] == provider
-                    for m in v["models"]
-                    if m["id"] == model
-                ),
-                None,
-            )
-            if not selected:
-                raise ValueError("供应商或模型不存在，请刷新配置")
             effort = p.get("reasoning")
-            if effort is not None and effort not in selected["reasoningLevels"]:
-                raise ValueError("模型不支持该推理等级")
+            # Use the admitted snapshot; config.read is the explicit reload path.
+            settings = self.settings(
+                directory, provider=provider, model=model, reasoning_effort=effort
+            )
             images = []
             parts = []
             for entry in attachments:
@@ -680,7 +677,7 @@ class Service:
                     }
                 if entry.get("type") == "image":
                     data = text(entry, "data", limit=1500000)
-                    if not selected["images"]:
+                    if not settings.supports_image_input:
                         raise ValueError("所选模型未声明支持图片输入")
                     if not data.startswith(
                         (
@@ -715,9 +712,6 @@ class Service:
                 )
             runtime = self.runtimes.get(thread)
             if runtime is None:
-                settings = self.settings(
-                    directory, provider=provider, model=model, reasoning_effort=effort
-                )
                 runtime = await self.factory(
                     settings=settings,
                     database_path=self.database,
@@ -812,6 +806,15 @@ class Service:
 
     async def run(self, thread, identity, runtime, content, images):
         terminal = False
+
+        async def health(warning):
+            data = {"warning": warning}
+            if thread in self.live:
+                append_event(self.live[thread], "model.health", data)
+            await self.emit("model.health", thread, data)
+
+        watch = ModelCallWatch(health)
+        observer_token = request_observer.set(watch)
         try:
             async with aclosing(
                 runtime.stream(content, attachments=images, realtime=True)
@@ -821,7 +824,7 @@ class Service:
                     if kind == "AssistantReasoningDelta" and event.channel != "summary":
                         continue
                     data = asdict(event)
-                    if kind in ("AssistantMessageCompleted", "TurnCancelled"):
+                    if kind in ("AssistantMessageCompleted", "TurnCancelled", "TurnFailed"):
                         data["createdAt"] = datetime.now(UTC).isoformat()
                     if kind == "ToolCallStarted":
                         data["startedAt"] = int(time.time() * 1000)
@@ -847,7 +850,7 @@ class Service:
                             "request_id": event.call_id,
                         }
                         self.pending[event.call_id] = value
-                    if kind == "TurnCancelled":
+                    if kind in ("TurnCancelled", "TurnFailed"):
                         self.state.save_interrupted(
                             thread,
                             str(event.turn_id),
@@ -906,6 +909,8 @@ class Service:
             self.state.update_request(identity, "failed", error=message)
             await self.emit("host.error", thread, {"message": message})
         finally:
+            await watch.close()
+            request_observer.reset(observer_token)
             self.pending = {k: v for k, v in self.pending.items() if v["threadId"] != thread}
             try:
                 await self.retire_idle_runtimes()

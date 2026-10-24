@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import time
 from urllib.parse import parse_qs
 
@@ -300,7 +301,20 @@ def test_runtime_refresh_persists_before_rpc_and_cold_restart(
             if rejected:
                 assert stored["selected"] == {**entry, "refresh_token": None}
             else:
-                assert path.stat().st_mode & 0o777 == 0o600
+                if os.name == "nt":
+                    # Windows mode bits do not represent credential privacy.
+                    # Verify the actual published file's DACL instead.
+                    from corki.platforms.windows_acl import WindowsPrivateACL
+                    from corki.platforms.windows_file_handles import WindowsFiles
+
+                    files = WindowsFiles()
+                    handle = files.open(path, access=0x20000)
+                    try:
+                        WindowsPrivateACL().verify(handle)
+                    finally:
+                        files.close(handle)
+                else:
+                    assert path.stat().st_mode & 0o777 == 0o600
                 thread = runtime.thread_id
                 await runtime.aclose()
                 runtime = await create(thread)

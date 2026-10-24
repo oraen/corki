@@ -142,7 +142,12 @@ def _save(home, previous, updated, scopes, *, remove=False):
             entries = kept
         else:
             entries = _updated_entries(entries, previous, updated, scopes)
-        descriptor, temporary = tempfile.mkstemp(prefix=".mcp-credentials-", dir=home)
+        if os.name == "nt":
+            from corki.platforms.windows_private_files import private_temporary_file
+
+            descriptor, temporary = private_temporary_file(home, prefix=".mcp-credentials-")
+        else:
+            descriptor, temporary = tempfile.mkstemp(prefix=".mcp-credentials-", dir=home)
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             json.dump(entries, stream, ensure_ascii=False, allow_nan=False)
             stream.flush()

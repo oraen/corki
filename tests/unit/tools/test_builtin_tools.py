@@ -28,6 +28,7 @@ def call(name: str, arguments: dict[str, object]) -> ToolCall:
     return ToolCall(new_tool_call_id(), name, arguments)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell fixture; Windows process tests cover native shells")
 def test_exec_command_and_write_stdin_resume_process(tmp_path: Path) -> None:
     async def scenario() -> None:
         processes = ProcessManager()
@@ -58,6 +59,7 @@ def test_exec_command_and_write_stdin_resume_process(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX PTY probe; Windows uses the ConPTY integration tests")
 def test_exec_command_supports_a_real_pseudo_terminal(tmp_path: Path) -> None:
     async def scenario() -> None:
         processes = ProcessManager()
@@ -212,6 +214,7 @@ def test_apply_patch_rolls_back_all_files_if_commit_fails(monkeypatch, tmp_path:
     first.write_text("first\n")
     second.write_text("second\n")
     first.chmod(0o744)
+    original_mode = stat.S_IMODE(first.stat().st_mode)
     real_replace = patch_module.os.replace
     calls = 0
 
@@ -239,7 +242,7 @@ def test_apply_patch_rolls_back_all_files_if_commit_fails(monkeypatch, tmp_path:
 
     assert first.read_text() == "first\n"
     assert second.read_text() == "second\n"
-    assert stat.S_IMODE(first.stat().st_mode) == 0o744
+    assert stat.S_IMODE(first.stat().st_mode) == original_mode
 
 
 def test_update_plan_preserves_step_status(tmp_path: Path) -> None:

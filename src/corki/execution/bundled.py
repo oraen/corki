@@ -9,6 +9,7 @@ import struct
 from pathlib import Path
 
 REFERENCE_COMMIT = "ddf04ad26789d040f9ef6a96736f76602e35a6cc"
+WINDOWS_HELPERS = frozenset({"codex-command-runner.exe", "codex-windows-sandbox-setup.exe"})
 _BUNDLE = Path(__file__).resolve().parent.parent / "_native" / "sandbox"
 
 
@@ -86,6 +87,29 @@ def verify_binary_platform(binary: Path, tag: str) -> None:
             if kind in (2, 3):  # executable or position-independent executable
                 actual = {62: "x86_64", 183: "arm64"}.get(cpu)
         valid_tag = tag == "linux_" + {"arm64": "aarch64"}.get(machine, machine)
+    elif system == "windows":
+        # PE/COFF format, not merely an .exe suffix. Bound all offsets before
+        # reading; a matching digest alone does not establish host compatibility.
+        if len(header) == 64 and header[:2] == b"MZ":
+            offset = struct.unpack_from("<I", header, 0x3C)[0]
+            size = binary.stat().st_size
+            if 64 <= offset <= size - 26:
+                with binary.open("rb") as stream:
+                    stream.seek(offset)
+                    pe = stream.read(26)
+                if pe[:4] == b"PE\0\0":
+                    cpu, sections = struct.unpack_from("<HH", pe, 4)
+                    optional_size, flags, magic = struct.unpack_from("<HHH", pe, 20)
+                    if (
+                        0 < sections <= 96
+                        and optional_size >= 112
+                        and offset + 24 + optional_size + sections * 40 <= size
+                        and flags & 0x2
+                        and not flags & 0x2000
+                        and magic == 0x20B
+                    ):
+                        actual = {0x8664: "x86_64", 0xAA64: "arm64"}.get(cpu)
+        valid_tag = tag == {"x86_64": "win_amd64", "arm64": "win_arm64"}.get(machine)
     if actual != machine or actual is None:
         raise ValueError("bundled compiler format or architecture does not match this host")
     if not valid_tag:
@@ -113,9 +137,14 @@ def verify_compiler(binary: Path, manifest_path: Path) -> dict:
         "machine",
         "wheel_platform",
     }
-    if not isinstance(manifest, dict) or set(manifest) != fields:
+    if not isinstance(manifest, dict):
         raise ValueError("invalid bundled compiler manifest fields")
-    if type(manifest["version"]) is not int or manifest["version"] != 1:
+    windows_bundle = manifest.get("system") == "windows"
+    if windows_bundle:
+        fields.add("auxiliary_sha256")
+    if set(manifest) != fields:
+        raise ValueError("invalid bundled compiler manifest fields")
+    if type(manifest["version"]) is not int or manifest["version"] != (2 if windows_bundle else 1):
         raise ValueError("unsupported bundled compiler manifest version")
     if manifest["reference_commit"] != REFERENCE_COMMIT:
         raise ValueError("bundled compiler reference revision mismatch")
@@ -139,6 +168,22 @@ def verify_compiler(binary: Path, manifest_path: Path) -> dict:
     if not os.access(binary, os.X_OK) or file_sha256(binary) != manifest["binary_sha256"]:
         raise ValueError("bundled compiler is not executable or its digest differs")
     verify_binary_platform(binary, tag)
+    if windows_bundle:
+        auxiliary = manifest["auxiliary_sha256"]
+        if not isinstance(auxiliary, dict) or set(auxiliary) != WINDOWS_HELPERS:
+            raise ValueError("invalid bundled Windows helper manifest")
+        for name, digest in auxiliary.items():
+            helper = binary.parent / name
+            if (
+                not isinstance(digest, str)
+                or re.fullmatch("[0-9a-f]{64}", digest) is None
+                or helper.is_symlink()
+                or not helper.is_file()
+                or not 0 < helper.stat().st_size <= 64 * 1024 * 1024
+                or file_sha256(helper) != digest
+            ):
+                raise ValueError("invalid bundled Windows helper executable")
+            verify_binary_platform(helper, tag)
     return manifest
 
 

@@ -1,5 +1,7 @@
 import asyncio
+import sys
 from collections.abc import AsyncIterator, Iterator
+from contextlib import closing
 from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path
@@ -32,6 +34,10 @@ from corki.protocol.events import (
 )
 from corki.protocol.ids import new_thread_id, new_tool_call_id, new_turn_id
 from corki.realtime import RealtimeTurnClosedError
+
+# Cases with real runtime/SQLite startup use a deadlock guard,
+# not an assertion that a cold Windows runtime must initialize within 3 seconds.
+RUNTIME_IO_TIMEOUT = 30 if sys.platform == "win32" else 3
 
 
 @dataclass
@@ -496,7 +502,7 @@ def test_realtime_memory_reset_reaches_actual_runtime_without_steering(tmp_path)
         ui = UI(iter(()))
         app = CorkiApplication(settings, CorkiPaths.from_home(tmp_path / "ui-home"), runtime, ui)
         try:
-            assert await asyncio.wait_for(app.run(), 3) == 0
+            assert await asyncio.wait_for(app.run(), RUNTIME_IO_TIMEOUT) == 0
         finally:
             release.set()
             await runtime.aclose()
@@ -580,7 +586,7 @@ def test_realtime_memory_mode_updates_real_runtime_without_steering(tmp_path):
                     return "/memory mode disabled"
                 if self.reads in (3, 4):
                     expected = "disabled" if self.reads == 3 else "enabled"
-                    with sqlite3.connect(database) as db:
+                    with closing(sqlite3.connect(database)) as db:
                         assert db.execute("SELECT memory_mode FROM threads").fetchone() == (
                             expected,
                         )
@@ -602,7 +608,7 @@ def test_realtime_memory_mode_updates_real_runtime_without_steering(tmp_path):
         ui = UI(iter(()))
         try:
             app = CorkiApplication(settings, CorkiPaths.from_home(tmp_path / "home"), runtime, ui)
-            assert await asyncio.wait_for(app.run(), 3) == 0
+            assert await asyncio.wait_for(app.run(), RUNTIME_IO_TIMEOUT) == 0
         finally:
             release.set()
             await runtime.aclose()
@@ -1388,7 +1394,7 @@ def test_busy_compact_is_rejected_and_idle_compact_remains_available(
         )
         ui = UI(iter(()))
         app = Application(settings, CorkiPaths.from_home(tmp_path / ".corki"), runtime, ui)
-        assert await asyncio.wait_for(app.run(), 3) == 0
+        assert await asyncio.wait_for(app.run(), RUNTIME_IO_TIMEOUT) == 0
         assert len(requests) == 2
         assert ui.restored == (
             *(("UNSUBMITTED STEER",) if pending_steer else ()),
@@ -1463,7 +1469,7 @@ def test_tab_queued_compact_runs_after_current_turn_without_cancellation(tmp_pat
         )
         ui = UI(iter(()))
         app = Application(settings, CorkiPaths.from_home(tmp_path / ".corki"), runtime, ui)
-        assert await asyncio.wait_for(app.run(), 3) == 0
+        assert await asyncio.wait_for(app.run(), RUNTIME_IO_TIMEOUT) == 0
         assert len(requests) == 2
         assert not any("interrupted" in text.lower() for _, text in ui.events)
         assert not any(kind == "error" for kind, _ in ui.events)
@@ -1556,7 +1562,7 @@ def test_compaction_keeps_input_available_and_owns_followups(tmp_path, cancel, f
         seed_history = await runtime._repository.load_items(runtime.thread_id)
         ui = UI(iter(()))
         app = Application(settings, CorkiPaths.from_home(tmp_path / ".corki"), runtime, ui)
-        assert await asyncio.wait_for(app.run(), 3) == 0
+        assert await asyncio.wait_for(app.run(), RUNTIME_IO_TIMEOUT) == 0
         assert ui.queued_count == 2
         if fail:
             assert any(

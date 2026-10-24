@@ -116,7 +116,9 @@ def _apply_operations(cwd: Path, operations: tuple[_Operation, ...]) -> str:
     def current(path: Path) -> str | None:
         if path in virtual:
             return virtual[path]
-        return path.read_text(encoding="utf-8") if path.is_file() else None
+        # Preserve original line endings for the compatibility hunk editor.
+        # Text-mode universal newline conversion would erase them before editing.
+        return path.read_bytes().decode("utf-8") if path.is_file() else None
 
     for operation in operations:
         path = _workspace_path(cwd, operation.path)

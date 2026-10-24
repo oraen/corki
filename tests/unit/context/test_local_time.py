@@ -1,4 +1,3 @@
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -52,9 +51,9 @@ def test_linux_openwrt_fallback_matches_source_tokens(monkeypatch, config, expec
         raise OSError("not a symlink")
 
     def read(path, **kwargs):
-        if str(path) == "/etc/timezone":
+        if path == Path("/etc/timezone"):
             raise UnicodeError("not UTF8")
-        assert str(path) == "/etc/config/system"
+        assert path == Path("/etc/config/system")
         return config
 
     monkeypatch.setattr(local_time.os, "readlink", readlink)
@@ -93,45 +92,23 @@ def test_darwin_refreshes_system_cache_and_releases_owned_reference(monkeypatch,
     assert calls == ["reset", ("release", 10)]
 
 
-@pytest.mark.parametrize("failure", [None, "timeout", "exit", "missing", "empty"])
-def test_windows_fixed_winrt_adapter_is_bounded_and_falls_back(monkeypatch, failure):
+@pytest.mark.parametrize("failure", [None, OSError, ValueError, UnicodeError, AttributeError])
+def test_windows_native_resolver_preserves_fallback_without_starting_shell(monkeypatch, failure):
+    from corki.platforms import windows_timezone
+
     monkeypatch.setattr(local_time, "sys", SimpleNamespace(platform="win32"))
-    monkeypatch.setattr(Path, "is_file", lambda path: False)
-    monkeypatch.setattr(
-        local_time.shutil, "which", lambda name: None if failure == "missing" else "powershell.exe"
-    )
-    calls = []
 
-    def run(args, **kwargs):
-        calls.append(args)
-        assert args[:5] == [
-            "powershell.exe",
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-        ]
-        assert args[5] == (
-            "[Windows.Globalization.Calendar,Windows.Globalization,ContentType=WindowsRuntime]"
-            "::new().GetTimeZone()"
-        )
-        assert kwargs == dict(
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            timeout=2,
-            check=True,
-            encoding="utf-8",
-        )
-        if failure == "timeout":
-            raise subprocess.TimeoutExpired(args, 2)
-        if failure == "exit":
-            raise subprocess.CalledProcessError(1, args)
-        return SimpleNamespace(stdout="" if failure == "empty" else "America/Los_Angeles\r\n")
+    def resolve():
+        if failure:
+            raise failure("timezone unavailable")
+        return "America/Los_Angeles"
 
-    monkeypatch.setattr(local_time.subprocess, "run", run)
-    assert local_time.timezone_name() == ("America/Los_Angeles" if failure is None else "Etc/UTC")
-    assert len(calls) == (failure != "missing")
+    def unexpected_process(*args, **kwargs):
+        raise AssertionError("timezone resolution must not launch a subprocess")
+
+    monkeypatch.setattr(windows_timezone, "timezone_name", resolve)
+    monkeypatch.setattr(local_time.subprocess, "run", unexpected_process)
+    assert local_time.timezone_name() == ("Etc/UTC" if failure else "America/Los_Angeles")
 
 
 def test_unsupported_platform_uses_explicit_fallback(monkeypatch):

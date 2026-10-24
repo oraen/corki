@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 
 import pytest
@@ -150,7 +151,7 @@ def test_captured_mcp_handler_unavailability_is_a_value_not_a_js_exception(
             if replay:
                 marker = '"isError":true' if change != "unchanged" else "live result"
                 assert output.content.replace(" ", "").count(marker.replace(" ", "")) == 2
-            with sqlite3.connect(tmp_path / "unavailable.db") as db:
+            with closing(sqlite3.connect(tmp_path / "unavailable.db")) as db:
                 rows = db.execute(
                     "SELECT status,result_json FROM tool_executions "
                     "WHERE tool_name='mcp__docs::echo'"

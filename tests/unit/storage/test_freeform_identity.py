@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from hashlib import sha256
 
@@ -52,7 +53,7 @@ def test_old_json_history_definition_and_ledger_are_still_idempotent(tmp_path):
         await repository.append_items(thread, items)
         await repository.claim_tool_call(thread, turn, call)
         await repository.complete_tool_call(thread, turn, result)
-        with sqlite3.connect(repository.path) as connection:
+        with closing(sqlite3.connect(repository.path)) as connection, connection:
             rows = connection.execute(
                 "SELECT payload_json FROM conversation_items ORDER BY sequence"
             ).fetchall()

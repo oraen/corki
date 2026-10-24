@@ -1,5 +1,6 @@
 import asyncio
 import io
+import os
 from functools import partial
 from pathlib import Path
 
@@ -17,7 +18,7 @@ from corki.cli.command_completion import CommandCompleter
 from corki.cli.draft_history import DraftEntry
 from corki.cli.inline_images import ImageDraft
 from corki.cli.input_owner import DraftText, ImageInput, QueuedInput, input_image_kwargs
-from corki.cli.reference_completion import FileSearchUnavailable, catalog, files
+from corki.cli.reference_completion import FileCandidates, FileSearchUnavailable, catalog, files
 from corki.config import CorkiSettings
 from corki.plugins.models import PluginManifest
 from corki.protocol.input_mentions import InputMention
@@ -95,10 +96,17 @@ def test_catalog_hides_plugin_owned_skills_only_in_unified_mode():
 
 def test_file_search_is_local_and_skips_ignored_and_control_names(tmp_path):
     (tmp_path / "中文 name.txt").touch()
-    (tmp_path / "bad\nfile").touch()
+    if os.name != "nt":  # Windows rejects control characters before search can run.
+        (tmp_path / "bad\nfile").touch()
     (tmp_path / ".git").mkdir()
     (tmp_path / ".git" / "config").touch()
     assert [r.label for r in asyncio.run(files(tmp_path))] == ["中文 name.txt"]
+
+
+def test_search_output_rejects_control_characters_on_every_platform():
+    candidates = FileCandidates("")
+    candidates.feed(b"good.txt\0bad\nfile\0bad\x7ffile\0")
+    assert [row.label for row in candidates.finish()] == ["good.txt"]
 
 
 def test_directory_candidates_include_nested_parents_once(tmp_path):
@@ -109,7 +117,7 @@ def test_directory_candidates_include_nested_parents_once(tmp_path):
     rows = asyncio.run(files(tmp_path))
     assert [(row.label, row.description) for row in rows if row.description == "Directory"] == [
         ("文档 guides", "Directory"),
-        ("文档 guides/nested", "Directory"),
+        (str(Path("文档 guides") / "nested"), "Directory"),
     ]
     assert all(row.selector is None for row in rows)
 
@@ -135,7 +143,7 @@ def test_followed_directory_link_preserves_reference_spelling_and_ignores(tmp_pa
     (project / "文档 link").symlink_to(external, target_is_directory=True)
     (project / "ignored-link").symlink_to(external, target_is_directory=True)
     rows = asyncio.run(files(project))
-    assert ("文档 link/说明.md", "File") in [(r.label, r.description) for r in rows]
+    assert (str(Path("文档 link") / "说明.md"), "File") in [(r.label, r.description) for r in rows]
     assert ("文档 link", "Directory") in [(r.label, r.description) for r in rows]
     assert not any("ignored-link" in row.label for row in rows)
     assert not any(str(external) in row.label for row in rows)
@@ -166,7 +174,7 @@ def test_candidate_search_keeps_same_named_skills_bound_by_path():
         completer.references = load
         rows = [c async for c in completer.get_completions_async(Document("$sam"), CompleteEvent())]
         assert len(rows) == 2
-        assert rows[1].reference.selector.path == "/b/SKILL.md"
+        assert rows[1].reference.selector.path == str(Path("/b/SKILL.md"))
 
     asyncio.run(run())
 

@@ -19,6 +19,22 @@ from corki.core import LangGraphRuntime
 from corki.protocol.items import ToolResultItem
 
 
+def python_probe(workspace, script):
+    if sys.platform != "win32":
+        return {"cmd": shlex.join([sys.executable, "-I", "-c", script]), "login": False}
+    probe = workspace / "permission probe.py"
+    probe.write_text(script, encoding="utf-8")
+
+    def quote(value):
+        return "'" + str(value).replace("'", "''") + "'"
+
+    return {
+        "cmd": f"& {quote(sys.executable)} -I {quote(probe)}",
+        "shell": "powershell.exe",
+        "login": False,
+    }
+
+
 async def exercise(tmp_path, monkeypatch, entry, mode, trust, *, managed=False):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -83,7 +99,7 @@ async def exercise(tmp_path, monkeypatch, entry, mode, trust, *, managed=False):
         " print('WRITE_DENIED')\n"
     )
     try:
-        await run(runtime, model, {"cmd": shlex.join([sys.executable, "-I", "-c", script])})
+        await run(runtime, model, python_probe(workspace, script))
         expected_write = trust is not None and not managed
         assert target.exists() is expected_write
         results = [item for item in model.requests[-1].items if isinstance(item, ToolResultItem)]
@@ -134,7 +150,7 @@ def test_explicit_full_access_is_native_policy_not_legacy_none(
             rules = host_dir / "rules"
             rules.mkdir()
             (rules / "deny.rules").write_text(
-                'prefix_rule(pattern=["touch"], decision="forbidden")'
+                f'prefix_rule(pattern=[{json.dumps(sys.executable)}], decision="forbidden")'
             )
         settings = (
             CorkiSettings(
@@ -155,7 +171,9 @@ def test_explicit_full_access_is_native_policy_not_legacy_none(
         )
         target = tmp_path / "created"
         try:
-            await run(runtime, model, {"cmd": "touch " + shlex.quote(str(target))})
+            await run(runtime, model, python_probe(
+                tmp_path, f"from pathlib import Path\nPath({str(target)!r}).touch()\n"
+            ))
             assert target.exists() is not forbidden
             assert json.loads(runtime._settings.execution_permissions.profile_json) == {
                 "type": "disabled"

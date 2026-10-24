@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from identifier_validation import validate_plugin_identifier
+from identifier_validation import configure_stdio, validate_plugin_identifier
 
 
 CACHEBUSTER_PREFIX = "codex"
@@ -34,6 +34,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    configure_stdio()
     args = parse_args()
     plugin_root = Path(args.plugin_path).expanduser().resolve()
     manifest_path = plugin_root / ".codex-plugin" / "plugin.json"
@@ -58,7 +59,7 @@ def main() -> None:
 def load_manifest(manifest_path: Path) -> dict[str, object]:
     if not manifest_path.is_file():
         raise FileNotFoundError(f"missing manifest: {manifest_path}")
-    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     if not isinstance(payload, dict):
         raise ValueError(f"{manifest_path} must contain a JSON object.")
     return payload

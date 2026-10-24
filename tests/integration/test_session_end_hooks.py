@@ -3,11 +3,10 @@
 import asyncio
 import json
 import os
-import shlex
-import sys
 from hashlib import sha256
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
@@ -26,16 +25,13 @@ def test_session_end_runs_once_after_turn_and_preserves_transcript(
     tmp_path, origin, fails, asynchronous
 ):
     async def scenario():
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
-                "record={'payload':p,'transcript':Path(p['transcript_path']).read_text()}; "
-                "Path('end.jsonl').open('a').write(json.dumps(record)+'\\n'); "
-                "print(json.dumps({'continue':False,'decision':'block','reason':'ignore me'})); "
-                f"sys.exit({2 if fails else 0})",
-            ]
+        command = python_command(
+            tmp_path,
+            "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
+            "record={'payload':p,'transcript':Path(p['transcript_path']).read_text()}; "
+            "Path('end.jsonl').open('a').write(json.dumps(record)+'\\n'); "
+            "print(json.dumps({'continue':False,'decision':'block','reason':'ignore me'})); "
+            f"sys.exit({2 if fails else 0})",
         )
         identity = {
             "event_name": "session_end",
@@ -138,14 +134,11 @@ def test_session_end_waits_for_pending_input_storage_barrier(tmp_path, monkeypat
     from corki.protocol.events import TurnFailed
 
     async def scenario():
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
-                "Path('end.jsonl').open('a').write("
-                "json.dumps(Path(p['transcript_path']).read_text())+'\\n')",
-            ]
+        command = python_command(
+            tmp_path,
+            "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
+            "Path('end.jsonl').open('a').write("
+            "json.dumps(Path(p['transcript_path']).read_text())+'\\n')",
         )
         fingerprint, _ = command_identity(
             {"type": "command", "command": command}, event_name="SessionEnd"
@@ -233,13 +226,10 @@ def test_session_end_timeout_reaps_process_when_observer_leaves(tmp_path, timeou
     from corki.core.stop_hooks import command_identity
 
     async def scenario():
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "import os,time; from pathlib import Path; "
-                "Path('pid').write_text(str(os.getpid())); time.sleep(30)",
-            ]
+        command = python_command(
+            tmp_path,
+            "import os,time; from pathlib import Path; "
+            "Path('pid').write_text(str(os.getpid())); time.sleep(30)",
         )
         handler = {"type": "command", "command": command}
         if timeout is not None:

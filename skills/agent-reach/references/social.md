@@ -2,6 +2,11 @@
 
 小红书、Twitter/X、B站、V2EX、Reddit。
 
+Windows 使用主技能中的 PowerShell 适配规则。示例中的 `@username` 请写为
+`'@username'`，避免被 PowerShell 解释为变量展开；`curl` 使用 `curl.exe`。
+Windows PowerShell 5.1 不支持 `&&`，需要分开执行命令，检查 `$LASTEXITCODE` 为 0
+后才继续依赖上一步成功的操作。缺少 CLI 或浏览器后端时先说明，不自动假设兼容。
+
 ## 小红书 / XiaoHongShu（多后端）
 
 小红书有三个后端，**先跑 `agent-reach doctor --json` 看 xiaohongshu 的 `active_backend` 是哪个**，再用对应命令组。

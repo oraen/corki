@@ -32,10 +32,10 @@ def exported(tmp_path):
 
 def test_patch_adds_product_name_without_replacing_existing_metadata(exported):
     patch = BRIDGE / "patches/workspace-metadata.patch"
-    before = {name: (exported / name).read_text() for name in PATHS}
+    before = {name: (exported / name).read_text(encoding="utf-8") for name in PATHS}
     BUILD["apply_workspace_metadata"](exported, patch)
     for name in PATHS:
-        content = (exported / name).read_text()
+        content = (exported / name).read_text(encoding="utf-8")
         assert '".corki"' in content
         for preserved in ('".codex"', '".git"', '".agents"'):
             assert content.count(preserved) == before[name].count(preserved)
@@ -49,7 +49,12 @@ def test_missing_or_drifted_patch_stops_build_without_partial_mutation(exported,
     patch = BRIDGE / "patches/workspace-metadata.patch"
     if drift == "source":
         target = exported / PATHS[1]
-        target.write_text(target.read_text().replace('Path::new(".codex")', 'Path::new("changed")'))
+        target.write_text(
+            target.read_text(encoding="utf-8").replace(
+                'Path::new(".codex")', 'Path::new("changed")'
+            ),
+            encoding="utf-8",
+        )
     else:
         patch = exported / "missing.patch"
     before = {name: (exported / name).read_bytes() for name in PATHS}

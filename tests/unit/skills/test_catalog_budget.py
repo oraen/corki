@@ -54,11 +54,11 @@ def no_alias(skill):
 
 def test_round_robin_keeps_every_locator_before_sharing_description_space():
     skills = (no_alias(metadata("one", "abcdefghij")), no_alias(metadata("two", "0123456789")))
-    minimum = sum(len(f"- {s.name}: (file: {s.path})\n") for s in skills)
+    minimum = sum(len(f"- {s.name}: (file: {s.path.as_posix()})\n") for s in skills)
     result = render_catalog(skills, MetadataBudget(minimum + 9, False))
     assert result.lines == (
-        f"- one: abcd (file: {skills[0].path})",
-        f"- two: 012 (file: {skills[1].path})",
+        f"- one: abcd (file: {skills[0].path.as_posix()})",
+        f"- two: 012 (file: {skills[1].path.as_posix()})",
     )
     assert result.metadata_cost == minimum + 9
     assert result.report == CatalogReport(2, 2, 0, 13, 2)
@@ -131,7 +131,7 @@ def test_alias_roots_follow_discovery_order_not_scope_display_order():
         ),
         MetadataBudget(10_000),
     )
-    assert result.roots[0] == ("r0", str(project.root))
+    assert result.roots[0] == ("r0", project.root.as_posix())
     assert result.lines[0].startswith("- s:")
 
 
@@ -141,7 +141,7 @@ def test_single_skill_plugin_versions_share_marketplace_alias_root():
         metadata(f"s{i}", "brief", marketplace / f"plugin{i}/1.0/skills") for i in range(12)
     )
     result = render_catalog(skills, MetadataBudget(1000))
-    assert result.roots == (("r0", str(marketplace)),)
+    assert result.roots == (("r0", marketplace.as_posix()),)
 
 
 @pytest.mark.parametrize("invalid", [0, -1, True, 1.5, "2000"])

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -27,7 +28,7 @@ def test_external_context_survives_history_and_immutable_ledger_reopen(tmp_path,
         assert ("contains_external_context" in payload) == flag
         assert item_from_payload("tool_result", payload) == item
         await repository.append_items(thread, (item,))
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             before = db.execute("SELECT result_json FROM tool_executions").fetchone()[0]
         assert ("contains_external_context" in json.loads(before)) == flag
         reopened = SQLiteSessionRepository(path)
@@ -35,7 +36,7 @@ def test_external_context_survives_history_and_immutable_ledger_reopen(tmp_path,
         assert cached == result
         assert (await reopened.load_items(thread))[-1] == item
         await reopened.complete_tool_call(thread, turn, cached)
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             assert db.execute("SELECT result_json FROM tool_executions").fetchone()[0] == before
 
     asyncio.run(scenario())

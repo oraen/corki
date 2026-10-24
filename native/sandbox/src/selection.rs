@@ -41,6 +41,7 @@ pub fn resolve(
     selection: Selection,
     requirements: &ConfigRequirementsToml,
     cwd: &Path,
+    windows_sandbox_level: WindowsSandboxLevel,
 ) -> Result<Resolved, String> {
     if selection.kind != "selection" {
         return Err("invalid permission selection".into());
@@ -69,7 +70,7 @@ pub fn resolve(
             &ProjectConfig {
                 trust_level: selection.project_trust,
             },
-            WindowsSandboxLevel::Disabled,
+            windows_sandbox_level,
         )
         .to_string()
     });

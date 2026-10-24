@@ -2,13 +2,16 @@
 
 import asyncio
 import json
-import shlex
+import os
+import subprocess
 import sys
 
 import pytest
-from test_bundled_execution import compiler as compiler
+import test_bundled_execution
+from platform_commands import python_command
 from test_execution_permissions import _run
-from test_execution_policy_live_inheritance import Model, run
+from test_execution_policy_live_inheritance import run
+from test_managed_approval import AwaitingModel
 
 from corki.config import CorkiSettings
 from corki.config.instructions import ProjectInstructionsConfig
@@ -18,6 +21,7 @@ from corki.execution.backend import resolve_execution_permissions
 from corki.protocol.items import ToolResultItem
 
 NAMES = (".codex", ".corki")
+bundled_compiler = test_bundled_execution.compiler
 WORKSPACE = {
     "type": "workspace-write",
     "exclude_tmpdir_env_var": True,
@@ -25,7 +29,25 @@ WORKSPACE = {
 }
 
 
-def command(actions):
+@pytest.fixture
+def compiler(tmp_path, request):
+    path = request.getfixturevalue("bundled_compiler")
+    if os.name == "nt":
+        # Native restricted tokens must be able to run the fixture script.
+        # pytest's temporary root has a special ACL unlike an ordinary workspace.
+        account = subprocess.run(
+            ["whoami.exe"], check=True, capture_output=True, text=True, timeout=30
+        ).stdout.strip()
+        subprocess.run(
+            ["icacls.exe", str(tmp_path), "/grant", f"{account}:(OI)(CI)(M)"],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+    return path
+
+
+def command(directory, actions):
     script = f"""
 from pathlib import Path
 result = {{}}
@@ -51,7 +73,7 @@ for label, operation, raw in {actions!r}:
 encoded = ','.join(k + '=' + str(v) for k, v in sorted(result.items()))
 print('METADATA_RESULT=' + encoded, flush=True)
 """
-    return {"cmd": shlex.join([sys.executable, "-I", "-c", script]), "login": False}
+    return {"cmd": python_command(directory, script, isolated=True), "login": False}
 
 
 def assert_results(results, expected):
@@ -80,7 +102,12 @@ def test_workspace_metadata_names_have_same_real_enforcement(tmp_path, compiler,
                     name + "-target"
                 )
                 target.mkdir()
-                metadata.symlink_to(target, target_is_directory=True)
+                try:
+                    metadata.symlink_to(target, target_is_directory=True)
+                except OSError as error:
+                    if os.name != "nt":
+                        raise
+                    pytest.skip(f"Windows symlink creation unavailable: {error}")
                 actions.append((name + "-target", "write", str(target / "config.toml")))
                 expected[name + "-target"] = external_grant
                 for op in ("unlink", "rename"):
@@ -93,11 +120,13 @@ def test_workspace_metadata_names_have_same_real_enforcement(tmp_path, compiler,
         expected[name] = external_grant
     actions.append(("ordinary", "write", str(workspace / "ordinary")))
     policy = ExecutionPermissions(
-        compiler,
-        workspace,
+        compiler, workspace,
         json.dumps({**WORKSPACE, "writable_roots": [str(outside)] if external_grant else []}),
+        runtime_home=tmp_path / "host",
     )
-    results = asyncio.run(_run(workspace, policy, "exec_command", command(actions), nested))
+    results = asyncio.run(
+        _run(workspace, policy, "exec_command", command(tmp_path, actions), nested)
+    )
     assert_results(results, expected)
     for name in NAMES:
         metadata = workspace / name
@@ -118,7 +147,7 @@ def test_default_sdk_protects_own_metadata_without_explicit_policy(tmp_path, com
         for name in NAMES:
             (workspace / name).mkdir()
             (workspace / name / "config.toml").write_text("# original")
-        model = Model(mode)
+        model = AwaitingModel(mode)
         runtime = await LangGraphRuntime.acreate(
             settings=CorkiSettings(
                 working_directory=workspace,
@@ -134,7 +163,9 @@ def test_default_sdk_protects_own_metadata_without_explicit_policy(tmp_path, com
             await run(
                 runtime,
                 model,
-                command([(n, "write", str(workspace / n / "config.toml")) for n in NAMES]),
+                command(
+                    tmp_path, [(n, "write", str(workspace / n / "config.toml")) for n in NAMES]
+                ),
             )
             results = [i for i in model.requests[-1].items if isinstance(i, ToolResultItem)]
             assert_results(results, dict.fromkeys(NAMES, False))
@@ -189,9 +220,10 @@ def test_explicit_metadata_rules_keep_native_precedence(tmp_path, compiler, acce
             actions.append((name + "-child", "write", str(metadata / "allowed/file")))
             expected[name + "-child"] = True
     policy = ExecutionPermissions(
-        compiler, tmp_path, json.dumps(managed_profile(tmp_path, overrides))
+        compiler, tmp_path, json.dumps(managed_profile(tmp_path, overrides)),
+        runtime_home=tmp_path / "host",
     )
-    results = asyncio.run(_run(tmp_path, policy, "exec_command", command(actions), False))
+    results = asyncio.run(_run(tmp_path, policy, "exec_command", command(tmp_path, actions), False))
     assert_results(results, expected)
 
 
@@ -201,7 +233,9 @@ def test_patch_helper_cannot_create_or_rewrite_metadata(tmp_path, compiler, nest
     metadata = tmp_path / ".corki"
     if existing:
         metadata.mkdir()
-    policy = ExecutionPermissions(compiler, tmp_path, json.dumps(WORKSPACE))
+    policy = ExecutionPermissions(
+        compiler, tmp_path, json.dumps(WORKSPACE), runtime_home=tmp_path / "host"
+    )
     results = asyncio.run(
         _run(
             tmp_path,
@@ -227,19 +261,22 @@ def test_patch_helper_cannot_create_or_rewrite_metadata(tmp_path, compiler, nest
     "profile", [{"type": "disabled"}, {"type": "external", "network": "enabled"}]
 )
 def test_native_unrestricted_modes_are_not_silently_restricted(tmp_path, compiler, profile):
-    policy = ExecutionPermissions(compiler, tmp_path, json.dumps(profile))
+    policy = ExecutionPermissions(
+        compiler, tmp_path, json.dumps(profile), runtime_home=tmp_path / "host"
+    )
     results = asyncio.run(
         _run(
             tmp_path,
             policy,
             "exec_command",
-            command([(name, "mkdir", str(tmp_path / name)) for name in NAMES]),
+            command(tmp_path, [(name, "mkdir", str(tmp_path / name)) for name in NAMES]),
             False,
         )
     )
     assert_results(results, dict.fromkeys(NAMES, True))
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS Seatbelt alias semantics")
 @pytest.mark.parametrize("layout", ["extra-root", "root-alias", "extra-root-alias", "system-alias"])
 @pytest.mark.parametrize("existing", [False, True])
 def test_metadata_protection_follows_native_writable_root_aliases(
@@ -266,20 +303,23 @@ def test_metadata_protection_follows_native_writable_root_aliases(
         assert str(real).startswith("/private/var/")
         writable = str(real).removeprefix("/private")
     policy = ExecutionPermissions(
-        compiler, workspace, json.dumps({**WORKSPACE, "writable_roots": [str(writable)]})
+        compiler, workspace, json.dumps({**WORKSPACE, "writable_roots": [str(writable)]}),
+        runtime_home=tmp_path / "host",
     )
     # Native Seatbelt rejects attacker-mutable writable roots, while allowing
     # system /var -> /private/var aliases. Do not normalize away this admission.
     if layout in {"root-alias", "extra-root-alias"}:
         with pytest.raises(ValueError, match="symlinked writable roots are not supported"):
-            asyncio.run(_run(workspace, policy, "exec_command", command(actions), False))
+            asyncio.run(_run(workspace, policy, "exec_command", command(tmp_path, actions), False))
         for name in NAMES:
             if existing:
                 assert (real / name / "config.toml").read_text() == "# original"
             else:
                 assert not (real / name).exists()
         return
-    results = asyncio.run(_run(workspace, policy, "exec_command", command(actions), False))
+    results = asyncio.run(
+        _run(workspace, policy, "exec_command", command(tmp_path, actions), False)
+    )
     assert_results(results, dict.fromkeys(NAMES, False))
 
 
@@ -293,7 +333,11 @@ def test_metadata_defaults_do_not_add_read_grants_to_deny_only_profile(tmp_path,
         "file_system": {"type": "restricted", "entries": entries},
     }
     admitted, warnings = asyncio.run(
-        resolve_execution_permissions(ExecutionPermissions(compiler, tmp_path, json.dumps(profile)))
+        resolve_execution_permissions(
+            ExecutionPermissions(
+                compiler, tmp_path, json.dumps(profile), runtime_home=tmp_path / "home"
+            )
+        )
     )
     assert not warnings
     actual = json.loads(admitted.profile_json)["file_system"]["entries"]

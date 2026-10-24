@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -19,16 +20,18 @@ from corki.protocol.items import AssistantMessageItem, ToolCallItem, ToolResultI
 from corki.protocol.session_source import SessionSource
 from corki.protocol.tools import ToolCall
 
+PROGRAM = "Write-Output" if sys.platform == "win32" else "printf"
+
 
 @pytest.fixture
 def compiler():
     value = os.environ.get("CORKI_TEST_SANDBOX_COMPILER")
-    if not value or sys.platform != "darwin":
-        pytest.skip("requires explicit native compiler and macOS")
+    if not value or sys.platform not in {"darwin", "win32"}:
+        pytest.skip("requires explicit native compiler and macOS or Windows")
     return Path(value)
 
 
-def managed_rule(program="printf", decision="forbidden", justification="MANAGED_RULE"):
+def managed_rule(program=PROGRAM, decision="forbidden", justification="MANAGED_RULE"):
     return (
         "[[rules.prefix_rules]]\n"
         f"pattern = [{{token={json.dumps(program)}}}]\n"
@@ -46,7 +49,7 @@ class Model:
         self.requests.append(request)
         turn, step = request.items[-1].turn_id, new_step_id()
         if len(self.requests) == 1:
-            args = {"cmd": "printf MANAGED_FIXTURE", "login": False}
+            args = {"cmd": f"{PROGRAM} MANAGED_FIXTURE", "login": False}
             call = (
                 ToolCall(new_tool_call_id(), "exec_command", args)
                 if self.mode == "direct"
@@ -60,6 +63,34 @@ class Model:
             )
             yield ModelCompleted((ToolCallItem(call, turn, step),))
         else:
+            results = [item for item in request.items if isinstance(item, ToolResultItem)]
+            if results:
+                content = results[-1].content
+                session = re.search(r"Process running with session ID ([\w-]+)", content)
+                if session is None:
+                    session = re.search(r'"session_id"\s*:\s*"([\w-]+)"', content)
+                cell = re.search(r"Script running with cell ID ([\w-]+)", content)
+                if session or cell:
+                    assert len(self.requests) < 30, "fixture command did not finish after polling"
+                    if session:
+                        arguments = {"session_id": session[1], "chars": ""}
+                        call = (
+                            ToolCall(new_tool_call_id(), "write_stdin", arguments)
+                            if self.mode == "direct"
+                            else ToolCall(
+                                new_tool_call_id(),
+                                "exec",
+                                None,
+                                raw_arguments="text(await tools.write_stdin("
+                                + json.dumps(arguments)
+                                + "));",
+                                input_kind="freeform",
+                            )
+                        )
+                    else:
+                        call = ToolCall(new_tool_call_id(), "wait", {"cell_id": cell[1]})
+                    yield ModelCompleted((ToolCallItem(call, turn, step),))
+                    return
             yield ModelCompleted((AssistantMessageItem(self.final_answer, turn, step),))
 
     async def aclose(self):
@@ -102,8 +133,9 @@ async def runtime_for(
 async def run(runtime, model):
     events = [e async for e in runtime.stream("check managed command policy")]
     assert isinstance(events[-1], TurnCompleted), events
-    result = [i for i in model.requests[-1].items if isinstance(i, ToolResultItem)][-1]
-    return events, result.content
+    results = [i.content for i in model.requests[-1].items if isinstance(i, ToolResultItem)]
+    assert results
+    return events, "\n".join(results)
 
 
 @pytest.mark.parametrize("mode", ["direct", "code_mode_only"])
@@ -115,9 +147,9 @@ def test_managed_rule_is_effective_in_actual_loop(tmp_path, compiler, mode, case
         (home_rules / "user.rules").write_text(
             "prefix_rule("
             if case == "bad_user"
-            else 'prefix_rule(pattern=["printf"],decision="allow")'
+            else f'prefix_rule(pattern=[{json.dumps(PROGRAM)}],decision="allow")'
         )
-        program = "not-printf" if case == "unmatched" else "printf"
+        program = "not-matching-command" if case == "unmatched" else PROGRAM
         decision = "prompt" if case == "prompt" else "forbidden"
         model = Model(mode)
         runtime = await runtime_for(
@@ -203,7 +235,9 @@ def test_inherited_rules_compare_native_managed_identity(tmp_path, compiler, cas
         home_rules = tmp_path / "home" / "rules"
         home_rules.mkdir(parents=True)
         source = home_rules / "user.rules"
-        source.write_text('prefix_rule(pattern=["printf"],decision="forbidden")')
+        source.write_text(
+            f'prefix_rule(pattern=[{json.dumps(PROGRAM)}],decision="forbidden")'
+        )
         original = managed_rule("cat") + managed_rule("ls")
         parent_model = Model()
         parent = await runtime_for(tmp_path, compiler, parent_model, [original])
@@ -246,7 +280,7 @@ def test_inherited_rules_compare_native_managed_identity(tmp_path, compiler, cas
 def test_managed_alternatives_match_command(tmp_path, compiler):
     async def scenario():
         rules = (
-            '[[rules.prefix_rules]]\npattern=[{any_of=["cat","printf"]}]\n'
+            '[[rules.prefix_rules]]\npattern=[{any_of=["cat",' + json.dumps(PROGRAM) + ']}]\n'
             'decision="forbidden"\njustification="ALTERNATIVE_RULE"'
         )
         model = Model()

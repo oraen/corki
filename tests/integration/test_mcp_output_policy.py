@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 
 import httpx
@@ -139,7 +140,7 @@ def test_mcp_output_budget_comes_from_admitted_connection_and_survives_reopen(
             events = [e async for e in runtime.stream("read")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert calls == [1]
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection:
                 (encoded,) = connection.execute(
                     "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs::read'"
                 ).fetchone()
@@ -163,7 +164,7 @@ def test_mcp_output_budget_comes_from_admitted_connection_and_survives_reopen(
         try:
             assert isinstance([e async for e in cold.stream("continue")][-1], TurnCompleted)
             assert calls == [1] and len(requests) == 3
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection:
                 assert (
                     connection.execute(
                         "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs::read'"
@@ -241,7 +242,7 @@ def test_remote_mcp_errors_resolve_to_code_mode_error_values(tmp_path, failure):
             events = [e async for e in runtime.stream("read")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert calls == ["read"] and len(requests) == 2
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 (value,) = db.execute(
                     "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs::read'"
                 ).fetchone()

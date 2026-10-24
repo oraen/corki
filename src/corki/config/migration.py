@@ -76,6 +76,10 @@ def migrate_user_file(target: Path) -> bool:
         return False
     converted = convert_toml(legacy.read_text(encoding="utf-8"), source=legacy, target=target)
     # The legacy file remains an exact backup and is ignored while JSON exists.
+    if os.name == "nt":
+        from corki.platforms.windows_private_files import restrict_file
+
+        restrict_file(legacy)
     legacy.chmod(0o600)
     write_text(target, converted)
     return True

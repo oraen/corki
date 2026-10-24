@@ -1,6 +1,8 @@
 // Browser QA through the local CDP workflow from the user's read_chrome skill.
 // Use a disposable manager home for --write; never mutate the user's workspace.
 import fs from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import assert from 'node:assert/strict';
 const debug = process.env.CHROME_DEBUG_PORT || '9225';
 const base = process.env.MANAGER_TEST_URL || 'http://127.0.0.1:17002';
@@ -97,7 +99,7 @@ try{
  await go('overview');
  await cdp('Page.enable');
  let shot=await cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
- fs.writeFileSync('/tmp/corki-manager-desktop-qa.png',Buffer.from(shot.data,'base64'));
+ fs.writeFileSync(join(tmpdir(),'corki-manager-desktop-qa.png'),Buffer.from(shot.data,'base64'));
  await cdp('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
  for(const name of ['overview','models','skills','knowledge','tools','chat','memories','logs','config']){
   await go(name);assert(await evaluate(`document.documentElement.scrollWidth<=innerWidth`),'Mobile overflow: '+name);
@@ -107,7 +109,7 @@ try{
  await waitFor(`!document.body.classList.contains('open-nav')`);
  await evaluate(`Promise.all(document.getAnimations().map(animation=>animation.finished.catch(()=>{})))`);
  shot=await cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
- fs.writeFileSync('/tmp/corki-manager-mobile-qa.png',Buffer.from(shot.data,'base64'));
+ fs.writeFileSync(join(tmpdir(),'corki-manager-mobile-qa.png'),Buffer.from(shot.data,'base64'));
  assert.equal(errors.length,0,errors.join('\n'));
  console.log('PASS: 9 desktop/mobile routes, dialogs, search, mobile navigation, no runtime errors'+(write?', provider/model/default/document CRUD':''));
 }finally{await cdp('Emulation.clearDeviceMetricsOverride');ws.close();}

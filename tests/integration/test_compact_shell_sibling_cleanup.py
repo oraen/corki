@@ -2,23 +2,22 @@
 
 import asyncio
 import json
-import os
-import shlex
 import sqlite3
-import sys
+from contextlib import closing
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
 from corki.core import LangGraphRuntime
 from corki.core.stop_hooks import command_identity
 from corki.models import ModelCompleted
+from corki.platforms.liveness import process_alive
 from corki.protocol.events import HookCompleted, TurnFailed
 from corki.protocol.items import AssistantMessageItem, CompactionItem, new_step_id
 
 
-@pytest.mark.skipif(os.name != "posix", reason="shell Hook process containment requires POSIX")
 @pytest.mark.parametrize("event", ["PreCompact", "PostCompact"])
 @pytest.mark.parametrize("failure", ["close", "journal"])
 def test_compact_shell_batch_joins_siblings_before_terminal(tmp_path, monkeypatch, event, failure):
@@ -34,7 +33,7 @@ def test_compact_shell_batch_joins_siblings_before_terminal(tmp_path, monkeypatc
                 "while not Path('release-'+str(index)).exists(): time.sleep(0.01)\n"
                 "print('{}')"
             )
-            command = shlex.join([sys.executable, "-c", script])
+            command = python_command(tmp_path, script, name=f"hook sibling {index}.py")
             document += f"[[hooks.{event}.hooks]]\ntype='command'\ncommand={json.dumps(command)}\n"
             fingerprint, _ = command_identity(
                 {"type": "command", "command": command},
@@ -86,8 +85,7 @@ def test_compact_shell_batch_joins_siblings_before_terminal(tmp_path, monkeypatc
             async for item in runtime.compact():
                 if isinstance(item, TurnFailed):
                     for path in tmp_path.glob("started-*"):
-                        with pytest.raises(ProcessLookupError):
-                            os.kill(int(path.read_text()), 0)
+                        assert not process_alive(int(path.read_text(encoding="utf-8")))
                 events.append(item)
 
         task = asyncio.create_task(consume())
@@ -96,7 +94,7 @@ def test_compact_shell_batch_joins_siblings_before_terminal(tmp_path, monkeypatc
             async with asyncio.timeout(5):
                 while len(list(tmp_path.glob("started-*"))) < 2:
                     await asyncio.sleep(0.01)
-            pids = [int(path.read_text()) for path in tmp_path.glob("started-*")]
+            pids = [int(path.read_text(encoding="utf-8")) for path in tmp_path.glob("started-*")]
             if failure == "journal":
                 (tmp_path / "release-0").touch()
                 await asyncio.wait_for(task, 5)
@@ -107,10 +105,9 @@ def test_compact_shell_batch_joins_siblings_before_terminal(tmp_path, monkeypatc
                 with pytest.raises(asyncio.CancelledError):
                     await asyncio.wait_for(task, 5)
             for pid in pids:
-                with pytest.raises(ProcessLookupError):
-                    os.kill(pid, 0)
+                assert not process_alive(pid)
             assert len(list(tmp_path.glob("started-*"))) == 2
-            with sqlite3.connect(tmp_path / "state.db") as connection:
+            with closing(sqlite3.connect(tmp_path / "state.db")) as connection:
                 rows = connection.execute("SELECT result_json FROM hook_executions").fetchall()
             assert rows == [(None,), (None,)]
             assert model.requests == (0 if event == "PreCompact" else 1)

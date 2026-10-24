@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -107,6 +108,65 @@ def test_catalog_missing_and_invalid(tmp_path):
         (tmp_path / "settings.json").write_text("{bad")
         assert not (await s.catalog({}))["valid"]
         await s.close()
+
+    asyncio.run(check())
+
+
+def test_catalog_uses_first_available_when_default_supplier_is_off(tmp_path):
+    async def check():
+        setup(tmp_path)
+        path = tmp_path / "settings.json"
+        config = json.loads(path.read_text())
+        profile = config["providers"]["test"]
+        config["providers"] = {"first": {**profile, "models": {"first-model": {}}},
+                               "test": {**profile, "enabled": False}}
+        path.write_text(json.dumps(config))
+        original = path.read_bytes()
+
+        async def send(value):
+            pass
+
+        service = Service(tmp_path, send)
+        try:
+            catalog = await service.catalog({})
+            assert catalog["valid"]
+            assert catalog["default"]["provider"] == "first"
+            assert catalog["default"]["model"] == "first-model"
+            assert path.read_bytes() == original
+        finally:
+            await service.close()
+
+    asyncio.run(check())
+
+
+def test_submit_uses_loaded_settings_until_explicit_reload(tmp_path, monkeypatch):
+    async def check():
+        setup(tmp_path)
+
+        async def send(value):
+            pass
+
+        async def factory(**kw):
+            return FakeRuntime(**kw)
+
+        service = Service(tmp_path, send, factory)
+        try:
+            assert (await service.catalog({}))["valid"]
+            # A broken file must not become a preflight failure on each send.
+            (tmp_path / "settings.json").write_text("{broken")
+            async def unexpected_catalog(params):
+                raise AssertionError("submit must not reload the model catalog")
+            with monkeypatch.context() as patch:
+                patch.setattr(service, "catalog", unexpected_catalog)
+                for _ in range(2):
+                    await service.submit({
+                        "requestId": str(uuid.uuid4()), "threadId": str(uuid.uuid4()),
+                        "content": "hello", "provider": "test", "model": "test-model",
+                    })
+                    await asyncio.gather(*service.tasks.values())
+            assert not (await service.catalog({}))["valid"]
+        finally:
+            await service.close()
 
     asyncio.run(check())
 
@@ -270,6 +330,7 @@ def test_stdio_real_model_stream_and_shutdown(tmp_path):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
         env=env,
     )
     output = Queue()
@@ -539,6 +600,8 @@ def test_real_runtime_execution_approval(tmp_path, action):
     from corki.protocol.items import ToolCallItem, ToolResultItem, new_step_id
     from corki.protocol.tools import ToolCall
 
+    output_command = "Write-Output" if os.name == "nt" else "printf"
+
     class ToolModel:
         calls = 0
         results = []
@@ -554,7 +617,7 @@ def test_real_runtime_execution_approval(tmp_path, action):
                                 "desktop-exec",
                                 "exec_command",
                                 {
-                                    "cmd": "printf DESKTOP_APPROVAL_FIXTURE",
+                                    "cmd": f"{output_command} DESKTOP_APPROVAL_FIXTURE",
                                     "login": False,
                                 },
                             ),
@@ -594,7 +657,7 @@ def test_real_runtime_execution_approval(tmp_path, action):
                     exec_policy_sources=(
                         ExecPolicySource(
                             str(tmp_path / "fixture.rules"),
-                            'prefix_rule(pattern=["printf"], decision="prompt", '
+                            f'prefix_rule(pattern=["{output_command}"], decision="prompt", '
                             'justification="Desktop fixture")',
                         ),
                     ),

@@ -148,7 +148,13 @@ pub fn apply(
             &authority.profile,
             &authority.profile.file_system_sandbox_policy(),
             &context,
-            crate::patch_safety::PatchSandboxRoute::Platform(WindowsSandboxLevel::Disabled),
+            crate::patch_safety::PatchSandboxRoute::Platform(
+                if matches!(sandbox, SandboxType::WindowsRestrictedToken) {
+                    WindowsSandboxLevel::RestrictedToken
+                } else {
+                    WindowsSandboxLevel::Disabled
+                },
+            ),
         ) {
             crate::patch_safety::SafetyCheck::AutoApprove => false,
             crate::patch_safety::SafetyCheck::Reject { reason } => return Err(format!("patch rejected: {reason}")),

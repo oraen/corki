@@ -28,7 +28,7 @@ def test_status_fits_cells_and_preserves_directory_tail(width):
 def test_light_background_uses_codex_latte_accents():
     fragments = session_status("model", Path("/repo"), 80, light=True)
     assert ("fg:#d59030", "model") in fragments
-    assert ("fg:#489a36", "/repo") in fragments
+    assert ("fg:#489a36", str(Path("/repo"))) in fragments
 
 
 def test_iterm_truecolor_respects_explicit_preferences(monkeypatch):
@@ -75,7 +75,7 @@ def test_model_with_effort_fits_footer(width):
     assert cell_len(text) <= width
     if width >= 40:
         assert "gpt-5.6-sol medium" in text
-        assert text.endswith("/repo")
+        assert text.endswith(str(Path("/repo")))
 
 
 def test_footer_effort_refreshes_and_does_not_inherit_previous_selection(tmp_path):

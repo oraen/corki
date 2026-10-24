@@ -158,6 +158,15 @@ def unified_exec_environment(
             else ("CODEX_PERMISSION_PROFILE", "CODEX_VERSION")
         )
     }
+    if windows:
+        # Python dictionaries are case-sensitive; Windows environment names are
+        # not. Remove inherited/configured aliases before adding host-owned values
+        # so a child never receives competing TERM/term or session identities.
+        runtime_keys = {*_UNIFIED_EXEC_ENV, "CODEX_VERSION"}
+        if identity is not None:
+            runtime_keys.update(("CODEX_THREAD_ID", "CODEX_SESSION_ID"))
+        folded_keys = {key.translate(_ASCII_LOWER) for key in runtime_keys}
+        env = {k: v for k, v in env.items() if k.translate(_ASCII_LOWER) not in folded_keys}
     if identity is not None:
         env["CODEX_THREAD_ID"] = str(identity.thread_id)
         env["CODEX_SESSION_ID"] = str(identity.session_id)

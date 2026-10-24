@@ -1,6 +1,10 @@
 import asyncio
 import io
+import os
+import subprocess
+import sys
 from functools import partial
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -34,9 +38,60 @@ from corki.protocol.tools import ImageAttachment
         ("", None),
     ],
 )
-def test_normalize(text, expected):
+def test_normalize(text, expected, monkeypatch):
+    monkeypatch.setattr(image_clipboard.sys, "platform", "darwin")
+    value = image_clipboard.normalize_pasted_path(text)
+    assert (value.as_posix() if value is not None else None) == expected
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("file:///C:/My%20Files/%E5%9B%BE.png", r"C:\My Files\图.png"),
+        ("file://localhost/D:/image.png", r"D:\image.png"),
+        ("file:///C:/literal%2520.png", r"C:\literal%20.png"),
+        ("file:///C:/%00.png", None),
+        ("file:///relative.png", None),
+        ("file://remote/C:/image.png", None),
+        ("file:///C:/image.png?query", None),
+    ],
+)
+def test_windows_file_url(text, expected, monkeypatch):
+    monkeypatch.setattr(image_clipboard.sys, "platform", "win32")
     value = image_clipboard.normalize_pasted_path(text)
     assert (str(value) if value is not None else None) == expected
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        (r".\图片\示例.png", r".\图片\示例.png"),
+        (r"..\images\a.png", r"..\images\a.png"),
+        (r'"图片 文件\a.png"', r"图片 文件\a.png"),
+        (r"images\a.png", r"images\a.png"),
+        (r"\images\a.png", r"\images\a.png"),
+    ],
+)
+def test_windows_relative_path_separators_are_not_shell_escapes(text, expected, monkeypatch):
+    monkeypatch.setattr(image_clipboard.sys, "platform", "win32")
+    assert image_clipboard.normalize_pasted_path(text) == Path(expected)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows path lookup")
+def test_windows_relative_paste_opens_the_intended_image(tmp_path):
+    folder = tmp_path / "图片 文件"
+    folder.mkdir()
+    image_path = folder / "示例.png"
+    with Image.new("RGB", (2, 3), "red") as picture:
+        picture.save(image_path)
+    relative = image_clipboard.normalize_pasted_path(r'.\图片 文件\示例.png')
+    assert relative is not None
+    image = image_clipboard._file_image([tmp_path / relative])
+    assert image is not None
+    try:
+        assert image.size == (2, 3)
+    finally:
+        image.close()
 
 
 def test_owned_path_reader_without_clipboard(tmp_path):
@@ -51,6 +106,34 @@ def test_owned_path_reader_without_clipboard(tmp_path):
             await image_clipboard.read_path_image(tmp_path / "missing", tmp_path)
 
     asyncio.run(scenario())
+
+
+def test_image_helper_startup_does_not_import_agent_runtime(tmp_path):
+    # An invalid argument exercises the installed worker entry without reading
+    # the user's clipboard. Inspect imports in a fresh isolated interpreter.
+    probe = """
+import runpy, sys
+helper = sys.argv[1]
+sys.argv = [helper, '--invalid-fixture-argument']
+try:
+    runpy.run_path(helper, run_name='__main__')
+except SystemExit as error:
+    assert error.code == 1
+else:
+    raise AssertionError('invalid invocation must fail')
+assert 'corki.cli.main' not in sys.modules
+assert 'corki.core' not in sys.modules
+assert 'corki.protocol' not in sys.modules
+assert 'corki.execution' not in sys.modules
+assert not any(name.startswith(('langgraph', 'langchain')) for name in sys.modules)
+"""
+    subprocess.run(
+        [sys.executable, "-I", "-c", probe, image_clipboard._HELPER_PATH],
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
+        timeout=15,
+    )
 
 
 @pytest.mark.parametrize("invalid", ["missing", "directory", "text", "bytes", "pixels"])

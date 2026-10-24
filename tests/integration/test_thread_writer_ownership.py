@@ -332,7 +332,11 @@ def test_process_death_releases_writer_and_does_not_replay_unknown_tool(tmp_path
                 return ToolResult(call.id, call.name, "incorrect replay")
 
         try:
-            assert await asyncio.wait_for(process.stdout.readline(), 10) == b"READY\n"
+            assert (
+                await asyncio.wait_for(
+                    process.stdout.readline(), 30 if sys.platform == "win32" else 10
+                )
+            ).strip() == b"READY"
             registry = ToolRegistry()
             registry.register(Tool())
             model = AnswerModel()

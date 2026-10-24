@@ -2,11 +2,10 @@
 
 import asyncio
 import json
-import shlex
-import sys
 from dataclasses import replace
 
 import pytest
+from platform_commands import python_command
 from test_code_mode import request_call
 
 from corki.config import CorkiSettings
@@ -39,15 +38,12 @@ def test_hook_feedback_compaction_and_cold_history(
 ):
     async def scenario():
         text = "HOOK_EVIDENCE " * (2000 if spill else 1)
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "from pathlib import Path; import json; "
-                "Path('hook-count').open('a').write('once\\n'); "
-                f"print(json.dumps({{'hookSpecificOutput': {{'hookEventName': {hook_event!r}, "
-                f"'additionalContext': {text!r}}}}}))",
-            ]
+        command = python_command(
+            tmp_path,
+            "from pathlib import Path; import json; "
+            "Path('hook-count').open('a').write('once\\n'); "
+            f"print(json.dumps({{'hookSpecificOutput': {{'hookEventName': {hook_event!r}, "
+            f"'additionalContext': {text!r}}}}}))",
         )
         source = tmp_path / "config.toml"
         event_key = "pre_tool_use" if hook_event == "PreToolUse" else "post_tool_use"

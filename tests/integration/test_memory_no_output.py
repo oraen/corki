@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -32,7 +33,7 @@ def test_new_empty_source_retracts_old_inputs_then_reopen_deduplicates(tmp_path,
         )
         await sessions.append_items(source, (UserMessageItem("Old preference.", turn),))
         version = datetime.now(UTC) - timedelta(hours=1)
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute(
                 "UPDATE threads SET updated_at=? WHERE id=?", (version.isoformat(), source)
             )
@@ -95,7 +96,7 @@ def test_new_empty_source_retracts_old_inputs_then_reopen_deduplicates(tmp_path,
         for index in range(3):
             if index:
                 # This scenario exercises publication on the next eligible startup pass.
-                with sqlite3.connect(database) as connection:
+                with closing(sqlite3.connect(database)) as connection, connection:
                     connection.execute(
                         "UPDATE memory_jobs SET finished_at=0 WHERE job_key='global'"
                     )
@@ -120,7 +121,7 @@ def test_new_empty_source_retracts_old_inputs_then_reopen_deduplicates(tmp_path,
                 if index == 0:
                     assert report.extracted == 1 and report.consolidated
                     assert "Old preference." in (root / "MEMORY.md").read_text()
-                    with sqlite3.connect(database) as connection:
+                    with closing(sqlite3.connect(database)) as connection, connection:
                         connection.execute(
                             "UPDATE threads SET updated_at=? WHERE id=?",
                             ((version + timedelta(seconds=1)).isoformat(), source),

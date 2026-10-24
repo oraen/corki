@@ -3,11 +3,11 @@
 import asyncio
 import json
 import os
-import shlex
 import sys
 from pathlib import Path
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.config.managed_mcp import MCPRequirementsLayer, load_mcp_requirements
@@ -22,20 +22,21 @@ from corki.protocol.tools import ToolCall
 
 def engine():
     path = os.environ.get("CORKI_TEST_SANDBOX_COMPILER")
-    if not path or sys.platform != "darwin":
-        pytest.skip("requires built native compiler and macOS Seatbelt")
+    if not path or sys.platform not in {"darwin", "win32"}:
+        pytest.skip("requires built native compiler and macOS or Windows")
     return Path(path)
 
 
 async def run(tmp_path, profile, requirements, script, *, nested=False):
     requests = []
+    command = python_command(tmp_path, script, name="managed permission fixture.py")
 
     class Model:
         async def stream(self, request):
             requests.append(request)
             turn, step = request.items[-1].turn_id, new_step_id()
             args = {
-                "cmd": shlex.join([sys.executable, "-I", "-c", script]),
+                "cmd": command,
                 "workdir": str(tmp_path),
                 "login": False,
                 "yield_time_ms": 1000,
@@ -278,6 +279,7 @@ try:
 except OSError:
     print('MANAGED_DENIED')
 """
+    command = python_command(tmp_path, script, name="managed worker fixture.py")
 
     async def scenario():
         class Main:
@@ -294,7 +296,7 @@ except OSError:
                 requests.append(request)
                 turn, step = request.items[-1].turn_id, new_step_id()
                 if len(requests) == 1:
-                    args = {"cmd": shlex.join([sys.executable, "-I", "-c", script]), "login": False}
+                    args = {"cmd": command, "login": False}
                     call = (
                         ToolCall(new_tool_call_id(), "exec_command", args)
                         if not nested

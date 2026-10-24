@@ -29,7 +29,9 @@ def test_named_configuration_without_compiler_is_not_silently_ignored(
 def test_raw_and_named_sources_cannot_be_combined(tmp_path):
     path = tmp_path / "config.toml"
     path.write_text(
-        'default_permissions=":read-only"\n[execution]\ncompiler="/host/compiler"\nprofile={type="disabled"}'
+        'default_permissions=":read-only"\n[execution]\ncompiler='
+        + json.dumps(str(tmp_path / "host compiler"))
+        + '\nprofile={type="disabled"}'
     )
     with pytest.raises(ValueError, match="cannot be combined"):
         CorkiSettings.for_directory(tmp_path, config_file=path)
@@ -37,7 +39,7 @@ def test_raw_and_named_sources_cannot_be_combined(tmp_path):
 
 def test_compiler_only_configuration_freezes_implicit_selection(tmp_path):
     path = tmp_path / "config.toml"
-    path.write_text('[execution]\ncompiler="/host/compiler"')
+    path.write_text('[execution]\ncompiler=' + json.dumps(str(tmp_path / "host compiler")))
     permissions = CorkiSettings.for_directory(tmp_path, config_file=path).execution_permissions
     assert permissions.needs_resolution
     assert json.loads(permissions.profile_json) == {"type": "selection"}

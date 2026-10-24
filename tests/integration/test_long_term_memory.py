@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -117,9 +118,10 @@ def test_runtime_injects_summary_and_registers_optional_memory_tools(tmp_path: P
     )
 
     async def scenario() -> list[object]:
-        events = [event async for event in runtime.stream("follow our convention")]
-        await runtime.aclose()
-        return events
+        try:
+            return [event async for event in runtime.stream("follow our convention")]
+        finally:
+            await runtime.aclose()
 
     events = asyncio.run(scenario())
     assert isinstance(events[-1], TurnCompleted)
@@ -166,16 +168,18 @@ def test_external_mcp_use_marks_thread_ineligible_for_memory_generation(tmp_path
     thread_id = runtime.thread_id
 
     async def scenario() -> tuple[object, ...]:
-        events = tuple([event async for event in runtime.stream("use external docs")])
-        claims = await memories.claim_extraction_jobs(
-            current_thread_id=new_thread_id(),
-            max_age_days=10,
-            min_idle_hours=0,
-            limit=2,
-            lease_seconds=60,
-        )
-        await runtime.aclose()
-        return events, claims
+        try:
+            events = tuple([event async for event in runtime.stream("use external docs")])
+            claims = await memories.claim_extraction_jobs(
+                current_thread_id=new_thread_id(),
+                max_age_days=10,
+                min_idle_hours=0,
+                limit=2,
+                lease_seconds=60,
+            )
+            return events, claims
+        finally:
+            await runtime.aclose()
 
     events, claims = asyncio.run(scenario())
     assert isinstance(events[-1], TurnCompleted)
@@ -198,7 +202,7 @@ def test_polluted_published_source_enqueues_and_cold_runtime_rebuilds_memory(tmp
         await sessions.create_thread(source, tmp_path)
         version = datetime.now(UTC).isoformat()
         memory = StageOneMemory(source, tmp_path, version, "RETRACT_THIS_SOURCE", "Old evidence")
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute(
                 "INSERT INTO memory_stage1_outputs(thread_id,cwd,source_updated_at,"
                 "raw_memory,rollout_summary) VALUES (?,?,?,?,?)",
@@ -231,7 +235,7 @@ def test_polluted_published_source_enqueues_and_cold_runtime_rebuilds_memory(tmp
             assert isinstance(
                 [e async for e in runtime.stream("read external docs")][-1], TurnCompleted
             )
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 state = connection.execute(
                     "SELECT status,input_watermark,completed_watermark "
                     "FROM memory_jobs WHERE job_key='global'"
@@ -245,7 +249,7 @@ def test_polluted_published_source_enqueues_and_cold_runtime_rebuilds_memory(tmp
                 )
         finally:
             await runtime.aclose()
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             # Next eligible startup, without changing the production cooldown policy.
             connection.execute("UPDATE memory_jobs SET finished_at=0 WHERE job_key='global'")
 
@@ -299,7 +303,7 @@ def test_polluted_published_source_enqueues_and_cold_runtime_rebuilds_memory(tmp
                 if isinstance(i, ContextItem) and i.key == "memory.instructions"
             )
             assert "REBUILT_INDEX" in index.content and background.count == 1
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 assert (
                     connection.execute(
                         "SELECT selected_for_phase2 FROM memory_stage1_outputs WHERE thread_id=?",
@@ -377,10 +381,12 @@ MEMORY.md:2-3|note=[durable command]
             model=model,
             memory_root=tmp_path / "memories",
         )
-        events = tuple([event async for event in runtime.stream("recall it")])
-        items = await sessions.load_items(runtime.thread_id)
-        selected = await memories.load_consolidation_inputs(limit=10, max_unused_days=30)
-        await runtime.aclose()
+        try:
+            events = tuple([event async for event in runtime.stream("recall it")])
+            items = await sessions.load_items(runtime.thread_id)
+            selected = await memories.load_consolidation_inputs(limit=10, max_unused_days=30)
+        finally:
+            await runtime.aclose()
 
         assert isinstance(events[-1], TurnCompleted)
         assert events[-1].final_answer == "Use the durable command.\n"

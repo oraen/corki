@@ -28,7 +28,11 @@ from corki.tools.errors import FatalToolError
         ("", None),
     ],
 )
-def test_source_shell_type_detection(path, kind):
+@pytest.mark.parametrize("platform", ["darwin", "win32"])
+def test_source_shell_type_detection(monkeypatch, platform, path, kind):
+    monkeypatch.setattr(shell, "sys", SimpleNamespace(platform=platform))
+    if platform == "win32" and path == "BASH":
+        kind = ShellType.BASH
     assert shell.detect_shell_type(path) is kind
 
 
@@ -101,7 +105,7 @@ def test_discovery_passwd_then_path_then_fallback(monkeypatch, user_exists, path
 
 def test_model_override_never_uses_supplied_executable_and_missing_type_falls_back(monkeypatch):
     monkeypatch.setattr(shell, "_user_shell_path", lambda: None)
-    monkeypatch.setattr(shell, "_is_file", lambda path: str(path) == "/untrusted/bash")
+    monkeypatch.setattr(shell, "_is_file", lambda path: path == Path("/untrusted/bash"))
     monkeypatch.setattr(
         shell.shutil, "which", lambda name: "/trusted/bash" if name == "bash" else None
     )
@@ -131,10 +135,22 @@ def test_powershell_order_and_windows_type_path(monkeypatch):
 
     monkeypatch.setattr(shell.shutil, "which", which)
     assert shell.detect_shell_type(r"C:\untrusted\pwsh.exe") is ShellType.POWERSHELL
+    assert shell.detect_shell_type(r"C:\WINDOWS\System32\CMD.EXE") is ShellType.CMD
     assert shell.default_user_shell() == Shell(
         ShellType.POWERSHELL, Path("/host/powershell.exe").absolute()
     )
     assert attempts == ["pwsh", "powershell"]
+
+
+def test_windows_shell_discovery_uses_installation_roots(monkeypatch):
+    monkeypatch.setattr(shell, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(shell, "_user_shell_path", lambda: None)
+    monkeypatch.setattr(shell.shutil, "which", lambda name: None)
+    monkeypatch.setenv("SYSTEMROOT", r"D:\Windows")
+    monkeypatch.setenv("PROGRAMFILES", r"D:\Program Files")
+    windows_shell = r"D:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+    monkeypatch.setattr(shell, "_is_file", lambda path: str(path) == windows_shell)
+    assert str(shell.get_shell(ShellType.POWERSHELL).path) == windows_shell
 
 
 @pytest.mark.parametrize("value", [None, 0, 1, "false", []])

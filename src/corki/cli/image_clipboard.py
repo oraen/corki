@@ -3,22 +3,24 @@
 import base64
 import io
 import json
+import nturl2path
 import os
 import re
 import shlex
 import subprocess
 import sys
 from contextlib import closing
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote, urlsplit
 
 from PIL import Image, ImageGrab
 
-from corki.execution.owned_process import run_owned
-from corki.protocol.tools import ImageAttachment
-
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_PIXELS = 32_000_000
+
+# Running via -m first imports cli.__init__, which boots the entire CLI/runtime.
+# This installed decoder script only needs Pillow and the standard library.
+_HELPER_PATH = str(Path(__file__).resolve())
 
 FILE_URL_SCRIPT = """ObjC.import('AppKit');
 var p = $.NSPasteboard.generalPasteboard;
@@ -31,12 +33,15 @@ JSON.stringify(paths);
 
 
 async def read_clipboard_image(cwd):
+    from corki.execution.owned_process import run_owned
+    from corki.protocol.tools import ImageAttachment
+
     if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
         raise ValueError(
             "Image paste needs a local clipboard; SSH clipboard reading is unavailable."
         )
     raw = await run_owned(
-        [sys.executable, "-I", "-m", "corki.cli.image_clipboard"],
+        [sys.executable, "-I", _HELPER_PATH],
         b"",
         cwd=cwd,
         output_limit=MAX_IMAGE_BYTES,
@@ -60,12 +65,24 @@ def normalize_pasted_path(text):
             return None
         if url.netloc not in {"", "localhost"} or url.query or url.fragment:
             return None
+        if sys.platform == "win32":
+            try:
+                path = nturl2path.url2pathname(url.path)
+            except OSError:
+                return None
+            if not PureWindowsPath(path).is_absolute() or "\x00" in path:
+                return None
+            return Path(path)
         path = unquote(url.path)
         return Path(path) if path.startswith("/") and "\x00" not in path else None
     if re.match(r"^[A-Za-z]:[\\/]", unquoted) or unquoted.startswith("\\\\"):
         if sys.platform == "linux" and (os.getenv("WSL_DISTRO_NAME") or os.getenv("WSL_INTEROP")):
             if re.match(r"^[A-Za-z]:[\\/]", unquoted):
                 return Path("/mnt/" + unquoted[0].lower() + "/" + unquoted[3:].replace("\\", "/"))
+        return Path(unquoted)
+    if sys.platform == "win32" and "\\" in unquoted:
+        # Backslashes in relative/root-relative Windows paths are separators,
+        # not POSIX shell escapes. The caller checks existence before decoding.
         return Path(unquoted)
     try:
         parts = shlex.split(text)
@@ -76,8 +93,11 @@ def normalize_pasted_path(text):
 
 async def read_path_image(path, cwd):
     """Decode only an explicitly pasted file; never fall back to system clipboard."""
+    from corki.execution.owned_process import run_owned
+    from corki.protocol.tools import ImageAttachment
+
     raw = await run_owned(
-        [sys.executable, "-I", "-m", "corki.cli.image_clipboard", "--file", str(path)],
+        [sys.executable, "-I", _HELPER_PATH, "--file", str(path)],
         b"",
         cwd=cwd,
         output_limit=MAX_IMAGE_BYTES,

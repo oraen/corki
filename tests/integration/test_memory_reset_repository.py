@@ -2,6 +2,7 @@
 
 import asyncio
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -28,7 +29,7 @@ def test_memory_reset_transaction_rows_modes_and_running_extraction(
         )
         repository = SQLiteMemoryRepository(database)
         await repository.mark_thread_mode(disabled, "disabled")
-        with sqlite3.connect(database) as db:
+        with closing(sqlite3.connect(database)) as db, db:
             db.execute(
                 "INSERT INTO memory_stage1_outputs(thread_id, source_updated_at, cwd, raw_memory, "
                 "rollout_summary, generated_at) "
@@ -49,14 +50,14 @@ def test_memory_reset_transaction_rows_modes_and_running_extraction(
         assert len(claims) == 1
         claim = claims[0]
         if fail_transaction:
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 db.execute(
                     "CREATE TRIGGER fail_reset BEFORE DELETE ON memory_jobs "
                     "BEGIN SELECT RAISE(ABORT, 'blocked reset'); END"
                 )
             with pytest.raises(sqlite3.IntegrityError, match="blocked reset"):
                 await repository.clear_memory_data()
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 assert db.execute("SELECT count(*) FROM memory_stage1_outputs").fetchone() == (1,)
                 assert db.execute("SELECT count(*) FROM memory_jobs").fetchone() == (2,)
                 db.execute("DROP TRIGGER fail_reset")
@@ -66,7 +67,7 @@ def test_memory_reset_transaction_rows_modes_and_running_extraction(
         )
         assert not await repository.fail_extraction(claim, "late failure", retry_delay_seconds=1)
         assert (await sessions.load_items(thread))[0].content == "retained conversation"
-        with sqlite3.connect(database) as db:
+        with closing(sqlite3.connect(database)) as db, db:
             assert db.execute("SELECT count(*) FROM memory_stage1_outputs").fetchone() == (0,)
             assert db.execute("SELECT kind, job_key, status FROM memory_jobs").fetchall() == [
                 ("unrelated", "keep", "pending")
@@ -94,7 +95,7 @@ def test_memory_reset_transaction_rows_modes_and_running_extraction(
             assert await reopened.fail_extraction(current, "fresh failure", retry_delay_seconds=60)
 
         def snapshot():
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 return (
                     db.execute("SELECT * FROM memory_jobs ORDER BY kind, job_key").fetchall(),
                     db.execute("SELECT * FROM memory_stage1_outputs ORDER BY thread_id").fetchall(),
@@ -111,7 +112,7 @@ def test_memory_reset_transaction_rows_modes_and_running_extraction(
         assert snapshot() == before
         if new_owner_state == "running":
             assert await reopened.complete_extraction(current, fresh)
-        with sqlite3.connect(database) as db:
+        with closing(sqlite3.connect(database)) as db, db:
             assert db.execute(
                 "SELECT raw_memory, rollout_summary FROM memory_stage1_outputs"
             ).fetchall() == (

@@ -170,7 +170,7 @@ function customToolDemo(transport){
   parameters:{type:'object',properties:{q:{type:'string',description:'搜索关键词，可加语言条件，例如 python language:python'}},required:['q'],additionalProperties:false},
   timeout_seconds:30,enabled:true};
  return transport==='http'?{...common,url:'https://api.github.com/search/repositories?per_page=3',method:'GET',headers:{Accept:'application/vnd.github+json','User-Agent':'Corki-Tool-Demo'}}:
-  {...common,command:'python3',args:['-c','import json, subprocess, sys; params = json.load(sys.stdin); result = subprocess.run(["curl", "--silent", "--show-error", "--fail", "--max-time", "20", "--get", "--data-urlencode", "q=" + params["q"], "--data-urlencode", "per_page=3", "--header", "Accept: application/vnd.github+json", "--header", "User-Agent: Corki-Tool-Demo", "https://api.github.com/search/repositories"]); sys.exit(result.returncode)'],cwd:null,env:{}};
+  {...common,command:state.runtime?.python||'python3',args:['-c','import json, subprocess, sys; params = json.load(sys.stdin); result = subprocess.run(["curl", "--silent", "--show-error", "--fail", "--max-time", "20", "--get", "--data-urlencode", "q=" + params["q"], "--data-urlencode", "per_page=3", "--header", "Accept: application/vnd.github+json", "--header", "User-Agent: Corki-Tool-Demo", "https://api.github.com/search/repositories"]); sys.exit(result.returncode)'],cwd:null,env:{}};
 }
 function showCustomToolGuide(transport,onApply){
  const data=customToolDemo(transport),dialog=document.createElement('dialog');let full=false;

@@ -1,6 +1,8 @@
 // Disposable manager required on 17003, rooted at /tmp/corki-skills-qa.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 const tabs=await(await fetch('http://127.0.0.1:9225/json')).json();
 const tab=tabs.find(t=>t.type==='page'&&t.url.startsWith('http://127.0.0.1:1700'));
 assert(tab);const original=tab.url;
@@ -11,7 +13,7 @@ const cdp=(method,params={})=>new Promise((resolve,reject)=>{const id=++seq;pend
 const ev=async expression=>{const r=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value};
 async function wait(expr){for(let n=0;n<100;n++){if(await ev(`Boolean(${expr})`))return;await new Promise(r=>setTimeout(r,100));}throw Error('Timeout '+expr)}
 const click=s=>ev(`document.querySelector(${JSON.stringify(s)}).click()`);
-const shot=async name=>{await ev('Promise.all(document.getAnimations().map(a=>a.finished.catch(()=>{})))');const r=await cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});fs.writeFileSync('/tmp/'+name+'.png',Buffer.from(r.data,'base64'))};
+const shot=async name=>{await ev('Promise.all(document.getAnimations().map(a=>a.finished.catch(()=>{})))');const r=await cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});fs.writeFileSync(join(tmpdir(),name+'.png'),Buffer.from(r.data,'base64'))};
 const upload=async(name,body)=>ev(`(()=>{const dt=new DataTransfer();dt.items.add(new File([${JSON.stringify(body)}],${JSON.stringify(name)},{type:'text/markdown'}));const el=document.querySelector('#skill-file-input');el.files=dt.files;el.dispatchEvent(new Event('change',{bubbles:true}));})()`);
 try{
  await cdp('Runtime.enable');await cdp('Page.enable');
@@ -24,7 +26,7 @@ try{
  await click('[data-skill-group="builtin"] [data-action="skill-view"]');await wait('CorkiSkills.editor');
  assert(await ev('document.querySelector("[data-sw=edit]").hidden'));await click('[data-sw="close"]');
  await click('[data-action="skill-import"]');assert(await ev('document.querySelector("#save").disabled'));
- await ev(`(()=>{const dt=new DataTransfer();for(const [path,body] of [['bundle/SKILL.md','---\\nname: folder-browser-qa\\ndescription: Folder import\\n---\\nRead references/guide.md'],['bundle/references/guide.md','Reference body']]){const f=new File([body],path.split('/').pop());Object.defineProperty(f,'webkitRelativePath',{value:path});dt.items.add(f);}const el=document.querySelector('#skill-folder-input');el.files=dt.files;el.dispatchEvent(new Event('change'));})()`);
+ await ev(`(()=>{const dt=new DataTransfer();for(const [path,body] of [['folder-browser-qa/SKILL.md','---\\nname: folder-browser-qa\\ndescription: Folder import\\n---\\nRead references/guide.md'],['folder-browser-qa/references/guide.md','Reference body']]){const f=new File([body],path.split('/').pop());Object.defineProperty(f,'webkitRelativePath',{value:path});dt.items.add(f);}const el=document.querySelector('#skill-folder-input');el.files=dt.files;el.dispatchEvent(new Event('change'));})()`);
  await wait('!document.querySelector("#save").disabled');
  assert(await ev('document.querySelector("#skill-import-preview").textContent.includes("references/guide.md")'));
  await click('#cancel-dialog');await click('[data-action="skill-import"]');
@@ -49,8 +51,9 @@ try{
  await click('[data-sw="close"]');
  await click('[data-action="skill-import"]');await upload('SKILL.md',`---\nname: ${name}\ndescription: Duplicate\n---\nBody`);
  await wait('document.querySelector("#form-error").textContent.includes("同名")');
- await ev(`const input=document.querySelector('#skill-import-name');input.value=${JSON.stringify(name+'-copy')};input.dispatchEvent(new Event('input'));input.dispatchEvent(new Event('change'));`);
- await wait('!document.querySelector("#save").disabled');await click('#cancel-dialog');
+ assert.equal(await ev('document.querySelector("#skill-import-name")'),null,'Import must use the declared Skill name');
+ assert(await ev('document.querySelector("#save").disabled'),'Duplicate skill must remain blocked');
+ await click('#cancel-dialog');
  await ev(`document.querySelector('#search').value='nothing-matches';document.querySelector('#search').dispatchEvent(new Event('input',{bubbles:true}))`);
  assert.equal(await ev('document.querySelectorAll(".skill-card").length'),0);
  await ev(`document.querySelector('#search').value='';document.querySelector('#search').dispatchEvent(new Event('input',{bubbles:true}))`);
@@ -60,5 +63,5 @@ try{
  await shot('corki-skills-mobile');
  await click('[data-action="skill-import"]');assert(await ev('document.querySelector("#editor").scrollWidth<=innerWidth'));
  await shot('corki-skills-import-mobile');await click('#cancel-dialog');
- assert.deepEqual(errors,[]);console.log('PASS: three groups, validation, import, runtime-facing files, toggle, edit, duplicate/rename, search, mobile.');
+ assert.deepEqual(errors,[]);console.log('PASS: three groups, validation, import, runtime-facing files, toggle, edit, duplicate rejection, search, mobile.');
 }finally{await cdp('Emulation.clearDeviceMetricsOverride');await cdp('Page.navigate',{url:original});ws.close();}

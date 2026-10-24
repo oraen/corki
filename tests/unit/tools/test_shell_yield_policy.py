@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 import pytest
 
@@ -45,7 +46,7 @@ def test_stdin_description_matches_effective_wait_bounds(seconds, maximum):
 @pytest.mark.parametrize(
     "kind,requested,expected",
     [
-        ("exec", 0, 0.25),
+        ("exec", 0, 10 if os.name == "nt" else 0.25),
         ("exec", 1000000, 30),
         ("empty", 0, 5),
         ("empty", 1000000, 300),

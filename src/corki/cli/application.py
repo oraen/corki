@@ -241,16 +241,25 @@ class CorkiApplication:
     async def run(self) -> int:
         """Run until Ctrl+C/EOF and close runtime resources deterministically."""
 
-        input_mode = getattr(self._ui, "input_mode", None)
-        with input_mode() if input_mode is not None else nullcontext():
-            return await self._run()
+        entered_run = False
+        try:
+            input_mode = getattr(self._ui, "input_mode", None)
+            with input_mode() if input_mode is not None else nullcontext():
+                entered_run = True
+                return await self._run()
+        finally:
+            # Before _run takes ownership, even constructing/entering the
+            # terminal mode can fail (e.g. a disconnected Windows console).
+            if not entered_run:
+                await self._runtime.aclose()
 
     async def _run(self) -> int:
 
-        self._ui.show_welcome()
-        watch_resize = getattr(self._ui, "watch_resize", None)
-        resize = asyncio.create_task(watch_resize()) if watch_resize is not None else None
+        resize = None
         try:
+            self._ui.show_welcome()
+            watch_resize = getattr(self._ui, "watch_resize", None)
+            resize = asyncio.create_task(watch_resize()) if watch_resize is not None else None
             load_history = getattr(self._runtime, "load_display_history", None)
             load_history = getattr(self._runtime, "load_display_snapshot", None) or load_history
             replay = getattr(self._ui, "replay_history", None)

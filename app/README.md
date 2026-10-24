@@ -30,9 +30,51 @@ npm run build
 npm test
 ```
 
-The Node protocol tests use the repository's `.venv/bin/python`. From the repository
+The Node protocol tests use the repository's development Python (`.venv/bin/python`
+on macOS, `.venv/Scripts/python.exe` on Windows), or `CORKI_TEST_PYTHON`. From the repository
 root, run `.venv/bin/python -m pytest app/tests/test_bridge.py app/tests/test_protocol.py app/tests/test_content.py app/tests/test_live.py`.
 Tests use disposable homes, never real user configuration or conversations.
+
+For Windows PowerShell, use the virtual environment interpreter directly; shell
+activation, WSL and Git Bash are not required. Install the Corki Python package
+and its matching native execution bundle before starting an Agent. Merely
+building Electron does not install that bundle. A missing compiler is reported
+as a configuration error; it must not be bypassed with an unrestricted executor.
+
+The Windows Electron development launcher also requires the
+[Microsoft Visual C++ v14 Redistributable (x64)](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)
+for Electron's native ZIP installer. Install it before `npm start`. On a
+clean system without `VCRUNTIME140.dll`, that installer reports “Cannot find
+native binding” even when its Windows binding is present; deleting the lockfile
+does not supply the missing DLL. This prerequisite applies to installing the
+Electron development launcher.
+
+```powershell
+# From the repository root, after installing the Python/core prerequisites:
+$env:CORKI_PYTHON = (Resolve-Path .venv/Scripts/python.exe).Path
+& $env:CORKI_PYTHON -m pytest app/tests/test_protocol.py app/tests/test_live.py
+Set-Location app
+npm.cmd ci --registry=https://registry.npmjs.org
+npm.cmd run typecheck
+npm.cmd start
+```
+
+Use Node 22.12 or newer, as required by the pinned Electron/packager dependencies.
+The current isolated Windows test environment uses Node 24 and Python 3.12.
+Selected Windows 11 x64 end-to-end Agent and packaged application checks have
+passed with an isolated fake model, including streaming, drafts, stop, reload,
+history recovery, single-instance startup, window recovery and owned-child
+cleanup on quit. Windows 10 and the full Windows test matrix remain
+unverified; the commands above are development entry points rather than a
+release guarantee.
+
+Current Windows acceptance is limited to the CLI. Desktop platform compatibility
+is reviewed in source and build configuration; further Windows desktop runtime
+and UI acceptance is reserved for manual testing on a Windows computer. The latest
+independent-runtime desktop smoke stopped while waiting for the initial working
+directory, before submitting a model request. Its cause is still unconfirmed, so
+earlier desktop results do not certify this installation path. Windows 10 is
+outside the current acceptance scope.
 
 After building, run `node tests/electron-smoke.mjs` here for the native macOS
 end-to-end test with a local fake model. To test the packaged executable:
@@ -67,8 +109,11 @@ After packaging, `node tests/package-check.mjs` verifies the payload allowlist,
 icon, startup without shell activation and that bridge imports do not modify the
 application bundle.
 
-`node tests/ui-smoke.mjs` performs a focused UI/selection check using an installed
-Google Chrome on macOS. Test profiles and screenshots stay in system temporary
+`node tests/ui-smoke.mjs` performs a focused UI/selection check using Playwright
+Chromium. Install the test browser with `npx playwright install chromium` inside
+`app/`, or set `CORKI_TEST_BROWSER` to an existing Chromium/Chrome executable.
+The same browser selection applies to the Markdown, scroll, interaction and
+transcript UI scripts on Windows and macOS. Test profiles and screenshots stay in system temporary
 directories, outside the repository.
 
 ## Packaging
@@ -76,6 +121,11 @@ directories, outside the repository.
 `npm run package` creates an unsigned application for the current host platform
 under `out/`. Packaging uses an allowlist staging directory; only the built UI,
 Electron entry points, local resources and the Python bridge are included.
+Windows icons are generated locally as 16/32/48/256px bitmap ICO frames using
+the build-time `png-to-ico` dependency. The package check reads the executable's
+actual Windows shell icon and compares it with the bundled Corki artwork.
+Set `CORKI_TEST_PACKAGE_BUNDLE` to a copied application directory (`Corki.app`
+on macOS) when running `node tests/package-check.mjs` against an installation.
 The first version uses a separately installed Corki Python environment. It does
 not silently include the developer's virtual environment. On first packaged
 launch, use “选择 Python 环境” to select its interpreter; the absolute interpreter
@@ -95,6 +145,32 @@ Select `~/.corki/app/python/bin/python` in the application's interpreter chooser
 This installs the core independently; the Electron package contains no Python
 virtual environment or user configuration. This flow has been tested with a
 non-editable wheel in a disposable environment outside the checkout.
+
+On Windows x64, first build and install the native bundles described in
+[the permission backend](../native/sandbox/README.md) and
+[file search](../native/file_search/README.md). Build the core wheel directly
+with `uv build --wheel`; the source archive intentionally excludes generated
+native assets. Install the resulting `win_amd64.whl` into a separate environment:
+
+```powershell
+$corkiPythonRoot = Join-Path $env:USERPROFILE '.corki\app\python'
+python -m venv $corkiPythonRoot
+# Substitute the actual wheel path produced by uv build --wheel:
+& (Join-Path $corkiPythonRoot 'Scripts\python.exe') -m pip install 'C:\path\to\corki-VERSION-py3-none-win_amd64.whl'
+```
+
+In `app/`, run `npm.cmd run package`. Copy the entire
+`out/Corki-win32-x64` directory to `%LOCALAPPDATA%\Programs\Corki`, then open
+`Corki.exe`; copying the executable alone omits required Electron resources.
+The manager's desktop quick launch recognizes this installation directory.
+For another directory, configure `CORKI_DESKTOP_EXECUTABLE` with the full
+`Corki.exe` path. A shortcut should target that executable and be named `Corki`.
+Select the independent environment's `Scripts\python.exe` on first launch.
+The application stores that choice outside the installation, so subsequent
+Explorer launches do not require an activated terminal. Fully quit Corki before
+replacing an existing application directory; keep user data separate.
+These are the Windows installation steps to exercise in final acceptance;
+the remaining unverified scope is listed below.
 Code signing, publishing and auto-update are not part of this local build.
 
 ## Data and lifecycle
@@ -140,7 +216,8 @@ Agent execution and independent packaged execution all passed. See
 [ACCEPTANCE.md](ACCEPTANCE.md) for the requirement mapping and
 [VALIDATION.md](VALIDATION.md) for specific evidence.
 
-- The package is unsigned. Windows/Linux have not been validated.
+- The package is unsigned. Windows has targeted native test coverage, but full
+  Agent and packaged acceptance is not complete. Linux has not been validated.
 - Packaged execution requires a separately installed Corki Python interpreter;
   select it on first launch. It does not include a Python distribution.
 - Model connectivity depends on the user's configured provider. Tests used local
@@ -151,8 +228,8 @@ Agent execution and independent packaged execution all passed. See
 - Permissions inherit Corki settings. Configuration management remains in the
   existing manager. Choosing a model here changes the session, not global defaults.
 - Stop invokes core cancellation; an interrupted goal follows the core's pause
-  behavior. Editing the next input while running is supported; stop the current
-  task before sending a new turn.
+  behavior. Input during execution follows the steering/queue rules documented
+  below; it does not silently start a second Agent loop.
 - Archive retains history; Delete removes session data without deleting project files.
 - Unknown crash outcomes require reconciliation; the app does not guarantee
   exactly-once side effects or automatically rerun tasks after a backend crash.
@@ -197,3 +274,16 @@ node tests/electron-followups.mjs
 ```
 
 Electron 测试使用独立临时 CORKI_HOME 和本机假模型，不读取真实用户配置。提取的第三方安装包、测试截图和运行日志只放系统临时目录。
+
+### 设置与管理服务
+
+桌面右上角「设置」先检测 `127.0.0.1:17002` 的 Corki 管理页面，已运行时直接打开；未运行时使用桌面配置的同一个 Python 环境启动管理服务，显示启动弹窗，待服务就绪后再打开浏览器。启动失败支持重试；端口被其他服务占用时明确报错。
+
+打包资源包含管理服务入口、静态页面与快速配置模板，不依赖源码目录。管理服务沿用当前 `CORKI_HOME`，默认工作目录为该目录下的 `main/default`，启动日志位于 `CORKI_HOME/manager/service.log`。服务启动后独立运行，关闭桌面窗口不会关闭管理服务。Python 环境仍须安装匹配版本的 Corki；缺少依赖时会提示启动失败。
+
+
+### 模型连接与默认项
+
+桌面窗口重新获得焦点、发送消息、切换已有会话时不重新读取配置。配置目录在启动、新会话、主动刷新或选择工作目录时加载；已有运行时使用已加载的连接信息。默认供应商/模型缺失或不可用时，按配置顺序使用第一个已启用供应商的第一个模型，不改写全局默认项。
+
+桌面调用实际 HTTP 请求连续失败 10 次，或连续 10 秒没有收到响应行时，显示不占布局空间的“模型调用失败，重试中”提示栏；连续失败 20 次或连续 20 秒无响应时，以普通模型回复显示“模型调用失败”并结束该轮（底层仍记录为失败）。收到响应行会重置无响应计时，成功完成一份模型响应会清零失败计数。工具运行、审批与用户补充信息等待不计入时间。已生成的回复保留，失败状态和部分回复可以从历史恢复。此策略位于桌面适配层，CLI 的重试策略不变。

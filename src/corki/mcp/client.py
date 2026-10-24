@@ -51,6 +51,7 @@ from corki.mcp.runtime_environment import (
 from corki.mcp.sse import SseParser, response_from_event
 from corki.mcp.sse_resume import read_sse_response
 from corki.mcp.wire_types import struct_object
+from corki.platforms.processes import close_job, create_subprocess_exec
 from corki.protocol.wire_json import WireObject
 from corki.protocol.wire_numbers import dumps_wire
 
@@ -153,7 +154,9 @@ class MCPClient(ABC):
         self, on_page: Callable[[object], None] | None = None
     ) -> tuple[dict[str, Any], ...]:
         try:
-            async with asyncio.timeout(self.settings.timeout_seconds):
+            # Bound the entire pagination operation, excluding time spent
+            # waiting for a host response just like each underlying request.
+            async with self.active_time.timeout(self.settings.timeout_seconds):
                 return await self._collect_tools(on_page)
         except TimeoutError:
             raise MCPProtocolError("tools/list pagination timed out") from None
@@ -353,7 +356,7 @@ class StdioMCPClient(MCPClient):
             raise
 
     async def _spawn(self, env: dict[str, str]) -> None:
-        self._process = await asyncio.create_subprocess_exec(
+        self._process = await create_subprocess_exec(
             self.settings.command,
             *self.settings.args,
             cwd=self.settings.cwd,
@@ -458,6 +461,7 @@ class StdioMCPClient(MCPClient):
             if self._inbound is not None:
                 await self._inbound.aclose()
             if process is not None:
+                close_job(process)
                 if self._group_finalizer is not None:
                     self._group_finalizer()
                 elif process.returncode is None:

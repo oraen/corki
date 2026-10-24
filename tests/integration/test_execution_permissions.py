@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import shlex
 import socket
 import sys
@@ -252,7 +253,34 @@ async def _run(tmp_path, policy, name, arguments, nested):
                 )
                 item = ToolCallItem(call, turn, step)
             else:
-                item = AssistantMessageItem("handled", turn, step)
+                results = [part for part in request.items if isinstance(part, ToolResultItem)]
+                latest = results[-1].content if results else ""
+                cell = re.search(r"Script running with cell ID ([\w-]+)", latest)
+                session = re.search(r"Process running with session ID ([\w-]+)", latest)
+                if session is None:
+                    session = re.search(r'"session_id"\s*:\s*"([\w-]+)"', latest)
+                if cell or session:
+                    assert len(requests) < 30, "fixture process did not finish after polling"
+                    if cell:
+                        call = ToolCall(new_tool_call_id(), "wait", {"cell_id": cell[1]})
+                    else:
+                        payload = {"session_id": session[1], "chars": ""}
+                        call = (
+                            ToolCall(new_tool_call_id(), "write_stdin", payload)
+                            if not nested
+                            else ToolCall(
+                                new_tool_call_id(),
+                                "exec",
+                                None,
+                                raw_arguments="text(await tools.write_stdin("
+                                + json.dumps(payload)
+                                + "));",
+                                input_kind="freeform",
+                            )
+                        )
+                    item = ToolCallItem(call, turn, step)
+                else:
+                    item = AssistantMessageItem("handled", turn, step)
             yield ModelCompleted((item,))
 
         async def aclose(self):
@@ -271,7 +299,7 @@ async def _run(tmp_path, policy, name, arguments, nested):
     try:
         events = [event async for event in runtime.stream("test permissions")]
         assert isinstance(events[-1], TurnCompleted), events[-1]
-        assert len(requests) == 2
+        assert len(requests) >= 2
         return [item for item in requests[-1].items if isinstance(item, ToolResultItem)]
     finally:
         await runtime.aclose()

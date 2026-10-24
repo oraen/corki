@@ -1,22 +1,26 @@
 """Opt-in, loopback-only Responses bridge for an existing Codex ChatGPT login.
 
 Codex owns login and refresh. This bridge never writes or refreshes auth.json.
-The downstream key is ephemeral and is not an OpenAI Platform API key.
+The downstream key is local-only and is not an OpenAI Platform API key.
 """
 
 from __future__ import annotations
 
 import argparse
+import errno
 import hmac
 import json
 import os
 import ssl
 import sys
+import threading
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 import truststore
@@ -25,6 +29,8 @@ from corki_openai_gateway.chat import chat_completion, chat_events, completed_re
 
 UPSTREAM = "https://chatgpt.com/backend-api/codex/responses"
 MAX_BODY = 16 * 1024 * 1024
+# Add a provider adapter here to opt it into routing; names never become URLs.
+PROVIDER_ROUTES = {"openai": "forward_openai"}
 
 
 class CredentialsUnavailable(Exception):
@@ -51,7 +57,7 @@ def environment_credentials(token_env: str, account_env: str) -> Credentials:
 
 def read_credentials(path: Path) -> Credentials:
     try:
-        document = json.loads(path.read_text())
+        document = json.loads(path.read_text(encoding="utf-8"))
         tokens = document.get("tokens")
         if document.get("auth_mode") not in (None, "chatgpt") or not isinstance(tokens, dict):
             raise ValueError
@@ -77,7 +83,12 @@ class Gateway(ThreadingHTTPServer):
         client: httpx.Client | None = None,
         port: int = 0,
         credential_provider: Callable[[], Credentials] | None = None,
+        control_token: str | None = None,
+        owner: str = "",
     ):
+        self.instance = uuid.uuid4().hex
+        self.control_token = control_token
+        self.owner = owner
         self.auth_file = auth_file
         self.key = key
         if credential_provider is None:
@@ -94,7 +105,12 @@ class Gateway(ThreadingHTTPServer):
             verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
         )
         self.owns_client = client is None
-        super().__init__(("127.0.0.1", port), Handler)
+        try:
+            super().__init__(("127.0.0.1", port), Handler)
+        except BaseException:
+            if self.owns_client:
+                self.client.close()
+            raise
 
     def credentials(self) -> Credentials:
         credentials = self.credential_provider()
@@ -130,19 +146,69 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def json_response(self, status, value):
+        body = json.dumps(value, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        self.wfile.write(body)
+
+    def provider_path(self):
+        path = urlsplit(self.path).path
+        parts = path.strip("/").split("/")
+        if not parts[0] or parts[0] in {"v1", "responses", "chat"}:
+            self.error(404, "路径需要加入服务商，例如 /openai/v1/responses")
+            return None
+        provider = parts[0]
+        if provider not in PROVIDER_ROUTES:
+            self.error(404, f"暂时不支持的供应商：{provider[:80]}")
+            return None
+        return provider, "/" + "/".join(parts[1:])
+
+    def do_GET(self):
+        if self.path == "/__corki_gateway/health":
+            return self.json_response(
+                200,
+                {
+                    "service": "corki-adaptor",
+                    "version": 2,
+                    "instance": self.server.instance,
+                    "owner": self.server.owner,
+                    "managed": bool(self.server.control_token),
+                    "providers": list(PROVIDER_ROUTES),
+                },
+            )
+        if self.provider_path() is not None:
+            self.error(405, "请使用 POST 调用转发接口")
+
     def do_POST(self):
         try:
-            self.forward()
+            if self.path == "/__corki_gateway/stop":
+                supplied = self.headers.get("X-Corki-Control", "")
+                token = self.server.control_token
+                if not token or not hmac.compare_digest(supplied.encode(), token.encode()):
+                    return self.error(403, "Gateway control denied.")
+                self.json_response(200, {"stopping": True})
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+                return
+            route = self.provider_path()
+            if route is not None:
+                provider, endpoint = route
+                getattr(self, PROVIDER_ROUTES[provider])(endpoint)
         except (BrokenPipeError, ConnectionResetError, TimeoutError):
             self.close_connection = True
 
-    def forward(self):
+    def forward_openai(self, endpoint):
         self.close_connection = True
         supplied = self.headers.get("Authorization", "")
         if not hmac.compare_digest(supplied.encode(), ("Bearer " + self.server.key).encode()):
             return self.error(401, "Invalid local gateway key.")
-        chat = self.path in {"/chat/completions", "/v1/chat/completions"}
-        if not chat and self.path not in {"/responses", "/v1/responses"}:
+        chat = endpoint in {"/chat/completions", "/v1/chat/completions"}
+        if not chat and endpoint not in {"/responses", "/v1/responses"}:
             return self.error(404, "Unsupported gateway endpoint.")
         lengths = self.headers.get_all("Content-Length", [])
         if self.headers.get("Transfer-Encoding") or len(lengths) != 1:
@@ -258,7 +324,7 @@ class Handler(BaseHTTPRequestHandler):
             # response.completed or retry a request that may have executed.
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, serve: Callable[[Gateway], None] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Run a private Codex-login OpenAI protocol gateway"
     )
@@ -280,31 +346,67 @@ def main(argv: list[str] | None = None) -> int:
         metavar="NAME",
         help="account ID variable for --access-token-env (default: CODEX_ACCOUNT_ID)",
     )
+    parser.add_argument("--control-file", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--owner", default="", help=argparse.SUPPRESS)
     parser.add_argument("--serve", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--auto-port", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--ready-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--port", type=int, default=17001)
     parser.add_argument("--key-file", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        key = args.key_file.expanduser().read_text().strip()
-    except OSError:
+        key = args.key_file.expanduser().read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
         parser.error("gateway key file is unavailable")
     if not key:
         parser.error("gateway key must not be empty")
     try:
+        control_token = (
+            args.control_file.read_text(encoding="utf-8").strip() if args.control_file else None
+        )
         provider = None
         if args.access_token_env is not None:
             provider = partial(environment_credentials, args.access_token_env, args.account_id_env)
-        gateway = Gateway(
-            None if provider else args.auth_file.expanduser(),
-            key,
-            port=args.port,
-            credential_provider=provider,
+        options = dict(credential_provider=provider, control_token=control_token, owner=args.owner)
+        auth_file = None if provider else args.auth_file.expanduser()
+        try:
+            gateway = Gateway(auth_file, key, port=args.port, **options)
+        except OSError as error:
+            if not args.auto_port or error.errno != errno.EADDRINUSE:
+                raise
+            # Bind port 0 directly: the kernel chooses and reserves a free port
+            # atomically, including when a competing listener wins a startup race.
+            gateway = Gateway(auth_file, key, port=0, **options)
+    except (CredentialsUnavailable, OSError) as exc:
+        print(
+            "Gateway credentials or control files are unavailable."
+            if isinstance(exc, OSError)
+            else str(exc),
+            file=sys.stderr,
         )
-    except CredentialsUnavailable as exc:
-        print(str(exc), file=sys.stderr)
         return 1
     try:
-        gateway.serve_forever()
+        if args.ready_file:
+            ready = args.ready_file
+            temporary = ready.with_name(ready.name + ".tmp")
+            try:
+                with temporary.open("x", encoding="utf-8") as stream:
+                    os.chmod(temporary, 0o600)
+                    json.dump(
+                        {
+                            "port": gateway.server_port,
+                            "owner": gateway.owner,
+                            "instance": gateway.instance,
+                        },
+                        stream,
+                    )
+                os.replace(temporary, ready)
+            finally:
+                temporary.unlink(missing_ok=True)
+        if serve is None:
+            gateway.serve_forever()
+        else:
+            serve(gateway)
     except KeyboardInterrupt:
         pass
     finally:

@@ -5,6 +5,7 @@ import json
 import sqlite3
 import threading
 import time
+from contextlib import closing
 
 import pytest
 
@@ -107,7 +108,7 @@ def test_runtime_close_joins_claim_and_releases_only_its_undispatched_lease(
             await asyncio.wait_for(entered.wait(), 3)
             key = str(source) if phase == "extraction" else "global"
             if pause == "new_owner":
-                with sqlite3.connect(database) as db:
+                with closing(sqlite3.connect(database)) as db, db:
                     db.execute(
                         "UPDATE memory_jobs SET ownership_token='new-owner' WHERE job_key=?", (key,)
                     )
@@ -124,7 +125,7 @@ def test_runtime_close_joins_claim_and_releases_only_its_undispatched_lease(
                 closed_early |= close.done()
             release.set()
             await asyncio.wait_for(asyncio.shield(close), 3)
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 row = db.execute(
                     "SELECT status, ownership_token FROM memory_jobs WHERE job_key=?", (key,)
                 ).fetchone()
@@ -144,7 +145,7 @@ def test_runtime_close_joins_claim_and_releases_only_its_undispatched_lease(
             if pause in ("claim_error", "cleanup_error", "unknown_commit"):
                 assert runtime._memory_service._warnings
             elif pause != "new_owner":
-                with sqlite3.connect(database) as db:
+                with closing(sqlite3.connect(database)) as db, db:
                     retries, retry_at = db.execute(
                         "SELECT retry_remaining, retry_at FROM memory_jobs WHERE job_key=?", (key,)
                     ).fetchone()
@@ -223,7 +224,7 @@ def test_runtime_close_releases_claims_waiting_for_extraction_concurrency(tmp_pa
             assert isinstance([e async for e in runtime.stream("work")][-1], TurnCompleted)
             await asyncio.wait_for(entered.wait(), 5)
             await runtime.aclose()
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 rows = db.execute(
                     "SELECT status, ownership_token, retry_remaining FROM memory_jobs "
                     "WHERE kind='memory_stage1'"

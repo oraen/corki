@@ -2,6 +2,7 @@
 
 import asyncio
 import sqlite3
+from contextlib import closing
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -54,7 +55,7 @@ def test_archived_sources_are_excluded_before_real_startup_scan_cap(tmp_path, mo
             _ = [event async for event in active.stream("eligible active source")]
             _ = [event async for event in archived.stream("excluded archived source")]
             await archived.archive()
-            with sqlite3.connect(tmp_path / "history.db") as db:
+            with closing(sqlite3.connect(tmp_path / "history.db")) as db, db:
                 db.execute(
                     "UPDATE threads SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-2 hours') "
                     "WHERE id=?",
@@ -69,7 +70,7 @@ def test_archived_sources_are_excluded_before_real_startup_scan_cap(tmp_path, mo
             report = await current._memory_service.wait()
             assert report.claimed == 1 and not report.failed
             assert len(memory_model.extractions) == 1
-            with sqlite3.connect(tmp_path / "history.db") as db:
+            with closing(sqlite3.connect(tmp_path / "history.db")) as db, db:
                 assert db.execute(
                     "SELECT job_key FROM memory_jobs WHERE kind='memory_stage1'"
                 ).fetchall() == [(active.thread_id,)]
@@ -107,7 +108,7 @@ def test_archive_preserves_derived_inputs_and_unarchive_restarts_idle_window(tmp
             assert await memory.complete_extraction(claims[0], output)
             await source.archive()
             assert await memory.load_consolidation_inputs(limit=10, max_unused_days=30) == (output,)
-            with sqlite3.connect(tmp_path / "history.db") as db:
+            with closing(sqlite3.connect(tmp_path / "history.db")) as db, db:
                 db.execute(
                     "UPDATE threads SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-2 hours')"
                 )

@@ -2,6 +2,7 @@
 
 import asyncio
 import concurrent.futures
+import errno
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -15,6 +16,33 @@ from corki.cron.service import CronService
 from corki.cron.store import CronStore
 from corki.cron.worker import supervise
 from corki.protocol.events import TurnCompleted, TurnFailed, UserInputRequested
+
+
+def test_lock_reacquire_keeps_ownership_until_close(tmp_path):
+    owner = FileLock(tmp_path / "worker.lock")
+    contender = FileLock(owner.path)
+    try:
+        assert owner.acquire()
+        handle = owner.file
+        assert owner.acquire()
+        assert owner.file is handle
+        assert not contender.acquire()
+        owner.close()
+        assert contender.acquire()
+    finally:
+        owner.close()
+        contender.close()
+
+
+def test_lock_io_failure_is_not_mistaken_for_live_worker(tmp_path, monkeypatch):
+    import corki.cron.locking as locking
+
+    def fail(handle):
+        raise OSError(errno.EIO, "simulated lock I/O failure")
+
+    monkeypatch.setattr(locking, "try_lock", fail)
+    with pytest.raises(OSError, match="I/O failure"):
+        FileLock(tmp_path / "worker.lock").acquire()
 
 
 def values(**overrides):
@@ -427,3 +455,26 @@ def test_unexpected_worker_failure_keeps_traceback(tmp_path):
     # Older databases gain the new column without losing existing records.
     assert store.run(identity)["error_log"] == ""
     assert store.run(identity)["status"] == "failed"
+
+
+def test_windows_worker_detaches_from_scheduler_console(tmp_path, monkeypatch):
+    import os
+    from types import SimpleNamespace
+
+    import corki.cron.service as module
+
+    calls = []
+    monkeypatch.setattr(module, "os", SimpleNamespace(
+        name="nt", environ=os.environ, pathsep=os.pathsep,
+    ))
+    monkeypatch.setattr(module.subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, raising=False)
+    monkeypatch.setattr(module.subprocess, "DETACHED_PROCESS", 0x8, raising=False)
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *a, **k: calls.append((a, k)))
+    service = module.CronService(tmp_path)
+    service._launch("fixture-run")
+    args, options = calls[0]
+    assert args[0][-1] == "fixture-run"
+    assert options["creationflags"] == 0x208
+    assert options["env"]["CORKI_HOME"] == str(service.store.home)
+    assert options["stdin"] == module.subprocess.DEVNULL
+    assert "shell" not in options

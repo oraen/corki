@@ -11,6 +11,16 @@ from corki.memory.artifacts import write_baseline, write_consolidated_artifacts
 from corki.memory.models import ConsolidatedMemory
 
 
+def test_missing_git_explains_dependency_without_changing_memory(tmp_path, monkeypatch):
+    note = tmp_path / "MEMORY.md"
+    note.write_text("retain memory", encoding="utf-8")
+    monkeypatch.setenv("PATH", str(tmp_path / "no-programs"))
+    with pytest.raises(RuntimeError, match="requires Git.*PATH"):
+        git._git(tmp_path, "status")
+    assert note.read_text(encoding="utf-8") == "retain memory"
+    assert not (tmp_path / ".git").exists()
+
+
 def test_reset_tracks_hidden_binary_modes_links_and_ignores_nonregular(tmp_path):
     (tmp_path / ".hidden").mkdir()
     (tmp_path / ".hidden/data").write_bytes(b"\0\xff\n")
@@ -27,7 +37,7 @@ def test_reset_tracks_hidden_binary_modes_links_and_ignores_nonregular(tmp_path)
     git.reset(tmp_path)
     assert git.read(tmp_path) == before
     assert set(before) == {".hidden/data", "exec", "link"}
-    assert before["exec"]["mode"] == "100755"
+    assert before["exec"]["mode"] == ("100644" if os.name == "nt" else "100755")
     assert before["link"]["mode"] == "120000"
     assert (tmp_path / "link").is_symlink()  # baseline primitive, not workspace validation
     assert (tmp_path / ".git/index").is_file()
@@ -88,7 +98,10 @@ def test_owned_unusable_metadata_is_rebuilt(tmp_path, broken):
         (tmp_path / ".git/HEAD").write_text("invalid")
     else:
         oid = git._git(tmp_path, "rev-parse", "HEAD^{tree}").strip().decode()
-        (tmp_path / ".git/objects" / oid[:2] / oid[2:]).unlink()
+        object_file = tmp_path / ".git/objects" / oid[:2] / oid[2:]
+        if os.name == "nt":
+            object_file.chmod(0o600)  # Allow the test to corrupt Git's read-only object.
+        object_file.unlink()
     git.prepare(tmp_path)
     assert git.read(tmp_path) == git.capture(tmp_path)
     assert (tmp_path / ".git/index").is_file()
@@ -240,6 +253,8 @@ def test_no_hooks_filters_or_auth_context_are_inherited(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("name", ["有空格 的文件", "line\nbreak", "tab\tname"])
 def test_git_paths_round_trip_without_line_protocol_ambiguity(tmp_path, name):
+    if os.name == "nt" and any(ord(char) < 32 for char in name):
+        pytest.skip("Windows does not permit control characters in file names")
     (tmp_path / name).write_bytes(b"first\0line\n")
     git.prepare(tmp_path)
     assert git.read(tmp_path) == git.capture(tmp_path)

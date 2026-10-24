@@ -42,6 +42,7 @@ from typing import Any, Iterable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _corki_home import get_corki_home  # noqa: E402
+from _ledger_lock import LedgerLock as _LedgerLock  # noqa: E402
 
 SCHEMA_VERSION = 1
 
@@ -104,47 +105,6 @@ def save_ledger(path: Path, data: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-class _LedgerLock:
-    """Best-effort cross-process lock (O_EXCL lockfile, stdlib only).
-
-    Parallel subagents can share one ledger via --ledger; without a lock two
-    concurrent ``add`` calls can assign the same id.  Falls through after the
-    timeout rather than blocking a task forever — a stale lock must never
-    wedge the ledger.
-    """
-
-    def __init__(self, path: Path, timeout: float = 5.0) -> None:
-        self.lock_path = path.with_suffix(path.suffix + ".lock")
-        self.timeout = timeout
-        self.fd: int | None = None
-
-    def __enter__(self) -> "_LedgerLock":
-        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        deadline = time.monotonic() + self.timeout
-        while True:
-            try:
-                self.fd = os.open(str(self.lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                return self
-            except FileExistsError:
-                if time.monotonic() >= deadline:
-                    # Assume a stale lock from a crashed run.
-                    try:
-                        self.lock_path.unlink()
-                    except OSError:
-                        return self
-                    continue
-                time.sleep(0.05)
-
-    def __exit__(self, *_exc: object) -> None:
-        if self.fd is not None:
-            try:
-                os.close(self.fd)
-            except OSError:
-                pass
-        try:
-            self.lock_path.unlink()
-        except OSError:
-            pass
 
 
 # ---------------------------------------------------------------------------
@@ -675,4 +635,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     sys.exit(main())

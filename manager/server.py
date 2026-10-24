@@ -30,6 +30,7 @@ import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import replace
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -39,6 +40,7 @@ from urllib.parse import parse_qs, quote, urljoin, urlparse
 from corki.config import document
 from corki.config.features import MCPServerSettings
 from corki.config.settings import CorkiSettings
+from corki.config.providers import effective_default
 from corki.config.skills import disabled_skill_paths, parse_skill_rules
 from corki.core.runtime import _create_model, _model_capabilities
 from corki.cron.diagnostics import safe_log
@@ -50,6 +52,8 @@ from corki.mcp.client import create_client
 from corki.mcp.input_schema import mcp_input_schema
 from corki.mcp.json_rpc import plain_json
 from corki.models.types import ModelRequest, ModelTextDelta
+from corki.platforms import windows_desktop
+from corki.platforms.paths import archive_parts, directory_error_message, is_link_path
 from corki.protocol.ids import new_model_step_id, new_tool_call_id, new_turn_id
 from corki.protocol.items import AssistantMessageItem, UserMessageItem
 from corki.protocol.tools import ToolCall
@@ -71,6 +75,15 @@ from corki.tools.executor import ToolExecutor
 from corki.tools.registry import ToolRegistry
 
 STATIC = Path(__file__).parent / "static"
+# Windows registry associations can label .js as text/plain. With nosniff that
+# prevents the UI from starting; shipped web assets have platform-neutral types.
+STATIC_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+}
 LOCK = threading.RLock()
 MCP_TEST_SLOTS = threading.BoundedSemaphore(4)
 MODEL_TEST_SLOTS = threading.BoundedSemaphore(3)
@@ -278,6 +291,25 @@ def revision(text):
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def private_temp(directory, prefix):
+    if os.name == "nt":
+        from corki.platforms.windows_private_files import private_temporary_file
+
+        return private_temporary_file(directory, prefix=prefix)
+    return tempfile.mkstemp(dir=directory, prefix=prefix)
+
+
+def atomic_bytes(path, content):
+    fd, temp = private_temp(path.parent, ".manager-")
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content)
+        os.replace(temp, path)
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)
+
+
 def atomic(path, text, backup=True):
     path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -287,16 +319,343 @@ def atomic(path, text, backup=True):
         old = path.read_bytes()
         target = dest / (path.name + "." + hashlib.sha256(old).hexdigest()[:16])
         if not target.exists():
-            target.write_bytes(old)
-            target.chmod(0o600)
-    fd, temp = tempfile.mkstemp(dir=path.parent, prefix=".manager-")
-    try:
-        with os.fdopen(fd, "w") as stream:
-            stream.write(text)
-        os.replace(temp, path)
-    finally:
-        if os.path.exists(temp):
-            os.unlink(temp)
+            atomic_bytes(target, old)
+    atomic_bytes(path, text.encode("utf-8"))
+
+
+class SessionMaintenance:
+    """An atomic daily claim, followed by best-effort idle-session deletion."""
+
+    def __init__(self, store):
+        self.store = store
+
+    @staticmethod
+    def cutoff(now):
+        import calendar
+
+        month = now.year * 12 + now.month - 1 - 3
+        year, month = divmod(month, 12)
+        month += 1
+        return now.replace(year=year, month=month, day=min(now.day, calendar.monthrange(year, month)[1]))
+
+    def enabled(self):
+        config = document.loads(self.store.config_text())
+        return config.get("sessions", {}).get("auto_cleanup", False) is True
+
+    def start_if_due(self, *, now=None):
+        if not self.enabled():
+            return False
+        now = now or datetime.now(UTC)
+        root = self.store.home / "manager"
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        path = root / "maintenance.db"
+        if path.is_symlink():
+            raise ValueError("维护数据库不能是符号链接")
+        with closing(sqlite3.connect(path, timeout=2)) as db, db:
+            db.execute("CREATE TABLE IF NOT EXISTS maintenance (name TEXT PRIMARY KEY, started_at REAL NOT NULL)")
+            claimed = db.execute(
+                "INSERT INTO maintenance(name,started_at) VALUES ('session_cleanup',?) "
+                "ON CONFLICT(name) DO UPDATE SET started_at=excluded.started_at "
+                "WHERE maintenance.started_at < ?",
+                (now.timestamp(), now.timestamp() - 86400),
+            ).rowcount == 1
+        # Commit the claim before scheduling any work, including in other processes.
+        if claimed:
+            threading.Thread(target=self._background, args=(self.cutoff(now).isoformat(),),
+                             name="corki-session-cleanup", daemon=True).start()
+        return claimed
+
+    def _background(self, cutoff):
+        try:
+            asyncio.run(self.clean(cutoff))
+        except Exception:
+            # Never return session contents or interrupt page loading on maintenance failure.
+            import logging
+            logging.getLogger(__name__).warning("Session maintenance failed; will retry on a later daily visit")
+
+    async def clean(self, cutoff):
+        from corki.protocol.ids import ThreadId
+        from corki.storage.thread_delete import SQLiteThreadDeleteStore
+        from corki.storage.thread_writer import ThreadWriterConflict
+
+        database = self.store.database
+        if not database.exists() or database.is_symlink():
+            return 0
+        deleted, cursor = 0, ""
+        while self.enabled():
+            rows = self.store.query(
+                "SELECT id FROM threads WHERE id>? AND julianday(updated_at)<julianday(?) ORDER BY id LIMIT 100",
+                (cursor, cutoff),
+            )
+            if not rows:
+                break
+            for row in rows:
+                cursor = row["id"]
+                if not self.enabled():
+                    return deleted
+                try:
+                    removed = await SQLiteThreadDeleteStore(database).delete(
+                        ThreadId(cursor), inactive_before=cutoff, before_delete=self._desktop_metadata
+                    )
+                    if removed:
+                        deleted += 1
+                except (ThreadWriterConflict, OSError, sqlite3.Error, ValueError):
+                    # Never take over an active writer or bypass a deletion boundary.
+                    continue
+        return deleted
+
+    def _desktop_metadata(self, thread):
+        path = self.store.home / "app/desktop.db"
+        if not path.exists() or path.is_symlink():
+            return
+        with closing(sqlite3.connect(path.as_uri() + "?mode=rw", uri=True, timeout=2)) as db, db:
+            db.execute("PRAGMA secure_delete=ON")
+            tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            for table, column in (("metadata", "id"), ("requests", "thread_id"),
+                                  ("interrupted_messages", "thread_id"), ("followups", "thread"),
+                                  ("followup_settings", "thread")):
+                if table in tables:
+                    db.execute(f'DELETE FROM "{table}" WHERE "{column}"=?', (thread,))
+            if "values_store" in tables:
+                db.execute("DELETE FROM values_store WHERE key=?", ("draft:" + thread,))
+                row = db.execute("SELECT value FROM values_store WHERE key='ui'").fetchone()
+                if row:
+                    value = json.loads(row[0])
+                    if isinstance(value, dict) and value.get("selected") == thread:
+                        value["selected"] = "new"
+                        db.execute("UPDATE values_store SET value=? WHERE key='ui'", (json.dumps(value),))
+
+
+def global_configuration(config):
+    features = config.get("features", {})
+    memories = config.get("memories", {})
+    sessions = config.get("sessions", {})
+    if not all(isinstance(value, dict) for value in (features, memories, sessions)):
+        raise ValueError("features、memories、sessions 必须是 JSON 对象")
+    for section, key in ((features, "self_evolution"), (memories, "enabled"), (sessions, "auto_cleanup")):
+        if key in section and type(section[key]) is not bool:
+            raise ValueError(f"{key} 必须是布尔值")
+    unrestricted = config.get("default_permissions") in (":danger-full-access", "danger-full-access")
+    execution = config.get("execution", {})
+    if isinstance(execution, dict) and isinstance(execution.get("profile"), dict):
+        unrestricted = execution["profile"].get("type") == "disabled"
+    return {
+        "approval_free": unrestricted and config.get("approval_policy", "on-request") == "never",
+        "self_evolution": features.get("self_evolution", False),
+        "memories": memories.get("enabled", False),
+        "auto_cleanup": sessions.get("auto_cleanup", False),
+    }
+
+
+ADAPTOR_LOCK = threading.RLock()
+# This is a public loopback protocol key, not an OpenAI credential.
+ADAPTOR_LOCAL_KEY = "sk-f127ac39ckkb278c8abddb4lbcc592zb"
+
+
+class GatewayManagement:
+    """Invoke the independent gateway environment; never import its implementation."""
+    providers = {"openai": "OpenAI"}
+
+    def __init__(self, store):
+        self.store = store
+        self.root = store.home / "gateway"
+
+    def port(self):
+        try:
+            return int(json.loads((self.root / "manager.json").read_text())["port"])
+        except (OSError, ValueError, TypeError, KeyError):
+            if sys.platform == "darwin":
+                import plistlib
+                try:
+                    path = Path.home() / "Library/LaunchAgents/local.corki.codex-gateway.plist"
+                    args = plistlib.loads(path.read_bytes())["ProgramArguments"]
+                    key_file = Path(args[args.index("--key-file") + 1]).resolve()
+                    if key_file.is_relative_to(self.store.home):
+                        return int(args[args.index("--port") + 1])
+                except (OSError, ValueError, KeyError, IndexError, TypeError):
+                    pass
+            return 17001
+
+    def interpreter(self, *, install=False):
+        import corki
+        explicit = os.environ.get("CORKI_GATEWAY_PYTHON")
+        if explicit:
+            return explicit
+        try:
+            installed = json.loads((self.root / "installation.json").read_text())["python"]
+            if Path(installed).is_file():
+                return installed
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        if sys.platform == "darwin":
+            import plistlib
+            try:
+                plist = Path.home() / "Library/LaunchAgents/local.corki.codex-gateway.plist"
+                args = plistlib.loads(plist.read_bytes())["ProgramArguments"]
+                if args[args.index("-m") + 1] == "corki_openai_gateway" and Path(args[0]).is_file():
+                    return args[0]
+            except (OSError, ValueError, IndexError, KeyError, TypeError):
+                pass
+        source = Path(corki.__file__).resolve().parents[2] / "adaptor/openai"
+        python = source / (".venv/Scripts/python.exe" if os.name == "nt" else ".venv/bin/python")
+        if python.is_file():
+            return str(python)
+        if install and (source / "pyproject.toml").is_file():
+            uv = shutil.which("uv")
+            if uv:
+                command = [uv, "sync", "--project", str(source), "--frozen", "--no-dev"]
+                env = {**os.environ, "UV_PROJECT_ENVIRONMENT": str(source / ".venv")}
+                result = subprocess.run(command, env=env, capture_output=True, timeout=180)
+                if result.returncode:
+                    raise ValueError("转发网关安装失败，请检查网络或 Python 环境")
+            else:
+                for command in ([sys.executable, "-m", "venv", str(source / ".venv")],
+                                [str(python), "-m", "pip", "install", str(source)]):
+                    if subprocess.run(command, capture_output=True, timeout=180).returncode:
+                        raise ValueError("转发网关安装失败，请检查网络或 Python 环境")
+            atomic(self.root / "installation.json", json.dumps({"python": str(python)}), backup=False)
+            return str(python)
+        raise ValueError("未找到转发网关，请先安装 adaptor/openai，或配置 CORKI_GATEWAY_PYTHON")
+
+    def control(self, action, *, port=None, install=False):
+        python = self.interpreter(install=install)
+        if action in ("start", "check"):
+            atomic(self.root / "installation.json", json.dumps({"python": python}), backup=False)
+        command = [python, "-m", "corki_openai_gateway.control", action,
+                   "--home", str(self.store.home)]
+        if port is not None:
+            command += ["--port", str(port)]
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=210,
+                                env={**os.environ, "CORKI_HOME": str(self.store.home)})
+        try:
+            value = json.loads(result.stdout)
+        except ValueError:
+            raise ValueError("转发网关未正确安装，请重新安装独立网关环境") from None
+        if not isinstance(value, dict) or value.get("protocol_version") != 1:
+            raise ValueError("网关控制接口版本不兼容，请更新独立网关")
+        if result.returncode:
+            raise ValueError(value.get("error", "网关操作失败"))
+        return value
+
+    def status(self):
+        text = self.store.config_text()
+        config = document.loads(text)
+        port = self.port()
+        error = ""
+        try:
+            service = self.control("status", port=port)
+        except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
+            service = {"running": False}
+            error = str(exc) if isinstance(exc, ValueError) else "暂时无法读取网关状态"
+        return {"port": port, "running": service.get("running", False),
+                "occupied": service.get("occupied", False), "error": error,
+                "revision": revision(text), "providers": [
+                    {"id": name, "name": label,
+                     "enabled": config.get("providers", {}).get("adaptor-" + name, {}).get("enabled", False),
+                     "configured": "adaptor-" + name in config.get("providers", {}),
+                     "base_url": f"http://127.0.0.1:{port}/{name}"}
+                    for name, label in self.providers.items()]}
+
+    def change(self, data):
+        with ADAPTOR_LOCK, LOCK:
+            original = self.store.config_text()
+            if data.get("revision") != revision(original):
+                raise ValueError("配置已更新，请刷新后重试")
+            action, enabled = data.get("action"), data.get("enabled")
+            if action not in ("provider", "power") or "port" in data:
+                raise ValueError("端口由网关自动选择，不支持手动修改")
+            if type(enabled) is not bool:
+                raise ValueError("启用状态必须是布尔值")
+            provider = data.get("provider", "openai")
+            if provider not in self.providers:
+                raise ValueError("暂时不支持该供应商")
+            config = document.loads(original)
+            old_port = self.port()
+            previous = self.control("status", port=old_port)
+            if action == "provider" and enabled and not previous.get("running"):
+                raise ValueError("需要先开启适配网关")
+            profiles = config.setdefault("providers", {})
+            identity = "adaptor-" + provider
+            existing = profiles.get(identity)
+            if enabled:
+                # Credentials are validated by the independent gateway before
+                # changing configuration or stopping any existing process.
+                self.control("check", install=True)
+            if action == "provider" and enabled:
+                if existing is None:
+                    models = next((copy.deepcopy(p["models"]) for p in profiles.values()
+                        if urlparse(p.get("base_url", "")).hostname in ("127.0.0.1", "localhost")
+                        and urlparse(p.get("base_url", "")).port == old_port and p.get("models")), None)
+                    if not models:
+                        models = copy.deepcopy(next(p for p in self.store.quick_templates()["providers"]
+                                                    if p["id"] == provider)["models"])
+                    existing = profiles.setdefault(identity, {"models": models})
+                existing.update(enabled=True, name=provider, api_mode="responses",
+                    base_url=f"http://127.0.0.1:{old_port}/{provider}", api_key=ADAPTOR_LOCAL_KEY)
+                if not effective_default(document.loads(original)):
+                    config["default"] = {"provider": identity, "model": next(iter(existing["models"]))}
+            elif action == "provider" and existing is not None:
+                existing["enabled"] = False
+            if action == "power" and not enabled:
+                for supplier in self.providers:
+                    if "adaptor-" + supplier in profiles:
+                        profiles["adaptor-" + supplier]["enabled"] = False
+
+            def content_for(port):
+                for name, profile in [*profiles.items(), ("__inline__", config.get("provider", {}))]:
+                    parsed = urlparse(profile.get("base_url", ""))
+                    supplier = name[8:] if name.startswith("adaptor-") else "openai"
+                    managed = name in {"adaptor-" + entry for entry in self.providers}
+                    legacy = (not name.startswith("adaptor-") and parsed.hostname in ("127.0.0.1", "localhost") and parsed.port == old_port
+                              and parsed.path.rstrip("/") in ("", "/v1", "/openai", "/openai/v1"))
+                    if (managed or legacy) and (action == "power" or (name == identity and enabled)):
+                        profile.update(base_url=f"http://127.0.0.1:{port}/{supplier}", api_key=ADAPTOR_LOCAL_KEY)
+                        if action == "power" and not enabled:
+                            profile["enabled"] = False
+                content = original
+                before = document.loads(original)
+                for key in ("providers", "default", "provider"):
+                    if key in config and config[key] != before.get(key):
+                        content = document.set_value(content, (key,), config[key])
+                self.store.validate_config(content, allow_adaptors=True)
+                return content
+
+            content_for(old_port)
+            current, changed = previous, False
+            try:
+                if action == "power" and enabled:
+                    # The controller owns atomic binding/fallback and returns
+                    # the actual bound port. The manager never probes/reserves it.
+                    current = self.control("start-auto")
+                    port = current.get("port")
+                    if type(port) is not int or not 1 <= port <= 65535:
+                        raise ValueError("网关未返回有效端口")
+                    changed = not previous.get("running") or port != old_port or current.get("instance") != previous.get("instance")
+                elif action == "power":
+                    self.control("stop")
+                    port = old_port
+                    changed = previous.get("running", False)
+                else:
+                    # Supplier switches only change their configuration. Never
+                    # start or stop the shared gateway as a side effect.
+                    port = old_port
+                content = content_for(port)
+                atomic(self.root / "manager.json", json.dumps({"port": port}), backup=False)
+                self.store.write_config(content, revision(original), "修改套餐转发")
+            except Exception:
+                atomic(self.root / "manager.json", json.dumps({"port": old_port}), backup=False)
+                if changed:
+                    try:
+                        self.control("stop")
+                        if previous.get("running"):
+                            self.control("start", port=old_port)
+                    except Exception:
+                        pass
+                raise
+            message = ("网关已开启" if enabled else "网关已关闭") if action == "power" else (
+                "已配置完成，可以在模型管理里面查看" if enabled else "配置已更新")
+            return {"message": message,
+                    "gateway": self.status()}
 
 
 class Store:
@@ -312,6 +671,8 @@ class Store:
         install_builtin_knowledge(self.home)
         self.cron = CronStore(self.home)
         self.cron_service = CronService(self.home)
+        self.maintenance = SessionMaintenance(self)
+        self.adaptor = GatewayManagement(self)
 
     @property
     def knowledge_root(self):
@@ -323,7 +684,7 @@ class Store:
 
     def knowledge_state(self):
         text = (
-            self.knowledge_state_path.read_text()
+            self.knowledge_state_path.read_text(encoding="utf-8")
             if self.knowledge_state_path.exists() else '{"disabled":[]}'
         )
         try:
@@ -377,7 +738,7 @@ class Store:
         return {"message": "已开启" if enabled else "已停用"}
 
     def start_knowledge(self, item):
-        doc = self.knowledge.sync(item["path"], item["name"], Path(item["path"]).read_text())
+        doc = self.knowledge.sync(item["path"], item["name"], Path(item["path"]).read_text(encoding="utf-8"))
         if doc["status"] in ("ready", "processing"):
             return
         if not KNOWLEDGE_SLOTS.acquire(blocking=False):
@@ -385,7 +746,7 @@ class Store:
         job = None
         try:
             config = document.loads(self.config_text())
-            default = config.get("default", {})
+            default = effective_default(config)
             provider, model = default.get("provider"), default.get("model")
             if not provider or not model:
                 raise ValueError("请先配置默认供应商和模型")
@@ -394,7 +755,7 @@ class Store:
             settings = replace(settings, model_request_max_retries=1,
                                model_unbounded_connection_retries=False,
                                execution_permissions=None)
-            content = Path(item["path"]).read_text()
+            content = Path(item["path"]).read_text(encoding="utf-8")
             self.knowledge.set_enabled(doc["id"], False)
             job = self.knowledge.claim(
                 doc["id"], settings.provider_id + "/" + settings.model, prepare=True)
@@ -433,10 +794,10 @@ class Store:
             KNOWLEDGE_SLOTS.release()
 
     def config_text(self):
-        return self.config.read_text() if self.config.exists() else "{}"
+        return self.config.read_text(encoding="utf-8") if self.config.exists() else "{}"
 
     def quick_templates(self, *, today=None):
-        template = json.loads((STATIC.parent / "templates/quick-setup.json").read_text())
+        template = json.loads((STATIC.parent / "templates/quick-setup.json").read_text(encoding="utf-8"))
         today = today or datetime.now(UTC).date().isoformat()
         for provider in template["providers"]:
             provider["models"] = {
@@ -567,10 +928,21 @@ class Store:
         return result.stdout.rstrip("\r\n")
 
     def choose_launch_directory(self):
+        if sys.platform == "win32":
+            path = windows_desktop.choose_directory()
+            return {"path": path, "cancelled": path is None}
         path = self.desktop_script('return POSIX path of (choose folder with prompt "选择 Corki 工作目录")', timeout=120)
         return {"path": path, "cancelled": path is None}
 
     def desktop_application(self):
+        configured = os.environ.get("CORKI_DESKTOP_EXECUTABLE")
+        if configured:
+            executable = Path(configured)
+            if executable.is_absolute() and executable.is_file():
+                return executable
+            raise ValueError("CORKI_DESKTOP_EXECUTABLE 必须指向桌面应用的完整路径")
+        if sys.platform == "win32":
+            return windows_desktop.application(Path(__file__).resolve().parents[1])
         local = Path(__file__).resolve().parents[1] / "app/out"
         candidates = [*sorted(local.glob("Corki-darwin-*/Corki.app")),
                       Path("/Applications/Corki.app"), Path.home() / "Applications/Corki.app"]
@@ -584,14 +956,14 @@ class Store:
         mode = data.get("mode", "cli")
         if mode not in ("cli", "desktop"):
             raise ValueError("请选择有效的启动方式")
-        if sys.platform != "darwin":
-            raise ValueError("快速启动目前支持 macOS")
+        if sys.platform not in ("darwin", "win32"):
+            raise ValueError("快速启动目前支持 macOS 和 Windows")
         message = "配置无效，建议使用快速配置配置厂商和模型"
         try:
             content = self.config_text()
             self.validate_config(content)
             config = document.loads(content)
-            default = config.get("default")
+            default = effective_default(config)
             providers = config.get("providers")
             if not isinstance(default, dict) or not isinstance(providers, dict):
                 raise ValueError(message)
@@ -599,10 +971,13 @@ class Store:
             if not isinstance(provider, str) or not provider.strip() or not isinstance(model, str) or not model.strip():
                 raise ValueError(message)
             profile = providers.get(provider)
+            if profile is not None and profile.get("enabled", True) is False:
+                raise ValueError(message)
             if profile is None:
                 profile = next((item for item in providers.values()
                                 if isinstance(item, dict) and provider in item.get("aliases", [])), None)
-            if not isinstance(profile, dict) or not isinstance(profile.get("models"), dict) or model not in profile["models"]:
+            if (not isinstance(profile, dict) or profile.get("enabled", True) is False
+                    or not isinstance(profile.get("models"), dict) or model not in profile["models"]):
                 raise ValueError(message)
         except (OSError, ValueError, TypeError, AttributeError) as error:
             raise ValueError(message) from error
@@ -615,7 +990,7 @@ class Store:
         if not value.strip():
             path.mkdir(parents=True, exist_ok=True, mode=0o700)
         if not path.is_dir():
-            raise ValueError("工作目录不存在，请重新选择")
+            raise ValueError(directory_error_message(path, "工作目录不存在，请重新选择"))
         if mode == "desktop":
             executable = self.desktop_application()
             environment = os.environ.copy()
@@ -627,11 +1002,15 @@ class Store:
                     [str(executable), "--corki-directory", str(path.resolve())],
                     cwd=str(path.resolve()), env=environment,
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    start_new_session=True,
+                    start_new_session=sys.platform != "win32",
                 )
             except OSError as error:
                 raise ValueError("无法启动 Corki 桌面应用，请检查安装是否完整") from error
             return {"message": "已请求打开 Corki 桌面应用", "directory": str(path.resolve()), "mode": mode}
+        if sys.platform == "win32":
+            windows_desktop.launch_cli(path.resolve(), self.home)
+            return {"message": "已打开 Corki 终端", "directory": str(path.resolve()),
+                    "mode": mode, "terminal": "Windows"}
         executable = shutil.which("corki")
         if not executable:
             executable = next((str(p) for p in (Path.home()/".local/bin/corki", Path(sys.executable).parent/"corki") if p.is_file() and os.access(p, os.X_OK)), None)
@@ -671,7 +1050,7 @@ end run'''
         folder = self.config_versions()
         entries = sorted(folder.glob("*.json"), reverse=True)
         if entries:
-            latest = json.loads(entries[0].read_text())
+            latest = json.loads(entries[0].read_text(encoding="utf-8"))
             if latest["revision"] == revision(text):
                 return latest["id"]
         identity = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f") + "-" + uuid.uuid4().hex
@@ -692,7 +1071,7 @@ end run'''
             versions = []
             selected = None
             for path in sorted(self.config_versions().glob("*.json"), reverse=True):
-                value = json.loads(path.read_text())
+                value = json.loads(path.read_text(encoding="utf-8"))
                 content = value.pop("content")
                 if value["id"] == identity:
                     selected = content
@@ -711,16 +1090,22 @@ end run'''
                 ),
             )
 
-    def validate_config(self, text):
+    def validate_config(self, text, *, allow_adaptors=False):
         if not isinstance(text, str) or len(text.encode()) > LIMIT:
             raise ValueError("配置不能超过 256 KB")
         if not text.strip():
             raise ValueError("配置不能为空，请输入 JSON 对象")
-        document.loads(text)
+        parsed = document.loads(text)
+        if not allow_adaptors:
+            old = document.loads(self.config_text()).get("providers", {})
+            new = parsed.get("providers", {})
+            if isinstance(new, dict) and any(name.strip().lower().startswith("adaptor-") and name not in old for name in new):
+                raise ValueError("供应商名称不能以'adaptor-'开头")
+        global_configuration(parsed)
         self.home.mkdir(parents=True, exist_ok=True)
-        fd, name = tempfile.mkstemp(dir=self.home, suffix=".json", prefix=".manager-validate-")
+        fd, name = private_temp(self.home, ".manager-validate-")
         try:
-            with os.fdopen(fd, "w") as stream:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
                 stream.write(text)
             CorkiSettings.for_directory(self.workspace, config_file=Path(name))
         except (ValueError, TypeError, KeyError, AttributeError) as error:
@@ -791,7 +1176,7 @@ end run'''
                 continue
             paths = walk_skill_files(root).files if kind == "skills" else root.rglob("*.md")
             for path in sorted(paths):
-                if ".manager-backups" in path.parts or path.is_symlink() or not path.is_file():
+                if ".manager-backups" in path.parts or is_link_path(path) or not path.is_file():
                     continue
                 resolved = path.resolve()
                 if not resolved.is_relative_to(root.resolve()) or resolved in seen:
@@ -806,7 +1191,7 @@ end run'''
                 )
                 if path.stat().st_size > LIMIT:
                     continue
-                text = path.read_text(errors="replace")
+                text = path.read_text(encoding="utf-8", errors="replace")
                 name, description = path.stem, ""
                 valid = True
                 if kind == "skills":
@@ -882,7 +1267,7 @@ end run'''
     def query(self, sql, args=()):
         if not self.database.exists():
             return []
-        with sqlite3.connect(self.database.as_uri() + "?mode=ro", uri=True, timeout=2) as db:
+        with closing(sqlite3.connect(self.database.as_uri() + "?mode=ro", uri=True, timeout=2)) as db:
             db.row_factory = sqlite3.Row
             return [dict(row) for row in db.execute(sql, args)]
 
@@ -908,7 +1293,7 @@ end run'''
         text = self.config_text()
         config = document.loads(text)
         path = self.home / "hooks.json"
-        raw = path.read_text() if path.exists() else ""
+        raw = path.read_text(encoding="utf-8") if path.exists() else ""
         external = json.loads(raw) if raw.strip() else {}
         if not isinstance(external, dict) or not isinstance(external.get("hooks", {}), dict):
             raise ValueError("hooks.json 格式无效，请先修复配置文件")
@@ -967,10 +1352,10 @@ end run'''
             return False
         config = document.loads(self.config_text())
         hook_file = self.home / "hooks.json"
-        external = json.loads(hook_file.read_text()) if hook_file.exists() else {}
+        external = json.loads(hook_file.read_text(encoding="utf-8")) if hook_file.exists() else {}
         if references(config) or references(external):
             return
-        if path.parent.is_symlink() or not path.parent.exists():
+        if is_link_path(path.parent) or not path.parent.exists():
             return
         shutil.rmtree(path.parent)
 
@@ -1010,7 +1395,7 @@ end run'''
                 raise ValueError("请选择 Hook")
             source = old["source"] if old else "settings"
             path = self.home / "hooks.json"
-            original = path.read_text() if path.exists() else ""
+            original = path.read_text(encoding="utf-8") if path.exists() else ""
             external = json.loads(original) if original.strip() else {}
             hooks = config.setdefault("hooks", {})
             events = hooks if source == "settings" else external.setdefault("hooks", {})
@@ -1091,6 +1476,7 @@ end run'''
                     base_url=p.get("base_url", ""),
                     api_mode=p.get("api_mode", "chat_completions"),
                     has_key=bool(p.get("api_key")),
+                    enabled=p.get("enabled", True),
                     models=p.get("models", {}),
                 )
             )
@@ -1141,17 +1527,26 @@ end run'''
             )
         except sqlite3.Error:
             errors.append("会话数据库暂不可读，配置管理仍可使用。")
-        with socket.socket() as sock:
-            sock.settimeout(0.15)
-            gateway = sock.connect_ex(("127.0.0.1", 17001)) == 0
+        gateway = False
+        probe = http.client.HTTPConnection("127.0.0.1", self.adaptor.port(), timeout=.2)
+        try:
+            probe.request("GET", "/__corki_gateway/health")
+            response = probe.getresponse()
+            health = json.loads(response.read(8192))
+            gateway = response.status == 200 and isinstance(health, dict) and health.get("service") == "corki-adaptor"
+        except (OSError, ValueError, OverflowError, http.client.HTTPException):
+            pass
+        finally:
+            probe.close()
         return json.loads(
             self.redact(
                 json.dumps(
                     dict(
                         revision=revision(text),
+                        global_config=global_configuration(config),
                         knowledge_revision=revision(knowledge_text),
                         providers=providers,
-                        default=config.get("default", {}),
+                        default=effective_default(config),
                         files=files,
                         tools=tools,
                         custom_tools=self.custom_tools(),
@@ -1161,6 +1556,7 @@ end run'''
                         executions=executions,
                         errors=errors,
                         gateway=gateway,
+                        runtime={"python": sys.executable},
                         home=str(self.home),
                         workspace=str(self.workspace),
                         updated=datetime.now(UTC).isoformat(),
@@ -1175,7 +1571,7 @@ end run'''
         folder = self.home / "manager/knowledge-versions" / item["document_id"]
         folder.mkdir(parents=True, exist_ok=True, mode=0o700)
         entries = sorted(folder.glob("*.json"), reverse=True)
-        if not entries or json.loads(entries[0].read_text())["revision"] != revision(content):
+        if not entries or json.loads(entries[0].read_text(encoding="utf-8"))["revision"] != revision(content):
             identity = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f") + "-" + uuid.uuid4().hex
             atomic(folder / (identity + ".json"), json.dumps(dict(
                 id=identity, created=datetime.now(UTC).isoformat(),
@@ -1192,10 +1588,10 @@ end run'''
                 raise ValueError("知识文档不存在")
             versions = []
             if item["group"] != "builtin":
-                raw = Path(item["path"]).read_text()
+                raw = Path(item["path"]).read_text(encoding="utf-8")
                 folder = self.archive_knowledge(item, raw)
                 for path in sorted(folder.glob("*.json"), reverse=True):
-                    value = json.loads(path.read_text())
+                    value = json.loads(path.read_text(encoding="utf-8"))
                     raw_content = value["content"]
                     value["content"] = self.redact(raw_content)
                     value["writable"] = item["writable"] and raw_content == value["content"]
@@ -1206,7 +1602,7 @@ end run'''
         item = next((x for x in self.files() if x["id"] == identity), None)
         if item is None:
             raise ValueError("文件不存在或不属于可管理目录")
-        text = Path(item["path"]).read_text()
+        text = Path(item["path"]).read_text(encoding="utf-8")
         redacted = text if item["kind"] == "skills" else self.redact(text)
         return {**item, "content": redacted, "writable": item["writable"] and redacted == text}
 
@@ -1227,7 +1623,7 @@ end run'''
                 if len(entries) >= 2000:
                     raise ValueError("技能文件过多，最多浏览 2000 个目录和文件")
                 relative = path.relative_to(root).as_posix()
-                if path.is_symlink():
+                if is_link_path(path):
                     entries.append(dict(path=relative, type="link", bytes=0))
                 elif path.is_dir():
                     entries.append(dict(path=relative, type="directory", bytes=0))
@@ -1245,8 +1641,8 @@ end run'''
             raise ValueError("文件不存在或为不可访问的链接")
         root = Path(package["root"])
         path = root / relative
-        if path.is_symlink() or any(
-            p.is_symlink() for p in path.parents if p != root and root in p.parents
+        if is_link_path(path) or any(
+            is_link_path(p) for p in path.parents if p != root and root in p.parents
         ):
             raise ValueError("不支持访问符号链接")
         if not path.resolve().is_relative_to(root.resolve()):
@@ -1366,8 +1762,9 @@ end run'''
     def custom_tool_path(self, identity):
         if not isinstance(identity, str) or not CUSTOM_TOOL_NAME.fullmatch(identity):
             raise ValueError("工具名称无效")
+        archive_parts(identity + ".json")
         path = self.home / "tools" / "custom" / (identity + ".json")
-        if path.is_symlink():
+        if is_link_path(path):
             raise ValueError("不支持符号链接工具配置")
         return path
 
@@ -1383,7 +1780,7 @@ end run'''
                         description=data["description"],
                         transport=data["transport"],
                         enabled=data.get("enabled", True),
-                        revision=revision(path.read_text()),
+                        revision=revision(path.read_text(encoding="utf-8")),
                         error=None,
                     )
                 )
@@ -1396,14 +1793,14 @@ end run'''
                         transport="",
                         enabled=False,
                         error="配置格式无效",
-                        revision=revision(path.read_text()),
+                        revision=revision(path.read_text(encoding="utf-8")),
                     )
                 )
         return rows
 
     def custom_tool_document(self, identity):
         path = self.custom_tool_path(identity)
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         return {"config": json.loads(text), "revision": revision(text)}
 
     def mutate_custom_tool(self, data):
@@ -1411,7 +1808,7 @@ end run'''
             identity = data.get("id")
             path = self.custom_tool_path(identity)
             exists = path.exists()
-            text = path.read_text() if exists else ""
+            text = path.read_text(encoding="utf-8") if exists else ""
             if data.get("is_new") and exists:
                 raise ValueError("同名工具已存在")
             if data.get("revision") != (revision(text) if exists else None):
@@ -1441,7 +1838,7 @@ end run'''
         identity = data.get("id")
         path = self.custom_tool_path(identity)
         with LOCK:
-            text = path.read_text() if path.exists() else None
+            text = path.read_text(encoding="utf-8") if path.exists() else None
             if data.get("revision") != (revision(text) if text is not None else None):
                 raise ValueError("工具配置已更新，请重新打开后测试")
             if data.get("is_new") and text is not None:
@@ -1680,7 +2077,69 @@ end run'''
             result["response"] = plain_json(response)
         return result
 
+    def mutate_global(self, data):
+        if data.get("action") == "visit":
+            self.maintenance.start_if_due()
+            return {"message": ""}
+        if data.get("action") != "set":
+            raise ValueError("不支持的全局配置操作")
+        key, enabled = data.get("key"), data.get("enabled")
+        if key not in ("approval_free", "self_evolution", "memories", "auto_cleanup") or type(enabled) is not bool:
+            raise ValueError("无效的全局配置")
+        with LOCK:
+            text = self.config_text()
+            if data.get("revision") != revision(text):
+                raise ValueError("配置已更新，请刷新后重试")
+            config = document.loads(text)
+            global_configuration(config)
+            if key == "approval_free":
+                execution = config.get("execution")
+                if isinstance(execution, dict) and "profile" in execution:
+                    # Named and concrete profiles are mutually exclusive in Corki.
+                    execution.pop("profile")
+                    text = document.set_value(text, ("execution",), execution)
+                text = document.set_value(text, ("default_permissions",), ":danger-full-access" if enabled else ":workspace")
+                text = document.set_value(text, ("approval_policy",), "never" if enabled else "on-request")
+            else:
+                path = {"self_evolution": ("features", "self_evolution"),
+                        "memories": ("memories", "enabled"),
+                        "auto_cleanup": ("sessions", "auto_cleanup")}[key]
+                text = document.set_value(text, path, enabled)
+            self.validate_config(text)
+            self.write_config(text, data["revision"], "修改全局配置")
+        if key == "auto_cleanup" and enabled:
+            self.maintenance.start_if_due()
+        return {"message": "配置已更新", "revision": revision(text),
+                "global_config": global_configuration(document.loads(text))}
+
     def mutate(self, data):
+        if data.get("kind") == "adaptor":
+            return self.adaptor.change(data)
+        if data.get("kind") == "providers" and data.get("action") == "save":
+            identity = data.get("id", "")
+            if isinstance(identity, str) and identity.startswith("adaptor-") and identity in document.loads(self.config_text()).get("providers", {}):
+                raise ValueError("适配模型不允许编辑")
+        if data.get("kind") == "providers" and data.get("action") == "delete" and str(data.get("id", "")).startswith("adaptor-"):
+            raise ValueError("套餐转发供应商无需删除，请通过开关关闭")
+        if data.get("kind") == "providers" and data.get("action") == "toggle":
+            identity = data.get("id", "")
+            if identity.startswith("adaptor-"):
+                raise ValueError("请在主页-工具箱-套餐转发中管理适配供应商")
+            with LOCK:
+                text = self.config_text()
+                if data.get("revision") != revision(text):
+                    raise ValueError("配置已更新，请刷新后重试")
+                config = document.loads(text)
+                profile = config.get("providers", {}).get(identity)
+                enabled = data.get("values", {}).get("enabled")
+                if profile is None or type(enabled) is not bool:
+                    raise ValueError("无效的供应商启用状态")
+                updated = document.set_value(text, ("providers", identity, "enabled"), enabled)
+                self.validate_config(updated)
+                self.write_config(updated, data["revision"], "修改供应商启用状态")
+                return {"message": "配置已更新"}
+        if data.get("kind") == "global-config":
+            return self.mutate_global(data)
         if data.get("kind") == "hooks":
             return self.mutate_hooks(data)
         if data.get("kind") == "sql-workspace":
@@ -1787,8 +2246,17 @@ end run'''
                         raise ValueError("请先切换默认模型，再删除供应商")
                     providers.pop(identity, None)
                 elif action == "save":
+                    new_name = values.get("id", identity)
+                    if isinstance(new_name, str) and new_name.strip().lower().startswith("adaptor-") and (identity not in providers or new_name != identity):
+                        raise ValueError("供应商名称不能以'adaptor-'开头")
                     self.identifier(identity)
+                    if identity.startswith("adaptor-") and new_name != identity:
+                        raise ValueError("套餐转发供应商不能重命名")
                     url = values.get("base_url", "").strip()
+                    if identity.startswith("adaptor-") and identity in providers:
+                        saved = providers[identity]
+                        if url != saved.get("base_url") or values.get("api_mode") != saved.get("api_mode") or (values.get("api_key") and values["api_key"] != saved.get("api_key")):
+                            raise ValueError("请在套餐转发页面修改网关连接配置")
                     if (
                         urlparse(url).scheme not in ("http", "https")
                         or not urlparse(url).netloc
@@ -1853,6 +2321,8 @@ end run'''
                     raise ValueError("供应商不存在")
                 models = config["providers"][provider].setdefault("models", {})
                 if action == "default":
+                    if config["providers"][provider].get("enabled", True) is False:
+                        raise ValueError("请先开启该供应商")
                     if identity not in models:
                         raise ValueError("模型不存在")
                     config["default"] = {"provider": provider, "model": identity}
@@ -2020,11 +2490,7 @@ end run'''
 
         def add(name, content, executable=False):
             nonlocal total
-            if not isinstance(name, str) or "\\" in name or "\x00" in name:
-                raise ValueError("技能包含无效路径")
-            parts = name.split("/")
-            if PurePosixPath(name).is_absolute() or any(p in ("", ".", "..") for p in parts):
-                raise ValueError("技能包含不安全路径")
+            parts = archive_parts(name)
             # A dot prefix alone does not make a file unsafe: packages can
             # require hidden configuration/version files. Skip only metadata.
             if any(p in {".DS_Store", "__MACOSX", ".git", ".manager-backups", "__pycache__"}
@@ -2102,11 +2568,12 @@ end run'''
         group = data.get("group", "public")
         if group not in ("corki", "public"):
             raise ValueError("请选择扩展 Skills 或公共 Skills")
+        archive_parts(folder)
         root = self.home / "skills" if group == "corki" else self.compatibility_home / ".agents/skills"
         if private:
             root = self.home / "hooks" / "skills"
         target = root / folder
-        if target.exists() or target.is_symlink():
+        if target.exists() or is_link_path(target):
             raise ValueError("所选位置已存在同名技能，不会覆盖已有文件")
         if not private and any(f["kind"] == "skills" and f["name"].casefold() == name.casefold()
                                for f in self.files()):
@@ -2130,7 +2597,7 @@ end run'''
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(content)
                 path.chmod(0o700 if executable else 0o600)
-            if target.exists() or target.is_symlink():
+            if target.exists() or is_link_path(target):
                 raise ValueError("同名技能已存在")
             os.rename(stage, target)
         finally:
@@ -2154,7 +2621,7 @@ end run'''
         root = next((r for r in roots if package != r and package.is_relative_to(r)), None)
         if root is None or not package.resolve().is_relative_to(root.resolve()):
             raise ValueError("技能目录超出可管理范围")
-        if any(p.is_symlink() for p in [package, *package.parents] if p != root and p.is_relative_to(root)):
+        if any(is_link_path(p) for p in [package, *package.parents] if p != root and p.is_relative_to(root)):
             raise ValueError("不支持删除链接技能目录")
         # Remove the entire package, including scripts/resources; rmtree does not
         # follow symlinks inside it. Built-in packages and collection roots stay protected.
@@ -2174,12 +2641,13 @@ end run'''
             name = data.get("name", "").strip()
             if not re.fullmatch(r"[\w-]{1,80}", name):
                 raise ValueError("文件名只允许文字、数字、横线和下划线")
+            archive_parts(name + ".md")
             path = (
                 self.home
                 / ("skills" if kind == "skills" else "manager/knowledge")
                 / (name + ("/SKILL.md" if kind == "skills" else ".md"))
             )
-            if path.exists() or path.is_symlink():
+            if path.exists() or is_link_path(path):
                 raise ValueError("同名文件已存在")
             if not path.resolve().is_relative_to(self.home):
                 raise ValueError("文件路径超出管理目录")
@@ -2207,7 +2675,7 @@ end run'''
             if kind == "skills":
                 self.validate_skill_name_unchanged(content, item["content"], path.parent.name)
             if kind == "knowledge" and action == "save":
-                self.archive_knowledge(item, Path(path).read_text())
+                self.archive_knowledge(item, Path(path).read_text(encoding="utf-8"))
             atomic(path, content, backup=kind != "knowledge")
             if kind == "knowledge":
                 title = next((line.lstrip("# ").strip() for line in content.splitlines()
@@ -2269,6 +2737,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(403, {"error": "仅允许本机同源访问"})
         parsed = urlparse(self.path)
         try:
+            if parsed.path == "/api/adaptor":
+                return self.respond(200, self.server.store.adaptor.status())
             if parsed.path == "/api/hooks":
                 return self.respond(200, self.server.store.hooks_document())
             if parsed.path == "/api/sql-workspace":
@@ -2359,7 +2829,8 @@ class Handler(BaseHTTPRequestHandler):
             if not file.resolve().is_relative_to(STATIC.resolve()) or not file.is_file():
                 return self.respond(404, {"error": "页面不存在"})
             self.respond(
-                200, file.read_bytes(), mimetypes.guess_type(file)[0] or "application/octet-stream"
+                200, file.read_bytes(), STATIC_TYPES.get(file.suffix.lower())
+                or mimetypes.guess_type(file)[0] or "application/octet-stream"
             )
         except (ValueError, OSError, sqlite3.Error):
             self.respond(400, {"error": "读取失败，请刷新后重试"})

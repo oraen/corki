@@ -2,9 +2,12 @@
 
 import asyncio
 import json
+import os
 import sqlite3
+from contextlib import closing
 
 import pytest
+from platform_commands import python_command
 
 from corki.code_mode.service import CodeModeService
 from corki.config import CorkiSettings
@@ -55,7 +58,7 @@ async def run_script(tmp_path, script, *, registry=None, mode="code_mode_only"):
         )
         assert "Script completed" in result.content, result.content
         assert not runtime._code_mode.cells
-        with sqlite3.connect(tmp_path / "sessions.db") as db:
+        with closing(sqlite3.connect(tmp_path / "sessions.db")) as db:
             ledger = {
                 name: json.loads(payload)
                 for name, payload in db.execute("SELECT tool_name,result_json FROM tool_executions")
@@ -67,10 +70,15 @@ async def run_script(tmp_path, script, *, registry=None, mode="code_mode_only"):
 
 @pytest.mark.parametrize("mode", ["code_mode", "code_mode_only"])
 def test_shell_returns_fields_not_formatted_diagnostics(tmp_path, mode):
+    command = (
+        python_command(tmp_path, "import sys; sys.stdout.write('answer'); sys.exit(7)")
+        if os.name == "nt"
+        else "printf answer; exit 7"
+    )
     content, ledger, request = asyncio.run(
         run_script(
             tmp_path,
-            "const r = await tools.exec_command({cmd:'printf answer; exit 7', login:false}); "
+            f"const r = await tools.exec_command({{cmd:{json.dumps(command)}, login:false}}); "
             "text({kind:typeof r,output:r.output,exit_code:r.exit_code,"
             "wall:typeof r.wall_time_seconds,session:'session_id' in Object(r)});",
             mode=mode,
@@ -204,10 +212,20 @@ def test_oversized_bridge_value_rejects_promise_without_replaying_tool(tmp_path)
 
 
 def test_running_shell_session_id_can_be_passed_to_write_stdin(tmp_path):
+    # This test covers nested session values. ConPTY's terminal semantics have
+    # separate native tests; pipes avoid console echo in this Windows fixture.
+    command = (
+        python_command(
+            tmp_path,
+            "import sys; sys.stdout.write(sys.stdin.readline().rstrip('\\r\\n'))",
+        )
+        if os.name == "nt"
+        else 'stty -echo; read answer; printf "%s" "$answer"'
+    )
     source = (
         "const running = await tools.exec_command({"
-        'cmd:\'stty -echo; read answer; printf "%s" "$answer"\','
-        "tty:true,login:false,yield_time_ms:50});"
+        f"cmd:{json.dumps(command)},tty:{json.dumps(os.name != 'nt')},"
+        "login:false,yield_time_ms:50});"
         "text(typeof running.session_id);"
         "const done = await tools.write_stdin({session_id:running.session_id,"
         "chars:'finished\\n',yield_time_ms:1000});"

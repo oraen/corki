@@ -6,6 +6,12 @@ local development.
 All scripts here are specified relative to the skill root. Update the path for running the scripts
 depending on your current working directory.
 
+The command blocks below use POSIX shell syntax. On Windows, invoke the installed
+Python 3 interpreter as `python` (or its full path), quote paths containing spaces,
+and put each command on one line rather than copying Bash's trailing `\`.
+For example: `python scripts/update_plugin_cachebuster.py "C:\work\my-plugin"`.
+The helpers accept UTF-8 JSON with or without a BOM and print UTF-8 through pipes.
+
 ## When To Use This Flow
 
 Use this flow when all of the following are true:

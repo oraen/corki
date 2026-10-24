@@ -27,6 +27,7 @@ export interface FollowUpState {
   messages: { id: string; content: string; attachments: string[]; state: string; error?: string }[];
 }
 export interface Conversation {
+  modelWarning?: boolean;
   followUps: FollowUpState;
   messages: Message[];
   running: boolean;
@@ -104,7 +105,7 @@ export function conversationFromSnapshot(
           ? { ...message, streaming: false } : message);
     }
     messages.push(...data.messages.slice(cursor));
-    view = { ...view, status: replay.status || view.status, messages };
+    view = { ...view, status: replay.status || view.status, messages, modelWarning: replay.modelWarning };
 
   }
   // A submitted input is a temporary display item until canonical history owns it.
@@ -323,6 +324,9 @@ export function reduceEvent(
     case "ModelRetryScheduled":
       s.status = `连接重试 ${d.attempt}`;
       break;
+    case "model.health":
+      s.modelWarning = !!d.warning;
+      break;
     case "UserInputRequested":
       s.pending = s.pending.filter((p) => p.request_id !== d.call_id);
       s.pending.push({
@@ -350,24 +354,35 @@ export function reduceEvent(
       break;
     case "TurnFailed":
     case "host.error": {
+      s.modelWarning = false;
       const id = d.turn_id ? `error:${d.turn_id}` : `error:${event.sequence}`;
+      const message = d.error || d.message || "执行失败";
+      const modelFailure = message === "模型调用失败";
+      const presentation = {
+        role: modelFailure ? "assistant" : "error",
+        error: !modelFailure,
+        phase: modelFailure ? "final_answer" : undefined,
+        streaming: false,
+        createdAt: d.createdAt,
+      };
       update(
         id,
-        (m) => ({ ...m, content: d.error || d.message || "执行失败" }),
+        (m) => ({ ...m, ...presentation, content: message }),
         {
           ...base,
           id,
-          role: "error",
-          error: true,
+          ...presentation,
         },
       );
       s.status = "执行失败";
       break;
     }
     case "TurnCompleted":
+      s.modelWarning = false;
       s.status = "已完成";
       break;
     case "TurnCancelled":
+      s.modelWarning = false;
       s.status = "回答已停止";
       s.messages = s.messages.map((m) =>
         m.turnId === d.turn_id && m.streaming
@@ -386,6 +401,7 @@ export function reduceEvent(
         ];
       break;
     case "run.settled":
+      s.modelWarning = false;
       s.running = false;
       s.pending = [];
       s.messages = s.messages.map((m) =>

@@ -16,6 +16,7 @@ import { readFile, writeFile, mkdir, stat, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { Bridge } from "./bridge";
+import { ManagerLauncher } from "./manager";
 import { saveAsset, readAsset, readBoundedFile } from "./assets";
 import { METHODS, type Attachment } from "../shared/protocol";
 
@@ -55,7 +56,7 @@ function launchDirectory(argv: string[]): string | null {
     : null;
 }
 let pendingDirectory = launchDirectory(process.argv);
-function makeBridge() {
+function selectedPython() {
   const root = app.getAppPath(),
     development = path.resolve(root, "..");
   const configured = preferences.python || process.env.CORKI_PYTHON;
@@ -71,6 +72,11 @@ function makeBridge() {
       : process.platform === "win32"
         ? "python"
         : "python3");
+  return python;
+}
+function makeBridge() {
+  const root = app.getAppPath();
+  const python = selectedPython();
   const script = app.isPackaged
     ? path.join(process.resourcesPath, "bridge", "main.py")
     : path.join(root, "bridge", "main.py");
@@ -90,6 +96,19 @@ function makeBridge() {
   });
   return host;
 }
+const manager = new ManagerLauncher({
+  python: selectedPython,
+  script: app.isPackaged
+    ? path.join(process.resourcesPath, "manager", "server.py")
+    : path.resolve(app.getAppPath(), "..", "manager", "server.py"),
+  home,
+  executable: app.isPackaged ? process.execPath : "",
+  open: (url) => shell.openExternal(url),
+  starting: () => {
+    if (window && !window.isDestroyed())
+      window.webContents.send("corki:manager-starting");
+  },
+});
 function trusted(event: Electron.IpcMainInvokeEvent) {
   if (
     !window ||
@@ -202,6 +221,10 @@ function registerIPC() {
     if (typeof value !== "string" || value.length > 16000000)
       throw new Error("Invalid text");
     clipboard.writeText(value);
+  });
+  ipcMain.handle("corki:manager-open", async (e) => {
+    trusted(e);
+    await manager.open();
   });
   ipcMain.handle("corki:link", async (e, value) => {
     trusted(e);
@@ -485,6 +508,9 @@ else {
         });
         if (result.response === 0) {
           quitPending = false;
+          // Windows/Linux close their last window before before-quit runs.
+          // Cancelling exit must restore a visible controller for live tasks.
+          if (!window && process.platform !== "darwin") createWindow();
           return;
         }
       }

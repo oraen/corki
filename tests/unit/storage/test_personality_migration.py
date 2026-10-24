@@ -2,6 +2,7 @@
 
 import asyncio
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 
 import pytest
@@ -24,7 +25,7 @@ def test_legacy_personality_column_migration_and_reopen(tmp_path, personality):
         settings = ThreadModelSettings("model", "independent", "high", "plan", "HOST MODE")
         await original.save_thread_model_settings(thread, settings)
         # Only the isolated fixture is downgraded to the pre-personality schema.
-        with sqlite3.connect(database) as db:
+        with closing(sqlite3.connect(database)) as db, db:
             db.execute("ALTER TABLE thread_model_settings DROP COLUMN personality")
         migrated = SQLiteSessionRepository(database)
         assert await migrated.load_thread_model_settings(thread) == settings

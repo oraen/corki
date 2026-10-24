@@ -91,6 +91,9 @@ def test_admitted_resource_call_keeps_binding_after_step_releases_it(monkeypatch
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+            if not binding.released:
+                binding.release()
+            await binding.closed
             await manager.aclose()
         assert new.closed.is_set()
 

@@ -386,9 +386,10 @@ def test_close_during_handoff_never_constructs_a_late_successor(monkeypatch):
         monkeypatch.setattr(manager, "_dispose_preparation", dispose)
         manager.request_reconcile((replace(declaration, url="https://changed.test"),))
         refresh = asyncio.create_task(manager.capture_tools(optional_startup_grace_ms=1))
-        await asyncio.wait_for(entered.wait(), 1)
-        closing = asyncio.create_task(manager.aclose())
+        closing = None
         try:
+            await asyncio.wait_for(entered.wait(), 1)
+            closing = asyncio.create_task(manager.aclose())
             await asyncio.wait_for(clients[0].cancelled.wait(), 1)
             release.set()
             with pytest.raises(RuntimeError, match="closed"):
@@ -399,7 +400,10 @@ def test_close_during_handoff_never_constructs_a_late_successor(monkeypatch):
         finally:
             release.set()
             refresh.cancel()
-            await asyncio.gather(refresh, closing, return_exceptions=True)
+            await asyncio.gather(
+                *([refresh, closing] if closing is not None else [refresh]),
+                return_exceptions=True,
+            )
             await manager.aclose()
 
     asyncio.run(scenario())

@@ -17,6 +17,7 @@ from corki.code_mode.service import CodeModeService
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.models import ModelCompleted, ModelError, ModelErrorKind, ModelItemCompleted
+from corki.platforms.liveness import process_alive
 from corki.protocol.events import TurnCompleted
 from corki.protocol.ids import new_tool_call_id
 from corki.protocol.items import ToolCallItem, ToolResultItem, new_step_id
@@ -209,7 +210,6 @@ def test_responses_wire_to_real_module_to_nested_tool_and_back(
     asyncio.run(scenario())
 
 
-@pytest.mark.skipif(os.name != "posix", reason="POSIX liveness assertion")
 def test_parent_process_death_reaps_even_synchronous_busy_cell(tmp_path):
     async def scenario():
         fixture = Path(__file__).parents[1] / "fixtures" / "code_mode_parent_exit.py"
@@ -227,11 +227,7 @@ def test_parent_process_death_reaps_even_synchronous_busy_cell(tmp_path):
             pid = int(output.strip())
 
             async def gone():
-                while True:
-                    try:
-                        os.kill(pid, 0)
-                    except ProcessLookupError:
-                        return
+                while process_alive(pid):
                     await asyncio.sleep(0.02)
 
             await asyncio.wait_for(gone(), 3)
@@ -239,9 +235,11 @@ def test_parent_process_death_reaps_even_synchronous_busy_cell(tmp_path):
             if parent.returncode is None:
                 parent.kill()
                 await parent.wait()
-            if pid is not None:
+            if pid is not None and process_alive(pid):
                 with suppress(ProcessLookupError):
-                    os.kill(pid, signal.SIGKILL)
+                    # Windows has no SIGKILL; SIGTERM invokes TerminateProcess.
+                    # This is failure cleanup of this fixture's worker only.
+                    os.kill(pid, signal.SIGTERM if os.name == "nt" else signal.SIGKILL)
 
     asyncio.run(scenario())
 

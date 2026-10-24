@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 import httpx
 import pytest
@@ -144,7 +145,7 @@ def test_cell_output_http_projection_and_cold_archive(tmp_path, api, budget, fai
             assert originals[0].content.count("X") == 50000
             if failed:
                 assert "Script error:\n" in originals[0].content
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 (encoded,) = db.execute(
                     "SELECT result_json FROM tool_executions WHERE tool_name='exec'"
                 ).fetchone()
@@ -175,7 +176,7 @@ def test_cell_output_http_projection_and_cold_archive(tmp_path, api, budget, fai
                 else:
                     assert "tokens truncated" in output and output.count("X") < 4800
                 assert "Script failed" in output if failed else "Script completed" in output
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 assert (
                     db.execute(
                         "SELECT result_json FROM tool_executions WHERE tool_name='exec'"

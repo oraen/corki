@@ -1,4 +1,5 @@
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,8 @@ def test_ad_hoc_note_preserves_exact_utf8_bytes(tmp_path, note):
     backend.add_note(filename, note)
     target = backend.root / "extensions/ad_hoc/notes" / filename
     assert target.read_bytes() == note.encode("utf-8")
-    assert target.stat().st_mode & 0o777 == 0o600
+    if os.name == "posix":
+        assert target.stat().st_mode & 0o777 == 0o600
     with pytest.raises(FileExistsError):
         backend.add_note(filename, "replacement")
     assert target.read_bytes() == note.encode("utf-8")
@@ -73,7 +75,7 @@ def test_memory_backend_lists_reads_searches_and_adds_notes(tmp_path: Path) -> N
     root = tmp_path / "memories"
     backend = LocalMemoryBackend(root)
     (root / "MEMORY.md").write_text(
-        "v1\n\nproject alpha\ncommand pytest\nsecond alpha fact\n", encoding="utf-8"
+        "v1\n\nproject alpha\ncommand pytest\nsecond alpha fact\n", encoding="utf-8", newline=""
     )
 
     listing = backend.list()

@@ -125,7 +125,7 @@ def test_markdown_display_and_source_reflow_snapshot(width):
     assert ui._transcript.calls[0][1] == (SOURCE,)
     normalized = "\n".join(line.rstrip() for line in rendered.strip("\n").splitlines()) + "\n"
     expected = Path(__file__).with_name("snapshots") / f"assistant_markdown_{width}.txt"
-    assert normalized == expected.read_text()
+    assert normalized == expected.read_text(encoding="utf-8")
     assert 'print("[literal] **code**")  \n' in rendered
     assert all(not line.strip() or line.startswith(("• ", "  ")) for line in rendered.splitlines())
 

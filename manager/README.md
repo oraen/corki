@@ -16,6 +16,22 @@ HTTP 服务，复用 Corki 的 JSONC 配置解析器、技能解析器和 MCP �
 脚本也支持绝对路径，从任意目录运行。使用仓库 `.venv/bin/python`；可通过
 `CORKI_MANAGER_PYTHON` 指定已安装 Corki 的 Python。前台运行，Ctrl+C 停止。
 
+Windows PowerShell 使用原生入口，无需 Git Bash 或 WSL：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\manager\bin\start.ps1
+```
+
+默认使用仓库 `.venv\Scripts\python.exe`，也可设置 `CORKI_MANAGER_PYTHON` 为已安装
+Corki 的 Python 可执行文件完整路径。支持同样的 `--home`、`--workspace`、`--port`
+参数；包含空格的路径用引号包围。入口在前台运行，Ctrl+C 停止，启动不修改系统执行策略。
+
+也可在仓库根目录直接使用 Python 入口，不执行任何 `.ps1` 脚本：
+
+```powershell
+& .\.venv\Scripts\python.exe -X utf8 -u .\manager\server.py --workspace .
+```
+
 ```bash
 ./manager/bin/start.sh --port 17002 --home ~/.corki --workspace /path/to/project
 ```
@@ -51,7 +67,7 @@ HTTP 服务，复用 Corki 的 JSONC 配置解析器、技能解析器和 MCP �
 关闭后再次开启会复用有效摘要；编辑原文会使旧索引失效。管理页保存后自动关闭，手动开启才重新处理。
 处理失败可点击重试，已完成的批次可复用。关闭会停止后续批次，正在进行的模型
 请求可能仍会完成，但不能发布结果。macOS/Linux 上服务意外退出后，刷新会识别已退出的处理进程并显示可重试；
-Windows 使用 25 分钟租约过期检测。最多同时处理两篇；超出时页面提示稍后重试。
+Windows 也检查进程是否退出；无法确认时保留任务并使用租约过期检测。最多同时处理两篇；超出时页面提示稍后重试。
 
 首次创建知识库后启动新的 Corki 会话，运行时会注册 `knowledge_search` 和
 `knowledge_read`。前者浏览文档/段落简介，或用 BM25 排序召回段落；后者按需
@@ -72,7 +88,7 @@ Corki 用户与内置目录、通用 Agents 目录，以及选定项目中的对
 - 所有测试使用临时目录；真实配置不作为测试数据修改。
 - 修改前比对 SHA-256 版本，避免覆盖已变化的文件；原文件保存在同目录
   `.manager-backups/`。这能发现写入前的外部更新，不是跨进程事务锁。
-- 原子替换文件，文件权限 0600；保留未修改配置区块及其注释。修改的区块会
+- 原子替换文件，macOS 使用文件权限 0600，Windows 使用当前用户私有 DACL；保留未修改配置区块及其注释。修改的区块会
   重新序列化，区块内部原注释可从备份恢复。
 - 知识库删除会直接移除正文、索引与版本历史，不移入回收目录，删除后无法恢复。
 - 仅接收本机合法 Host、同源 Origin 和管理页自定义请求头的写请求。
@@ -86,6 +102,17 @@ Corki 用户与内置目录、通用 Agents 目录，以及选定项目中的对
 .venv/bin/python -m pytest manager/tests/test_manager.py
 node --check manager/static/app.js
 ```
+
+Windows PowerShell 对应命令：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest manager/tests/test_manager.py
+node --check manager/static/app.js
+```
+
+这些是后端和语法检查，不能代替浏览器或桌面应用验收。使用 Playwright 的独立测试
+需要先安装 `app/` 开发依赖；可通过 `CORKI_TEST_BROWSER` 指定本机 Chrome/Edge
+可执行文件，未设置时使用 Playwright 安装的浏览器。测试截图写入系统临时目录。
 
 浏览器测试遵循用户 `read_chrome` skill 的本地 CDP 流程，不需要 npm 依赖：
 
@@ -105,8 +132,9 @@ CHROME_DEBUG_PORT=9225 MANAGER_TEST_URL=http://127.0.0.1:17006 node manager/test
 尾逗号，拒绝重复键及非有限数字）。输入停止后自动校验，保存前再次校验；错误不写入
 文件。模型详情仅展示常用参数，保存时保留其他模型元数据。
 
-历史版本存放于 `~/.corki/manager/config-versions/`，目录权限 0700、文件 0600，
-包含完整凭据，不写入 IndexedDB/localStorage。配置表单写入同样记录版本；读取
+历史版本存放于 `~/.corki/manager/config-versions/`，macOS 目录权限 0700、文件 0600；
+Windows 的私密文件使用当前用户私有 DACL。
+版本文件包含完整凭据，不写入 IndexedDB/localStorage。配置表单写入同样记录版本；读取
 版本列表时会记录外部修改后的当前配置。未被观察到的外部中间修改无法追溯。
 保存后立即替换配置文件，回滚会追加一份新版本；旧版本保留，当前相同内容的
 重复保存不创建冗余版本。未保存的编辑在页面内切换时保留，离开浏览器页面有提示。
@@ -165,6 +193,8 @@ npm --prefix manager run build
 技能包不限制文件数量和总大小；SKILL.md 入口仍遵循运行时 128 KB 读取上限。使用运行时同一 frontmatter 解析器；
 导入使用 SKILL.md 的 name 作为安装目录名，不允许自定义名称。包内如有技能目录，其目录名必须与 name 一致；根目录直接包含 SKILL.md 的 ZIP 按 name 安装，ZIP 文件名不参与命名。已有技能不迁移；管理页不提供改名，编辑 SKILL.md 时须保留原 name。同目录或同名技能不覆盖。拒绝路径跳转、重复路径和 ZIP 符号链接；跳过系统元数据，保留普通隐藏资源文件。
 ZIP 的执行位会保留，文件夹上传不携带文件权限。导入不会运行脚本、安装工具或授权账号。
+执行位适用于 macOS/Linux；Windows 上不能依靠 ZIP 的 Unix 执行位或 `.py` 文件关联启动脚本，
+应使用已安装的解释器和独立参数。
 
 ### 技能文件工作区
 
@@ -241,6 +271,9 @@ print(json.dumps({"text": arguments["text"]}, ensure_ascii=False))
 ```
 
 每次调用启动一个进程，参数对象写入 stdin 后关闭输入；stdout 为结果，stderr 为诊断，退出码非零表示失败。
+示例中的 `python3` 和脚本路径需要换成当前系统的实际值；Windows 可使用 Python
+可执行文件完整路径，JSON 路径中的反斜杠需写为 `\\`。管理页格式指引使用管理服务自身的
+Python 解释器路径，避免假设 Windows 安装了 `python3` 命令。
 命令和启动参数直接传递，不做 shell 插值。可选 `cwd`（默认为当前工作空间）、`env` 和 `timeout_seconds`。
 参数定义沿用 Corki 工具执行器支持的 JSON Schema 子集，不会自动补齐 Schema 的 default 值。
 `enabled` 默认为 true，设为 false 后下次启动不注册。配置文件限 256 KB，单次输出限 1 MB，超时范围 0.1–300 秒。
@@ -261,7 +294,10 @@ print(json.dumps({"text": arguments["text"]}, ensure_ascii=False))
 
 Claude 使用其官方 OpenAI SDK 兼容接口，支持基本聊天和工具调用，不承诺与原生 Messages 全功能等价。Chat 运行时保留同一接口、同一模型返回的推理内容及工具签名，以支持 Kimi/DeepSeek 推理回传与 Gemini 工具循环；切换接口或模型时不回传这些专有数据。
 
-快速启动目前支持 macOS：可输入工作目录、通过系统窗口选择目录，或留空使用 Corki home 下的 `main/default`。优先使用 iTerm，否则使用 Terminal。启动命令固定为 Corki，目录经过 shell 转义，使用当前管理服务的 Corki home。首次使用可能需要系统自动化授权。
+快速启动可输入工作目录、通过系统窗口选择目录，或留空使用 Corki home 下的 `main/default`。
+macOS 的 CLI 模式优先使用 iTerm，否则使用 Terminal，首次使用可能需要系统自动化授权。
+Windows 的 CLI 模式使用管理服务的 Python 在独立系统控制台运行 Corki，不要求安装
+Windows Terminal、Git Bash 或 WSL。两种平台都使用当前管理服务的 Corki home。
 
 ### 定时任务
 
@@ -329,6 +365,12 @@ SQL 查询标签支持创建、双击改名及自动保存；每次执行生成�
 通过独立参数传递目录，不拼接 shell 命令。桌面应用已运行时由单实例入口接收目录，
 打开新会话草稿，不停止已有会话。更新此功能后需重启管理服务及旧版桌面进程。
 
+Windows 桌面模式优先使用 `CORKI_DESKTOP_EXECUTABLE` 指定的完整可执行文件路径；
+未设置时查找匹配当前架构的 `app/out/Corki-win32-<架构>/Corki.exe`，再查找
+`LOCALAPPDATA`、`PROGRAMFILES`、`PROGRAMFILES(X86)` 下的 `Programs/Corki` 或 `Corki`。
+不从 PATH 查找同名 `corki.exe`，避免误启动 pip 安装的 CLI 入口。
+这些说明描述已实现的查找规则；Windows 全流程验收仍需包含安装、实际启动和退出。
+
 ### 知识文档详情与版本
 
 点击文档打开独立详情页，使用 Markdown 高亮编辑器。内置文档只读；用户文档点击编辑后保存。
@@ -351,3 +393,28 @@ Hook 引用与 Skills 页面的启停状态相互独立；只遵循 Hook 自身�
 原有信任状态，不自动信任其他未批准配置。修改使用版本检查，配置变更进入历史。
 新会话读取更新后的配置；页面不会为了测试而执行命令。项目级、插件及宿主管理的
 Hooks 不在此用户级编辑页的管理范围内。
+
+## 主页全局配置
+
+开关逐项保存至 `settings.json`，沿用配置版本历史和冲突检查。免审批开启时使用
+`default_permissions: ":danger-full-access"` 与 `approval_policy: "never"`；关闭时恢复
+`:workspace` 和 `on-request`。记忆使用 `memories.enabled`，自进化设置存储于
+`features.self_evolution`。已有任务继续遵循其启动时载入的配置。
+
+会话自动清理由 `sessions.auto_cleanup` 控制，默认关闭。开启后，管理页面打开时会
+在 `manager/maintenance.db` 原子记录启动时间；距上次启动超过 24 小时才再执行。
+清理在后台进行，以三个自然月为界，复用核心物理删除能力；重新检查最新活动时间，
+跳过运行中或持有写入锁的会话。会同时清理对应桌面草稿和元数据，不删除工作目录、
+用户项目文件或共享记忆。清理删除的会话不可恢复；SQLite 释放的空闲页可由后续数据复用。
+
+## 套餐转发
+
+「主页 → 工具箱 → 套餐转发」连接独立 `adaptor/openai` 网关。开启前检查本机 Codex
+文件登录，自动创建或更新 `adaptor-openai`；模型管理分为自定义供应商与系统适配供应商；系统适配分组默认折叠，仅展示已开启的供应商。启停统一在套餐转发页面操作。先开启网关，再启用供应商；供应商开关仅修改对应配置，关闭全部供应商也不会停止网关。网关关闭时不能开启供应商；关闭网关会停用对应供应商，但保留其配置。
+关闭保留模型配置；系统适配供应商的连接设置只读。供应商 `enabled` 默认为 true；关闭后不进入运行时模型目录，模型创建也会拒绝。
+
+地址格式为 `http://127.0.0.1:端口/openai`。管理页仅显示端口；开启时默认使用 17001，
+占用时由独立网关直接绑定系统分配的空闲端口。页面与供应商配置同步使用实际端口，重复开启不迁移正在运行的实例。
+`adaptor-` 为管理页保留前缀，不能通过普通添加或重命名供应商创建。可修改其模型配置，
+连接参数由套餐转发页面管理。网关保持独立依赖；管理服务通过独立解释器的 JSON 控制入口调用，
+不导入或复制上游转发实现。登录 Token 不进入页面、供应商配置或控制命令参数。

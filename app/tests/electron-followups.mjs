@@ -1,3 +1,4 @@
+import { python } from './platform.mjs';
 import { _electron as electron } from 'playwright';
 import http from 'node:http';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -20,7 +21,7 @@ await writeFile(path.join(home,'settings.json'),JSON.stringify({default:{provide
 async function until(check) { const end=Date.now()+20000; while(!check()){if(Date.now()>end)throw Error('Timed out');await new Promise(r=>setTimeout(r,20));} }
 let app;
 try {
-  const env={...process.env,CORKI_HOME:home,CORKI_PYTHON:path.resolve('../.venv/bin/python')};delete env.ELECTRON_RUN_AS_NODE;
+  const env={...process.env,CORKI_HOME:home,CORKI_PYTHON:python};delete env.ELECTRON_RUN_AS_NODE;
   const packaged = process.env.CORKI_TEST_PACKAGED;
   app=await electron.launch({...(packaged ? {executablePath:path.resolve(packaged)} : {}), args:[...(packaged ? [] : [path.resolve('.')]), ...(process.env.CORKI_QUEUE_CDP ? ['--remote-debugging-port='+process.env.CORKI_QUEUE_CDP] : [])],env});
   await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1,checkboxChecked:false})});

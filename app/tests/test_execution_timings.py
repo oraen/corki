@@ -2,6 +2,7 @@
 
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bridge"))
@@ -10,7 +11,7 @@ from content import execution_timings
 
 def test_execution_timings_are_scoped_durable_and_allow_running_entries(tmp_path):
     database = tmp_path / "ledger.db"
-    with sqlite3.connect(database) as db:
+    with closing(sqlite3.connect(database)) as db, db:
         db.execute(
             "CREATE TABLE tool_executions(call_id,thread_id,turn_id,started_at,completed_at)"
         )

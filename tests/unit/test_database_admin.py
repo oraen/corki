@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -7,7 +8,7 @@ from corki.storage.admin import DatabaseAdmin
 
 @pytest.fixture
 def admin(tmp_path):
-    with sqlite3.connect(tmp_path / "fixture.db") as db:
+    with closing(sqlite3.connect(tmp_path / "fixture.db")) as db:
         db.executescript("""
         CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
                            amount INTEGER, payload BLOB);

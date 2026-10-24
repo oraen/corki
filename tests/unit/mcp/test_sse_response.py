@@ -314,7 +314,10 @@ def test_loopback_completed_sse_closes_connection_without_peer_eof():
             await client.aclose()
             server.close()
             await server.wait_closed()
-            await asyncio.gather(*peers)
+            pending = tuple(peers)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
         assert errors == []
 
     asyncio.run(scenario())

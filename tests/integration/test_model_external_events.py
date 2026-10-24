@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 
 import httpx
@@ -143,7 +144,7 @@ def test_live_external_protocol_is_rejected_but_ordinary_call_is_durable(
                 assert events[-1].error_kind == "protocol"
                 assert not events[-1].retryable
                 assert len(requests) == 1
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 assert db.execute("SELECT memory_mode FROM threads").fetchone()[0] == "enabled"
             stored = await runtime._repository.load_items(runtime.thread_id)
             calls = [i for i in stored if hasattr(i, "call")]
@@ -180,12 +181,15 @@ def test_cold_hosted_history_uses_chat_compatibility_and_notification_startup_po
     async def scenario():
         database = tmp_path / "sessions.db"
         repository = SQLiteSessionRepository(database)
-        thread = new_thread_id()
-        await repository.create_thread(thread, tmp_path)
-        item = HostedToolItem(json.dumps(external_payload(kind)), new_turn_id(), new_step_id())
-        await repository.append_items(thread, (item,))
-        messages = await repository.load_messages(thread)
-        assert messages[0].content == item.compatibility_content
+        try:
+            thread = new_thread_id()
+            await repository.create_thread(thread, tmp_path)
+            item = HostedToolItem(json.dumps(external_payload(kind)), new_turn_id(), new_step_id())
+            await repository.append_items(thread, (item,))
+            messages = await repository.load_messages(thread)
+            assert messages[0].content == item.compatibility_content
+        finally:
+            await repository.close()
         requests = []
 
         def respond(request):
@@ -227,7 +231,7 @@ def test_cold_hosted_history_uses_chat_compatibility_and_notification_startup_po
         try:
             assert isinstance([e async for e in runtime.stream("follow up")][-1], TurnCompleted)
             assert len(requests) == 1
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 assert db.execute("SELECT memory_mode FROM threads").fetchone()[0] == (
                     "polluted" if kind == "notification" else "enabled"
                 )
@@ -442,26 +446,31 @@ def test_cold_recovery_reuses_hosted_fact_without_resampling_original_step(tmp_p
     async def scenario():
         database = tmp_path / "sessions.db"
         repository = SQLiteSessionRepository(database)
-        thread, turn = new_thread_id(), new_turn_id()
-        await repository.create_thread(thread, tmp_path)
-        await repository.save_turn(TurnRecord(turn, thread, TurnStatus.RUNNING, "external"))
-        await repository.append_items(thread, (UserMessageItem("external", turn),))
-        source = external_payload(kind)
-        local_call = kind in {"native_search", "ordinary_search"}
-        item = (
-            ToolCallItem(
-                ToolCall(new_tool_call_id(), "tool_search", None, "null", parse_error="not object"),
-                turn,
-                new_step_id(),
-                contains_external_context=kind == "native_search",
+        try:
+            thread, turn = new_thread_id(), new_turn_id()
+            await repository.create_thread(thread, tmp_path)
+            await repository.save_turn(TurnRecord(turn, thread, TurnStatus.RUNNING, "external"))
+            await repository.append_items(thread, (UserMessageItem("external", turn),))
+            source = external_payload(kind)
+            local_call = kind in {"native_search", "ordinary_search"}
+            item = (
+                ToolCallItem(
+                    ToolCall(
+                        new_tool_call_id(), "tool_search", None, "null", parse_error="not object"
+                    ),
+                    turn,
+                    new_step_id(),
+                    contains_external_context=kind == "native_search",
+                )
+                if local_call
+                else HostedToolItem(json.dumps(source), turn, new_step_id())
             )
-            if local_call
-            else HostedToolItem(json.dumps(source), turn, new_step_id())
-        )
-        if partial:
-            await repository.append_partial_item(thread, turn, 0, item)
-        else:
-            await repository.commit_model_step(thread, turn, 0, ModelCompleted((item,)))
+            if partial:
+                await repository.append_partial_item(thread, turn, 0, item)
+            else:
+                await repository.commit_model_step(thread, turn, 0, ModelCompleted((item,)))
+        finally:
+            await repository.close()
         requests = []
 
         def respond(request):
@@ -503,7 +512,7 @@ def test_cold_recovery_reuses_hosted_fact_without_resampling_original_step(tmp_p
         try:
             assert isinstance([e async for e in runtime.resume_pending()][-1], TurnCompleted)
             assert len(requests) == int(partial or local_call)
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 assert db.execute("SELECT memory_mode FROM threads").fetchone()[0] == (
                     "enabled" if kind == "ordinary_search" else "polluted"
                 )

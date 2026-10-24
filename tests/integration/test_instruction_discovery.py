@@ -119,7 +119,7 @@ def test_toml_marker_fallback_and_raw_utf8_budget_reach_runtime(tmp_path, marker
     root, cwd, home = setup(tmp_path)
     (root / ".custom").touch()
     (root / "RULES.md").write_text("AB")
-    (cwd / "RULES.md").write_text("你好")
+    (cwd / "RULES.md").write_text("你好", encoding="utf-8")
     config_file = tmp_path / "config.toml"
     config_file.write_text(
         f"project_root_markers={markers}\n"

@@ -313,13 +313,15 @@ def test_invalidated_cache_activates_dormant_server(tmp_path, monkeypatch, inval
 def test_idle_cancel_preserves_dormant_but_close_joins_it_without_factory(tmp_path, monkeypatch):
     async def scenario():
         runtime, clients, _, _ = await setup_runtime(tmp_path, monkeypatch, EmptyModel())
-        await runtime._ensure_ready()
-        generation = runtime._mcp_manager._preparation
-        task = generation.tasks["lazy"]
-        runtime._mcp_manager.cancel_startup()
-        await asyncio.sleep(0)
-        assert not task.done() and generation.is_dormant("lazy")
-        await runtime.aclose()
+        try:
+            await runtime._ensure_ready()
+            generation = runtime._mcp_manager._preparation
+            task = generation.tasks["lazy"]
+            runtime._mcp_manager.cancel_startup()
+            await asyncio.sleep(0)
+            assert not task.done() and generation.is_dormant("lazy")
+        finally:
+            await runtime.aclose()
         assert task.done() and not clients
 
     asyncio.run(scenario())

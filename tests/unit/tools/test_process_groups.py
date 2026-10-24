@@ -7,6 +7,8 @@ import pytest
 
 from corki.tools.builtin import process_groups as groups
 
+pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX process-group adapter")
+
 
 @pytest.mark.parametrize("case", ["normal", "moved", "gone", "partial", "denied", "empty"])
 def test_macos_fallback_rechecks_exact_group_and_preserves_errors(monkeypatch, case):

@@ -2,6 +2,7 @@
 
 import asyncio
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 
 import pytest
@@ -68,14 +69,14 @@ def test_missing_legacy_arguments_are_not_assumed_to_match(tmp_path):
         call = ToolCall(new_tool_call_id(), "write", {"path": "one.txt"})
         await repository.claim_tool_call(thread, turn, call)
         await repository.complete_tool_call(thread, turn, ToolResult(call.id, call.name, "legacy"))
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             columns = [row[1] for row in connection.execute("PRAGMA table_info(tool_executions)")]
             if "arguments_sha256" in columns:
                 connection.execute("ALTER TABLE tool_executions DROP COLUMN arguments_sha256")
         reopened = SQLiteSessionRepository(database)
         unknown = await reopened.claim_tool_call(thread, turn, call)
         assert unknown.is_error and "unverified" in unknown.content
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             assert (
                 connection.execute("SELECT status FROM tool_executions").fetchone()[0]
                 == "completed"
@@ -142,7 +143,7 @@ def test_later_history_cannot_be_used_to_guess_legacy_execution_arguments(tmp_pa
         await repository.claim_tool_call(thread, turn, call)
         original = ToolResult(call.id, call.name, "one")
         await repository.complete_tool_call(thread, turn, original)
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute("ALTER TABLE tool_executions DROP COLUMN arguments_sha256")
         reopened = SQLiteSessionRepository(database)
         later_call = replace(call, arguments={"path": "two.txt"})

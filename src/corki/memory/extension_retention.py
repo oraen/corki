@@ -7,6 +7,8 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from corki.platforms.paths import is_link_metadata
+
 _LOG = logging.getLogger(__name__)
 _RETENTION = timedelta(days=7)
 
@@ -56,7 +58,8 @@ def prune_old_extension_resources(root: Path, *, now: datetime | None = None) ->
 
 def _is_directory(path: Path) -> bool:
     try:
-        return stat.S_ISDIR(path.lstat().st_mode)
+        metadata = path.lstat()
+        return stat.S_ISDIR(metadata.st_mode) and not is_link_metadata(metadata)
     except FileNotFoundError:
         return False
     except OSError as exc:

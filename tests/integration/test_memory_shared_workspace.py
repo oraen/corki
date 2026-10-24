@@ -3,6 +3,7 @@ import shlex
 import sys
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -25,6 +26,11 @@ def test_consolidation_tools_write_shared_root_before_completion(tmp_path, fail)
             "Path('memory_summary.md').write_text('v1\\nLIVE_SUMMARY'); "
             "print(Path.cwd())"
         )
+        command = (
+            python_command(tmp_path, script)
+            if sys.platform == "win32"
+            else shlex.join([sys.executable, "-I", "-c", script])
+        )
 
         class Main:
             async def stream(self, request):
@@ -43,7 +49,7 @@ def test_consolidation_tools_write_shared_root_before_completion(tmp_path, fail)
                     call = ToolCall(
                         new_tool_call_id(),
                         "exec_command",
-                        {"cmd": shlex.join([sys.executable, "-I", "-c", script]), "login": False},
+                        {"cmd": command, "login": False},
                     )
                     yield ModelCompleted((ToolCallItem(call, turn, step),))
                     return

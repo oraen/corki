@@ -13,7 +13,7 @@ from corki.skills.walk import walk_skill_files
 def write_skill(root, folder):
     path = root / folder / "SKILL.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\nname: guide\ndescription: {folder}\n---\nBODY")
+    path.write_text(f"---\nname: guide\ndescription: {folder}\n---\nBODY", encoding="utf-8")
     return path
 
 

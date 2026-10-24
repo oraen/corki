@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 import httpx
 import pytest
@@ -161,7 +162,7 @@ def test_host_result_events_ledger_private_projection_and_cold_no_replay(
                 assert json.loads(event.mcp_result_json) == expected and event.mcp_error is None
             raw = await runtime._repository.load_items(runtime._thread_id)
             assert "PRIVATE" not in repr(raw)
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 encoded = db.execute(
                     "SELECT result_json FROM tool_executions WHERE tool_name=?", (name,)
                 ).fetchone()[0]
@@ -189,7 +190,7 @@ def test_host_result_events_ledger_private_projection_and_cold_no_replay(
             assert not any(isinstance(e, ToolCallCompleted) for e in events)
             after = await cold._repository.load_items(cold._thread_id)
             assert after[: len(raw)] == raw and len(calls) == 1
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 assert (
                     db.execute(
                         "SELECT result_json FROM tool_executions WHERE tool_name=?", (name,)

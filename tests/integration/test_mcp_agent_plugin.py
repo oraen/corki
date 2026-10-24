@@ -255,6 +255,8 @@ def test_agent_client_owned_headers_do_not_become_plugin_credentials(tmp_path, m
             await runtime.aclose()
         assert carrier.closed and all(b.closed for b in carrier.bodies)
 
+    asyncio.run(scenario())
+
 
 def test_agent_unicode_header_survives_actual_transport(tmp_path, monkeypatch):
     async def scenario():
@@ -269,10 +271,18 @@ def test_agent_unicode_header_survives_actual_transport(tmp_path, monkeypatch):
             events = [e async for e in runtime.stream("needle")]
             assert isinstance(events[-1], TurnCompleted)
             assert len(carrier.calls) == 1
-            assert all((b"x-plugin", "café".encode()) in r.headers.raw for r in carrier.requests)
+            assert all(
+                any(
+                    name.lower() == b"x-plugin" and value == "café".encode()
+                    for name, value in request.headers.raw
+                )
+                for request in carrier.requests
+            )
         finally:
             await runtime.aclose()
         assert carrier.closed and all(b.closed for b in carrier.bodies)
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("kind", ["unsupported", "symlink", "directory"])

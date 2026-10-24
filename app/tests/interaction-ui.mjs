@@ -1,3 +1,4 @@
+import { browserLaunchOptions } from './platform.mjs';
 import { chromium } from "playwright";
 import http from "node:http";
 import { readFile, mkdtemp, rm } from "node:fs/promises";
@@ -11,7 +12,7 @@ const server = http.createServer(async (req, res) => {
       root,
       "." + new URL(req.url, "http://localhost").pathname,
     );
-    if (!p.startsWith(root + "/")) throw Error();
+    if (!p.startsWith(root + path.sep)) throw Error();
     const body = await readFile(p);
     res.setHeader(
       "Content-Type",
@@ -31,11 +32,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-const browser = await chromium.launch({
-  executablePath:
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  headless: true,
-});
+const browser = await chromium.launch(browserLaunchOptions);
 try {
  const page=await browser.newPage({viewport:{width:1440,height:900}});
  await page.addInitScript(()=>{
@@ -78,7 +75,7 @@ try {
    await page.getByRole('button',{name:'打开链接'}).click();
    assert.equal(await page.evaluate(()=>window.responses.at(-1).requestId),'patch');
    assert.equal(await page.evaluate(()=>window.links.at(-1)),'https://example.invalid/fixture');
-   await page.screenshot({path:'/tmp/corki-desktop-url-interaction.png'});
+   await page.screenshot({path:path.join(os.tmpdir(),'corki-desktop-url-interaction.png')});
   }
   await page.getByRole('button',{name:label,exact:true}).click();
   const response=await page.evaluate(()=>window.responses.at(-1));

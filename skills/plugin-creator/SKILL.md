@@ -7,10 +7,24 @@ description: Create and scaffold Codex-compatible Corki plugin directories with 
 
 > Corki compatibility: keep the Codex-compatible `.codex-plugin/plugin.json` format, but install
 > local plugins under `~/.corki/plugins/<name>` (or a directory configured in
-> `[plugins].directories`). Corki discovers these packages directly on its next process start;
+> `plugins.directories` in settings.json). Corki discovers these packages directly on its next process start;
 > do not use Codex marketplace commands or `codex://` links for a Corki-only installation.
 
 ## Quick Start
+
+Resolve the installed skill directory from the loaded `SKILL.md`, and invoke its scripts with
+an available Python 3 interpreter. The Bash examples below are for macOS and Unix shells;
+Windows does not require Bash, WSL, executable permission bits or `.py` file associations.
+For example, from PowerShell in the installed skill directory:
+
+```powershell
+& python .\scripts\create_basic_plugin.py my-plugin
+& python .\scripts\validate_plugin.py "$HOME\.corki\plugins\my-plugin"
+```
+
+If `python` is unavailable, detect `py -3` or another installed Python 3 interpreter and
+use that executable with the same script path. Use PowerShell line continuation or a single
+line for the later multi-line Bash examples; do not paste Bash backslashes or `${...}` syntax.
 
 1. Run the scaffold script:
 

@@ -1,6 +1,7 @@
 """Memory startup follows fresh input Turns; all accepted passes remain owned."""
 
 import asyncio
+import contextlib
 import json
 import sqlite3
 
@@ -73,7 +74,7 @@ def test_startup_runs_for_each_new_turn_not_initialization(
                 result = await runtime._memory_service.wait()
                 assert result.claimed == count
                 assert calls == [runtime.thread_id] * count
-            with sqlite3.connect(tmp_path / "sessions.db") as db:
+            with contextlib.closing(sqlite3.connect(tmp_path / "sessions.db")) as db:
                 assert db.execute(
                     "SELECT memory_mode FROM threads WHERE id=?", (runtime.thread_id,)
                 ).fetchone() == ("enabled" if generate else "disabled",)
@@ -363,7 +364,7 @@ def test_real_worker_stream_closes_before_claim_and_repository_release(
         closing = None
 
         def job():
-            with sqlite3.connect(tmp_path / "sessions.db") as db:
+            with contextlib.closing(sqlite3.connect(tmp_path / "sessions.db")) as db:
                 return db.execute(
                     "SELECT status, ownership_token FROM memory_jobs "
                     "WHERE kind='memory_consolidate_global'"
@@ -424,7 +425,7 @@ def test_explicit_background_pause_is_independent_of_source_eligibility(
         try:
             await complete_turn(runtime)
             assert await runtime._memory_service.wait() is None
-            with sqlite3.connect(tmp_path / "sessions.db") as db:
+            with contextlib.closing(sqlite3.connect(tmp_path / "sessions.db")) as db:
                 assert db.execute(
                     "SELECT memory_mode FROM threads WHERE id=?", (runtime.thread_id,)
                 ).fetchone() == ("enabled" if generate else "disabled",)

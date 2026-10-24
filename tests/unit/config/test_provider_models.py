@@ -109,7 +109,7 @@ def test_missing_provider_never_inherits_current_credentials(configured):
     assert settings.api_key == "key-a"
 
 
-@pytest.mark.parametrize("default", [None, {"model": []}, {"provider": "a", "model": "typo"}])
+@pytest.mark.parametrize("default", [None, {"model": []}, {"provider": "a", "model": []}])
 def test_invalid_defaults_fail_before_client_creation(configured, default):
     path, _ = configured
     document = loads(path.read_text())
@@ -157,8 +157,8 @@ def test_alias_conflicts_fail_and_missing_default_identity_is_not_an_empty_profi
     document["providers"]["a"].pop("aliases")
     document["default"]["provider"] = "default"
     path.write_text(json.dumps(document))
-    with pytest.raises(ValueError, match="unavailable"):
-        CorkiSettings.for_directory(path.parent, config_file=path)
+    fallback = CorkiSettings.for_directory(path.parent, config_file=path)
+    assert (fallback.provider_id, fallback.model) == ("a", "shared")
 
 
 @pytest.mark.parametrize("trusted", [True, False])
@@ -195,3 +195,54 @@ def test_removed_profile_does_not_get_recreated_without_credentials(configured):
     with pytest.raises(ValueError, match="no longer configured"):
         save_model_default(path, "b", "shared", "low")
     assert path.read_bytes() == before
+
+
+def test_no_default_uses_first_provider_and_model_without_writing_file(tmp_path):
+    path = tmp_path / "settings.json"
+    document = {"providers": {
+        "z-first": {"api_key": "first-fixture", "base_url": "https://first.example.invalid", "models": {"model-first": {}, "model-second": {}}},
+        "a-second": {"api_key": "second-fixture", "models": {"other": {}}},
+    }}
+    path.write_text(json.dumps(document))
+    original = path.read_text()
+    settings = CorkiSettings.for_directory(tmp_path, config_file=path)
+    assert (settings.provider_id, settings.model, settings.api_key) == ("z-first", "model-first", "first-fixture")
+    assert path.read_text() == original
+    selected = CorkiSettings.for_directory(tmp_path, config_file=path, provider="a-second")
+    assert selected.provider_id == "a-second" and selected.model == "other"
+    document["default"] = {"provider": "a-second", "model": "other"}
+    path.write_text(json.dumps(document))
+    assert CorkiSettings.for_directory(tmp_path, config_file=path).provider_id == "a-second"
+
+
+def test_implicit_default_skips_closed_providers_and_all_closed_stays_blocked(tmp_path):
+    path = tmp_path / "settings.json"
+    document = {"providers": {
+        "closed": {"enabled": False, "models": {"first": {}}},
+        "available": {"models": {"second": {}}},
+    }}
+    path.write_text(json.dumps(document))
+    assert CorkiSettings.for_directory(tmp_path, config_file=path).provider_id == "available"
+    document["providers"]["available"]["enabled"] = False
+    path.write_text(json.dumps(document))
+    assert CorkiSettings.for_directory(tmp_path, config_file=path).provider_enabled is False
+
+
+@pytest.mark.parametrize("default", [
+    {}, {"provider": "closed", "model": "old"},
+    {"provider": "removed", "model": "old"},
+    {"provider": "z-first"}, {"provider": "z-first", "model": "removed"},
+])
+def test_unavailable_default_falls_back_without_rewriting_config(tmp_path, default):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"default": default, "providers": {
+        "closed": {"enabled": False, "models": {"old": {}}},
+        "z-first": {"models": {"first-model": {}, "second-model": {}}},
+        "a-second": {"models": {"other-model": {}}},
+    }}))
+    original = path.read_bytes()
+    settings = CorkiSettings.for_directory(tmp_path, config_file=path)
+    assert (settings.provider_id, settings.model) == ("z-first", "first-model")
+    assert path.read_bytes() == original
+    explicit = CorkiSettings.for_directory(tmp_path, config_file=path, provider="closed")
+    assert explicit.provider_id == "closed" and not explicit.provider_enabled

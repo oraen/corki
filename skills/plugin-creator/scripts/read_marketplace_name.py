@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from identifier_validation import validate_marketplace_name
+from identifier_validation import configure_stdio, validate_marketplace_name
 
 
 def default_marketplace_path() -> Path:
@@ -33,9 +33,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    configure_stdio()
     args = parse_args()
     marketplace_path = Path(args.marketplace_path).expanduser().resolve()
-    payload = json.loads(marketplace_path.read_text(encoding="utf-8"))
+    payload = json.loads(marketplace_path.read_text(encoding="utf-8-sig"))
     if not isinstance(payload, dict):
         raise ValueError(f"{marketplace_path} must contain a JSON object.")
     name = payload.get("name")

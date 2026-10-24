@@ -5,6 +5,7 @@ import base64
 import json
 import sqlite3
 import time
+from contextlib import closing
 
 import pytest
 from memory_evidence import inspect_worker_evidence
@@ -73,7 +74,7 @@ def test_runtime_consolidation_receives_named_change_and_cold_recall(
                 if len(memories) == 2 and failure == "model":
                     raise RuntimeError("injected consolidation failure")
                 if len(memories) == 2 and failure == "lost_owner":
-                    with sqlite3.connect(database) as db:
+                    with closing(sqlite3.connect(database)) as db, db:
                         db.execute(
                             "UPDATE memory_jobs SET ownership_token='new-owner' "
                             "WHERE job_key='global'"
@@ -136,7 +137,7 @@ def test_runtime_consolidation_receives_named_change_and_cold_recall(
 
         assert (await run()).consolidated
         old_baseline = git_baseline.read(root)
-        with sqlite3.connect(database) as db:
+        with closing(sqlite3.connect(database)) as db, db:
             old_watermarks = db.execute(
                 "SELECT completed_watermark, input_watermark FROM memory_jobs "
                 "WHERE job_key='global'"
@@ -155,7 +156,7 @@ def test_runtime_consolidation_receives_named_change_and_cold_recall(
                 # The detail file was replaced before the summary failed.
                 # Neither rollback nor all-files atomic publication is promised.
                 assert "CURRENT_ONLY" in (root / "MEMORY.md").read_text()
-                with sqlite3.connect(database) as db:
+                with closing(sqlite3.connect(database)) as db, db:
                     status, completed, pending = db.execute(
                         "SELECT status, completed_watermark, input_watermark FROM memory_jobs "
                         "WHERE job_key='global'"

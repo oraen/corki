@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 import httpx
 import pytest
@@ -153,7 +154,7 @@ def test_exact_result_survives_runtime_ledger_and_restart(
                     and record.getMessage().endswith(": " + canonical)
                     for record in caplog.records
                 )
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 (encoded,) = db.execute(
                     "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs::read'"
                 ).fetchone()
@@ -172,7 +173,7 @@ def test_exact_result_survives_runtime_ledger_and_restart(
             events = [event async for event in runtime.stream("continue")]
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert len(calls) == 1 and len(requests) == 3
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 assert (
                     db.execute(
                         "SELECT result_json FROM tool_executions WHERE tool_name='mcp__docs::read'"

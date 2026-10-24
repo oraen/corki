@@ -24,6 +24,12 @@ function ProcessGroup({
       className="process-group"
       open={open}
       onClickCapture={(event) => {
+        // The avatar shares the summary's layout, but is not a toggle target.
+        if ((event.target as Element).closest(".process-heading > .turn-avatar")) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         const summary = (event.target as Element).closest("summary");
         if (!summary) return;
         const details = summary.parentElement as HTMLDetailsElement;

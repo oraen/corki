@@ -62,11 +62,13 @@ def test_runtime_recalls_context_skill_and_continuous_memory_in_codex_order(
     )
 
     async def scenario() -> tuple[tuple[object, ...], tuple[object, ...]]:
-        first = tuple([event async for event in runtime.stream("use $demo-recall now")])
-        second = tuple([event async for event in runtime.stream("remember the prior answer")])
-        stored = await repository.load_items(runtime.thread_id)
-        await runtime.aclose()
-        return (*first, *second), stored
+        try:
+            first = tuple([event async for event in runtime.stream("use $demo-recall now")])
+            second = tuple([event async for event in runtime.stream("remember the prior answer")])
+            stored = await repository.load_items(runtime.thread_id)
+            return (*first, *second), stored
+        finally:
+            await runtime.aclose()
 
     events, stored = asyncio.run(scenario())
 
@@ -169,9 +171,10 @@ def test_runtime_seals_handlers_and_rejects_unadvertised_tool_call(tmp_path: Pat
     )
 
     async def scenario() -> tuple[object, ...]:
-        events = tuple([event async for event in runtime.stream("try a late tool")])
-        await runtime.aclose()
-        return events
+        try:
+            return tuple([event async for event in runtime.stream("try a late tool")])
+        finally:
+            await runtime.aclose()
 
     events = asyncio.run(scenario())
 

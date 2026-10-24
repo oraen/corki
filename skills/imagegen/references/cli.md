@@ -13,12 +13,28 @@ The word `batch` in a user request is not CLI opt-in by itself.
 Real API calls require **network access** + `OPENAI_API_KEY`. `--dry-run` does not.
 
 ## Quick start (works from any repo)
-Set a stable path to the skill CLI (default `CODEX_HOME` is `~/.codex`):
+Resolve `scripts/image_gen.py` relative to this installed skill's directory.
+Use the path supplied by Corki's skill discovery, including a custom
+`CORKI_HOME`; do not search another agent's installation. Detect a working
+Python 3 interpreter (`python` below may be `python3` or an absolute path).
 
+POSIX shell:
+
+```bash
+IMAGE_GEN="<installed-skill-directory>/scripts/image_gen.py"
 ```
-export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
-export IMAGE_GEN="$CODEX_HOME/skills/.system/imagegen/scripts/image_gen.py"
+
+PowerShell:
+
+```powershell
+$IMAGE_GEN = Join-Path '<installed-skill-directory>' 'scripts/image_gen.py'
+python "$IMAGE_GEN" generate --prompt "Test" --out output/imagegen/test.png --dry-run
 ```
+
+The multiline commands below use POSIX `\` continuation. In PowerShell write
+the command on one line or pass an argument array; do not paste Bash
+continuations, `export`, or heredocs into PowerShell. For an absolute Python
+executable path use `& 'path-to-python.exe' ...`.
 
 Install dependencies into that environment with its package manager. In uv-managed environments, `uv pip install ...` remains the preferred path.
 
@@ -222,7 +238,13 @@ rm -f tmp/imagegen/prompts.jsonl
 
 Notes:
 - `generate-batch` requires `--out-dir`.
-- generate-batch requires --out-dir.
+- The batch recipe above is POSIX-specific. On Windows create the directories
+  with `New-Item -ItemType Directory -Force`, write the JSONL as UTF-8 without
+  a BOM, and invoke the same `generate-batch` arguments on one line. In
+  Windows PowerShell 5 use `[System.IO.File]::WriteAllText($path, $jsonl,
+  [System.Text.UTF8Encoding]::new($false))`; default redirection can produce
+  UTF-16 and `Set-Content -Encoding UTF8` adds a BOM. Delete only the temporary
+  input with `Remove-Item -LiteralPath $path` after the command completes.
 - Use `--concurrency` to control parallelism (default `5`).
 - Per-job overrides are supported in JSONL (for example `size`, `quality`, `background`, `output_format`, `output_compression`, `moderation`, `n`, `model`, `out`, and prompt-augmentation fields).
 - `--n` generates multiple variants for a single prompt; `generate-batch` is for many different prompts.

@@ -2,11 +2,10 @@
 
 import asyncio
 import json
-import shlex
-import sys
 from dataclasses import replace
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -28,13 +27,10 @@ def test_json_hook_file_enters_runtime_with_independent_approval(tmp_path, case)
         user = tmp_path / "user.toml"
 
         def command(label):
-            return shlex.join(
-                [
-                    sys.executable,
-                    "-c",
-                    "from pathlib import Path; "
-                    f"Path('hook-calls').open('a').write({label!r}+'\\n'); print('{{}}')",
-                ]
+            return python_command(
+                tmp_path,
+                "from pathlib import Path; "
+                f"Path('hook-calls').open('a').write({label!r}+'\\n'); print('{{}}')",
             )
 
         handler = {"type": "command", "command": command("json")}

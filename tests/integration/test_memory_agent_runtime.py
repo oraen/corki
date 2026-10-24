@@ -1,11 +1,12 @@
 import asyncio
+import contextlib
 import json
 import shlex
-import shutil
 import sqlite3
 import sys
 
 import pytest
+from platform_commands import python_command
 
 from corki.code_mode.service import CodeModeService
 from corki.config import CorkiSettings
@@ -13,6 +14,7 @@ from corki.core import LangGraphRuntime
 from corki.memory import git_baseline, workspace
 from corki.memory.artifacts import write_baseline
 from corki.models import ModelCompleted, ModelItemCompleted
+from corki.platforms.cleanup import remove_owned_tree
 from corki.protocol.events import TurnCompleted
 from corki.protocol.ids import new_tool_call_id
 from corki.protocol.items import (
@@ -139,18 +141,23 @@ def test_file_editing_worker_repairs_tool_error_verifies_and_recalls(
             "*** Delete File: skills/old/SKILL.md\n*** End Patch"
         )
         verify = (
-            "from pathlib import Path; "
+            "from pathlib import Path; import os; "
             "assert 'SOURCE_EVIDENCE' in Path('MEMORY.md').read_text(); "
             "assert Path('memory_summary.md').read_text().startswith('v1\\n'); "
-            "Path('skills/verify/scripts/check.sh').chmod(0o700); "
+            "Path('skills/verify/scripts/check.sh').chmod(0o700) if os.name != 'nt' else None; "
             "Path('skills/verify/asset.bin').write_bytes(bytes([255, 0, 254])); "
             "print('VERIFIED')"
+        )
+        verify_command = (
+            python_command(tmp_path, verify)
+            if sys.platform == "win32"
+            else shlex.join([sys.executable, "-c", verify])
         )
         operations = [
             ("unavailable_tool", {}),
             ("exec_command", {"cmd": "cat extensions/team/source.txt", "login": False}),
             ("apply_patch", {"patch": patch}),
-            ("exec_command", {"cmd": shlex.join([sys.executable, "-c", verify]), "login": False}),
+            ("exec_command", {"cmd": verify_command, "login": False}),
         ]
 
         class Main:
@@ -234,7 +241,10 @@ def test_file_editing_worker_repairs_tool_error_verifies_and_recalls(
             assert "SOURCE_EVIDENCE" in memory and "AKIAABCDEFGHIJKLMNOP" in memory
             assert source.read_text() == "SOURCE_EVIDENCE" and not obsolete.exists()
             assert (root / "skills/verify/asset.bin").read_bytes() == bytes([255, 0, 254])
-            assert (root / "skills/verify/scripts/check.sh").stat().st_mode & 0o111
+            script = root / "skills/verify/scripts/check.sh"
+            assert script.read_text(encoding="utf-8") == "echo SOURCE_EVIDENCE\n"
+            if sys.platform != "win32":
+                assert script.stat().st_mode & 0o111
             prefix = await runtime._repository.load_items(runtime.thread_id)
             assert isinstance([e async for e in runtime.compact()][-1], TurnCompleted)
             assert isinstance([e async for e in runtime.stream("recall")][-1], TurnCompleted)
@@ -318,7 +328,7 @@ def test_unconfirmed_child_shutdown_keeps_lease_even_during_stop(
                     await task
             else:
                 assert (await task).failed == 1
-            with sqlite3.connect(database) as db:
+            with contextlib.closing(sqlite3.connect(database)) as db, db:
                 status, token = db.execute(
                     "SELECT status,ownership_token FROM memory_jobs WHERE job_key='global'"
                 ).fetchone()
@@ -331,7 +341,7 @@ def test_unconfirmed_child_shutdown_keeps_lease_even_during_stop(
             release.set()
             await original_close(runtime)
             for path in children:
-                shutil.rmtree(path)  # Only fixture-owned copies; the real child was closed above.
+                remove_owned_tree(path)  # Fixture-owned copies; the real child was closed above.
 
     asyncio.run(scenario())
 
@@ -407,7 +417,7 @@ def test_file_editing_child_preserves_side_effects_without_false_success(
                     entered.set()
                     await asyncio.Event().wait()
                 if failure == "lost_owner":
-                    with sqlite3.connect(database) as db:
+                    with contextlib.closing(sqlite3.connect(database)) as db, db:
                         db.execute(
                             "UPDATE memory_jobs SET ownership_token='successor' "
                             "WHERE job_key='global'"
@@ -419,7 +429,7 @@ def test_file_editing_child_preserves_side_effects_without_false_success(
 
                     monkeypatch.setattr(git_baseline, "reset", fail_baseline)
                 if failure.startswith("database_success"):
-                    with sqlite3.connect(database) as db:
+                    with contextlib.closing(sqlite3.connect(database)) as db, db:
                         db.execute(
                             "CREATE TRIGGER reject_memory_success BEFORE UPDATE ON memory_jobs "
                             "WHEN NEW.job_key='global' AND NEW.status='succeeded' "
@@ -477,7 +487,7 @@ def test_file_editing_child_preserves_side_effects_without_false_success(
                 assert git_baseline.read(root) == baseline
                 assert source.read_text() == "source\n"
             if failure == "baseline_commit" or failure.startswith("database_success"):
-                with sqlite3.connect(database) as db:
+                with contextlib.closing(sqlite3.connect(database)) as db, db:
                     row = db.execute(
                         "SELECT status, completed_watermark, ownership_token FROM memory_jobs "
                         "WHERE job_key='global'"
@@ -486,7 +496,7 @@ def test_file_editing_child_preserves_side_effects_without_false_success(
             if failure.startswith("database_success"):
                 published = git_baseline.read(root)
                 assert runtime._memory_service._model.count == 2
-                with sqlite3.connect(database) as db:
+                with contextlib.closing(sqlite3.connect(database)) as db, db:
                     db.execute("DROP TRIGGER reject_memory_success")
                     # Advance only this fixture's retry eligibility, without
                     # changing the failed status or either watermark.
@@ -508,7 +518,7 @@ def test_file_editing_child_preserves_side_effects_without_false_success(
                 assert not retried.consolidated
                 assert git_baseline.read(root) == published
                 assert (root / "MEMORY.md").read_text() == "v1\nnew\n"
-                with sqlite3.connect(database) as db:
+                with contextlib.closing(sqlite3.connect(database)) as db, db:
                     row = db.execute(
                         "SELECT status, completed_watermark=input_watermark, ownership_token "
                         "FROM memory_jobs WHERE job_key='global'"

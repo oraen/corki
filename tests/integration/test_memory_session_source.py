@@ -1,6 +1,7 @@
 """Historical source eligibility and current startup authority are separate contracts."""
 
 import asyncio
+import contextlib
 import sqlite3
 import threading
 
@@ -133,7 +134,7 @@ def test_layout_failure_is_background_only_and_precedes_claims(tmp_path, monkeyp
             assert any(
                 "fixture layout denied" in warning for warning in runtime._memory_service.warnings
             )
-            with sqlite3.connect(database) as db:
+            with contextlib.closing(sqlite3.connect(database)) as db:
                 assert db.execute("SELECT COUNT(*) FROM memory_jobs").fetchone() == (0,)
         finally:
             await runtime.aclose()
@@ -355,7 +356,7 @@ def test_shutdown_joins_cancelled_layout_worker_before_closing_storage(tmp_path,
             await asyncio.wait_for(closing, 2)
             assert finished.is_set() and repository_closed.is_set() and cancelled.is_set()
             assert worker.cancelled()
-            with sqlite3.connect(tmp_path / "history.db") as db:
+            with contextlib.closing(sqlite3.connect(tmp_path / "history.db")) as db:
                 assert db.execute("SELECT COUNT(*) FROM memory_jobs").fetchone() == (0,)
         finally:
             release.set()

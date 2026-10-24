@@ -1,6 +1,14 @@
 """Validate plugin and marketplace identifiers before using them in commands."""
 
 import re
+import sys
+
+
+def configure_stdio() -> None:
+    """Keep standalone CLI output readable through Windows pipes."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
 def validate_plugin_identifier(plugin_name: str) -> None:

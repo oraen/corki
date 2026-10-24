@@ -4,6 +4,7 @@ import asyncio
 import json
 import sqlite3
 import threading
+from contextlib import closing
 from dataclasses import replace
 
 import pytest
@@ -38,7 +39,7 @@ def test_legacy_failure_default_counter_allows_idempotent_commit(tmp_path):
         thread, turn = new_thread_id(), new_turn_id()
         await repository.create_thread(thread, tmp_path)
         payload = {"message": "lost", "kind": "transport", "retryable": True, "retries_used": 2}
-        with sqlite3.connect(repository.path) as connection:
+        with closing(sqlite3.connect(repository.path)) as connection, connection:
             connection.execute(
                 "INSERT INTO model_failures VALUES (?, ?, ?, ?)",
                 (thread, turn, 0, json.dumps(payload)),
@@ -46,7 +47,7 @@ def test_legacy_failure_default_counter_allows_idempotent_commit(tmp_path):
         failure = await repository.load_model_failure(thread, turn, 0)
         assert failure.connection_retries_used == 0
         await repository.save_model_failure(thread, turn, 0, failure)
-        with sqlite3.connect(repository.path) as connection:
+        with closing(sqlite3.connect(repository.path)) as connection, connection:
             row = connection.execute("SELECT payload_json FROM model_failures").fetchone()
             assert json.loads(row[0]) == payload
 
@@ -65,7 +66,7 @@ def test_legacy_payment_failure_keeps_fact_but_disables_retry(tmp_path):
             "retries_used": 2,
             "status_code": 402,
         }
-        with sqlite3.connect(repository.path) as connection:
+        with closing(sqlite3.connect(repository.path)) as connection, connection:
             connection.execute(
                 "INSERT INTO model_failures VALUES (?, ?, ?, ?)",
                 (thread, turn, 0, json.dumps(payload)),
@@ -75,7 +76,7 @@ def test_legacy_payment_failure_keeps_fact_but_disables_retry(tmp_path):
         assert failure.error().retryable is False
         assert str(failure.error()) == payload["message"]
         await repository.save_model_failure(thread, turn, 0, failure)
-        with sqlite3.connect(repository.path) as connection:
+        with closing(sqlite3.connect(repository.path)) as connection, connection:
             row = connection.execute("SELECT payload_json FROM model_failures").fetchone()
             assert json.loads(row[0]) == payload
 

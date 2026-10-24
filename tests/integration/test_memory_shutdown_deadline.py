@@ -1,13 +1,13 @@
 import asyncio
 import json
 import shlex
-import shutil
 import sqlite3
 import sys
 import traceback
-from contextlib import suppress
+from contextlib import closing, suppress
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -48,11 +48,17 @@ def test_timeout_retains_worker_and_terminal_without_late_publication(
 
         monkeypatch.setattr(sqlite3, "connect", diagnostic_connect)
         root, database = tmp_path / "memories", tmp_path / "sessions.db"
+        source = "import time; time.sleep(60)"
+        command = (
+            python_command(tmp_path, source)
+            if sys.platform == "win32"
+            else shlex.join([sys.executable, "-c", source])
+        )
         monkeypatch.setattr("corki.memory.agent._SHUTDOWN_TIMEOUT_SECONDS", 0.03, raising=False)
         original_blocking = agent._blocking
 
         async def blocking(function, *args):
-            if function is shutil.rmtree and late_failure == "copy":
+            if function is agent.remove_owned_tree and late_failure == "copy":
                 raise OSError("injected copy cleanup failure")
             return await original_blocking(function, *args)
 
@@ -78,9 +84,7 @@ def test_timeout_retains_worker_and_terminal_without_late_publication(
                         new_tool_call_id(),
                         "exec_command",
                         {
-                            "cmd": shlex.join(
-                                [sys.executable, "-c", "import time; time.sleep(60)"]
-                            ),
+                            "cmd": command,
                             "login": False,
                             "yield_time_ms": 250,
                         },
@@ -146,7 +150,7 @@ def test_timeout_retains_worker_and_terminal_without_late_publication(
             assert len(retained) == 1 and retained[0].status == "closing"
             copy = retained[0].working_copy
             assert copy.exists() and children[0]._process_manager.list_background_terminals()
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 before = db.execute(
                     "SELECT status,ownership_token FROM memory_jobs WHERE job_key='global'"
                 ).fetchone()
@@ -171,7 +175,7 @@ def test_timeout_retains_worker_and_terminal_without_late_publication(
             from corki.memory import git_baseline
 
             assert "MEMORY.md" not in git_baseline.read(root)
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 assert (
                     db.execute(
                         "SELECT status,ownership_token FROM memory_jobs WHERE job_key='global'"
@@ -187,7 +191,8 @@ def test_timeout_retains_worker_and_terminal_without_late_publication(
             await original_close(runtime)
             for copy in memory_worker_state_dirs:
                 if copy.exists():
-                    shutil.rmtree(copy)  # Fixture-confirmed close; never an unverified live worker.
+                    # Fixture-confirmed close; never an unverified live worker.
+                    agent.remove_owned_tree(copy)
             # The injected wrapper/copy failures are fixture-owned; actual Runtime
             # close was explicitly confirmed above before dropping diagnostic records.
             owner = runtime._memory_service._agent_shutdowns

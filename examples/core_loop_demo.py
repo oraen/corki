@@ -8,6 +8,8 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from _commands import python_script_command
+
 from corki.config import CorkiSettings
 from corki.config.instructions import ProjectInstructionsConfig
 from corki.core import LangGraphRuntime
@@ -19,6 +21,7 @@ from corki.protocol.items import (
     AssistantMessageItem,
     ContextItem,
     ToolCallItem,
+    ToolResultItem,
     UserMessageItem,
     new_step_id,
 )
@@ -44,8 +47,9 @@ def _tool_item(
 class DemoModel:
     """Return a fixed inspect/plan/edit/verify/final sequence."""
 
-    def __init__(self) -> None:
+    def __init__(self, workspace: Path) -> None:
         self.requests: list[ModelRequest] = []
+        self.workspace = workspace
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelEvent]:
         self.requests.append(request)
@@ -72,7 +76,7 @@ class DemoModel:
                         request,
                         "inspect-1",
                         "exec_command",
-                        {"cmd": "printf harness-inspected"},
+                        python_script_command(self.workspace, "demo-inspect.py", "print('harness-inspected')"),
                         step_id,
                     ),
                 )
@@ -101,7 +105,10 @@ class DemoModel:
                         request,
                         "verify-1",
                         "exec_command",
-                        {"cmd": "test -f demo.txt && printf harness-verified"},
+                        python_script_command(
+                            self.workspace, "demo-verify.py",
+                            "from pathlib import Path\nassert Path('demo.txt').is_file()\nprint('harness-verified')",
+                        ),
                         new_step_id(),
                     ),
                 )
@@ -120,7 +127,7 @@ class DemoModel:
 async def _run(workspace: Path) -> dict[str, object]:
     (workspace / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
     (workspace / "AGENTS.md").write_text("DEMO_PROJECT_INSTRUCTION", encoding="utf-8")
-    model = DemoModel()
+    model = DemoModel(workspace)
     runtime = await LangGraphRuntime.acreate(
         settings=CorkiSettings(
             working_directory=workspace,
@@ -134,9 +141,11 @@ async def _run(workspace: Path) -> dict[str, object]:
         home_path=workspace / ".runtime",
         model=model,
     )
-    first = [event async for event in runtime.stream("create and verify demo.txt")]
-    second = [event async for event in runtime.stream("what did you just do?")]
-    await runtime.aclose()
+    try:
+        first = [event async for event in runtime.stream("create and verify demo.txt")]
+        second = [event async for event in runtime.stream("what did you just do?")]
+    finally:
+        await runtime.aclose()
 
     first_request = model.requests[0]
     first_user = next(
@@ -157,6 +166,10 @@ async def _run(workspace: Path) -> dict[str, object]:
         "what did you just do?",
     ], remembered_messages
     assert (workspace / "demo.txt").read_text(encoding="utf-8") == "created by core loop demo\n"
+    results = [item for item in model.requests[-1].items if isinstance(item, ToolResultItem)]
+    assert all(not item.is_error for item in results), results
+    assert any("harness-inspected" in item.content for item in results), results
+    assert any("harness-verified" in item.content for item in results), results
     assert isinstance(first[-1], TurnCompleted) and isinstance(second[-1], TurnCompleted)
 
     return {

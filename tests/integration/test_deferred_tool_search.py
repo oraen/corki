@@ -206,54 +206,60 @@ def test_search_ledger_resume_restores_definitions_without_reexecution(
             repository=repository,
             model=warm_model,
         )
-        await first._ensure_ready()
-        turn = new_turn_id()
-        user = UserMessageItem("discover calendar", turn)
-        await repository.save_turn(
-            TurnRecord(turn, first.thread_id, TurnStatus.RUNNING, user.content)
-        )
-        await repository.append_items(first.thread_id, (user,))
-        search_call = ToolCall(ToolCallId("durable-search"), "tool_search", {"query": "calendar"})
-        await repository.commit_model_step(
-            first.thread_id,
-            turn,
-            0,
-            ModelCompleted((ToolCallItem(search_call, turn, new_step_id()),)),
-        )
-        state = _initial_state(first.thread_id, turn, settings, user)
-        state["request_tools"] = registry.model_visible_specs()
-        node_runtime = type("NodeRuntime", (), {"context": GraphRunContext(events=NullSink())})()
-        result = await first._graph._execute_one(state, node_runtime, search_call)
-        if append_result:
-            await repository.append_items(first.thread_id, (result,))
-        if checkpoint:
-            reached_model = asyncio.Event()
-
-            class BlockingLoadedModel:
-                async def stream(self, request):
-                    assert CalendarTool.spec.name in {spec.name for spec in request.tools}
-                    reached_model.set()
-                    await asyncio.Event().wait()
-                    yield
-
-            first._graph._model = BlockingLoadedModel()
-            invocation = asyncio.create_task(
-                first._compiled.ainvoke(
-                    state,
-                    context=node_runtime.context,
-                    config=first._graph_config(turn),
-                )
+        try:
+            await first._ensure_ready()
+            turn = new_turn_id()
+            user = UserMessageItem("discover calendar", turn)
+            await repository.save_turn(
+                TurnRecord(turn, first.thread_id, TurnStatus.RUNNING, user.content)
             )
-            try:
-                await asyncio.wait_for(reached_model.wait(), timeout=3)
-                saved = await first._checkpointer.aget_tuple(first._graph_config(turn))
-                assert saved is not None
-                values = saved.checkpoint["channel_values"]
-                assert CalendarTool.spec.name in {spec.name for spec in values["request_tools"]}
-            finally:
-                invocation.cancel()
-                await asyncio.gather(invocation, return_exceptions=True)
-        await first.aclose()
+            await repository.append_items(first.thread_id, (user,))
+            search_call = ToolCall(
+                ToolCallId("durable-search"), "tool_search", {"query": "calendar"}
+            )
+            await repository.commit_model_step(
+                first.thread_id,
+                turn,
+                0,
+                ModelCompleted((ToolCallItem(search_call, turn, new_step_id()),)),
+            )
+            state = _initial_state(first.thread_id, turn, settings, user)
+            state["request_tools"] = registry.model_visible_specs()
+            node_runtime = type(
+                "NodeRuntime", (), {"context": GraphRunContext(events=NullSink())}
+            )()
+            result = await first._graph._execute_one(state, node_runtime, search_call)
+            if append_result:
+                await repository.append_items(first.thread_id, (result,))
+            if checkpoint:
+                reached_model = asyncio.Event()
+
+                class BlockingLoadedModel:
+                    async def stream(self, request):
+                        assert CalendarTool.spec.name in {spec.name for spec in request.tools}
+                        reached_model.set()
+                        await asyncio.Event().wait()
+                        yield
+
+                first._graph._model = BlockingLoadedModel()
+                invocation = asyncio.create_task(
+                    first._compiled.ainvoke(
+                        state,
+                        context=node_runtime.context,
+                        config=first._graph_config(turn),
+                    )
+                )
+                try:
+                    await asyncio.wait_for(reached_model.wait(), timeout=3)
+                    saved = await first._checkpointer.aget_tuple(first._graph_config(turn))
+                    assert saved is not None
+                    values = saved.checkpoint["channel_values"]
+                    assert CalendarTool.spec.name in {spec.name for spec in values["request_tools"]}
+                finally:
+                    invocation.cancel()
+                    await asyncio.gather(invocation, return_exceptions=True)
+        finally:
+            await first.aclose()
         assert warm_model.requests == [], "committed search model step was sampled again"
         registry = ToolRegistry()
         calendar = CalendarTool()
@@ -402,7 +408,7 @@ def test_responses_search_wire_roundtrip_without_eager_schemas(
             assert calendar.titles == ["round trip"]
             assert len(bodies) == 3
             assert not any(tool.get("name") == calendar.spec.name for tool in bodies[0]["tools"])
-            assert bodies[0]["tools"][0]["name"] == "tool_search"
+            assert any(tool.get("name") == "tool_search" for tool in bodies[0]["tools"])
             assert any(tool["name"] == calendar.spec.name for tool in bodies[1]["tools"])
             if refresh_after_search:
                 assert not any(

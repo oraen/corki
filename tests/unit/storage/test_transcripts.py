@@ -61,7 +61,7 @@ def test_concurrent_repository_writers_publish_one_canonical_sequence(tmp_path):
         inode = path.stat().st_ino
         items = tuple(UserMessageItem(f"item-{i}", new_turn_id()) for i in range(32))
         try:
-            with path.open() as reader:
+            with path.open(encoding="utf-8") as reader:
                 metadata = json.loads(reader.readline())
                 await asyncio.gather(
                     *(
@@ -117,7 +117,7 @@ asyncio.run(main())
 """
         processes = []
         try:
-            with path.open() as reader:
+            with path.open(encoding="utf-8") as reader:
                 reader.readline()
                 for label in ("first", "second"):
                     processes.append(
@@ -186,7 +186,7 @@ def test_pending_publication_survives_cold_open_and_legacy_upgrade(tmp_path, mon
         cold = SQLiteSessionRepository(database)
         # An unrelated business commit also retries durable outstanding work.
         await cold.create_thread(ThreadId("other"), tmp_path)
-        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
         assert [row["payload"]["content"] for row in rows[1:]] == [item.content]
         with cold._connect() as connection:
             assert connection.execute("SELECT * FROM transcript_pending").fetchall() == []
@@ -232,7 +232,7 @@ def test_cancellation_joins_post_commit_publication(tmp_path, monkeypatch):
             with pytest.raises(asyncio.CancelledError):
                 await writer
             await repository.close()
-        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
         assert [row["payload"]["content"] for row in rows[1:]] == [item.content]
 
     asyncio.run(scenario())
@@ -256,7 +256,7 @@ def test_fsync_failure_does_not_roll_back_commit_or_duplicate_retry(tmp_path, mo
         assert "publication failed" in caplog.text
         assert await repository.materialize_transcript(thread) == path
         await repository.append_items(thread, (item,))
-        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
         assert [row["payload"]["content"] for row in rows[1:]] == [item.content]
         await repository.close()
 
@@ -270,15 +270,26 @@ def test_materialized_transcript_follows_commits_and_cold_repository(tmp_path):
         thread = ThreadId("../opaque-thread")
         await repository.create_thread(thread, tmp_path, session_id=SessionId("different-session"))
         assert not database.with_name("history.db.transcripts").exists()
-        first = UserMessageItem("first", new_turn_id())
+        first = UserMessageItem("第一条 first", new_turn_id())
         await repository.append_items(thread, (first,))
         path = await repository.materialize_transcript(thread)
         assert path.parent == tmp_path / "history.db.transcripts"
-        assert path.stat().st_mode & 0o777 == 0o600
-        with path.open() as reader:
+        if os.name == "nt":
+            from corki.platforms.windows_acl import WindowsPrivateACL
+            from corki.platforms.windows_file_handles import WindowsFiles
+
+            files = WindowsFiles()
+            handle = files.open(path, access=0x20000)
+            try:
+                WindowsPrivateACL().verify(handle)
+            finally:
+                files.close(handle)
+        else:
+            assert path.stat().st_mode & 0o777 == 0o600
+        with path.open(encoding="utf-8") as reader:
             initial = [json.loads(line) for line in reader]
             assert initial[0]["session_id"] == "different-session"
-            assert initial[1]["payload"]["content"] == "first"
+            assert initial[1]["payload"]["content"] == "第一条 first"
             await repository.append_items(thread, (first,))
             assert reader.read() == ""
             await repository.close()
@@ -323,7 +334,7 @@ def test_projection_recovery_never_overwrites_foreign_content(tmp_path, failure,
         await repository.append_items(thread, (second,))
         assert await repository.load_items(thread) == (first, second)
         if failure == "partial":
-            rows = [json.loads(line) for line in path.read_text().splitlines()]
+            rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
             assert [row["payload"]["content"] for row in rows[1:]] == ["first", "second"]
         else:
             assert "publication failed" in caplog.text

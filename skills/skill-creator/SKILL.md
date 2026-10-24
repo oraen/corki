@@ -171,16 +171,27 @@ Create those resources only when their concrete benefit justifies them. If the u
 
 For a new skill, use the bundled initializer when it helps create the required files consistently:
 
-```bash
-scripts/init_skill.py <skill-name> --path <output-directory> [--resources scripts,references,assets] [--examples]
-```
-
-For example:
+Run the helpers with a detected Python 3 interpreter and resolve their paths relative to this skill's installed directory, not the user's working directory. Do not rely on executable permission bits or `.py` file associations. In the examples below, `python` means that detected interpreter; on macOS it may be `python3`, and in PowerShell an absolute executable path is invoked with `&`.
 
 ```bash
-scripts/init_skill.py my-skill --path "${CORKI_HOME:-$HOME/.corki}/skills"
-scripts/init_skill.py my-skill --path "${CORKI_HOME:-$HOME/.corki}/skills" --resources references
+python scripts/init_skill.py <skill-name> --path <output-directory> [--resources scripts,references,assets] [--examples]
 ```
+
+For example, from this skill's directory in a POSIX shell:
+
+```bash
+python3 scripts/init_skill.py my-skill --path "${CORKI_HOME:-$HOME/.corki}/skills"
+python3 scripts/init_skill.py my-skill --path "${CORKI_HOME:-$HOME/.corki}/skills" --resources references
+```
+
+In PowerShell, after detecting `python` as a working Python 3 interpreter:
+
+```powershell
+$corkiData = if ($env:CORKI_HOME) { $env:CORKI_HOME } else { Join-Path $HOME '.corki' }
+python scripts/init_skill.py my-skill --path (Join-Path $corkiData 'skills') --resources references
+```
+
+Use the same interpreter and installed-script path rules for `generate_openai_yaml.py` and `quick_validate.py`. The shell examples are alternatives; Bash parameter expansion is not PowerShell syntax.
 
 Request only the resource directories the skill needs. Use `--examples` only when concrete placeholders would help, and replace or remove them before finishing. Do not initialize an existing skill again.
 

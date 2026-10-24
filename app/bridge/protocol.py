@@ -10,6 +10,7 @@ from enum import Enum
 from pathlib import Path
 
 from live import SpooledText
+from pipe_reader import ThreadPipeReader
 
 MAX_FRAME = 2 * 1024 * 1024
 MAX_MESSAGE = 64 * 1024 * 1024
@@ -99,6 +100,7 @@ class Transport:
         writer.add_done_callback(lambda _: self.disconnected.set())
         tasks = set()
         reader_transport = None
+        thread_reader = None
         # A blocking executor readline cannot be cancelled when the parent closes
         # stdout but keeps stdin open. POSIX pipe readers must belong to the loop.
         if os.name != "nt":
@@ -110,9 +112,8 @@ class Transport:
             async def readline():
                 return await reader.readline()
         else:
-
-            async def readline():
-                return await asyncio.to_thread(sys.stdin.buffer.readline, MAX_FRAME + 1)
+            thread_reader = ThreadPipeReader(sys.stdin.buffer, MAX_FRAME + 1)
+            readline = thread_reader.readline
 
         async def handle(message):
             identity = message.get("id")
@@ -192,3 +193,5 @@ class Transport:
                 await asyncio.gather(writer, return_exceptions=True)
                 if reader_transport:
                     reader_transport.close()
+                if thread_reader:
+                    thread_reader.close()

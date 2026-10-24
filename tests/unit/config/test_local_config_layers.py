@@ -1,6 +1,7 @@
 """Layer ordering, source-relative paths and disabled-layer error semantics."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -128,14 +129,18 @@ def test_project_cannot_redirect_provider_or_execution_compiler(tmp_path):
     root, cwd, user = project(tmp_path)
     user.write_text(
         user.read_text()
-        + '[provider]\nbase_url="https://host.invalid/v1"\n[execution]\ncompiler="/host/compiler"\nprofile={type="read-only"}\n'
+        + '[provider]\nbase_url="https://host.invalid/v1"\n[execution]\ncompiler='
+        + json.dumps(str(tmp_path / "host compiler"))
+        + '\nprofile={type="read-only"}\n'
     )
     (root / ".corki/config.toml").write_text(
-        '[provider]\nbase_url="https://repository.invalid"\n[execution]\ncompiler="/repository/compiler"\n[agent]\nauto_compact_tokens=5\n'
+        '[provider]\nbase_url="https://repository.invalid"\n[execution]\ncompiler='
+        + json.dumps(str(tmp_path / "repository compiler"))
+        + '\n[agent]\nauto_compact_tokens=5\n'
     )
     settings = CorkiSettings.for_directory(cwd, config_file=user)
     assert settings.api_base == "https://host.invalid/v1"
-    assert settings.execution_permissions.compiler == Path("/host/compiler")
+    assert settings.execution_permissions.compiler == tmp_path / "host compiler"
     assert settings.auto_compact_tokens == 5
     assert any(
         "execution.compiler" in warning and "provider" in warning
@@ -170,6 +175,7 @@ def test_filters_merge_case_insensitively_but_validate_each_source(tmp_path):
         CorkiSettings.for_directory(cwd, config_file=user)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="WSL uses POSIX paths and case semantics")
 def test_layer_lookup_does_not_apply_active_project_wsl_folding(monkeypatch):
     path = Path("/mnt/C/Project")
     monkeypatch.setattr(project_trust.sys, "platform", "linux")

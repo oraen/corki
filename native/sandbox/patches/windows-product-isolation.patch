@@ -1,0 +1,364 @@
+--- a/codex-rs/windows-sandbox-rs/src/bin/command_runner/win.rs
++++ b/codex-rs/windows-sandbox-rs/src/bin/command_runner/win.rs
+@@ -77,7 +77,7 @@
+ use windows_sys::Win32::System::Threading::TerminateProcess;
+ use windows_sys::Win32::System::Threading::WaitForSingleObject;
+ 
+-const READ_ACL_MUTEX_NAME: &str = "Local\\CodexSandboxReadAcl";
++const READ_ACL_MUTEX_NAME: &str = "Local\\CorkiSandboxReadAcl";
+ const TERMINATION_WAIT_MS: u32 = 5_000;
+ const WAIT_TIMEOUT: u32 = 0x0000_0102;
+ 
+--- a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win/firewall.rs
++++ b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win/firewall.rs
+@@ -29,16 +29,16 @@
+ 
+ // This is the stable identifier we use to find/update the rule idempotently.
+ // It intentionally does not change between installs.
+-const OFFLINE_BLOCK_RULE_NAME: &str = "codex_sandbox_offline_block_outbound";
+-const OFFLINE_BLOCK_LOOPBACK_TCP_RULE_NAME: &str = "codex_sandbox_offline_block_loopback_tcp";
+-const OFFLINE_BLOCK_LOOPBACK_UDP_RULE_NAME: &str = "codex_sandbox_offline_block_loopback_udp";
++const OFFLINE_BLOCK_RULE_NAME: &str = "corki_sandbox_offline_block_outbound";
++const OFFLINE_BLOCK_LOOPBACK_TCP_RULE_NAME: &str = "corki_sandbox_offline_block_loopback_tcp";
++const OFFLINE_BLOCK_LOOPBACK_UDP_RULE_NAME: &str = "corki_sandbox_offline_block_loopback_udp";
+ 
+ // Friendly text shown in the firewall UI.
+-const OFFLINE_BLOCK_RULE_FRIENDLY: &str = "Codex Sandbox Offline - Block Non-Loopback Outbound";
++const OFFLINE_BLOCK_RULE_FRIENDLY: &str = "Corki Sandbox Offline - Block Non-Loopback Outbound";
+ const OFFLINE_BLOCK_LOOPBACK_TCP_RULE_FRIENDLY: &str =
+-    "Codex Sandbox Offline - Block Loopback TCP (Except Proxy)";
+-const OFFLINE_BLOCK_LOOPBACK_UDP_RULE_FRIENDLY: &str = "Codex Sandbox Offline - Block Loopback UDP";
+-const OFFLINE_PROXY_ALLOW_RULE_NAME: &str = "codex_sandbox_offline_allow_loopback_proxy";
++    "Corki Sandbox Offline - Block Loopback TCP (Except Proxy)";
++const OFFLINE_BLOCK_LOOPBACK_UDP_RULE_FRIENDLY: &str = "Corki Sandbox Offline - Block Loopback UDP";
++const OFFLINE_PROXY_ALLOW_RULE_NAME: &str = "corki_sandbox_offline_allow_loopback_proxy";
+ const LOOPBACK_REMOTE_ADDRESSES: &str = "127.0.0.0/8,::/127";
+ const NON_LOOPBACK_REMOTE_ADDRESSES: &str = "0.0.0.0-126.255.255.255,128.0.0.0-255.255.255.255,::,::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff";
+ 
+--- a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win/read_acl_mutex.rs
++++ b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win/read_acl_mutex.rs
+@@ -11,7 +11,7 @@
+ use windows_sys::Win32::System::Threading::OpenMutexW;
+ use windows_sys::Win32::System::Threading::ReleaseMutex;
+ 
+-const READ_ACL_MUTEX_NAME: &str = "Local\\CodexSandboxReadAcl";
++const READ_ACL_MUTEX_NAME: &str = "Local\\CorkiSandboxReadAcl";
+ 
+ pub(super) struct ReadAclMutexGuard {
+     handle: HANDLE,
+--- a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs
++++ b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs
+@@ -1144,8 +1144,8 @@
+     fn payload_json() -> serde_json::Value {
+         json!({
+             "version": SETUP_VERSION,
+-            "offline_username": "CodexSandboxOffline",
+-            "online_username": "CodexSandboxOnline",
++            "offline_username": "CorkiSandboxOffline",
++            "online_username": "CorkiSandboxOnline",
+             "codex_home": "C:\\codex-home",
+             "command_cwd": "C:\\workspace",
+             "read_roots": [],
+--- a/codex-rs/windows-sandbox-rs/src/desktop.rs
++++ b/codex-rs/windows-sandbox-rs/src/desktop.rs
+@@ -63,7 +63,7 @@
+ use windows_sys::Win32::System::StationsAndDesktops::DESKTOP_WRITEOBJECTS;
+ use windows_sys::Win32::System::StationsAndDesktops::OpenDesktopW;
+ 
+-const PRIVATE_DESKTOP_PREFIX: &str = "CodexSandboxDesktop-";
++const PRIVATE_DESKTOP_PREFIX: &str = "CorkiSandboxDesktop-";
+ 
+ const DESKTOP_ALL_ACCESS: u32 = DESKTOP_READOBJECTS
+     | DESKTOP_CREATEWINDOW
+@@ -346,7 +346,7 @@
+ impl PrivateDesktop {
+     fn create(logs_base_dir: Option<&Path>) -> Result<Self> {
+         let mut rng = SmallRng::from_entropy();
+-        let name = format!("CodexSandboxDesktop-{:x}", rng.r#gen::<u128>());
++        let name = format!("CorkiSandboxDesktop-{:x}", rng.r#gen::<u128>());
+         let name_wide = to_wide(&name);
+         let handle = unsafe {
+             CreateDesktopW(
+--- a/codex-rs/windows-sandbox-rs/src/desktop_tests.rs
++++ b/codex-rs/windows-sandbox-rs/src/desktop_tests.rs
+@@ -30,10 +30,10 @@
+     for name in [
+         "Default",
+         r"Winsta0\Default",
+-        "CodexSandboxDesktop-",
+-        r"CodexSandboxDesktop-abcd\Default",
+-        "CodexSandboxDesktop-abcd\0Default",
+-        "CodexSandboxDesktop-0123456789abcdef0123456789abcdef0",
++        "CorkiSandboxDesktop-",
++        r"CorkiSandboxDesktop-abcd\Default",
++        "CorkiSandboxDesktop-abcd\0Default",
++        "CorkiSandboxDesktop-0123456789abcdef0123456789abcdef0",
+     ] {
+         assert!(LaunchDesktop::open_private(name).is_err(), "{name:?}");
+     }
+--- a/codex-rs/windows-sandbox-rs/src/elevated/ipc_framed.rs
++++ b/codex-rs/windows-sandbox-rs/src/elevated/ipc_framed.rs
+@@ -207,7 +207,7 @@
+                     tty: false,
+                     stdin_open: false,
+                     use_private_desktop: true,
+-                    private_desktop_name: Some("CodexSandboxDesktop-1234".to_string()),
++                    private_desktop_name: Some("CorkiSandboxDesktop-1234".to_string()),
+                 }),
+             },
+         };
+@@ -226,7 +226,7 @@
+         assert_eq!(PermissionProfile::read_only(), payload.permission_profile);
+         assert_eq!(workspace_roots, payload.workspace_roots);
+         assert_eq!(
+-            Some("CodexSandboxDesktop-1234"),
++            Some("CorkiSandboxDesktop-1234"),
+             payload.private_desktop_name.as_deref()
+         );
+         assert_eq!(
+--- a/codex-rs/windows-sandbox-rs/src/provisioning_client.rs
++++ b/codex-rs/windows-sandbox-rs/src/provisioning_client.rs
+@@ -32,7 +32,7 @@
+ use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
+ use windows_sys::Win32::System::Services;
+ 
+-const SERVICE_NAME: &str = "CodexSandboxService";
++const SERVICE_NAME: &str = "CorkiSandboxService";
+ const PROVISIONING_TIMEOUT: Duration = Duration::from_secs(120);
+ 
+ impl WindowsSandboxProvisioningSettings {
+--- a/codex-rs/windows-sandbox-rs/src/provisioning_protocol.rs
++++ b/codex-rs/windows-sandbox-rs/src/provisioning_protocol.rs
+@@ -11,7 +11,7 @@
+ pub const PROVISIONING_PROTOCOL_VERSION: u8 = 1;
+ 
+ /// Named pipe used by the machine-wide Windows sandbox provisioning service.
+-pub const SANDBOX_PROVISIONING_PIPE_NAME: &str = r"\\.\pipe\OpenAI.CodexSandbox";
++pub const SANDBOX_PROVISIONING_PIPE_NAME: &str = r"\\.\pipe\Corki.Sandbox";
+ 
+ /// Versioned provisioning-service message carried in a length-prefixed JSON frame.
+ #[derive(Debug, Serialize, Deserialize, Clone)]
+--- a/codex-rs/windows-sandbox-rs/src/setup.rs
++++ b/codex-rs/windows-sandbox-rs/src/setup.rs
+@@ -48,8 +48,8 @@
+ use windows_sys::Win32::Security::SECURITY_NT_AUTHORITY;
+ 
+ pub const SETUP_VERSION: u32 = 5;
+-pub const OFFLINE_USERNAME: &str = "CodexSandboxOffline";
+-pub const ONLINE_USERNAME: &str = "CodexSandboxOnline";
++pub const OFFLINE_USERNAME: &str = "CorkiSandboxOffline";
++pub const ONLINE_USERNAME: &str = "CorkiSandboxOnline";
+ const ERROR_CANCELLED: u32 = 1223;
+ const SECURITY_BUILTIN_DOMAIN_RID: u32 = 0x0000_0020;
+ const DOMAIN_ALIAS_RID_ADMINS: u32 = 0x0000_0220;
+--- a/codex-rs/windows-sandbox-rs/src/setup_mutex.rs
++++ b/codex-rs/windows-sandbox-rs/src/setup_mutex.rs
+@@ -60,7 +60,7 @@
+         lpSecurityDescriptor: descriptor,
+         bInheritHandle: 0,
+     };
+-    let name = to_wide(r"Global\CodexSandboxSetup");
++    let name = to_wide(r"Global\CorkiSandboxSetup");
+     let handle = unsafe {
+         CreateMutexW(&attributes, /*binitialowner*/ 0, name.as_ptr())
+     };
+--- a/codex-rs/windows-sandbox-rs/src/uninstall_windows/firewall.rs
++++ b/codex-rs/windows-sandbox-rs/src/uninstall_windows/firewall.rs
+@@ -17,10 +17,10 @@
+     let rules = unsafe { policy.Rules() }.context("access sandbox firewall rules")?;
+     let mut errors = Vec::new();
+     for name in [
+-        "codex_sandbox_offline_block_outbound",
+-        "codex_sandbox_offline_block_loopback_tcp",
+-        "codex_sandbox_offline_block_loopback_udp",
+-        "codex_sandbox_offline_allow_loopback_proxy",
++        "corki_sandbox_offline_block_outbound",
++        "corki_sandbox_offline_block_loopback_tcp",
++        "corki_sandbox_offline_block_loopback_udp",
++        "corki_sandbox_offline_allow_loopback_proxy",
+     ] {
+         if let Err(error) = unsafe { rules.Remove(&BSTR::from(name)) } {
+             errors.push(format!("remove sandbox firewall rule {name}: {error}"));
+--- a/codex-rs/windows-sandbox-rs/src/uninstall_windows/principals.rs
++++ b/codex-rs/windows-sandbox-rs/src/uninstall_windows/principals.rs
+@@ -68,7 +68,7 @@
+ 
+ pub(super) fn remove_sandbox_principal(name: &str) -> Result<()> {
+     let name_wide = to_wide(name);
+-    let status = if name == "CodexSandboxUsers" {
++    let status = if name == "CorkiSandboxUsers" {
+         unsafe { network::NetLocalGroupDel(null(), name_wide.as_ptr()) }
+     } else {
+         unsafe { network::NetUserDel(null(), name_wide.as_ptr()) }
+--- a/codex-rs/windows-sandbox-rs/src/uninstall_windows.rs
++++ b/codex-rs/windows-sandbox-rs/src/uninstall_windows.rs
+@@ -54,7 +54,7 @@
+     for result in [
+         crate::wfp::remove_wfp_filters(),
+         firewall::cleanup_firewall_rules(),
+-        principals::remove_sandbox_principal("CodexSandboxUsers"),
++        principals::remove_sandbox_principal("CorkiSandboxUsers"),
+         crate::hide_users::unhide_sandbox_users(&[OFFLINE_USERNAME, ONLINE_USERNAME]),
+         // Keep accounts disabled and setup locked until shared cleanup and account deletion finish.
+         principals::remove_sandbox_principal(OFFLINE_USERNAME),
+--- a/codex-rs/windows-sandbox-rs/src/wfp/filter_specs.rs
++++ b/codex-rs/windows-sandbox-rs/src/wfp/filter_specs.rs
+@@ -24,8 +24,8 @@
+ 
+ pub(super) const FILTER_SPECS: &[FilterSpec] = &[
+     FilterSpec {
+-        key: GUID::from_u128(0x9f5f3812_79f0_4fe9_9615_4c2c92d2f0ff),
+-        name: "codex_wfp_icmp_connect_v4",
++        key: GUID::from_u128(0x913fcf58_b264_5769_94af_d9c8cf044e61),
++        name: "corki_wfp_icmp_connect_v4",
+         description: "Block sandbox-account ICMP connect v4",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+         conditions: &[
+@@ -34,8 +34,8 @@
+         ],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0x87498484_45ab_4510_845e_ece8b791b3bc),
+-        name: "codex_wfp_icmp_connect_v6",
++        key: GUID::from_u128(0xe6b6f979_13e3_51de_8bc2_92de9a6a9a67),
++        name: "corki_wfp_icmp_connect_v6",
+         description: "Block sandbox-account ICMP connect v6",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+         conditions: &[
+@@ -44,8 +44,8 @@
+         ],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0xaf4751de_f874_4a7b_a34d_f0d0f22d1d9b),
+-        name: "codex_wfp_icmp_assign_v4",
++        key: GUID::from_u128(0x97777863_700e_5465_9efd_4f4c16e297c2),
++        name: "corki_wfp_icmp_assign_v4",
+         description: "Block sandbox-account ICMP resource assignment v4",
+         layer_key: FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V4,
+         conditions: &[
+@@ -54,8 +54,8 @@
+         ],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0xea10db66_a928_4b2e_a82e_a376a54f93ba),
+-        name: "codex_wfp_icmp_assign_v6",
++        key: GUID::from_u128(0x5e18d051_07ab_5b32_8c0b_582b392aa5df),
++        name: "corki_wfp_icmp_assign_v6",
+         description: "Block sandbox-account ICMP resource assignment v6",
+         layer_key: FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V6,
+         conditions: &[
+@@ -66,57 +66,57 @@
+     // NAME_RESOLUTION_CACHE filters are intentionally omitted because ordinary
+     // static filter shapes returned FWP_E_OUT_OF_BOUNDS during validation.
+     FilterSpec {
+-        key: GUID::from_u128(0x83172805_f6be_4ae1_9dc6_6847aef04e7f),
+-        name: "codex_wfp_dns_53_v4",
++        key: GUID::from_u128(0x3251fa12_1855_5f10_bc32_083d28c06f01),
++        name: "corki_wfp_dns_53_v4",
+         description: "Block sandbox-account DNS TCP or UDP port 53 v4",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+         conditions: &[ConditionSpec::User, ConditionSpec::RemotePort(53)],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0xd23b2efb_1efb_46b2_96f3_b0ccda5690c8),
+-        name: "codex_wfp_dns_53_v6",
++        key: GUID::from_u128(0x8aa6c4a4_5eaa_5d6d_998c_0a282d9cc5da),
++        name: "corki_wfp_dns_53_v6",
+         description: "Block sandbox-account DNS TCP or UDP port 53 v6",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+         conditions: &[ConditionSpec::User, ConditionSpec::RemotePort(53)],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0x420b026f_9dc9_4aea_88f4_0f2b9feab39a),
+-        name: "codex_wfp_dns_853_v4",
++        key: GUID::from_u128(0x8f7dc7c9_e928_5565_a1f5_1359607905b3),
++        name: "corki_wfp_dns_853_v4",
+         description: "Block sandbox-account DNS-over-TLS port 853 v4",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+         conditions: &[ConditionSpec::User, ConditionSpec::RemotePort(853)],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0x8d917c81_99cc_45e7_84d6_824df860cfb8),
+-        name: "codex_wfp_dns_853_v6",
++        key: GUID::from_u128(0xc86c1b23_6c5e_567f_8562_b5d30288d021),
++        name: "corki_wfp_dns_853_v6",
+         description: "Block sandbox-account DNS-over-TLS port 853 v6",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+         conditions: &[ConditionSpec::User, ConditionSpec::RemotePort(853)],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0xe1d6e0af_ce5f_471b_b2d3_15ca00e966f3),
+-        name: "codex_wfp_smb_445_v4",
++        key: GUID::from_u128(0x609ee84f_fd61_58a5_9e07_5aa187f235a2),
++        name: "corki_wfp_smb_445_v4",
+         description: "Block sandbox-account SMB port 445 v4",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+         conditions: &[ConditionSpec::User, ConditionSpec::RemotePort(445)],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0xc2bceca4_66ef_4a0f_ba80_f4f761b8c6f0),
+-        name: "codex_wfp_smb_445_v6",
++        key: GUID::from_u128(0xe2da8bcb_ac7e_511b_bd57_4933b9f987b3),
++        name: "corki_wfp_smb_445_v6",
+         description: "Block sandbox-account SMB port 445 v6",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+         conditions: &[ConditionSpec::User, ConditionSpec::RemotePort(445)],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0xba10c618_84e7_4b83_8f74_36e22b2fa1ff),
+-        name: "codex_wfp_smb_139_v4",
++        key: GUID::from_u128(0x1c8a7915_3cf4_5f91_8c86_874503a00b1e),
++        name: "corki_wfp_smb_139_v4",
+         description: "Block sandbox-account SMB port 139 v4",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+         conditions: &[ConditionSpec::User, ConditionSpec::RemotePort(139)],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0xfe7f22b8_5cf5_4adb_b2aa_71fc0a8f5d44),
+-        name: "codex_wfp_smb_139_v6",
++        key: GUID::from_u128(0xf03bfe3e_5338_5e4f_ae6e_53258ccfd6c4),
++        name: "corki_wfp_smb_139_v6",
+         description: "Block sandbox-account SMB port 139 v6",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+         conditions: &[ConditionSpec::User, ConditionSpec::RemotePort(139)],
+--- a/codex-rs/windows-sandbox-rs/src/wfp.rs
++++ b/codex-rs/windows-sandbox-rs/src/wfp.rs
+@@ -64,17 +64,17 @@
+ use filter_specs::FILTER_SPECS;
+ use filter_specs::FilterSpec;
+ 
+-const SESSION_NAME: &str = "Codex Windows Sandbox WFP";
+-const PROVIDER_NAME: &str = "Codex Windows Sandbox WFP";
+-const PROVIDER_DESCRIPTION: &str = "Persistent WFP provider for Codex Windows sandbox filters";
+-const SUBLAYER_NAME: &str = "Codex Windows Sandbox WFP";
+-const SUBLAYER_DESCRIPTION: &str = "Persistent WFP sublayer for Codex Windows sandbox filters";
++const SESSION_NAME: &str = "Corki Windows Sandbox WFP";
++const PROVIDER_NAME: &str = "Corki Windows Sandbox WFP";
++const PROVIDER_DESCRIPTION: &str = "Persistent WFP provider for Corki Windows sandbox filters";
++const SUBLAYER_NAME: &str = "Corki Windows Sandbox WFP";
++const SUBLAYER_DESCRIPTION: &str = "Persistent WFP sublayer for Corki Windows sandbox filters";
+ 
+ // WFP identifies persistent providers, sublayers, and filters by stable GUIDs.
+-// These values are Codex-owned identities; do not regenerate them unless we
++// These values are Corki-owned identities; do not regenerate them unless we
+ // intentionally want to orphan old objects and create a new WFP namespace.
+-const PROVIDER_KEY: GUID = GUID::from_u128(0x2e31d31c_3948_4753_9117_e5d1a6496f41);
+-const SUBLAYER_KEY: GUID = GUID::from_u128(0xe65054fd_4d32_4c7c_95ef_621f0cf6431a);
++const PROVIDER_KEY: GUID = GUID::from_u128(0xf9eec7a0_5235_504c_a9cd_378c4b724494);
++const SUBLAYER_KEY: GUID = GUID::from_u128(0x44cb4b96_2436_5a82_8205_352f8337744b);
+ 
+ /// Installs the persistent Codex WFP filters for `account`.
+ ///
+--- a/codex-rs/windows-sandbox-rs/src/winutil.rs
++++ b/codex-rs/windows-sandbox-rs/src/winutil.rs
+@@ -26,8 +26,8 @@
+ use windows_sys::Win32::System::Diagnostics::Debug::FORMAT_MESSAGE_IGNORE_INSERTS;
+ use windows_sys::Win32::System::Diagnostics::Debug::FormatMessageW;
+ 
+-pub const SANDBOX_USERS_GROUP: &str = "CodexSandboxUsers";
+-const SANDBOX_USERS_GROUP_COMMENT: &str = "Codex sandbox internal group (managed)";
++pub const SANDBOX_USERS_GROUP: &str = "CorkiSandboxUsers";
++const SANDBOX_USERS_GROUP_COMMENT: &str = "Corki sandbox internal group (managed)";
+ 
+ pub fn to_wide<S: AsRef<OsStr>>(s: S) -> Vec<u16> {
+     let mut v: Vec<u16> = s.as_ref().encode_wide().collect();

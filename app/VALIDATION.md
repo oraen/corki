@@ -263,8 +263,10 @@ and New Chat shortcut. Capture used Electron capturePage for correct scaled
 screenshots; inspected wide and zoomed views retain visible composer controls.
 README now documents the supported runtime, attachment bounds and platform
 limits. ACCEPTANCE.md reconciles the fourteen-part specification with sources
-and verification. Windows/Linux remain unverified; no user settings or real
-model requests were used in acceptance testing.
+and verification. At the time of this initial desktop review, Windows/Linux
+were unverified; later Windows 11 x64 packaged Agent checks passed with an
+isolated fake model. Windows 10 and Linux remain unverified. No user settings
+or real model requests were used in this acceptance testing.
 
 ## Deliverable hygiene review
 

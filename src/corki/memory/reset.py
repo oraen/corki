@@ -8,6 +8,7 @@ from pathlib import Path
 from corki.memory.repository import MemoryRepository
 from corki.memory.sqlite import SQLiteMemoryRepository
 from corki.memory.workspace_lease import MemoryWorkspaceBusy, WorkspaceLeases
+from corki.platforms.paths import is_link_path
 
 
 class MemoryResetError(RuntimeError):
@@ -131,6 +132,8 @@ class MemoryResetter:
         return self._roots
 
     def _validate_targets(self) -> None:
+        if any(is_link_path(root) for root in self._roots):
+            raise MemoryResetError("refusing to clear linked memory root")
         protected = tuple(path.resolve() for path in self._protected)
         targets = tuple(path.resolve() for path in self._roots)
         for logical, target in zip(self._roots, targets, strict=True):
@@ -146,7 +149,7 @@ class MemoryResetter:
 
 def _clear_roots(roots: tuple[Path, ...]) -> None:
     for root in roots:
-        if root.is_symlink():
+        if is_link_path(root):
             raise ValueError(f"refusing to clear symlinked memory root: {root}")
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
         for entry in root.iterdir():

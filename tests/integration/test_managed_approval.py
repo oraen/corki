@@ -2,12 +2,16 @@
 
 import asyncio
 import json
-import shlex
+import os
+import re
+import subprocess
+import sys
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
+from platform_commands import python_command
 from test_execution_policy_live_inheritance import Model, run, runtime_for
-from test_execution_policy_live_inheritance import compiler as compiler
 
 from corki.config import CorkiSettings
 from corki.config.execution_requirements import ExecutionRequirementsLayer
@@ -15,10 +19,81 @@ from corki.config.managed_mcp import MCPRequirementsLayer, compose_mcp_requireme
 from corki.config.permissions import ExecutionPermissions
 from corki.execution.backend import resolve_execution_permissions, sandbox_command
 from corki.execution.owned_process import run_owned
+from corki.models import ModelCompleted
 from corki.protocol.context import ModelContextInfo
 from corki.protocol.events import WarningEvent
-from corki.protocol.items import ContextItem, ToolResultItem
+from corki.protocol.ids import new_tool_call_id
+from corki.protocol.items import ContextItem, ToolCallItem, ToolResultItem, new_step_id
 from corki.protocol.session_source import SessionSource
+from corki.protocol.tools import ToolCall
+
+
+class AwaitingModel(Model):
+    """Use the real continuation protocol when command startup outlives a yield."""
+
+    async def stream(self, request):
+        results = [item for item in request.items if isinstance(item, ToolResultItem)]
+        if self.command is None and results:
+            content = results[-1].content
+            cell = re.search(r"Script running with cell ID ([\w-]+)", content)
+            session = re.search(r"Process running with session ID ([\w-]+)", content)
+            if session is None:
+                session = re.search(r'"session_id"\s*:\s*"([\w-]+)"', content)
+            if cell or session:
+                assert len(self.requests) < 30, "fixture command did not finish after polling"
+                self.requests.append(request)
+                turn = request.items[-1].turn_id
+                if cell:
+                    call = ToolCall(new_tool_call_id(), "wait", {"cell_id": cell[1]})
+                else:
+                    arguments = {"session_id": session[1], "chars": ""}
+                    call = (
+                        ToolCall(new_tool_call_id(), "write_stdin", arguments)
+                        if self.mode == "direct"
+                        else ToolCall(
+                            new_tool_call_id(),
+                            "exec",
+                            None,
+                            input_kind="freeform",
+                            raw_arguments="text(await tools.write_stdin("
+                            + json.dumps(arguments)
+                            + "));",
+                        )
+                    )
+                yield ModelCompleted((ToolCallItem(call, turn, new_step_id()),))
+                return
+        async for event in super().stream(request):
+            yield event
+
+
+def assert_completed_output(model, marker):
+    results = [item for item in model.requests[-1].items if isinstance(item, ToolResultItem)]
+    output = "\n".join(item.content for item in results)
+    assert results and not any(item.is_error for item in results), output
+    # Polling can deliver the text before a final empty completion chunk.
+    assert marker in output, output
+    if model.mode == "direct":
+        assert results[-1].exit_code == 0, output
+    else:
+        assert re.search(r'"exit_code"\s*:\s*0\s*[,}]', results[-1].content), output
+
+
+@pytest.fixture
+def compiler(tmp_path):
+    value = os.environ.get("CORKI_TEST_SANDBOX_COMPILER")
+    if not value or sys.platform not in {"darwin", "win32"}:
+        pytest.skip("requires explicit native compiler and macOS or Windows")
+    if sys.platform == "win32":
+        account = subprocess.run(
+            ["whoami.exe"], check=True, capture_output=True, text=True, timeout=30
+        ).stdout.strip()
+        subprocess.run(
+            ["icacls.exe", str(tmp_path), "/grant", f"{account}:(OI)(CI)(M)"],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+    return Path(value)
 
 
 def layer(policies, name="organization", **values):
@@ -42,13 +117,15 @@ def test_native_layer_validation_confirms_early_host_guard(tmp_path, compiler, p
             "legacy": {"type": "read-only"},
             "cwd": str(tmp_path),
             "policy_cwd": str(tmp_path),
-            "command": ["/usr/bin/true"],
+            "command": [sys.executable, "-c", "pass"],
             "resolve_requirements": True,
             "requirements": [
                 {"source": source, "value": {"allowed_approval_policies": values}}
                 for source, values in zip(("low", "high"), policies, strict=True)
             ],
         }
+        if sys.platform == "win32":
+            request["runtime_home"] = str(tmp_path / "home")
         response = json.loads(
             await run_owned(
                 [str(compiler)],
@@ -70,7 +147,7 @@ def test_runtime_applies_higher_managed_policy_before_effective_empty_check(
     tmp_path, compiler, mode
 ):
     async def scenario():
-        model = Model(mode)
+        model = AwaitingModel(mode)
         settings = CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -91,10 +168,9 @@ def test_runtime_applies_higher_managed_policy_before_effective_empty_check(
             tmp_path, compiler, model, settings=settings, mcp_requirements=managed
         )
         try:
-            await run(runtime, model, {"cmd": "printf composed-policy"})
+            await run(runtime, model, {"cmd": python_command(tmp_path, "print('composed-policy')")})
             assert runtime._settings.execution_permissions.approval_policy_json == '"on-request"'
-            results = [i for i in model.requests[-1].items if isinstance(i, ToolResultItem)]
-            assert results and not results[-1].is_error and "composed-policy" in results[-1].content
+            assert_completed_output(model, "composed-policy")
         finally:
             await runtime.aclose()
 
@@ -104,7 +180,7 @@ def test_runtime_applies_higher_managed_policy_before_effective_empty_check(
 @pytest.mark.parametrize("mode", ["direct", "code_mode_only"])
 def test_required_interactive_policy_reaches_real_approval_owner(tmp_path, compiler, mode):
     async def scenario():
-        model = Model(mode)
+        model = AwaitingModel(mode)
         settings = CorkiSettings(
             working_directory=tmp_path,
             skills_enabled=False,
@@ -133,12 +209,15 @@ def test_required_interactive_policy_reaches_real_approval_owner(tmp_path, compi
                 runtime,
                 model,
                 {
-                    "cmd": "touch " + shlex.quote(str(target)),
+                    "cmd": python_command(
+                        tmp_path, f"from pathlib import Path; Path({str(target)!r}).touch()"
+                    ),
                     "sandbox_permissions": "require_escalated",
                     "justification": "fixture scoped write",
                 },
             )
             assert target.exists() and len(prompts) == 1
+            assert_completed_output(model, "")
             assert runtime._settings.execution_permissions.approval_policy_json == '"on-request"'
             context = "\n".join(
                 item.content for item in model.requests[0].items if isinstance(item, ContextItem)
@@ -160,11 +239,12 @@ def test_only_internal_guardian_replaces_parent_approval_constraint(
             compiler,
             tmp_path,
             '{"type":"read-only"}',
+            runtime_home=tmp_path / "home",
             approval_policy_json='"on-request"',
             requirements=(layer(["on-request"]),),
         )
         parent, _ = await resolve_execution_permissions(requested)
-        model = Model(mode)
+        model = AwaitingModel(mode)
         runtime = await runtime_for(
             tmp_path,
             compiler,
@@ -182,15 +262,13 @@ def test_only_internal_guardian_replaces_parent_approval_constraint(
             else SessionSource.from_startup_arg("guardian"),
         )
         try:
-            events = await run(runtime, model, {"cmd": "printf guardian-fixture"})
+            events = await run(
+                runtime, model, {"cmd": python_command(tmp_path, "print('guardian-fixture')")}
+            )
             resolved = runtime._settings.execution_permissions
             assert resolved.approval_policy_json == ('"never"' if typed else '"on-request"')
             assert resolved.approval_policy_constraint == ("guardian" if typed else "configured")
-            results = [
-                item for item in model.requests[-1].items if isinstance(item, ToolResultItem)
-            ]
-            assert results and not results[-1].is_error
-            assert "guardian-fixture" in results[-1].content
+            assert_completed_output(model, "guardian-fixture")
             context = "\n".join(
                 item.content for item in model.requests[0].items if isinstance(item, ContextItem)
             )
@@ -233,19 +311,38 @@ def test_managed_default_controls_tools_context_and_startup_warning(
         managed = compose_mcp_requirements(
             [MCPRequirementsLayer("organization", 'allowed_approval_policies=["never"]')]
         )
-        model = Model(mode)
+        model = AwaitingModel(mode)
         runtime = await runtime_for(
             tmp_path, compiler, model, settings=settings, mcp_requirements=managed
         )
         try:
             target = tmp_path / "written"
-            events = await run(runtime, model, {"cmd": "touch " + shlex.quote(str(target))})
+            events = await run(
+                runtime,
+                model,
+                {
+                    "cmd": python_command(
+                        tmp_path, f"from pathlib import Path; Path({str(target)!r}).touch()"
+                    )
+                },
+            )
             resolved = runtime._settings.execution_permissions
             assert resolved.approval_policy_json == '"never"'
             assert resolved.requested_approval_policy_json == (
                 '"untrusted"' if trust == "untrusted" and not explicit else '"on-request"'
             )
-            assert target.exists() is (trust is not None)
+            results = [
+                item
+                for request in model.requests
+                for item in request.items
+                if isinstance(item, ToolResultItem)
+            ]
+            assert target.exists() is (trust is not None), (
+                len(results),
+                (results[-1].content[-650:], results[-1].is_error, results[-1].exit_code)
+                if results
+                else None,
+            )
             context = "\n".join(
                 item.content for item in model.requests[0].items if isinstance(item, ContextItem)
             )
@@ -278,6 +375,7 @@ def test_readmission_uses_retained_request_and_commands_never_fallback(
             compiler,
             tmp_path,
             '{"type":"read-only"}',
+            runtime_home=tmp_path / "home",
             requirements=(layer(["never"]),),
             approval_policy_json='"on-request"',
             approval_policy_explicit=explicit,
@@ -286,7 +384,7 @@ def test_readmission_uses_retained_request_and_commands_never_fallback(
         assert admitted.approval_policy_json == '"never"' and bool(warnings) is explicit
         changed = replace(admitted, requirements=(layer(["on-request"]),))
         with pytest.raises(ValueError, match="approval_policy"):
-            await sandbox_command(changed, ["/usr/bin/true"], tmp_path)
+            await sandbox_command(changed, [sys.executable, "-c", "pass"], tmp_path)
         admitted_again, warnings = await resolve_execution_permissions(changed)
         assert admitted_again.approval_policy_json == '"on-request"' and not warnings
         unrestricted, _ = await resolve_execution_permissions(replace(admitted, requirements=()))
@@ -308,6 +406,7 @@ def test_native_layer_precedence_and_full_granular_equality(tmp_path, compiler, 
             compiler,
             tmp_path,
             '{"type":"read-only"}',
+            runtime_home=tmp_path / "home",
             requirements=(layer(["never"], "lower"), layer([granular, "on-request"], "higher")),
             approval_policy_json=json.dumps(requested),
             approval_policy_explicit=explicit,
@@ -356,6 +455,7 @@ def test_profile_fallback_guard_uses_effective_approval(tmp_path, compiler, allo
             compiler,
             tmp_path,
             '{"type":"danger-full-access"}',
+            runtime_home=tmp_path / "home",
             requirements=(layer([allowed], allowed_sandbox_modes=["read-only"]),),
             approval_policy_json='"on-request"' if allowed == "never" else '"never"',
         )

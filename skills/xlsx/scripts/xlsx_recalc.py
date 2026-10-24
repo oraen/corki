@@ -37,17 +37,23 @@ def count_cached(path):
     """Number of formula cells with a cached value present."""
     from openpyxl import load_workbook
     wb_f = load_workbook(path, data_only=False)
-    wb_v = load_workbook(path, data_only=True)
-    formulas = cached = 0
-    for name in wb_f.sheetnames:
-        ws_f, ws_v = wb_f[name], wb_v[name]
-        for row in ws_f.iter_rows():
-            for cell in row:
-                if isinstance(cell.value, str) and cell.value.startswith("="):
-                    formulas += 1
-                    if ws_v[cell.coordinate].value is not None:
-                        cached += 1
-    return formulas, cached
+    try:
+        wb_v = load_workbook(path, data_only=True)
+        try:
+            formulas = cached = 0
+            for name in wb_f.sheetnames:
+                ws_f, ws_v = wb_f[name], wb_v[name]
+                for row in ws_f.iter_rows():
+                    for cell in row:
+                        if isinstance(cell.value, str) and cell.value.startswith("="):
+                            formulas += 1
+                            if ws_v[cell.coordinate].value is not None:
+                                cached += 1
+            return formulas, cached
+        finally:
+            wb_v.close()
+    finally:
+        wb_f.close()
 
 
 def main(argv=None):
@@ -79,12 +85,11 @@ def main(argv=None):
 
     with tempfile.TemporaryDirectory() as tmp:
         proc = subprocess.run(
-            [soffice, "--headless", "--calc", "--convert-to", "xlsx:Calc "
+            [soffice, "-env:UserInstallation=" + (Path(tmp) / "profile").as_uri(),
+             "--headless", "--calc", "--convert-to", "xlsx:Calc "
              "MS Excel 2007 XML", "--outdir", tmp, str(src)],
             capture_output=True, text=True, encoding="utf-8",
-            timeout=args.timeout,
-            env={"HOME": tmp, "PATH": Path(soffice).parent.as_posix()
-                 + ":/usr/bin:/bin"})
+            timeout=args.timeout)
         produced = Path(tmp) / (src.stem + ".xlsx")
         if proc.returncode != 0 or not produced.exists():
             print(json.dumps({"ok": False,
@@ -104,9 +109,11 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    from _stdio import configure_stdio
+
+    configure_stdio()
     try:
         sys.exit(main())
     except Exception as exc:  # noqa: BLE001
         print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
         sys.exit(1)
-

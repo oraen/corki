@@ -2,7 +2,9 @@
 
 This maps the user's fourteen-part desktop specification to implementation and
 verification. Number ranges below refer to that specification, not test counts.
-Evidence is scoped to macOS arm64; Windows/Linux are not certified. Runtime tests
+This records the initial macOS arm64 desktop acceptance; it does not certify
+Windows/Linux. Current Windows 11 verification and remaining platform limits
+are described in README.md. Runtime tests
 use disposable Corki homes and deterministic models. A fixture-only UI test proves
 rendering behavior, not backend execution.
 

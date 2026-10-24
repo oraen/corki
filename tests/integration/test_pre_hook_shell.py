@@ -2,11 +2,10 @@
 
 import asyncio
 import json
-import shlex
-import sys
 from dataclasses import replace
 
 import pytest
+from platform_commands import python_command
 from test_bundled_execution import compiler as compiler
 from test_execution_approvals import Model
 
@@ -80,14 +79,11 @@ def test_shell_hook_rewrite_preserves_options_and_approval(
         }
         if action == "block":
             output = {"decision": "block", "reason": "shell denied"}
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "import json,sys; from pathlib import Path; "
-                "p=json.load(sys.stdin); Path('shell-hook.json').write_text(json.dumps(p)); "
-                f"print(json.dumps({output!r}))",
-            ]
+        command = python_command(
+            tmp_path,
+            "import json,sys; from pathlib import Path; "
+            "p=json.load(sys.stdin); Path('shell-hook.json').write_text(json.dumps(p)); "
+            f"print(json.dumps({output!r}))",
         )
         source = tmp_path / "config.toml"
         fingerprint = command_identity(

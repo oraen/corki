@@ -10,6 +10,8 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 from tempfile import mkdtemp
 
+from corki.storage.file_lock import lock, open_lock, unlock_and_close
+
 _MARKER = ".corki-system-skills.marker"
 
 
@@ -27,11 +29,25 @@ def bundled_skills_source() -> Traversable:
 
 def install_bundled_skills(home: Path, source: Traversable | None = None) -> Path:
     """Atomically refresh ``~/.corki/skills/.system`` when assets change."""
-
     source = source or bundled_skills_source()
     skills_root = home / "skills"
-    destination = skills_root / ".system"
     skills_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    owner = open_lock(skills_root / ".system.lock")
+    try:
+        lock(owner)
+    except BaseException:
+        owner.close()
+        raise
+    try:
+        return _install_locked(skills_root, source)
+    finally:
+        unlock_and_close(owner)
+
+
+def _install_locked(skills_root: Path, source: Traversable) -> Path:
+    # Recheck the marker under the same OS lock as backup/replacement. Otherwise
+    # concurrent CLI, manager and desktop starts can remove one another's backup.
+    destination = skills_root / ".system"
     fingerprint = _fingerprint(source)
     marker = destination / _MARKER
     try:

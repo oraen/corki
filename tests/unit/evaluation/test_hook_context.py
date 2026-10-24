@@ -45,7 +45,7 @@ def test_context_cold_reuse_keeps_original_input_owner_and_spill(tmp_path, monke
             assert items[0].content_kind == "hooks.additional_context"
             if limit:
                 path = Path(preview.split("Full hook output saved to: ")[1])
-                assert path.read_text() == text
+                assert path.read_text(encoding="utf-8") == text
             else:
                 assert preview == text
         finally:

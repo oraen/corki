@@ -1,5 +1,4 @@
 import asyncio
-import os
 
 import pytest
 
@@ -80,12 +79,14 @@ def test_manager_identity_is_immutable_and_typed():
         manager.bind_identity(ExecutionIdentity(new_thread_id(), new_session_id()))
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX command")
 def test_completed_process_does_not_reopen_identity_binding(tmp_path):
     async def scenario():
         manager = ProcessManager()
         try:
-            result = await manager.execute("true", cwd=tmp_path, yield_seconds=1, login=False)
+            result = await manager.execute("exit 0", cwd=tmp_path, yield_seconds=1, login=False)
+            async with asyncio.timeout(60):
+                while result.session_id is not None:
+                    result = await manager.write_stdin(result.session_id, "", yield_seconds=1)
             assert result.exit_code == 0
             with pytest.raises(RuntimeError, match="cannot change"):
                 manager.bind_identity(ExecutionIdentity(new_thread_id(), new_session_id()))

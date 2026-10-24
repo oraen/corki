@@ -3,6 +3,7 @@
 import asyncio
 import re
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -26,7 +27,7 @@ def test_worker_deletion_is_immediate_and_does_not_redelete_recreated_summary(tm
         sessions = SQLiteSessionRepository(database)
         repository = SQLiteMemoryRepository(database)
         source = (datetime.now(UTC) - timedelta(days=1)).isoformat()
-        with sqlite3.connect(database) as db:
+        with closing(sqlite3.connect(database)) as db, db:
             db.execute(
                 "INSERT INTO threads(id,cwd,updated_at,memory_mode) "
                 "VALUES ('source',?,?,'enabled')",

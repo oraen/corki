@@ -2,11 +2,10 @@
 
 import asyncio
 import json
-import shlex
-import sys
 from dataclasses import replace
 
 import pytest
+from platform_commands import python_command
 from test_code_mode import request_call
 
 from corki.config import CorkiSettings
@@ -33,26 +32,20 @@ def test_cold_post_hook_feedback(
     tmp_path, monkeypatch, window, nested, remove_configuration, action, repeat_recovery
 ):
     async def scenario():
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "from pathlib import Path; import json; "
-                "Path('hook-calls').open('a').write('once\\n'); "
-                "print(json.dumps({'decision':'block','reason':'POST_BLOCK',"
-                "'hookSpecificOutput':{'hookEventName':'PostToolUse','additionalContext':'SAVED_POST_CONTEXT'}}))",
-            ]
+        command = python_command(
+            tmp_path,
+            "from pathlib import Path; import json; "
+            "Path('hook-calls').open('a').write('once\\n'); "
+            "print(json.dumps({'decision':'block','reason':'POST_BLOCK',"
+            "'hookSpecificOutput':{'hookEventName':'PostToolUse','additionalContext':'SAVED_POST_CONTEXT'}}))",
         )
         if action == "context":
-            command = shlex.join(
-                [
-                    sys.executable,
-                    "-c",
-                    "from pathlib import Path; import json; "
-                    "Path('hook-calls').open('a').write('once\\n'); "
-                    "print(json.dumps({'hookSpecificOutput':"
-                    "{'hookEventName':'PostToolUse','additionalContext':'SAVED_POST_CONTEXT'}}))",
-                ]
+            command = python_command(
+                tmp_path,
+                "from pathlib import Path; import json; "
+                "Path('hook-calls').open('a').write('once\\n'); "
+                "print(json.dumps({'hookSpecificOutput':"
+                "{'hookEventName':'PostToolUse','additionalContext':'SAVED_POST_CONTEXT'}}))",
             )
         source = tmp_path / "config.toml"
         fingerprint = command_identity(

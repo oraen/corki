@@ -1,5 +1,6 @@
 import asyncio
 import json
+from contextlib import closing
 
 import httpx
 import pytest
@@ -150,7 +151,7 @@ def test_function_raw_ledger_archive_and_http_history_are_distinct(tmp_path, api
             assert raw in render_transcript((original,), redact=lambda text: text)
             import sqlite3
 
-            with sqlite3.connect(tmp_path / "session.db") as connection:
+            with closing(sqlite3.connect(tmp_path / "session.db")) as connection:
                 ledger = connection.execute(
                     "SELECT result_json FROM tool_executions WHERE call_id = ?", (str(calls[0].id),)
                 ).fetchone()
@@ -295,7 +296,7 @@ def test_raw_result_survives_completed_ledger_fault_and_nested_call(tmp_path, ne
             assert len(requests) == 2 and len(calls) == 1
             import sqlite3
 
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection:
                 (payload,) = connection.execute(
                     "SELECT result_json FROM tool_executions WHERE tool_name='read'"
                 ).fetchone()

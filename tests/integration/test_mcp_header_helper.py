@@ -6,6 +6,7 @@ import sys
 
 import httpx
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings, MCPServerSettings
 from corki.core import LangGraphRuntime
@@ -16,8 +17,6 @@ from corki.protocol.ids import new_tool_call_id
 from corki.protocol.items import AssistantMessageItem, ToolCallItem, ToolResultItem, new_step_id
 from corki.protocol.tools import ToolCall
 from corki.tools import ToolRegistry
-
-pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX helper process contract")
 
 
 @pytest.mark.parametrize("mode", ["native", "compatible"])
@@ -32,7 +31,11 @@ def test_runtime_helper_auth_refresh_reconciliation_plugin_and_cold_history(
             f"p=Path({str(count)!r}); n=int(p.read_text())+1 if p.exists() else 1; "
             "p.write_text(str(n)); print(json.dumps({'X-Gateway':str(n),'X-Label':'café'}))"
         )
-        command = shlex.join([sys.executable, "-c", script])
+        command = (
+            python_command(tmp_path, script)
+            if os.name == "nt"
+            else shlex.join([sys.executable, "-c", script])
+        )
         clients, calls, executed, deleted = [], [], [], []
 
         def factory(settings):

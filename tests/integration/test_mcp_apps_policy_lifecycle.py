@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 import httpx
 import pytest
@@ -174,7 +175,7 @@ def test_session_consent_and_cancel_preserve_call_authority(
                 await asyncio.gather(task, return_exceptions=True)
             await runtime.aclose()
         assert all(client.is_closed for client in clients)
-        with sqlite3.connect(tmp_path / "policy.db") as db:
+        with closing(sqlite3.connect(tmp_path / "policy.db")) as db:
             rows = db.execute(
                 "SELECT status,result_json FROM tool_executions WHERE tool_name LIKE 'mcp__%'"
             ).fetchall()

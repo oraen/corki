@@ -1,4 +1,5 @@
 import base64
+import os
 
 import pytest
 
@@ -42,7 +43,9 @@ def test_collect_preserves_binary_and_redacts_text(tmp_path):
     assert "source.txt" not in artifacts.files
     assert b"AKIAABCDEFGHIJKLMNOP" not in base64.b64decode(artifacts.files["MEMORY.md"]["content"])
     assert base64.b64decode(artifacts.files["skills/demo/image.bin"]["content"]) == b"\xff\x00"
-    assert artifacts.files["skills/demo/run.sh"]["mode"] == "100755"
+    assert artifacts.files["skills/demo/run.sh"]["mode"] == (
+        "100644" if os.name == "nt" else "100755"
+    )
 
 
 @pytest.mark.parametrize("direction", ["file_to_directory", "directory_to_file"])

@@ -2,11 +2,10 @@
 
 import asyncio
 import json
-import shlex
-import sys
 from hashlib import sha256
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
@@ -38,21 +37,18 @@ def test_user_prompt_submit_inspects_before_sampling(tmp_path, policy, steering)
         elif policy == "allow":
             output = {}
         stdout = "PROMPT_CONTEXT" if policy == "plain" else json.dumps(output)
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "import json,sys; from pathlib import Path; "
-                "payload=json.load(sys.stdin); "
-                "Path('prompt-payload.json').write_text(json.dumps(payload)); "
-                "initial=payload['prompt']=='INITIAL'; "
-                f"print('{{}}' if initial else {json.dumps(stdout)}); "
-                + (
-                    "print('reject',file=sys.stderr); sys.exit(0 if initial else 2)"
-                    if policy == "exit2"
-                    else ""
-                ),
-            ]
+        command = python_command(
+            tmp_path,
+            "import json,sys; from pathlib import Path; "
+            "payload=json.load(sys.stdin); "
+            "Path('prompt-payload.json').write_text(json.dumps(payload)); "
+            "initial=payload['prompt']=='INITIAL'; "
+            f"print('{{}}' if initial else {json.dumps(stdout)}); "
+            + (
+                "print('reject',file=sys.stderr); sys.exit(0 if initial else 2)"
+                if policy == "exit2"
+                else ""
+            ),
         )
         identity = {
             "event_name": "user_prompt_submit",

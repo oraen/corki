@@ -3,6 +3,10 @@
 import json
 import sys
 
+# MCP stdio is UTF-8 even when Windows pipes use a legacy locale.
+for stream in (sys.stdin, sys.stdout):
+    stream.reconfigure(encoding="utf-8")
+
 
 def send(value):
     print(json.dumps(value), flush=True)

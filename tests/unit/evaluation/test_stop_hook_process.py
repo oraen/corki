@@ -6,7 +6,8 @@ import sys
 import pytest
 
 from corki.core.stop_hooks import StopCommand, outcome, run_command
-from corki.shell import default_user_shell
+from corki.platforms.liveness import process_alive
+from corki.shell import ShellType, default_user_shell
 
 
 @pytest.mark.parametrize("failure", ["timeout", "overflow", "cancel"])
@@ -16,17 +17,28 @@ def test_stop_command_cleanup_joins_child(tmp_path, failure):
             "import os,time; from pathlib import Path; "
             "Path('pid').write_text(str(os.getpid())); "
             + ("print('x'*1100000, flush=True); " if failure == "overflow" else "")
-            + "time.sleep(30)"
+            + "time.sleep(120)"
         )
-        command = StopCommand("fixture", "hash", shlex.join([sys.executable, "-c", script]), 1)
+        script_path = tmp_path / "hook script.py"
+        script_path.write_text(script, encoding="utf-8")
+        shell = default_user_shell()
+        if shell.kind == ShellType.POWERSHELL:
+            quoted = [
+                "'" + part.replace("'", "''") + "'" for part in (sys.executable, str(script_path))
+            ]
+            invocation = "& " + " ".join(quoted)
+        else:
+            invocation = shlex.join([sys.executable, str(script_path)])
+        timeout = 30 if os.name == "nt" else 1
+        command = StopCommand("fixture", "hash", invocation, timeout)
         task = asyncio.create_task(
             run_command(
-                command, {}, shell=default_user_shell(), cwd=tmp_path, environment=dict(os.environ)
+                command, {}, shell=shell, cwd=tmp_path, environment=dict(os.environ)
             )
         )
         try:
             if failure == "cancel":
-                async with asyncio.timeout(5):
+                async with asyncio.timeout(60):
                     while not (tmp_path / "pid").exists():
                         await asyncio.sleep(0.01)
                 task.cancel()
@@ -38,10 +50,9 @@ def test_stop_command_cleanup_joins_child(tmp_path, failure):
                 "cancel": asyncio.CancelledError,
             }[failure]
             with pytest.raises(error):
-                await asyncio.wait_for(task, 5)
+                await asyncio.wait_for(task, timeout + 30)
             pid = int((tmp_path / "pid").read_text())
-            with pytest.raises(ProcessLookupError):
-                os.kill(pid, 0)
+            assert not process_alive(pid)
         finally:
             if not task.done():
                 task.cancel()

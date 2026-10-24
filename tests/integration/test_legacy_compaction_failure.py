@@ -207,15 +207,15 @@ def test_ordinary_summary_cancel_closes_body_and_preserves_window(tmp_path, monk
         runtime = await LangGraphRuntime.acreate(
             settings=settings(tmp_path), database_path=tmp_path / "s.db", registry=ToolRegistry()
         )
-        await runtime._ensure_ready()
-        old = UserMessageItem("old", "old-turn")
-        await runtime._repository.append_items(runtime.thread_id, (old,))
-
         async def consume():
             return [event async for event in runtime.compact()]
 
-        task = asyncio.create_task(consume())
+        task = None
         try:
+            await runtime._ensure_ready()
+            old = UserMessageItem("old", "old-turn")
+            await runtime._repository.append_items(runtime.thread_id, (old,))
+            task = asyncio.create_task(consume())
             await asyncio.wait_for(entered.wait(), 3)
             await (runtime.aclose() if close else runtime.cancel_active())
             with pytest.raises(asyncio.CancelledError):
@@ -225,8 +225,9 @@ def test_ordinary_summary_cancel_closes_body_and_preserves_window(tmp_path, monk
             assert len(stored) == 2 and stored[0] == old
             assert isinstance(stored[1], TurnAbortedItem)
         finally:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
             await runtime.aclose()
 
     asyncio.run(scenario())

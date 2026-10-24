@@ -147,7 +147,7 @@ def test_empty_at_query_retains_catalog_without_starting_file_scan(tmp_path, mon
         rows = [
             row async for row in completer.get_completions_async(Document("@"), CompleteEvent())
         ]
-        assert len(rows) == 1 and rows[0].reference.selector.path == "/local/review/SKILL.md"
+        assert len(rows) == 1 and rows[0].reference.selector.path == str(Path("/local/review/SKILL.md"))
         assert completer.reference_error is None
 
     asyncio.run(scenario())

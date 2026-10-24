@@ -58,8 +58,15 @@ def render_template(template: PromptTemplate, variables: Mapping[str, str]) -> s
     if missing:
         raise MissingPromptVariablesError(template.name, missing)
 
-    def replace(match: re.Match[str]) -> str:
-        return variables[match.group(1)]
-
-    rendered = _PLACEHOLDER_PATTERN.sub(replace, template.source)
-    return rendered.replace(_ESCAPED_PLACEHOLDER_PREFIX, "#{")
+    # Decode escapes only in template literals. Replacement values are opaque:
+    # a Windows path such as C:\\#{notes} must retain its directory separator.
+    parts: list[str] = []
+    start = 0
+    for match in _PLACEHOLDER_PATTERN.finditer(template.source):
+        parts.append(
+            template.source[start : match.start()].replace(_ESCAPED_PLACEHOLDER_PREFIX, "#{")
+        )
+        parts.append(variables[match.group(1)])
+        start = match.end()
+    parts.append(template.source[start:].replace(_ESCAPED_PLACEHOLDER_PREFIX, "#{"))
+    return "".join(parts)

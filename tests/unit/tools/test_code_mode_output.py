@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 
 import pytest
@@ -144,7 +145,7 @@ def test_absent_override_keeps_old_ledger_payload_byte_compatible(tmp_path):
         )
         await repository.claim_tool_call(thread, turn, call)
         await repository.complete_tool_call(thread, turn, result)
-        with sqlite3.connect(repository.path) as db:
+        with closing(sqlite3.connect(repository.path)) as db, db:
             assert db.execute("SELECT result_json FROM tool_executions").fetchone()[0] == old
         reopened = SQLiteSessionRepository(repository.path)
         loaded = await reopened.claim_tool_call(thread, turn, call)

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -30,7 +31,7 @@ def test_owned_extraction_survives_source_change_without_bypassing_selection(
         await sessions.append_items(source, (UserMessageItem("CLAIMED_SOURCE", turn),))
         version = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
         newer = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
-        with sqlite3.connect(database) as db:
+        with closing(sqlite3.connect(database)) as db, db:
             db.execute("UPDATE threads SET updated_at=? WHERE id=?", (version, source))
         extracted, release = asyncio.Event(), asyncio.Event()
         consolidations = []
@@ -88,7 +89,7 @@ def test_owned_extraction_survives_source_change_without_bypassing_selection(
             if change == "disabled":
                 await runtime.set_thread_memory_mode("disabled", thread_id=source)
             else:
-                with sqlite3.connect(database) as db:
+                with closing(sqlite3.connect(database)) as db, db:
                     if change == "new_version":
                         db.execute("UPDATE threads SET updated_at=? WHERE id=?", (newer, source))
                     else:
@@ -97,7 +98,7 @@ def test_owned_extraction_survives_source_change_without_bypassing_selection(
             report = await asyncio.wait_for(runtime._memory_service.wait(), 3)
             assert report.failed == 0 and report.consolidated
             assert report.empty == int(empty) and report.extracted == int(not empty)
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 assert db.execute(
                     "SELECT status, last_success_source_updated_at "
                     "FROM memory_jobs WHERE job_key=?",
@@ -132,7 +133,7 @@ def test_cold_runtime_reextracts_submillisecond_new_source(tmp_path):
         old = (datetime.now(UTC) - timedelta(hours=2)).replace(microsecond=100_000)
         old_version = old.isoformat()
         advanced_version = (old + timedelta(microseconds=1)).isoformat()
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute(
                 "UPDATE threads SET updated_at=? WHERE id=?", (old_version, str(source))
             )
@@ -191,7 +192,7 @@ def test_cold_runtime_reextracts_submillisecond_new_source(tmp_path):
                 assert isinstance(events[-1], TurnCompleted)
                 report = await runtime._memory_service.wait()
                 assert report.failed == 0 and report.extracted == 1
-                with sqlite3.connect(database) as connection:
+                with closing(sqlite3.connect(database)) as connection, connection:
                     assert connection.execute(
                         "SELECT source_updated_at, raw_memory FROM memory_stage1_outputs "
                         "WHERE thread_id=?",
@@ -204,7 +205,7 @@ def test_cold_runtime_reextracts_submillisecond_new_source(tmp_path):
                 await runtime.aclose()
             if expected == 1:
                 await sessions.append_items(source, (UserMessageItem("NEW_SOURCE", new_turn_id()),))
-                with sqlite3.connect(database) as connection:
+                with closing(sqlite3.connect(database)) as connection, connection:
                     connection.execute(
                         "UPDATE threads SET updated_at=? WHERE id=?",
                         (advanced_version, str(source)),

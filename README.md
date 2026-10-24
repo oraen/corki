@@ -16,8 +16,9 @@ removed; the SDK no longer accepts these settings.
 
 ### Local management UI
 
-After installing the development environment, run `./manager/bin/start.sh` and open
-http://127.0.0.1:17002. The responsive local dashboard manages providers, models,
+After installing the development environment, run `./manager/bin/start.sh` on macOS
+or use the [Windows startup commands](manager/README.md#启动), then open
+http://127.0.0.1:17002. The local dashboard manages providers, models,
 Skills, knowledge documents, MCP settings, memories, and recorded activity.
 See [`manager/README.md`](manager/README.md) for capabilities and limitations.
 
@@ -36,8 +37,11 @@ Codex login tokens or import gateway implementation code.
 ./adaptor/openai/bin/stop.sh
 ```
 
-The existing local deployment serves `http://127.0.0.1:17001`. Keep the configured
-provider URL and local API key; models and reasoning effort remain configurable
+On Windows PowerShell, use `adaptor/openai/bin/install.ps1`, `start.ps1`, and
+`stop.ps1` instead. The gateway README covers the independent Windows environment.
+
+The local OpenAI forwarding endpoint is `http://127.0.0.1:17001/openai`. The manager
+Toolbox can configure its port and the `adaptor-openai` provider; models and reasoning effort remain configurable
 in Corki. Other providers do not require this service. Gateway setup, credentials,
 and protocol compatibility are documented in its own README.
 
@@ -48,6 +52,24 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
 ```
+
+Windows PowerShell uses the native virtual environment layout:
+
+```powershell
+py -3 -m venv .venv
+& .\.venv\Scripts\python.exe -m pip install -e '.[dev]'
+```
+
+Activation is optional on Windows. After installing the native backend below,
+run `& .\.venv\Scripts\corki.exe` from the checkout, or use that executable's
+full path from another directory. A bare `corki` command requires the environment's
+`Scripts` directory on PATH. No global PowerShell execution-policy change is
+needed to use the executable.
+
+Keep `CORKI_HOME` on a local disk. If Windows rejects a long workspace directory,
+Corki includes long-path guidance instead of only reporting a missing directory. It does
+not change the system long-path setting. Extended paths accepted by filesystem
+checks are not a guarantee that every shell or external tool supports them.
 
 Default CLI and SDK execution now requires the pinned native permission backend.
 For a source checkout, build it with Rust 1.95.0 and install the verified artifact:
@@ -406,11 +428,14 @@ still refreshes the local date. Steering and token-budget resets keep the admitt
 name. A legacy checkpoint lacking this field captures it at its next prepare boundary,
 without rewriting an already prepared model request. Linux uses system timezone files
 (including OpenWrt fallback); macOS refreshes CoreFoundation's system timezone cache.
-Windows uses a fixed, non-interactive, two-second PowerShell query of the WinRT
-Calendar timezone API; unavailable/failed resolution falls back to `Etc/UTC`.
-This adapter differs from Codex's direct Windows API call and can add startup latency.
-macOS native resolution and offline platform fixtures have been exercised; native
-Windows/Linux execution and other Codex platform resolvers have not been verified.
+Windows calls the WinRT Calendar timezone API directly, using the same interface
+as Codex's `iana-time-zone` dependency. It preserves an existing COM apartment and
+balances owned references, without launching PowerShell or maintaining a mapping
+table. Only DLL bindings are cached; each admitted Turn reads the live OS zone.
+Unavailable/failed resolution still falls back to `Etc/UTC`. Native macOS and
+Windows 10/11 resolver checks, concurrency/apartment tests and offline failure
+cases have passed. Linux runtime behavior still requires separate platform
+verification.
 Shell selection is Session-owned, separate from this Turn-owned timezone state.
 
 Local compaction retains base instructions and appends a user compaction
@@ -1216,8 +1241,9 @@ its tool execution remain consistent even if the reopened Session selects anothe
 New Steps use the current Session selection. Old checkpoints without executable identity
 use the reopened Session default; environment prompt text is never parsed as executable
 authority. Missing selected executables produce an error, not an automatic shell switch.
-Direct and Code Mode paths, pipe/PTY and cold recovery have offline local verification;
-Windows shell discovery/argv have fixtures, not native Windows execution evidence.
+Direct and Code Mode paths, pipe/PTY and cold recovery have offline local verification.
+Native Windows 11 tests have exercised PowerShell discovery, ordinary command execution,
+long-running sessions and ConPTY input; broader Windows 10 and remote-shell behavior remain open.
 Remote shells, zsh-fork/shell snapshots and elevated Windows sandbox policies remain open.
 
 Shell tools build an explicit child environment from `[shell_environment_policy]`.
@@ -1302,8 +1328,10 @@ and closes its subprocess transport. Observation, timeout and shutdown share ter
 ownership; cancellation waits for that cleanup. PTY reads use event-loop readiness, not blocking
 threadpool reads. On macOS, a denied group signal falls back to enumerating that exact group and
 rechecking each member's current group before signalling it; this does not enumerate arbitrary
-process trees. Windows Job containment and escaped process groups remain unimplemented; signal
-failures without a successful delivery are still reported.
+process trees. Windows-owned child processes use a Job object assigned before the child
+resumes; native Windows 11 tests cover descendant cleanup and preservation of unrelated
+processes. Escaped process groups and signal failures without a successful delivery are
+still reported.
 Startup is manager-owned even while asynchronous OS creation is handing back its handle:
 cancellation/close joins that handoff and retires stale startups before returning. Closing
 temporarily rejects new starts; the manager can then be reused. Cancelling just an observation
@@ -1331,7 +1359,8 @@ goes through the byte writer: raw mode receives the byte, while terminal signal 
 targets the foreground process group. An isolated stdlib-only helper attaches the
 controlling terminal before exec; a bounded close-on-exec status pipe reports setup/exec
 failure before startup handoff. Cancellation joins failed-start cleanup. No Python
-`preexec_fn` runs in the threaded parent. Windows console and remote parity remain unverified.
+`preexec_fn` runs in the threaded parent. Native Windows 11 ConPTY input and cancellation
+have targeted coverage; complete console and remote parity remain unverified.
 New shell observations project Unix signal termination onto the pinned Codex backend contract:
 plain pipes report `128 + signal`, while default portable-PTY observations report `1`.
 Normal exit codes are unchanged. The raw asyncio status stays intact for cleanup; direct text,
@@ -1553,7 +1582,7 @@ repository does not mark other live tools interrupted. Lock files are cleaned un
 coordination lock; do not delete them while any Runtime is active. This is cooperative local
 Runtime ownership, not a security sandbox, distributed lease, or protection for arbitrary direct
 database writers/hard-link aliases. Cross-process and crash recovery are tested on macOS;
-the Windows locking branch has not been executed in this workspace.
+selected Windows 11 lock contention and recovery tests have also passed.
 
 Hosts can call `await runtime.archive()` after a Thread has materialized canonical history.
 It closes that Runtime and moves the Thread into a transactional archived view, preserving
@@ -2065,7 +2094,8 @@ and `.agents`, using an audited additive patch to the pinned build export. Defau
 workspace commands and the patch helper cannot create or rewrite that metadata.
 Native explicit overrides still apply, including independent grants to an external
 symlink target; this is not an unconditional deny. Older explicit compilers must be
-rebuilt and are rejected before admission. Real OS verification is macOS-only; see
+rebuilt and are rejected before admission. Real OS verification includes macOS and
+selected Windows 11 native permission tests; see
 the backend README for symlink, build provenance and remaining platform limitations.
 User config, `CORKI_HOME`, workspace files and model arguments cannot redirect this
 authority path. Corki does not read another application's `/etc/codex` policy.

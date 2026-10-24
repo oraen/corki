@@ -143,7 +143,7 @@ def test_agent_command_rejects_escaping_or_dangling_symlink_prefix(tmp_path, dan
     outside = tmp_path / "outside"
     if not dangling:
         outside.mkdir()
-    (root / "link").symlink_to(outside)
+    (root / "link").symlink_to(outside, target_is_directory=True)
     manager = load(
         root,
         {

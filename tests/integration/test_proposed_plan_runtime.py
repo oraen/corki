@@ -18,7 +18,9 @@ from corki.protocol.items import AssistantMessageItem, new_step_id
 @pytest.mark.parametrize("mode", ["default", "plan"])
 @pytest.mark.parametrize("streamed", [False, True])
 @pytest.mark.parametrize("shape", ["mixed", "only_plan", "multiple_blocks"])
-def test_plan_output_separates_events_without_rewriting_history(tmp_path, mode, streamed, shape):
+def test_plan_output_separates_events_without_rewriting_history(
+    tmp_path, mode, streamed, shape, headless_terminal
+):
     async def scenario():
         text = "Intro\n<proposed_plan>\n- first\n</proposed_plan>\nOutro"
         normal = "Intro\nOutro"

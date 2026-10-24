@@ -198,9 +198,11 @@ def test_model_creates_goal_and_existing_stream_continues(tmp_path):
 def test_active_goal_resumes_after_reopen(tmp_path):
     async def scenario():
         runtime = await make_runtime(tmp_path, GoalModel([]))
-        await runtime.goal_command("create", objective="persist")
-        thread = runtime.thread_id
-        await runtime.aclose()
+        try:
+            await runtime.goal_command("create", objective="persist")
+            thread = runtime.thread_id
+        finally:
+            await runtime.aclose()
         model = GoalModel([("update_goal", {"status": "complete"}), "done"])
         runtime = await make_runtime(tmp_path, model, thread=thread)
         try:
@@ -423,9 +425,11 @@ def test_runtime_fork_copies_goal_and_waits_for_new_input(tmp_path, external):
         from corki.storage.sqlite import SQLiteSessionRepository
 
         source = await make_runtime(tmp_path, GoalModel([]))
-        source_id = source.thread_id
-        await source.goal_command("create", objective="fork goal", token_budget=500)
-        await source.aclose()
+        try:
+            source_id = source.thread_id
+            await source.goal_command("create", objective="fork goal", token_budget=500)
+        finally:
+            await source.aclose()
         database = tmp_path / "other" / "sessions.db" if external else tmp_path / "sessions.db"
         model = GoalModel([("update_goal", {"status": "complete"}), "done"])
         fork = await LangGraphRuntime.acreate(

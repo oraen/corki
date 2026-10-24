@@ -3,6 +3,7 @@
 import asyncio
 import sqlite3
 import time
+from contextlib import closing
 
 import pytest
 
@@ -64,7 +65,7 @@ def test_failure_backoff_is_status_independent_and_new_input_can_reset_it(store)
         assert first is not None
         assert await repository.fail_consolidation(first, "temporary", retry_delay_seconds=60)
         # Claim must respect persisted retry_at, not infer eligibility from a status label.
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute("UPDATE memory_jobs SET status='pending'")
         assert await repository.claim_consolidation(lease_seconds=60) is None
         await repository.enqueue_consolidation(force=True)
@@ -90,7 +91,7 @@ def test_repeated_enqueue_strictly_advances_watermark_even_if_clock_does_not(sto
         await repository.enqueue_consolidation(force=True)
         assert await repository.claim_consolidation(lease_seconds=60) is None
         assert await repository.complete_consolidation(first, ())
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             row = connection.execute(
                 "SELECT input_watermark,completed_watermark,status FROM memory_jobs"
             ).fetchone()
@@ -123,7 +124,7 @@ def test_legacy_phase2_migration_does_not_invent_success_time(tmp_path, status):
     database = tmp_path / "legacy.db"
     SQLiteSessionRepository(database)
     future = time.time() + 3600
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute(
             """
             CREATE TABLE memory_jobs (
@@ -152,7 +153,7 @@ def test_legacy_phase2_migration_does_not_invent_success_time(tmp_path, status):
         )
         before = connection.execute("SELECT * FROM memory_jobs").fetchone()
     repository = SQLiteMemoryRepository(database)
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         after = connection.execute("SELECT * FROM memory_jobs").fetchone()
         assert after[:-1] == before and after[-1] is None
 

@@ -194,20 +194,22 @@ def test_cold_pending_keeps_provenance_despite_catalog_replacement(tmp_path, sav
     async def scenario():
         name = "unlisted" if saved_unknown else "large"
         old = await runtime(tmp_path, configured(tmp_path, name), Model())
-        await old._ensure_ready()
-        turn = new_turn_id()
-        user = UserMessageItem("durable admission", turn)
-        state = _initial_state(old.thread_id, turn, old._settings, user)
-        await old._repository.save_turn(
-            TurnRecord(
-                turn,
-                old.thread_id,
-                TurnStatus.RUNNING,
-                user.content,
-                model_settings=state["turn_model_settings"],
+        try:
+            await old._ensure_ready()
+            turn = new_turn_id()
+            user = UserMessageItem("durable admission", turn)
+            state = _initial_state(old.thread_id, turn, old._settings, user)
+            await old._repository.save_turn(
+                TurnRecord(
+                    turn,
+                    old.thread_id,
+                    TurnStatus.RUNNING,
+                    user.content,
+                    model_settings=state["turn_model_settings"],
+                )
             )
-        )
-        await old.aclose()
+        finally:
+            await old.aclose()
         current = replace(
             configured(tmp_path, "small"), model_contexts=(ModelContextInfo(name, 3000),)
         )
@@ -235,18 +237,24 @@ def test_cold_pending_previous_model_compaction_uses_current_catalog_not_admissi
             model_contexts=(ModelContextInfo("large", 200000, comp_hash="old"),),
         )
         old = await runtime(tmp_path, old_settings, Model())
-        assert isinstance([event async for event in old.stream("old history")][-1], TurnCompleted)
-        turn = new_turn_id()
-        pending = replace(
-            old_settings,
-            model="large",
-            model_contexts=(ModelContextInfo("large", 200000, comp_hash="new"),),
-        )
-        saved = capture_model_settings(pending)
-        await old._repository.save_turn(
-            TurnRecord(turn, old.thread_id, TurnStatus.RUNNING, "new input", model_settings=saved)
-        )
-        await old.aclose()
+        try:
+            assert isinstance(
+                [event async for event in old.stream("old history")][-1], TurnCompleted
+            )
+            turn = new_turn_id()
+            pending = replace(
+                old_settings,
+                model="large",
+                model_contexts=(ModelContextInfo("large", 200000, comp_hash="new"),),
+            )
+            saved = capture_model_settings(pending)
+            await old._repository.save_turn(
+                TurnRecord(
+                    turn, old.thread_id, TurnStatus.RUNNING, "new input", model_settings=saved
+                )
+            )
+        finally:
+            await old.aclose()
         model = Model()
         current = replace(
             configured(tmp_path, "small"),
@@ -274,27 +282,29 @@ def test_checkpoint_only_snapshot_is_restored_without_business_ledger_backup(tmp
                 pass
 
         old = await runtime(tmp_path, configured(tmp_path, name), Model())
-        await old._ensure_ready()
-        turn = new_turn_id()
-        user = UserMessageItem("checkpoint input", turn)
-        state = _initial_state(old.thread_id, turn, old._settings, user)
-        # Legacy business row, but a current checkpoint: no ledger backup can
-        # mask a serializer failure in the checkpoint's model metadata.
-        await old._repository.save_turn(
-            TurnRecord(turn, old.thread_id, TurnStatus.RUNNING, user.content)
-        )
-        await old._compiled.ainvoke(
-            state,
-            config=old._graph_config(turn),
-            context=GraphRunContext(events=Sink()),
-            interrupt_before=["call_model"],
-        )
-        checkpoint = await old._checkpointer.aget_tuple(old._graph_config(turn))
-        assert (
-            checkpoint.checkpoint["channel_values"]["turn_model_settings"]
-            == state["turn_model_settings"]
-        )
-        await old.aclose()
+        try:
+            await old._ensure_ready()
+            turn = new_turn_id()
+            user = UserMessageItem("checkpoint input", turn)
+            state = _initial_state(old.thread_id, turn, old._settings, user)
+            # Legacy business row, but a current checkpoint: no ledger backup can
+            # mask a serializer failure in the checkpoint's model metadata.
+            await old._repository.save_turn(
+                TurnRecord(turn, old.thread_id, TurnStatus.RUNNING, user.content)
+            )
+            await old._compiled.ainvoke(
+                state,
+                config=old._graph_config(turn),
+                context=GraphRunContext(events=Sink()),
+                interrupt_before=["call_model"],
+            )
+            checkpoint = await old._checkpointer.aget_tuple(old._graph_config(turn))
+            assert (
+                checkpoint.checkpoint["channel_values"]["turn_model_settings"]
+                == state["turn_model_settings"]
+            )
+        finally:
+            await old.aclose()
         model = Model()
         current = replace(
             configured(tmp_path, "small"), model_contexts=(ModelContextInfo(name, 3000),)

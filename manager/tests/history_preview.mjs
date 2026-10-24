@@ -1,5 +1,7 @@
 // Browser regression for the inline version history editor.
 import fs from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import assert from 'node:assert/strict';
 const base=process.env.MANAGER_TEST_URL||'http://127.0.0.1:17002';
 const tabs=await(await fetch('http://127.0.0.1:9225/json')).json();
@@ -14,7 +16,7 @@ async function wait(expr){for(let n=0;n<100;n++){if(await ev(`Boolean(${expr})`)
 const click=selector=>ev(`document.querySelector(${JSON.stringify(selector)}).click()`);
 const action=name=>click(`[data-config-action="${name}"]`);
 const replace=text=>ev(`CorkiConfig.editor.dispatch({changes:{from:0,to:CorkiConfig.editor.state.doc.length,insert:${JSON.stringify(text)}}})`);
-const shot=async name=>{const r=await cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});fs.writeFileSync('/tmp/'+name+'.png',Buffer.from(r.data,'base64'))};
+const shot=async name=>{const r=await cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});fs.writeFileSync(join(tmpdir(),name+'.png'),Buffer.from(r.data,'base64'))};
 
 try{
  await cdp('Runtime.enable');await cdp('Page.enable');

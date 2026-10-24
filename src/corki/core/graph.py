@@ -55,6 +55,7 @@ from corki.models import (
     ModelTextDelta,
 )
 from corki.models.failure import ModelFailure
+from corki.models.request_watch import request_wait
 from corki.protocol.events import (
     AssistantMessageInterrupted,
     ContextCompacted,
@@ -1039,7 +1040,7 @@ class CorkiGraph:
             )
         )
         realtime = runtime.context.realtime if state.get("realtime_active", False) else None
-        command = await wait_retry(state["model_retry_delay"], realtime)
+        command = await request_wait(wait_retry(state["model_retry_delay"], realtime))
         if isinstance(command, RealtimeStop):
             raise asyncio.CancelledError
         tool_snapshot = self._resolve_tool_snapshot(state, runtime)

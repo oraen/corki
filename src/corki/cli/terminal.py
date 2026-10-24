@@ -77,6 +77,7 @@ from corki.cli.terminal_console import TerminalConsole
 from corki.cli.terminal_palette import TerminalPalette
 from corki.cli.terminal_responses import frame_terminal_responses
 from corki.cli.terminal_title import project_title
+from corki.cli.theme import ACCENT, PROMPT_ACCENT
 from corki.cli.transcript import Transcript, remember_display
 from corki.cli.user_input import collect_user_input
 from corki.cli.working_status import WorkingStatus, format_work_summary
@@ -462,7 +463,7 @@ class TerminalUI(PlanStreamUI):
             [
                 ConditionalContainer(
                     Window(
-                        FormattedTextControl([("fg:ansicyan", "  Loading MCP tools…")]),
+                        FormattedTextControl([(PROMPT_ACCENT, "  Loading MCP tools…")]),
                         height=1,
                     ),
                     Condition(lambda: self._mcp_loading and not self._history_view.active),
@@ -686,7 +687,7 @@ class TerminalUI(PlanStreamUI):
             text = f"{len(self._images)} image(s) · Backspace/Delete removes an image marker"
         if self._image_notice:
             text += ("\n" if text else "") + self._image_notice
-        return [("fg:ansicyan", text)]
+        return [(PROMPT_ACCENT, text)]
 
     def _composer_style(self) -> str:
         if self._session.app.is_done:
@@ -766,7 +767,7 @@ class TerminalUI(PlanStreamUI):
         body.append("\n\n")
         body.append("model:     ", style="dim")
         body.append(visible_terminal_text(self._settings.model))
-        body.append("   /model to change", style="cyan")
+        body.append("   /model to change", style=ACCENT)
         body.append("\n")
         body.append("directory: ", style="dim")
         body.append(visible_terminal_text(str(self._settings.working_directory)))
@@ -816,7 +817,7 @@ class TerminalUI(PlanStreamUI):
         with patch_stdout(raw=True), enhanced_keyboard(self._session.app):
             try:
                 message = await self._session.prompt_async(
-                    HTML("<ansicyan><b>›</b></ansicyan> "),
+                    HTML(f'<style fg="{ACCENT}"><b>›</b></style> '),
                     placeholder=lambda: (
                         []
                         if self._images
@@ -905,7 +906,7 @@ class TerminalUI(PlanStreamUI):
     def _show_submitted_input(self, message: str) -> None:
         if not self._transcript.replaying:
             self._backtrack_has_target = True
-        self._console.print(Text.assemble(("› ", "cyan bold"), visible_terminal_text(message)))
+        self._console.print(Text.assemble(("› ", f"{ACCENT} bold"), visible_terminal_text(message)))
 
     def replay_history(self, items) -> None:
         replay_history(self, items)
@@ -1221,13 +1222,13 @@ class TerminalUI(PlanStreamUI):
             extra = "   ctrl+t history"
             if len(text + extra) <= width:
                 text += extra
-            return [("fg:ansicyan" if mode == "plan" else "fg:ansibrightblack", text[:width])]
+            return [(PROMPT_ACCENT if mode == "plan" else "fg:ansibrightblack", text[:width])]
         if getattr(self, "_collaboration_mode", self._settings.collaboration_mode) == "plan":
             label = "  Plan mode"
             history = "   ctrl+t history"
             if len(label + history) <= self._session.app.output.get_size().columns:
-                return [("fg:ansicyan", label), ("", history)]
-            return [("fg:ansicyan", label)]
+                return [(PROMPT_ACCENT, label), ("", history)]
+            return [(PROMPT_ACCENT, label)]
         width = self._session.app.output.get_size().columns
         hints = (
             "  ? for shortcuts   ctrl+t history   ctrl+c to quit",
@@ -1633,7 +1634,7 @@ class TerminalUI(PlanStreamUI):
             self._console.print(
                 Text.assemble(
                     ("  └ " if index == 0 else "    ", "dim"),
-                    (row.kind + " ", "cyan"),
+                    (row.kind + " ", ACCENT),
                     detail,
                 )
             )
@@ -1701,7 +1702,7 @@ class TerminalUI(PlanStreamUI):
                 rows.extend(
                     Text.assemble(
                         ("  └ " if index == 0 else "    ", "dim"),
-                        (activity.kind + " ", "cyan"),
+                        (activity.kind + " ", ACCENT),
                         visible_terminal_text(activity.detail),
                     ).wrap(self._console, max(1, self._console.width), overflow="fold")
                 )
@@ -1717,7 +1718,7 @@ class TerminalUI(PlanStreamUI):
         expanded = getattr(getattr(self, "_transcript", None), "expand_tools", False)
         if len(preview) > 180 and not expanded:
             preview = preview[:177] + "..."
-        header = Text.assemble(("• ", "cyan"), (name, "bold"), (f" {preview}", "dim"))
+        header = Text.assemble(("• ", ACCENT), (name, "bold"), (f" {preview}", "dim"))
         rows = header.wrap(self._console, max(1, self._console.width), overflow="fold")
         if len(rows) > 2 and not expanded:
             rows = rows[:2]
@@ -1805,7 +1806,7 @@ class TerminalUI(PlanStreamUI):
         self._console.print(Text.assemble(("• ", "dim"), ("Updated Plan", "bold")))
         styles = {
             "completed": ("✔ ", "dim strike"),
-            "in_progress": ("□ ", "cyan bold"),
+            "in_progress": ("□ ", f"{ACCENT} bold"),
             "pending": ("□ ", "dim"),
         }
         first = True

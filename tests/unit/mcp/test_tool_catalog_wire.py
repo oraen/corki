@@ -119,14 +119,18 @@ def test_tool_catalog_raw_types_and_legacy_single_page(tmp_path, carrier, name):
                 ' print(\'{"jsonrpc":"2.0","id":\'+str(p[\'id\'])'
                 "+',\"result\":'+result+'}',flush=True)\n"
             )
+            # Keep large wire fixtures out of Windows' bounded command line.
+            script_path = tmp_path / "catalog_server.py"
+            script_path.write_text(script, encoding="utf-8")
             client = StdioMCPClient(
                 MCPServerSettings(
                     "docs",
                     "stdio",
                     command=sys.executable,
-                    args=("-u", "-c", script),
+                    args=("-u", str(script_path)),
                     cwd=tmp_path,
-                    timeout_seconds=1,
+                    # This tests wire validation, not interpreter startup latency.
+                    timeout_seconds=30,
                 )
             )
         else:
@@ -269,6 +273,34 @@ def test_legacy_tool_catalog_collects_later_pages_and_rejects_repeated_cursor(se
             else:
                 assert [tool["name"] for tool in await client.list_tools()] == ["first", "second"]
             assert requested == [None, "repeat"]
+        finally:
+            await client.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_catalog_pagination_keeps_one_total_active_budget(monkeypatch):
+    async def scenario():
+        client = HttpMCPClient(
+            MCPServerSettings(
+                "fixture", "http", url="https://fixture.invalid", timeout_seconds=0.1
+            )
+        )
+        completed = []
+
+        async def request(method, params):
+            assert method == "tools/list"
+            await asyncio.sleep(0.03)
+            completed.append(params)
+            return {"tools": [], "nextCursor": str(len(completed))}
+
+        monkeypatch.setattr(client, "request", request)
+        try:
+            # No individual page exhausts the budget; the aggregate must still
+            # stop an indefinitely paginating server, without resetting per page.
+            with pytest.raises(MCPProtocolError, match="pagination timed out"):
+                await asyncio.wait_for(client.list_tools(), 2)
+            assert len(completed) < 20
         finally:
             await client.aclose()
 

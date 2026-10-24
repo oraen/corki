@@ -1,3 +1,4 @@
+import { python } from './platform.mjs';
 import {_electron as electron} from 'playwright';
 import http from 'node:http';
 import {mkdtemp,mkdir,writeFile,readFile,realpath} from 'node:fs/promises';
@@ -21,7 +22,7 @@ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 await writeFile(path.join(home,'settings.json'),JSON.stringify({default:{provider:'fixture',model:'fixture'},providers:{fixture:{base_url:`http://127.0.0.1:${server.address().port}/v1`,api_mode:'chat_completions',api_key:'fixture-not-a-credential',models:{fixture:{context_window:262144}}}},approval_policy:'never',tools:{mode:'direct',search_mode:'disabled'},features:{goals:false,plugins:false},skills:{enabled:false},memories:{generate:false,use:false}}));
 let app;
 try{
- const env={...process.env,CORKI_HOME:home,CORKI_PYTHON:path.resolve('../.venv/bin/python')};delete env.ELECTRON_RUN_AS_NODE;
+ const env={...process.env,CORKI_HOME:home,CORKI_PYTHON:python};delete env.ELECTRON_RUN_AS_NODE;
  app=await electron.launch({args:[path.resolve('.')],env});
  await app.evaluate(({dialog},work)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[work]});dialog.showMessageBox=async()=>({response:1})},work);
  const page=await app.firstWindow();
@@ -61,7 +62,7 @@ try{
  assert.equal((await page.evaluate(()=>window.corki.request('threads.list'))).threads.length,0);
  assert.equal((await page.evaluate(()=>window.corki.request('status'))).running.length,0);
  assert.equal(await readFile(marker,'utf8'),'project file must survive');
- const count=id=>Number(execFileSync(path.resolve('../.venv/bin/python'),['-c','import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); print(db.execute("SELECT count(*) FROM threads WHERE id=?", (sys.argv[2],)).fetchone()[0])',path.join(home,'sessions/corki.db'),id],{encoding:'utf8'}).trim());
+ const count=id=>Number(execFileSync(python,['-c','import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); print(db.execute("SELECT count(*) FROM threads WHERE id=?", (sys.argv[2],)).fetchone()[0])',path.join(home,'sessions/corki.db'),id],{encoding:'utf8'}).trim());
  assert.equal(count(thread.id),0);
  assert((await page.evaluate(()=>window.corki.request('state.read',{key:'deleteConfirmationUntil'})))>Date.now());
  hold=false;

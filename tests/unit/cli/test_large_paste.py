@@ -126,7 +126,7 @@ def test_large_paste_submits_expanded_and_recalls_folded(tmp_path, monkeypatch):
                 await asyncio.gather(task, return_exceptions=True)
 
         asyncio.run(scenario())
-        stored = (tmp_path / "history").read_text()
+        stored = (tmp_path / "history").read_text(encoding="utf-8")
         assert "[Pasted Content" not in stored
         assert "中文" in stored
 

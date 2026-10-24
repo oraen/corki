@@ -2,11 +2,11 @@
 
 import asyncio
 import json
-import shlex
-import sys
+import re
 from dataclasses import replace
 
 import pytest
+from platform_commands import python_command
 from test_code_mode import request_call
 
 from corki.config import CorkiSettings
@@ -62,14 +62,11 @@ def test_mcp_hook_name_and_rewrite_do_not_change_rpc_route(
         }
         if not rewrite:
             output = {}
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
-                "Path('mcp-hook.json').write_text(json.dumps(p)); "
-                f"print(json.dumps({output!r}))",
-            ]
+        command = python_command(
+            tmp_path,
+            "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
+            "Path('mcp-hook.json').write_text(json.dumps(p)); "
+            f"print(json.dumps({output!r}))",
         )
         source = tmp_path / "config.toml"
         fingerprint = command_identity(
@@ -86,6 +83,17 @@ def test_mcp_hook_name_and_rewrite_do_not_change_rpc_route(
         class Model:
             async def stream(self, request):
                 requests.append(request)
+                results = [item for item in request.items if isinstance(item, ToolResultItem)]
+                if nested and results:
+                    cell = re.search(r"Script running with cell ID ([\w-]+)", results[-1].content)
+                    if cell:
+                        assert len(requests) < 30, "fixture cell did not finish after polling"
+                        yield request_call(
+                            request,
+                            "exec",
+                            "text(await tools.wait(" + json.dumps({"cell_id": cell[1]}) + "));",
+                        )
+                        return
                 if len(requests) == 1:
                     completed = request_call(
                         request,

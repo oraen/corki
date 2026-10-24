@@ -1,6 +1,7 @@
 """Cell observation ownership and bounded subprocess state."""
 
 import asyncio
+import json
 import re
 
 import pytest
@@ -13,6 +14,29 @@ pytestmark = pytest.mark.skipif(not CodeModeService.available(), reason="install
 
 def cell_id(output):
     return re.search(r"cell ID (\S+)", output.content)[1]
+
+
+def test_worker_roundtrips_unicode_text_and_stored_values():
+    async def scenario():
+        service = CodeModeService(ToolRegistry())
+        try:
+            result = await service.execute(
+                "unicode", "store('内容', '中文🦀 café'); text(load('内容'));", 10000, 1000
+            )
+            observed = [result.content]
+            # A slow machine may legitimately yield before the worker finishes.
+            # Observe the same cell; never replay the script to obtain a result.
+            async with asyncio.timeout(120):
+                while json.loads(result.lifecycle_json)["status"] == "running":
+                    result = await service.wait(cell_id(result), 1000, 1000)
+                    observed.append(result.content)
+            assert "Script completed" in result.content, result.content
+            assert "中文🦀 café" in "\n".join(observed)
+            assert service.stored == {"内容": "中文🦀 café"}
+        finally:
+            await service.aclose()
+
+    asyncio.run(scenario())
 
 
 def test_single_observer_cancel_does_not_consume_output_or_terminate_cell():

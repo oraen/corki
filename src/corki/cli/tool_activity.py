@@ -1,6 +1,7 @@
 """Display-only command summaries. Never used for execution or authorization."""
 
 import json
+import os
 import re
 import shlex
 from dataclasses import dataclass
@@ -111,6 +112,11 @@ def classify(name, arguments_preview):
         args = json.loads(arguments_preview)
         command = args.get("cmd", args.get("command")) if isinstance(args, dict) else None
         if not isinstance(command, str) or not command:
+            return ()
+        # POSIX shlex treats backslashes as escapes, unlike Windows shell paths.
+        # Preserve the original tool display when this parser cannot safely
+        # summarize it; execution and permission decisions never use this code.
+        if os.name == "nt" and "\\" in command:
             return ()
         # Do not let shlex erase syntax which could hide execution or redirection.
         # A future AST adapter can classify more forms without weakening this fallback.

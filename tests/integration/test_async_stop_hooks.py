@@ -2,12 +2,10 @@
 
 import asyncio
 import json
-import os
-import shlex
-import sys
 from dataclasses import replace
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
@@ -16,6 +14,7 @@ from corki.core.graph import GraphRunContext
 from corki.core.runtime import _initial_state
 from corki.core.stop_hooks import command_identity
 from corki.models import ModelCompleted
+from corki.platforms.liveness import process_alive
 from corki.protocol.events import (
     HookCompleted,
     HookStarted,
@@ -42,7 +41,7 @@ def settings_for(tmp_path, event_name, *, count=1, script=None):
         "print(json.dumps({'continue':False,'stopReason':'DO_NOT_CONTROL',"
         "'decision':'block','reason':'DO_NOT_INJECT','systemMessage':'ASYNC_WARNING'}))"
     )
-    command = shlex.join([sys.executable, "-c", script])
+    command = python_command(tmp_path, script)
     handler = {"type": "command", "command": command, "async": True}
     fingerprint, _ = command_identity(handler, event_name=event_name)
     source = tmp_path / "config.toml"
@@ -91,10 +90,11 @@ def test_open_hook_transcript_tracks_later_turn_after_hook_removal(
     async def scenario():
         script = (
             "import json,sys,time; from pathlib import Path; p=json.load(sys.stdin); "
-            "f=open(p['transcript_path']); Path('before.jsonl').write_text(f.read()); "
+            "f=open(p['transcript_path'], encoding='utf-8'); "
+            "Path('before.jsonl').write_text(f.read(), encoding='utf-8'); "
             "Path('reader-ready').touch(); "
             "exec(\"while not Path('release').exists(): time.sleep(0.01)\"); "
-            "Path('after.jsonl').write_text(f.read()); f.close(); print('{}')"
+            "Path('after.jsonl').write_text(f.read(), encoding='utf-8'); f.close(); print('{}')"
         )
         model = Model()
         runtime = await LangGraphRuntime.acreate(
@@ -130,10 +130,12 @@ def test_open_hook_transcript_tracks_later_turn_after_hook_removal(
                 while owner._tasks:
                     await asyncio.sleep(0.01)
             before = [
-                json.loads(line) for line in (tmp_path / "before.jsonl").read_text().splitlines()
+                json.loads(line)
+                for line in (tmp_path / "before.jsonl").read_text(encoding="utf-8").splitlines()
             ]
             after = [
-                json.loads(line) for line in (tmp_path / "after.jsonl").read_text().splitlines()
+                json.loads(line)
+                for line in (tmp_path / "after.jsonl").read_text(encoding="utf-8").splitlines()
             ]
             assert any(row.get("payload", {}).get("content") == "FIRST_RAW_INPUT" for row in before)
             assert not any(
@@ -141,7 +143,7 @@ def test_open_hook_transcript_tracks_later_turn_after_hook_removal(
             )
             assert any(row.get("payload", {}).get("content") == "SECOND_RAW_INPUT" for row in after)
             path = await runtime._repository.materialize_transcript(runtime.thread_id)
-            complete = [json.loads(line) for line in path.read_text().splitlines()]
+            complete = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
             assert complete[: len(before) + len(after)] == before + after
             assert any(
                 row.get("payload", {}).get("content") == "FIRST_RAW_INPUT" for row in complete
@@ -228,7 +230,7 @@ def test_later_async_command_is_started_before_earlier_sync_command_finishes(tmp
             "exec(\"while not list(Path('.').glob('started-*')): time.sleep(0.01)\"); "
             "Path('sync-finished').touch(); print('{}')"
         )
-        command = shlex.join([sys.executable, "-c", script])
+        command = python_command(tmp_path, script, name="sync hook fixture.py")
         fingerprint, _ = command_identity({"type": "command", "command": command})
         sync = f"[[hooks.Stop.hooks]]\ntype='command'\ncommand={json.dumps(command)}\n"
         key = f"{layer.file}:stop:0:0"
@@ -283,7 +285,7 @@ def test_async_hook_concurrency_and_owned_shutdown(tmp_path, close_before_releas
                     await asyncio.sleep(0.01)
             assert len(list(tmp_path.glob("started-*"))) == 8
             assert len(owner._tasks) == 9
-            pids = [int(path.read_text()) for path in tmp_path.glob("started-*")]
+            pids = [int(path.read_text(encoding="utf-8")) for path in tmp_path.glob("started-*")]
             if close_before_release:
                 async with asyncio.timeout(5):
                     await runtime.aclose()
@@ -291,8 +293,7 @@ def test_async_hook_concurrency_and_owned_shutdown(tmp_path, close_before_releas
                 assert not owner._results
                 assert len(list(tmp_path.glob("started-*"))) == 8
                 for pid in pids:
-                    with pytest.raises(ProcessLookupError):
-                        os.kill(pid, 0)
+                    assert not process_alive(pid)
             else:
                 (tmp_path / "release").touch()
                 async with asyncio.timeout(5):

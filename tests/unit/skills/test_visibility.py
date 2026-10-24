@@ -95,8 +95,8 @@ def test_disabled_path_does_not_remove_enabled_same_name_in_another_root(tmp_pat
         fallback.resolve()
     ]
     assert snapshot.resolve("same").path == fallback.resolve()
-    assert str(home / "skills") in service.render_catalog(project)
-    assert str(project / ".corki/skills") not in service.render_catalog(project)
+    assert (home / "skills").as_posix() in service.render_catalog(project)
+    assert (project / ".corki/skills").as_posix() not in service.render_catalog(project)
 
 
 @pytest.mark.parametrize("last_enabled", [False, True])

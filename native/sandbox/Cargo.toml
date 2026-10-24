@@ -34,6 +34,11 @@ axum = "=0.8.8"
 clatter = { version = "=2.2.0", default-features = false }
 zeroize_derive = "=1.4.3"
 
+[target.'cfg(windows)'.dependencies]
+codex-windows-sandbox = { path = "reference/codex-rs/windows-sandbox-rs" }
+codex-utils-pty = { path = "reference/codex-rs/utils/pty" }
+windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem"] }
+
 [profile.dev]
 debug = 0
 

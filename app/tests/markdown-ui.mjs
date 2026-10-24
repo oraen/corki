@@ -1,3 +1,4 @@
+import { browserLaunchOptions } from './platform.mjs';
 import { chromium } from "playwright";
 import http from "node:http";
 import { readFile, mkdtemp, rm } from "node:fs/promises";
@@ -11,7 +12,7 @@ const server = http.createServer(async (req, res) => {
       root,
       "." + new URL(req.url, "http://localhost").pathname,
     );
-    if (!p.startsWith(root + "/")) throw Error();
+    if (!p.startsWith(root + path.sep)) throw Error();
     const body = await readFile(p);
     res.setHeader(
       "Content-Type",
@@ -31,11 +32,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-const browser = await chromium.launch({
-  executablePath:
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  headless: true,
-});
+const browser = await chromium.launch(browserLaunchOptions);
 try {
  const page=await browser.newPage({viewport:{width:1280,height:800}});
  const outbound=[];page.on('request',request=>{if(request.url().includes('example.invalid'))outbound.push(request.url())});
@@ -95,7 +92,7 @@ try {
  assert.equal(fallbackBox.width,20);assert.equal(fallbackBox.height,20);
  assert.equal(brandBox.width,20);assert.equal(brandBox.height,20);
  assert.equal((await fallbackRow.locator('.picker-label').boundingBox()).x,(await brandRow.locator('.picker-label').boundingBox()).x);
- await page.screenshot({path:'/tmp/corki-provider-alignment.png'});
+ await page.screenshot({path:path.join(os.tmpdir(),'corki-provider-alignment.png')});
  await page.keyboard.press('Escape');
  assert.equal(await page.getByRole('button',{name:'选择模型',exact:true}).locator('.picker-fallback svg').count(),1);
  const userAvatar=await page.locator('.message.user .avatar').boundingBox();
@@ -104,7 +101,7 @@ try {
  const agentAvatar=await page.locator('.message.assistant .avatar').boundingBox();
  const agentText=await page.locator('.message.assistant .message-content').boundingBox();
  assert(agentAvatar.x+agentAvatar.width<=agentText.x);
- await page.screenshot({path:'/tmp/corki-chat-alignment.png'});
+ await page.screenshot({path:path.join(os.tmpdir(),'corki-chat-alignment.png')});
 
  assert.equal(await page.locator('.markdown script, .markdown img, .markdown iframe, .markdown svg, .markdown math').count(),0);
  assert.equal(await page.evaluate(()=>window.injected),undefined);

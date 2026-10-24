@@ -1,6 +1,8 @@
 // Run only against a disposable Manager home containing the example.db fixture.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 
 const base=process.env.MANAGER_TEST_URL||'http://127.0.0.1:17018';
 const port=process.env.CHROME_DEBUG_PORT||'9447';
@@ -8,18 +10,20 @@ const target=await(await fetch(`http://127.0.0.1:${port}/json/new?about:blank`,{
 const socket=new WebSocket(target.webSocketDebuggerUrl);
 await new Promise((resolve,reject)=>{socket.onopen=resolve;socket.onerror=reject;});
 let serial=0;const pending=new Map();
+let selectAllModifier=2;
 socket.onmessage=event=>{const message=JSON.parse(event.data),item=pending.get(message.id);if(!item)return;pending.delete(message.id);message.error?item.reject(new Error(message.error.message)):item.resolve(message.result);};
 function cdp(method,params={}){return new Promise((resolve,reject)=>{const id=++serial;pending.set(id,{resolve,reject});socket.send(JSON.stringify({id,method,params}));});}
 async function evaluate(expression){const result=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(result.exceptionDetails)throw new Error(result.exceptionDetails.text);return result.result.value;}
 async function wait(expression){for(let i=0;i<70;i++){if(await evaluate(`Boolean(${expression})`))return;await new Promise(resolve=>setTimeout(resolve,100));}throw new Error(`Timed out: ${expression}`);}
 async function editJSON(value){
  await evaluate(`document.querySelector('.dms-editor .cm-content').focus()`);
- await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'a',code:'KeyA',modifiers:4,commands:['selectAll']});
- await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'a',code:'KeyA',modifiers:4});
+ await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'a',code:'KeyA',modifiers:selectAllModifier,...(selectAllModifier===4?{commands:['selectAll']}:{})});
+ await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'a',code:'KeyA',modifiers:selectAllModifier});
  await cdp('Input.insertText',{text:JSON.stringify(value,null,2)});
 }
 try {
  await cdp('Page.enable');await cdp('Runtime.enable');
+ selectAllModifier=await evaluate('/Mac/.test(navigator.platform)')?4:2;
  await cdp('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
  await cdp('Page.navigate',{url:base+'/#database'});
  await wait(`document.querySelector('[data-table="notes"]')`);
@@ -40,7 +44,7 @@ try {
  await wait(`!document.querySelector('.dms-dialog') && document.querySelector('.dms-footer')?.textContent.includes('共 0 条')`);
  await evaluate(`document.querySelector('.dms-search input').value='';document.querySelector('.dms-search').requestSubmit()`);
  await wait(`document.querySelector('.dms-grid')?.textContent.includes('使用指引')`);
- fs.writeFileSync('/tmp/corki-dms-sqlite.png',Buffer.from((await cdp('Page.captureScreenshot',{format:'png'})).data,'base64'));
+ fs.writeFileSync(join(tmpdir(),'corki-dms-sqlite.png'),Buffer.from((await cdp('Page.captureScreenshot',{format:'png'})).data,'base64'));
  await evaluate(`document.querySelector('[data-tab="schema"]').click()`);
  assert(await evaluate(`document.querySelector('.dms-ddl').textContent.includes('CREATE TABLE')`));
  await evaluate(`document.querySelector('[data-do="sql"]').click()`);
@@ -49,8 +53,8 @@ try {
  assert(await evaluate(`location.hash.startsWith('#database/sql/') && document.querySelector('.header-back').getAttribute('href')==='#database'`));
  async function setSQL(sql){
   await evaluate(`document.querySelector('.sql-page-editor .cm-content').focus()`);
-  await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'a',code:'KeyA',modifiers:4,commands:['selectAll']});
-  await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'a',code:'KeyA',modifiers:4});
+  await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'a',code:'KeyA',modifiers:selectAllModifier,...(selectAllModifier===4?{commands:['selectAll']}:{})});
+  await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'a',code:'KeyA',modifiers:selectAllModifier});
   await cdp('Input.insertText',{text:sql});
  }
  await setSQL("SELECT 'first' AS value; SELECT 'second' AS value;");
@@ -85,7 +89,7 @@ try {
  await setSQL('SELECT * FROM notes');
  await evaluate(`document.querySelector('[data-sql-run]').click()`);
  await wait(`document.querySelectorAll('[data-sql-result]').length===4 && document.querySelector('.sql-result-body')?.textContent.includes('使用指引')`);
- fs.writeFileSync('/tmp/corki-sql-page.png',Buffer.from((await cdp('Page.captureScreenshot',{format:'png'})).data,'base64'));
+ fs.writeFileSync(join(tmpdir(),'corki-sql-page.png'),Buffer.from((await cdp('Page.captureScreenshot',{format:'png'})).data,'base64'));
  assert(await evaluate(`document.querySelector('[data-sql-new]').checkVisibility()`));
  await evaluate(`document.querySelector('[data-sql-new]').click()`);
  await wait(`document.querySelectorAll('[data-sql-tab]').length===2`);

@@ -78,7 +78,7 @@ class CronTool:
                 from corki.config.document import loads
 
                 try:
-                    config = loads((self.store.home / "settings.json").read_text())
+                    config = loads((self.store.home / "settings.json").read_text(encoding="utf-8"))
                     defaults = config.get("default", {})
                     values.update(provider=defaults.get("provider"), model=defaults.get("model"))
                 except (OSError, ValueError, AttributeError) as error:

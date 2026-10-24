@@ -8,12 +8,17 @@ Identify the domain, task, and relevant environment. For example, “speed up a 
 
 Check `scripts/list-skills.py --local --format json` first. Prefer an installed suitable skill over a duplicate download. For a familiar domain, https://skills.sh/ can suggest established candidates; it is optional, not a mandatory extra request before every search.
 
-If Node.js/npm are available (`command -v node`, `command -v npx`), search with explicit keywords:
+Check Node.js/npm with `command -v node` and `command -v npx` in a POSIX shell,
+or `Get-Command node, npx.cmd` in Windows PowerShell. If available, search with explicit keywords:
 
 ```bash
 npx --yes skills find "react performance"
 npx --yes skills find "presentation slides"
 ```
+
+In Windows PowerShell, use `npx.cmd --yes skills find "react performance"` (and
+the same form for other queries). The `.cmd` entry avoids depending on permission
+to execute npm's PowerShell shim; do not change the machine's execution policy.
 
 `npx` may fetch/cache the CLI the first time; it does not install the returned skills. Use `--owner` only if the installed CLI's help supports it. Avoid the interactive empty-query mode in unattended tools. Apply a bounded command timeout; if the tool returns a running process, collect its completion before treating the search as complete. A timeout or dependency failure is not “no results”.
 

@@ -2,11 +2,10 @@
 
 import asyncio
 import json
-import shlex
-import sys
 from pathlib import Path
 
 import pytest
+from platform_commands import python_command
 from test_code_mode import request_call
 
 from corki.config import CorkiSettings
@@ -109,17 +108,14 @@ def test_trusted_pre_hook_controls_actual_handler_without_rewriting_history(
                 output["continue"] = False
             elif action == "context_bad_type":
                 output["hookSpecificOutput"]["additionalContext"] = 123
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "import json,sys; from pathlib import Path; "
-                "p=json.load(sys.stdin); Path('hook-input.json').write_text(json.dumps(p)); "
-                "Path('hook-transcript.jsonl').write_text("
-                "Path(p['transcript_path']).read_text() "
-                "if p['transcript_path'] else 'unavailable'); "
-                f"print(json.dumps({output!r}))",
-            ]
+        command = python_command(
+            tmp_path,
+            "import json,sys; from pathlib import Path; "
+            "p=json.load(sys.stdin); Path('hook-input.json').write_text(json.dumps(p)); "
+            "Path('hook-transcript.jsonl').write_text("
+            "Path(p['transcript_path']).read_text() "
+            "if p['transcript_path'] else 'unavailable'); "
+            f"print(json.dumps({output!r}))",
         )
         source = tmp_path / "config.toml"
         handler = {"type": "command", "command": command}

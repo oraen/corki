@@ -14,6 +14,7 @@ from uuid import NAMESPACE_URL, uuid5
 from corki.config.document import loads
 from corki.core import hook_matchers
 from corki.core.async_hooks import AsyncHooks
+from corki.platforms.processes import close_job, create_subprocess_exec
 from corki.protocol.events import (
     HookCompleted,
     HookOutputEntry,
@@ -24,6 +25,7 @@ from corki.protocol.events import (
 from corki.protocol.ids import ItemId
 from corki.protocol.items import AssistantMessageItem, ContextItem, ContextRole, UserMessageItem
 from corki.protocol.session_source import SessionSourceKind, SubAgentSource, ThreadSpawnSource
+from corki.shell import powershell_utf8_argv
 from corki.tools.builtin.shell_environment import _NON_INHERITABLE
 
 _LOG = logging.getLogger(__name__)
@@ -376,14 +378,12 @@ async def run_command(command, payload, *, shell, cwd, environment):
         from corki.core.context_hooks import run
 
         return await asyncio.to_thread(run, command.context, payload)
-    if os.name != "posix":
-        raise ValueError("Stop hook process containment is not implemented on this platform")
     spawn = asyncio.create_task(
-        asyncio.create_subprocess_exec(
-            *shell.exec_args(command.command, login=False),
+        create_subprocess_exec(
+            *powershell_utf8_argv(shell.exec_args(command.command, login=False)),
             cwd=cwd,
             env=environment,
-            start_new_session=True,
+            start_new_session=os.name == "posix",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -432,9 +432,11 @@ async def run_command(command, payload, *, shell, cwd, environment):
             except (OSError, asyncio.CancelledError):
                 process = None
             if process is not None:
+                windows_owned = close_job(process)
                 if not completed:
-                    with suppress(ProcessLookupError):
-                        os.killpg(process.pid, signal.SIGKILL)
+                    if not windows_owned:
+                        with suppress(ProcessLookupError):
+                            os.killpg(process.pid, signal.SIGKILL)
                     # Cancelled readers may leave full pipe buffers. Closing
                     # transports releases wait() without waiting for a reader
                     # which no longer exists, after terminating the group.

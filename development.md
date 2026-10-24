@@ -21,7 +21,8 @@ Corki 使用 Python 和 LangGraph 实现一个以本地代码仓库为工作对�
   -> 模型明确要求继续时重新准备上下文；有效完成且无待执行工具时结束 Turn
 ```
 
-当前版本明确不实现：
+2026-09-06 初版里程碑当时未纳入下列能力；这不是当前版本的功能清单，
+当前状态应以源码、README 和实际平台验收记录为准：
 
 - 命令审批、危险操作判断和完整 CLI 用户确认；MCP 已有独立宿主输入接口，见 README；
 - OS sandbox、网络权限和文件访问策略；
@@ -781,7 +782,8 @@ ThreadWriterConflict；不同 Thread 可以并行。锁文件名是 opaque Threa
 阻塞锁操作在线程执行，取消时 join 已启动 acquisition 并关闭返回的 guard。初始化失败可重试，
 关闭错误在其余资源清理和释放 writer 后报告；取消 close waiter 不取消共享清理任务。
 这是合作 Runtime 的本机写入所有权，不保护任意直接 SQL/管理元数据写入，也不涵盖 hard-link
-别名、分布式锁或完整安全沙箱。macOS 实际跨进程竞争/退出恢复已测试；Windows 分支尚未执行。
+别名、分布式锁或完整安全沙箱。macOS 实际跨进程竞争/退出恢复已测试；Windows 11
+已完成原生锁竞争与恢复的针对性测试，Windows 10 仍未实测。
 
 单 Thread 归档由 sessions/archive.py 的宿主控制器驱动：Runtime.archive 先检查已有 canonical
 history，再关闭当前 Runtime，最后调用 archive store。关闭等待上限10秒，超时/关闭错误先记录，
@@ -1255,6 +1257,14 @@ source .venv/bin/activate
 pip install -e '.[dev]'
 ```
 
+Windows PowerShell 使用本机虚拟环境入口：
+
+```powershell
+Set-Location C:\path\to\corki
+py -3 -m venv .venv
+& .\.venv\Scripts\python.exe -m pip install -e '.[dev]'
+```
+
 运行：
 
 ```bash
@@ -1585,7 +1595,8 @@ AnyIO许可随模块移至包根。Runtime自建模型在普通/实时路径取�
 变量保持大小写敏感。string与{name,source?}引用均经严格解析，未知字段/来源报错。
 source=remote配置可解析但本地启动在spawn之前失败；Manager隔离该server，其他server
 继续搜索/调用。HTTP显式env_vars连空数组也拒绝，null视为缺省。插件走同一配置和实际
-启动路径。不修改os.environ，不代表OS沙箱；真实Windows/远端运行仍未验证/对齐。
+启动路径。不修改os.environ，不代表OS沙箱；Windows 11 的部分本地执行路径已实测，
+远端运行及该处全部配置组合仍未完成验收。
 CA边缘路径表示与原始配置Option表示的剩余差异见审计。
 
 第99批POSIX stdio使用process_group=0，只保留刚创建的组ID；leader退出后仍清理该组。

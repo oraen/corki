@@ -21,6 +21,10 @@ def between_readers_mode(terminal_input):
                 attributes = termios.tcgetattr(descriptor)
                 attributes[3] |= termios.ISIG | termios.NOFLSH
                 termios.tcsetattr(descriptor, termios.TCSANOW, attributes)
+        elif os.name == "nt":
+            from corki.platforms.windows_console import enable_console_interrupts
+
+            enable_console_interrupts(terminal_input)
         yield
     # The enclosing raw_mode restores the complete original terminal state,
     # including signal and flush flags, on exceptions and cancellation too.

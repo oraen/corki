@@ -307,9 +307,15 @@ def test_retry_backoff_shares_one_deadline(phase):
         server = Server([502] * 3, phase)
         client = server.client(timeout=0.05)
         try:
-            with pytest.raises(TimeoutError):
+            if phase == "tools/list":
                 await client.start()
-                await client.list_tools()
+            with pytest.raises(TimeoutError):
+                if phase == "initialize":
+                    await client.start()
+                else:
+                    # Exercise the RPC retry budget, independently of the
+                    # catalog pagination deadline and its protocol-error wrapper.
+                    await client.request("tools/list", {})
             assert len([m for m, _ in server.requests if m["method"] == phase]) == 1
         finally:
             await client.aclose()
@@ -658,7 +664,10 @@ def test_loopback_expiry_recovers_without_waiting_for_404_body_eof():
             await client.aclose()
             server.close()
             await server.wait_closed()
-            await asyncio.gather(*peers)
+            pending = tuple(peers)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
         assert errors == []
 
     asyncio.run(scenario())

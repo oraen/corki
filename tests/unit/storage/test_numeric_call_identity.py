@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from hashlib import sha256
 
@@ -61,12 +62,12 @@ def test_old_lossy_fingerprint_is_not_backfilled_or_reexecuted(tmp_path):
                 {"parsed": dict(call.arguments)}, sort_keys=True, separators=(",", ":")
             ).encode("ascii")
         ).hexdigest()
-        with sqlite3.connect(repository.path) as db:
+        with closing(sqlite3.connect(repository.path)) as db, db:
             db.execute("UPDATE tool_executions SET arguments_sha256=?", (old_hash,))
         reopened = SQLiteSessionRepository(repository.path)
         result = await reopened.claim_tool_call(thread, turn, call)
         assert result.is_error and "collision" in result.content
-        with sqlite3.connect(repository.path) as db:
+        with closing(sqlite3.connect(repository.path)) as db, db:
             assert db.execute("SELECT arguments_sha256,status FROM tool_executions").fetchone() == (
                 old_hash,
                 "completed",

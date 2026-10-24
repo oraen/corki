@@ -2,6 +2,7 @@
 
 import asyncio
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 
 import pytest
@@ -172,7 +173,7 @@ def test_real_runtime_waits_before_remote_effect_and_returns_observation(
             # Existing tool_search results independently carry external context.
             # Direct/Code Mode have no earlier search pollution to obscure this gate.
             prior_mode = "polluted" if mode in ("native", "compatible") else "enabled"
-            with sqlite3.connect(tmp_path / "history.db") as db:
+            with closing(sqlite3.connect(tmp_path / "history.db")) as db:
                 assert db.execute("SELECT memory_mode FROM threads").fetchone()[0] == prior_mode
             assert requests[0].kind == "tool_approval"
             assert requests[0].params["_meta"]["tool_params"] == {"value": 1}
@@ -180,7 +181,7 @@ def test_real_runtime_waits_before_remote_effect_and_returns_observation(
             events = await asyncio.wait_for(task, 5)
             assert isinstance(events[-1], TurnCompleted), events[-1]
             assert len(clients[0].calls) == (1 if action == "accept" else 0)
-            with sqlite3.connect(tmp_path / "history.db") as db:
+            with closing(sqlite3.connect(tmp_path / "history.db")) as db:
                 assert db.execute("SELECT memory_mode FROM threads").fetchone()[0] == (
                     "polluted" if action == "accept" else prior_mode
                 )

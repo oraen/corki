@@ -2,17 +2,16 @@
 
 import asyncio
 import json
-import os
-import shlex
-import sys
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
 from corki.core import LangGraphRuntime
 from corki.core.stop_hooks import command_identity
 from corki.models import ModelCompleted
+from corki.platforms.liveness import process_alive
 from corki.protocol.events import HookCompleted, HookStarted, TurnCompleted, WarningEvent
 from corki.protocol.ids import ToolCallId
 from corki.protocol.items import AssistantMessageItem, CompactionItem, ToolCallItem, new_step_id
@@ -61,16 +60,13 @@ def test_async_compact_hook_control_is_ignored_and_process_is_owned(
             async def aclose(self):
                 pass
 
-        command = shlex.join(
-            [
-                sys.executable,
-                "-c",
-                "import json,os,sys,time; from pathlib import Path; json.load(sys.stdin); "
-                "Path('started-'+str(os.getpid())).write_text(str(os.getpid())); "
-                "exec(\"while not Path('release').exists(): time.sleep(0.01)\"); "
-                "print(json.dumps({'continue':False,'stopReason':'DO_NOT_CONTROL',"
-                "'systemMessage':'ASYNC_COMPACT_WARNING'}))",
-            ]
+        command = python_command(
+            tmp_path,
+            "import json,os,sys,time; from pathlib import Path; json.load(sys.stdin); "
+            "Path('started-'+str(os.getpid())).write_text(str(os.getpid())); "
+            "exec(\"while not Path('release').exists(): time.sleep(0.01)\"); "
+            "print(json.dumps({'continue':False,'stopReason':'DO_NOT_CONTROL',"
+            "'systemMessage':'ASYNC_COMPACT_WARNING'}))",
         )
         fingerprint, _ = command_identity(
             {"type": "command", "command": command, "async": True}, event_name=event
@@ -90,8 +86,9 @@ def test_async_compact_hook_control_is_ignored_and_process_is_owned(
             plugins_enabled=False,
             tool_mode="direct",
             context_window_tokens=8000,
-            # Fixed base budget: test compaction boundaries, not bundled wording.
-            base_instructions="B" * 4962,
+            # Leave headroom for normal host context; the large tool result,
+            # not the fixed prefix alone, must trigger automatic compaction.
+            base_instructions="Fixture instructions.",
             auto_compact_tokens=3000,
             compact_prompt="SUMMARY_REQUEST",
             configuration=LocalConfigState((ConfigLayer(source, "user", contents=document),)),
@@ -128,7 +125,7 @@ def test_async_compact_hook_control_is_ignored_and_process_is_owned(
             started = tuple(tmp_path.glob("started-*"))
             assert len(started) == 1
             pid = int(started[0].read_text())
-            os.kill(pid, 0)
+            assert process_alive(pid)
             owner = runtime._graph._stop_hooks._async
             assert len(owner._tasks) == 1
             assert (
@@ -156,8 +153,7 @@ def test_async_compact_hook_control_is_ignored_and_process_is_owned(
         finally:
             await runtime.aclose()
         assert not owner._tasks
-        with pytest.raises(ProcessLookupError):
-            os.kill(pid, 0)
+        assert not process_alive(pid)
         cold = await create(thread)
         try:
             await cold._ensure_ready()

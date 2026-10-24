@@ -15,7 +15,7 @@ from corki.protocol.items import AssistantMessageItem, new_step_id
 
 
 @pytest.mark.parametrize("burst", [False, True])
-def test_plan_queue_drains_before_model_completion(tmp_path, burst):
+def test_plan_queue_drains_before_model_completion(tmp_path, burst, headless_terminal):
     async def scenario():
         waiting, drained = asyncio.Event(), asyncio.Event()
         ticks = []
@@ -63,12 +63,18 @@ def test_plan_queue_drains_before_model_completion(tmp_path, burst):
         )
         app = CorkiApplication(configured, CorkiPaths.from_home(tmp_path), runtime, ui)
         try:
-            await asyncio.wait_for(app._consume_events(runtime.stream("Plan")), 3)
+            # Deadlock watchdog, not a display latency assertion: this includes
+            # native runtime admission and SQLite commits on real Windows hosts.
+            await asyncio.wait_for(app._consume_events(runtime.stream("Plan")), 30)
             assert ticks
             if burst:
                 assert ticks == [(True, 10)]
             else:
-                assert len(ticks) > 1 and set(ticks) == {(False, 1)}
+                # The animation policy may batch aged queued rows on a slow
+                # host, even when the burst has only three rows. Every row
+                # must still drain before the model is allowed to finish.
+                assert all(not catch_up and count > 0 for catch_up, count in ticks)
+                assert sum(count for _, count in ticks) == 3
             assert "Proposed Plan" in output.getvalue()
             assert getattr(ui, "_plan_stream", None) is None
             assert not ui._animation_enabled

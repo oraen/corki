@@ -3,6 +3,7 @@
 import asyncio
 import sqlite3
 import threading
+from contextlib import closing
 
 import pytest
 
@@ -20,7 +21,7 @@ def test_archive_migration_and_reopening_preserve_history_and_collection(tmp_pat
         await sessions.create_thread(thread, tmp_path)
         history = (UserMessageItem("old history", new_turn_id()),)
         await sessions.append_items(thread, history)
-        with sqlite3.connect(database) as db:
+        with closing(sqlite3.connect(database)) as db, db:
             db.execute("ALTER TABLE threads DROP COLUMN archived_at")
         migrated = SQLiteSessionRepository(database)
         store = SQLiteThreadArchiveStore(database)

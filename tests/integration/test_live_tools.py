@@ -432,18 +432,21 @@ def test_partial_response_resume_does_not_resample_old_request(tmp_path, claim_s
     async def scenario():
         repository = SQLiteSessionRepository(tmp_path / "sessions.db")
         thread, turn = new_thread_id(), new_turn_id()
-        await repository.create_thread(thread, tmp_path)
-        await repository.save_turn(TurnRecord(turn, thread, TurnStatus.RUNNING, "run"))
-        await repository.append_items(thread, (UserMessageItem("run", turn),))
-        call = ToolCall(ToolCallId("durable"), "probe", {})
-        item = ToolCallItem(call, turn, new_step_id())
-        await repository.append_partial_item(thread, turn, 0, item)
-        if claim_state != "unclaimed":
-            await repository.claim_tool_call(thread, turn, call)
-        if claim_state == "completed":
-            await repository.complete_tool_call(
-                thread, turn, ToolResult(call.id, call.name, "saved")
-            )
+        try:
+            await repository.create_thread(thread, tmp_path)
+            await repository.save_turn(TurnRecord(turn, thread, TurnStatus.RUNNING, "run"))
+            await repository.append_items(thread, (UserMessageItem("run", turn),))
+            call = ToolCall(ToolCallId("durable"), "probe", {})
+            item = ToolCallItem(call, turn, new_step_id())
+            await repository.append_partial_item(thread, turn, 0, item)
+            if claim_state != "unclaimed":
+                await repository.claim_tool_call(thread, turn, call)
+            if claim_state == "completed":
+                await repository.complete_tool_call(
+                    thread, turn, ToolResult(call.id, call.name, "saved")
+                )
+        finally:
+            await repository.close()
         repository = SQLiteSessionRepository(repository.path)
         calls = []
         requests = []

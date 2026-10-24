@@ -27,7 +27,7 @@ def safe_log(home, text):
                 yield from secrets(child)
 
     try:
-        config = document.loads((home / "settings.json").read_text())
+        config = document.loads((home / "settings.json").read_text(encoding="utf-8"))
         for secret in sorted(set(secrets(config)), key=len, reverse=True):
             text = text.replace(secret, "[已隐藏]")
     except (OSError, ValueError):

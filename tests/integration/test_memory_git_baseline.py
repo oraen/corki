@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import subprocess
+from contextlib import closing
 
 import pytest
 
@@ -80,7 +81,7 @@ def test_runtime_memory_uses_git_workspace_inputs(tmp_path, case):
                 outside.write_text("MUST NOT READ")
                 (root / "link").symlink_to(outside)
                 (root / "note.md").write_text("NEW INPUT")
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 db.execute("UPDATE memory_jobs SET finished_at=0 WHERE job_key='global'")
             assert isinstance([e async for e in runtime.stream("next")][-1], TurnCompleted)
             report = await runtime._memory_service.wait()

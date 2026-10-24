@@ -2,6 +2,7 @@ import asyncio
 import json
 import sqlite3
 import time
+from contextlib import closing
 
 import httpx
 import pytest
@@ -357,7 +358,7 @@ def test_search_recover_observe_ledger_and_cold_history(tmp_path, monkeypatch, m
             assert (event.mcp_error is not None) == failed
             assert (event.mcp_result_json is None) == failed
             raw = await runtime._repository.load_items(runtime._thread_id)
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 rows = db.execute(
                     "SELECT result_json FROM tool_executions WHERE tool_name=?", (name,)
                 ).fetchall()
@@ -383,7 +384,7 @@ def test_search_recover_observe_ledger_and_cold_history(tmp_path, monkeypatch, m
             assert not any(isinstance(e, ToolCallCompleted) for e in events)
             after = await cold._repository.load_items(cold._thread_id)
             assert after[: len(raw)] == raw and len(calls) == expected_calls
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 assert db.execute(
                     "SELECT result_json FROM tool_executions WHERE tool_name=?", (name,)
                 ).fetchall() == [(encoded,)]

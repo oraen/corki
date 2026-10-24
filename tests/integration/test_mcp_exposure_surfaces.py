@@ -389,22 +389,23 @@ def test_cold_resume_uses_saved_spec_validation_for_changed_server_mask(
             )
 
         old = await create(settings)
-        await old._ensure_ready()
-        thread, turn = old.thread_id, new_turn_id()
-        user = UserMessageItem("once", turn)
-        await old._repository.save_turn(TurnRecord(turn, thread, TurnStatus.RUNNING, "once"))
-
         class Sink:
             async def emit(self, event):
                 pass
 
-        await old._compiled.ainvoke(
-            _initial_state(thread, turn, settings, user),
-            config=old._graph_config(turn),
-            context=GraphRunContext(events=Sink()),
-            interrupt_before=["call_model"],
-        )
-        await old.aclose()
+        try:
+            await old._ensure_ready()
+            thread, turn = old.thread_id, new_turn_id()
+            user = UserMessageItem("once", turn)
+            await old._repository.save_turn(TurnRecord(turn, thread, TurnStatus.RUNNING, "once"))
+            await old._compiled.ainvoke(
+                _initial_state(thread, turn, settings, user),
+                config=old._graph_config(turn),
+                context=GraphRunContext(events=Sink()),
+                interrupt_before=["call_model"],
+            )
+        finally:
+            await old.aclose()
         cold = await create(
             replace(
                 settings,

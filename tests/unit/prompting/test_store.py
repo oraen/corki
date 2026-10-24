@@ -39,6 +39,16 @@ def test_keeps_escaped_placeholder_literal(tmp_path: Path) -> None:
     assert store.render("sample", name="Corki") == "Literal: #{name}; rendered: Corki"
 
 
+def test_variable_paths_are_not_unescaped_or_reparsed(tmp_path: Path) -> None:
+    (tmp_path / "sample.md").write_text(
+        r"\#{literal} #{path} #{path} \#{trailing}", encoding="utf-8"
+    )
+    path = r"C:\资料\#{notes}\file.txt"
+    assert PromptStore(root=tmp_path).render("sample", path=path) == (
+        "#{literal} " + path + " " + path + " #{trailing}"
+    )
+
+
 def test_reports_every_missing_variable(tmp_path: Path) -> None:
     (tmp_path / "sample.md").write_text("#{first} #{second}", encoding="utf-8")
     store = PromptStore(root=tmp_path)

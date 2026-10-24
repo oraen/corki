@@ -1,12 +1,12 @@
 import asyncio
 import json
-import os
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+from corki.platforms.liveness import process_alive
 from corki.protocol.ids import new_tool_call_id
 from corki.protocol.tools import ToolCall
 from corki.tools.base import ToolContext
@@ -21,7 +21,7 @@ def definition(**changes):
         "description": "Echo JSON",
         "transport": "process",
         "command": sys.executable,
-        "args": ["-c", "import sys;print(sys.stdin.read())"],
+        "args": ["-X", "utf8", "-c", "import sys;print(sys.stdin.read())"],
         "parameters": {
             "type": "object",
             "properties": {"text": {"type": "string"}},
@@ -83,7 +83,9 @@ def test_http_real_post_and_errors(tmp_path):
         assert json.loads(result.content) == {"text": "hello"}
         assert calls == [("/ok", {"text": "hello"}, "secret")]
         data["url"] = data["url"].replace("/ok", "/redirect")
-        assert execute(CustomTool(data), tmp_path, {"text": "hello"}).is_error
+        failed = execute(CustomTool(data), tmp_path, {"text": "hello"})
+        assert failed.is_error
+        assert "HTTP 请求失败：302" in failed.content
         assert len(calls) == 2  # no redirect replay/credential forwarding
     finally:
         server.shutdown()
@@ -127,7 +129,12 @@ def test_timeout_output_limit_and_exit_errors(tmp_path):
 
 def test_cancel_terminates_process(tmp_path):
     pidfile = tmp_path / "pid"
-    script = f"import os,time;open({str(pidfile)!r},'w').write(str(os.getpid()));time.sleep(30)"
+    ready = tmp_path / "ready"
+    script = (
+        "import os,time;from pathlib import Path;"
+        f"Path({str(pidfile)!r}).write_text(str(os.getpid()));"
+        f"Path({str(ready)!r}).write_text('ready');time.sleep(120)"
+    )
 
     async def scenario():
         tool = CustomTool(definition(args=["-c", script]))
@@ -136,16 +143,18 @@ def test_cancel_terminates_process(tmp_path):
                 ToolCall(new_tool_call_id(), tool.spec.name, {"text": "x"}), ToolContext(tmp_path)
             )
         )
-        for _ in range(100):
-            if pidfile.exists():
-                break
-            await asyncio.sleep(0.02)
-        assert pidfile.exists()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        with pytest.raises(ProcessLookupError):
-            os.kill(int(pidfile.read_text()), 0)
+        try:
+            async with asyncio.timeout(60):
+                while not ready.exists():
+                    await asyncio.sleep(0.02)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert not process_alive(int(pidfile.read_text()))
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(scenario())
 

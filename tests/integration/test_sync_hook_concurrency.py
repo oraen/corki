@@ -3,11 +3,10 @@
 import asyncio
 import json
 import os
-import shlex
 import sqlite3
-import sys
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
@@ -44,7 +43,7 @@ def test_sync_commands_overlap_and_publish_in_configuration_order(tmp_path, even
                 "print(json.dumps({} if p['stop_hook_active'] else "
                 "{'decision':'block','reason':'VERIFY_'+str(index)}))"
             )
-            command = shlex.join([sys.executable, "-c", script])
+            command = python_command(tmp_path, script)
             fingerprint, _ = command_identity(
                 {"type": "command", "command": command, "timeout": 2}, event_name=event_name
             )
@@ -127,7 +126,7 @@ def test_sync_batch_joins_sibling_processes_on_failure(tmp_path, monkeypatch, fa
                 "while not Path('release-'+str(index)).exists(): time.sleep(0.01)\n"
                 "print('{}')"
             )
-            command = shlex.join([sys.executable, "-c", script])
+            command = python_command(tmp_path, script)
             definition += f"[[hooks.Stop.hooks]]\ntype='command'\ncommand={json.dumps(command)}\n"
             fingerprint, _ = command_identity({"type": "command", "command": command})
             approvals += (

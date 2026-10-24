@@ -30,6 +30,7 @@ def workspace_policy(compiler, root):
                 },
             }
         ),
+        runtime_home=root / "host",
     )
 
 

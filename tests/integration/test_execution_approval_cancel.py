@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from platform_commands import python_command
 
 from corki.cli.application import CorkiApplication
 from corki.code_mode.service import CodeModeService
@@ -24,9 +25,15 @@ from corki.protocol.tools import ToolCall
 @pytest.fixture
 def compiler():
     value = os.environ.get("CORKI_TEST_SANDBOX_COMPILER")
-    if not value or sys.platform != "darwin":
-        pytest.skip("requires explicit native compiler and macOS")
+    if not value or sys.platform not in ("darwin", "win32"):
+        pytest.skip("requires explicit native compiler and macOS or Windows")
     return Path(value)
+
+
+def mkdir_command(root, target):
+    if sys.platform == "win32":
+        return python_command(root, f"from pathlib import Path\nPath({str(target)!r}).mkdir()")
+    return "mkdir " + shlex.quote(str(target))
 
 
 class ApprovalModel:
@@ -116,7 +123,7 @@ async def observe(runtime, message):
 def test_host_cancel_ends_turn_while_decline_can_continue(tmp_path, compiler, mode, host, action):
     async def scenario():
         target = tmp_path / "must-not-exist"
-        model = ApprovalModel(mode, "mkdir " + shlex.quote(str(target)))
+        model = ApprovalModel(mode, mkdir_command(tmp_path, target))
         runtime = await create_runtime(tmp_path, compiler, model)
         prompts = []
 
@@ -177,7 +184,7 @@ def test_cancel_dismisses_parallel_reviews_and_stale_tokens_cannot_cancel_next_t
 ):
     async def scenario():
         target = tmp_path / "after-cancel"
-        model = ApprovalModel(mode, "mkdir " + shlex.quote(str(target)), count=2)
+        model = ApprovalModel(mode, mkdir_command(tmp_path, target), count=2)
         runtime = await create_runtime(tmp_path, compiler, model)
         prompts, dismissed = [], set()
 
@@ -237,7 +244,7 @@ def test_cancel_dismisses_parallel_reviews_and_stale_tokens_cannot_cancel_next_t
 def test_approval_cancel_cold_resume_does_not_replay_pending_command(tmp_path, compiler, mode):
     async def scenario():
         target = tmp_path / "never-replayed"
-        command = "mkdir " + shlex.quote(str(target))
+        command = mkdir_command(tmp_path, target)
         model = ApprovalModel(mode, command)
         runtime = await create_runtime(tmp_path, compiler, model)
         thread_id = runtime.thread_id
@@ -271,7 +278,7 @@ def test_host_approval_cancel_finishes_cleanup_with_paused_event_consumer(
 ):
     async def scenario():
         target = tmp_path / "paused-consumer-fixture"
-        model = ApprovalModel("direct", "mkdir " + shlex.quote(str(target)))
+        model = ApprovalModel("direct", mkdir_command(tmp_path, target))
         runtime = await create_runtime(tmp_path, compiler, model, queue_size=queue_size)
         entered, paused, released, dismissed = (asyncio.Event() for _ in range(4))
         prompts, events = [], []

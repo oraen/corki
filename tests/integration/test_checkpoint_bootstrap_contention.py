@@ -2,7 +2,7 @@
 
 import asyncio
 import sqlite3
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing as closing_connection
 
 import pytest
 
@@ -90,7 +90,7 @@ def test_actual_sqlite_busy_bootstrap_retries_without_replaying_turn(tmp_path, m
             assert all(runtime._checkpoint_path == checkpoint_path for runtime in runtimes)
             assert holder.execute("SELECT value FROM sentinel").fetchall() == [("must remain",)]
             for runtime in runtimes:
-                with sqlite3.connect(runtime._repository.path) as connection:
+                with closing_connection(sqlite3.connect(runtime._repository.path)) as connection:
                     assert connection.execute("SELECT status FROM turns").fetchall() == [
                         ("completed",)
                     ]
@@ -178,7 +178,7 @@ def test_busy_bootstrap_failure_or_cancel_joins_cleanup_before_reuse(tmp_path, m
                 await asyncio.sleep(0)
             assert not consumer.done() and not requests
             assert runtime._compiled is None and runtime._checkpointer is None
-            with sqlite3.connect(runtime._repository.path) as connection:
+            with closing_connection(sqlite3.connect(runtime._repository.path)) as connection:
                 assert connection.execute("SELECT COUNT(*) FROM turns").fetchone() == (0,)
             release.set()
             with pytest.raises(

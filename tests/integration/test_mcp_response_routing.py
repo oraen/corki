@@ -2,6 +2,7 @@ import asyncio
 import json
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 
 import httpx
@@ -296,7 +297,7 @@ def test_common_stream_search_call_observation_ledger_and_cold_history(
             if transport == "http":
                 assert len(replies) == int(outcome == "ping")
             raw = await runtime._repository.load_items(runtime._thread_id)
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 rows = db.execute(
                     "SELECT result_json FROM tool_executions WHERE tool_name='mcp__fixture::read'"
                 ).fetchall()
@@ -321,7 +322,7 @@ def test_common_stream_search_call_observation_ledger_and_cold_history(
             assert isinstance(events[-1], TurnCompleted)
             assert not any(isinstance(e, ToolCallCompleted) for e in events)
             assert (await cold._repository.load_items(cold._thread_id))[: len(raw)] == raw
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db:
                 assert (
                     db.execute(
                         "SELECT result_json FROM tool_executions "

@@ -2,11 +2,9 @@
 
 import asyncio
 import json
-import os
-import shlex
-import sys
 
 import pytest
+from platform_commands import python_command
 from test_code_mode import request_call
 
 from corki.config import CorkiSettings
@@ -15,6 +13,7 @@ from corki.core import LangGraphRuntime
 from corki.core.stop_hooks import command_identity
 from corki.models import ModelCompleted, ModelError, ModelErrorKind
 from corki.models.types import ModelUsage
+from corki.platforms.liveness import process_alive
 from corki.protocol.events import (
     HookCompleted,
     HookStarted,
@@ -71,11 +70,12 @@ def test_async_post_feedback_after_last_sample(tmp_path, nested, control, delive
             "import json,os,sys,time; from pathlib import Path; p=json.load(sys.stdin); "
             "assert p['tool_response']=='ORIGINAL_RESULT'; "
             "Path('hook-started').write_text(str(os.getpid())); "
-            "Path('hook-count').open('a').write('run\\n'); "
+            "\nwith Path('hook-count').open('a', encoding='utf-8') as output:\n"
+            "    output.write('run\\n')\n"
             "exec(\"while not Path('release').exists(): time.sleep(0.01)\"); "
             f"print(json.dumps({output!r}))"
         )
-        command = shlex.join([sys.executable, "-c", script])
+        command = python_command(tmp_path, script)
         handler = {"type": "command", "command": command, "async": True}
         fingerprint, _ = command_identity(handler, event_name="PostToolUse", matcher="probe")
         source = tmp_path / "config.toml"
@@ -229,8 +229,7 @@ def test_async_post_feedback_after_last_sample(tmp_path, nested, control, delive
                     if delivery == "cold_unknown":
                         assert not committed.is_set()
                         pid = int((tmp_path / "hook-started").read_text())
-                        with pytest.raises(ProcessLookupError):
-                            os.kill(pid, 0)
+                        assert not process_alive(pid)
                         # Keep the trusted hook configured and allow a mistaken
                         # replay to finish, so the count check cannot hide it.
                         (tmp_path / "release").touch()

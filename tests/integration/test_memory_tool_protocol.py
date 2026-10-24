@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 
 import httpx
@@ -178,7 +179,7 @@ def test_memory_tool_contract_on_real_http_requests(tmp_path, mode, leaf, argume
             assert json.dumps(result.content) in json.dumps(bodies[1])
             if not is_error:
                 value = json.loads(result.content)
-                with sqlite3.connect(tmp_path / "sessions.db") as db:
+                with closing(sqlite3.connect(tmp_path / "sessions.db")) as db:
                     payload = json.loads(
                         db.execute(
                             "SELECT result_json FROM tool_executions WHERE call_id='memory-call'"

@@ -6,21 +6,24 @@ import base64
 import difflib
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
+
+from corki.platforms.paths import archive_parts, is_link_path
 
 Snapshot = dict[str, dict[str, str]]
 MAX_DIFF_BYTES = 4 * 1024 * 1024
 
 
 def workspace_files(root: Path) -> tuple[Path, ...]:
-    if root.is_symlink():
+    if is_link_path(root):
         raise ValueError("memory root cannot be a symbolic link")
     directories, files = [root], []
     while directories:
         for path in directories.pop().iterdir():
             if path.name.startswith(".") or path == root / "phase2_workspace_diff.md":
                 continue  # private state and generated evidence are not memory inputs
-            if path.is_symlink():
+            if is_link_path(path):
                 raise ValueError(f"memory workspace cannot contain a symbolic link: {path}")
             if path.is_dir():
                 directories.append(path)
@@ -35,7 +38,7 @@ def capture(root: Path) -> Snapshot:
     return {
         path.relative_to(root).as_posix(): {
             "content": base64.b64encode(path.read_bytes()).decode("ascii"),
-            "mode": "100755" if path.stat().st_mode & 0o111 else "100644",
+            "mode": "100755" if os.name != "nt" and path.stat().st_mode & 0o111 else "100644",
         }
         for path in workspace_files(root)
     }
@@ -47,6 +50,11 @@ def validate(value: object) -> Snapshot | None:
     for name, entry in value.items():
         if not isinstance(name, str):
             return None
+        if os.name == "nt":
+            try:
+                archive_parts(name, windows=True)
+            except ValueError:
+                return None
         path = PurePosixPath(name)
         if (
             not path.parts
@@ -91,7 +99,7 @@ def text(snapshot: Snapshot, name: str) -> str:
 
 def read_previous(root: Path) -> Snapshot | None:
     path = root / ".consolidation-baseline.json"
-    if path.is_symlink():
+    if is_link_path(path):
         raise ValueError("memory baseline cannot be a symbolic link")
     try:
         value = json.loads(path.read_text(encoding="utf-8"))

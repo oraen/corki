@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 import pytest
 from memory_evidence import inspect_worker_evidence
@@ -109,7 +110,7 @@ def test_stage_one_parser_and_redaction_survive_runtime_publication(tmp_path, ca
             assert report.failed == int(invalid), runtime._memory_service.warnings
             assert report.extracted == int(not invalid) and report.empty == 0
             assert report.consolidated and len(model.requests) == 2
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection:
                 row = connection.execute(
                     "SELECT raw_memory,rollout_summary,rollout_slug "
                     "FROM memory_stage1_outputs WHERE thread_id=?",

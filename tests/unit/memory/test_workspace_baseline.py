@@ -3,10 +3,10 @@
 import asyncio
 import json
 import re
-import shutil
 import sqlite3
 import subprocess
 import sys
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -20,6 +20,7 @@ from corki.memory import (
     workspace,
 )
 from corki.models import ModelCompleted
+from corki.platforms.cleanup import remove_owned_tree
 from corki.protocol.ids import new_thread_id
 from corki.protocol.items import AssistantMessageItem, new_step_id
 from corki.storage import SQLiteSessionRepository
@@ -73,7 +74,7 @@ def _setup(tmp_path):
 
 def _elapse_success_cooldown(workspace):
     """Artifact tests run the next eligible pass; dedicated policy tests cover the six-hour gate."""
-    with sqlite3.connect(workspace / "sessions.db") as connection:
+    with closing(sqlite3.connect(workspace / "sessions.db")) as connection, connection:
         connection.execute(
             "UPDATE memory_jobs SET finished_at=0 WHERE kind='memory_consolidate_global'"
         )
@@ -96,7 +97,7 @@ def test_output_changes_and_legacy_baselines_do_not_skip_consolidation(tmp_path,
             path = root / ".consolidation-baseline.json"
             # Recreate an actual old-version store; migration tests separately
             # prove v3 content survives and unknown versions force a model pass.
-            shutil.rmtree(root / ".git")  # exclusively owned fixture metadata
+            remove_owned_tree(root / ".git")  # exclusively owned fixture metadata
             path.write_text(json.dumps({"version": 1}), encoding="utf-8")
         _elapse_success_cooldown(tmp_path)
         report = await service.run_once(new_thread_id())
@@ -167,7 +168,7 @@ def test_partial_publication_failure_keeps_watermark_pending_and_retry_rebuilds(
         service, model, root, _ = _setup(tmp_path)
         assert (await service.run_once(new_thread_id())).consolidated
         baseline = git_baseline.read(root)
-        with sqlite3.connect(tmp_path / "sessions.db") as connection:
+        with closing(sqlite3.connect(tmp_path / "sessions.db")) as connection, connection:
             watermark = connection.execute(
                 "SELECT completed_watermark FROM memory_jobs WHERE job_key='global'"
             ).fetchone()[0]
@@ -186,7 +187,7 @@ def test_partial_publication_failure_keeps_watermark_pending_and_retry_rebuilds(
         assert report.failed == 1 and not report.consolidated
         assert "memory 2" in (root / "MEMORY.md").read_text()  # per-file, not set-atomic
         assert git_baseline.read(root) == baseline
-        with sqlite3.connect(tmp_path / "sessions.db") as connection:
+        with closing(sqlite3.connect(tmp_path / "sessions.db")) as connection, connection:
             assert connection.execute(
                 "SELECT completed_watermark, status FROM memory_jobs WHERE job_key='global'"
             ).fetchone() == (watermark, "failed")
@@ -250,7 +251,7 @@ def test_process_exit_after_baseline_before_db_commit_recovers_without_resamplin
     async def scenario():
         service, model, root, _ = _setup(tmp_path)
         assert (await service.run_once(new_thread_id())).consolidated
-        with sqlite3.connect(tmp_path / "sessions.db") as connection:
+        with closing(sqlite3.connect(tmp_path / "sessions.db")) as connection, connection:
             old_watermark = connection.execute(
                 "SELECT completed_watermark FROM memory_jobs WHERE job_key='global'"
             ).fetchone()[0]
@@ -262,6 +263,7 @@ from pathlib import Path
 from corki.config import CorkiSettings
 from corki.memory import LongTermMemoryService, SQLiteMemoryRepository, git_baseline
 from corki.models import ModelCompleted
+from corki.platforms.cleanup import remove_owned_tree
 from corki.protocol.ids import new_thread_id
 from corki.protocol.items import AssistantMessageItem, new_step_id
 
@@ -293,7 +295,7 @@ asyncio.run(service.run_once(new_thread_id()))
         )
         assert result.returncode == 23, result.stderr
         assert "after-crash" in (root / "MEMORY.md").read_text()
-        with sqlite3.connect(tmp_path / "sessions.db") as connection:
+        with closing(sqlite3.connect(tmp_path / "sessions.db")) as connection, connection:
             assert connection.execute(
                 "SELECT completed_watermark, status FROM memory_jobs WHERE job_key='global'"
             ).fetchone() == (old_watermark, "running")
@@ -301,7 +303,7 @@ asyncio.run(service.run_once(new_thread_id()))
         resumed = await service.run_once(new_thread_id())
         assert resumed.consolidation_skipped and not resumed.consolidated
         assert len(model.requests) == 1, "the child's completed model result must not be resampled"
-        with sqlite3.connect(tmp_path / "sessions.db") as connection:
+        with closing(sqlite3.connect(tmp_path / "sessions.db")) as connection, connection:
             completed, status = connection.execute(
                 "SELECT completed_watermark, status FROM memory_jobs WHERE job_key='global'"
             ).fetchone()

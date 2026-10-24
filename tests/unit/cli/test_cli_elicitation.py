@@ -333,7 +333,7 @@ def test_terminal_form_uses_real_prompt_session_without_persistent_history(
             3,
         )
         assert result == (("cancel", None) if cancel else ("accept", {"label": "HOST_ONLY_VALUE"}))
-        assert not history.exists() or "HOST_ONLY_VALUE" not in history.read_text()
+        assert not history.exists() or "HOST_ONLY_VALUE" not in history.read_text(encoding="utf-8")
         assert not ui._form_session.history.get_strings()
         assert ui._form_session.default_buffer.text == ""
 

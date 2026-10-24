@@ -2,6 +2,7 @@
 
 import asyncio
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -34,7 +35,7 @@ async def claim(repository, *, limit=1, current=None, idle=0, lease=60):
 
 
 def set_version(database, thread, value):
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute("UPDATE threads SET updated_at=? WHERE id=?", (value, str(thread)))
 
 
@@ -139,7 +140,7 @@ def test_global_running_cap_is_shared_by_independent_repositories(tmp_path):
         assert len(active) == 2
         assert len({value.thread_id for value in active}) == 2
         assert not await claim(first, limit=2)
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute("UPDATE memory_jobs SET lease_until=0")
         replacements = await claim(second, limit=2)
         assert len(replacements) == 2
@@ -255,7 +256,7 @@ def test_submillisecond_source_advance_is_claimed(tmp_path, prior):
                     initial, "fixture failure", retry_delay_seconds=3_600
                 )
                 if attempt < 2:
-                    with sqlite3.connect(database) as connection:
+                    with closing(sqlite3.connect(database)) as connection, connection:
                         connection.execute(
                             "UPDATE memory_jobs SET retry_at=0 WHERE job_key=?", (str(source),)
                         )
@@ -285,7 +286,7 @@ def test_valid_source_replaces_unorderable_legacy_version(tmp_path):
         version = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
         set_version(database, source, version)
         repository = SQLiteMemoryRepository(database)
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute(
                 "INSERT INTO memory_stage1_outputs(thread_id, source_updated_at, cwd, "
                 "raw_memory, rollout_summary) VALUES (?, 'old-version', ?, 'old', 'old')",
@@ -303,7 +304,7 @@ def test_valid_source_replaces_unorderable_legacy_version(tmp_path):
         assert await repository.complete_extraction(
             owned, StageOneMemory(source, tmp_path, version, "fresh", "fresh")
         )
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             assert connection.execute(
                 "SELECT source_updated_at, raw_memory FROM memory_stage1_outputs WHERE thread_id=?",
                 (str(source),),
@@ -332,7 +333,7 @@ def test_no_output_removes_old_extraction_and_enqueues_consolidation(tmp_path):
         assert await repository.complete_extraction(replacement, None)
         assert await repository.load_consolidation_inputs(limit=10, max_unused_days=30) == ()
         assert await repository.claim_consolidation(lease_seconds=60) is None
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute("UPDATE memory_jobs SET finished_at=0 WHERE job_key='global'")
         pending = await repository.claim_consolidation(lease_seconds=60)
         assert pending is not None and pending.input_watermark > phase2.input_watermark
@@ -351,7 +352,7 @@ def test_bounded_scan_precedes_memory_staleness_probes(
         SQLiteSessionRepository(database)
         repository = SQLiteMemoryRepository(database)
         now = datetime.now(UTC) - timedelta(hours=1)
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             for index in range(prefix_count + 1):
                 thread = f"source-{index:05}"
                 updated = (now - timedelta(seconds=index)).isoformat()
@@ -411,7 +412,7 @@ def test_legacy_job_migration_preserves_owner_backoff_and_success(tmp_path):
         future = (datetime.now(UTC) + timedelta(hours=1)).timestamp()
         for source in sources:
             set_version(database, source, version)
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute(
                 """
                 CREATE TABLE memory_jobs (
@@ -442,7 +443,7 @@ def test_legacy_job_migration_preserves_owner_backoff_and_success(tmp_path):
         repositories = await asyncio.gather(
             *(asyncio.to_thread(SQLiteMemoryRepository, database) for _ in range(4))
         )
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             after = connection.execute("SELECT * FROM memory_jobs ORDER BY job_key").fetchall()
             assert [row[:-3] for row in after] == before
             assert all(row[-3] == 3 and row[-1] is None for row in after)

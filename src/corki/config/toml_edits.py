@@ -109,7 +109,12 @@ def _write_document(write_path: Path, document) -> None:
 
 def write_text(write_path: Path, updated: str) -> None:
     write_path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, name = tempfile.mkstemp(prefix=".corki-config-", dir=write_path.parent)
+    if os.name == "nt":
+        from corki.platforms.windows_private_files import private_temporary_file
+
+        descriptor, name = private_temporary_file(write_path.parent, prefix=".corki-config-")
+    else:
+        descriptor, name = tempfile.mkstemp(prefix=".corki-config-", dir=write_path.parent)
     temporary = Path(name)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:

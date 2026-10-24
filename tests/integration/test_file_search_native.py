@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,20 @@ def search(binary, cwd, query, limit=100):
                 timeout=5,
             )
         )
+    )
+
+
+def directory_link(link, target):
+    if os.name != "nt":
+        link.symlink_to(target, target_is_directory=True)
+        return
+    # NTFS directory junctions need neither elevation nor Developer Mode.
+    # These are generated fixture paths, never user/model command arguments.
+    assert not any('"' in str(path) for path in (link, target))
+    command = Path(os.environ["SYSTEMROOT"]) / "System32" / "cmd.exe"
+    subprocess.run(
+        f'"{command}" /d /v:off /c mklink /J "{link}" "{target}"',
+        check=True, capture_output=True, timeout=30,
     )
 
 
@@ -64,11 +79,17 @@ def test_followed_links_keep_spelling_and_loop_does_not_fail(search_binary, tmp_
     external = tmp_path / "external"
     external.mkdir()
     (external / "empty").mkdir()
-    (project / "资料 link").symlink_to(external, target_is_directory=True)
-    (project / "loop").symlink_to(project, target_is_directory=True)
-    rows = search(search_binary, project, "empty")
-    assert [row["path"] for row in rows] == ["资料 link/empty"]
-    assert rows[0]["directory"]
+    links = []
+    try:
+        for link, target in ((project / "资料 link", external), (project / "loop", project)):
+            directory_link(link, target)
+            links.append(link)
+        rows = search(search_binary, project, "empty")
+        assert [Path(row["path"]) for row in rows] == [Path("资料 link") / "empty"]
+        assert rows[0]["directory"]
+    finally:
+        for link in reversed(links):
+            link.rmdir() if os.name == "nt" else link.unlink()
 
 
 def test_nucleo_normalization_and_path_boundary_ranking(search_binary, tmp_path):
@@ -77,16 +98,21 @@ def test_nucleo_normalization_and_path_boundary_ranking(search_binary, tmp_path)
         (tmp_path / name).touch()
     assert search(search_binary, tmp_path, "cafe")[0]["path"] == "café.md"
     rows = search(search_binary, tmp_path, "foo")
-    assert rows[0]["path"] == "nested/foo.rs"
+    assert Path(rows[0]["path"]) == Path("nested") / "foo.rs"
     assert [row["score"] for row in rows] == sorted((r["score"] for r in rows), reverse=True)
-    assert search(search_binary, tmp_path, "^nested/")[0]["path"] == "nested/foo.rs"
+    assert Path(search(search_binary, tmp_path, "^nested" + os.sep)[0]["path"]) == (
+        Path("nested") / "foo.rs"
+    )
 
 
 def test_top_matches_not_first_discovered_entries(search_binary, tmp_path):
     for index in range(10001):
-        (tmp_path / f"ordinary-{index:05}").mkdir()
+        # Exercise more than 10,000 competing candidates without turning this
+        # ranking regression into a subdirectory-enumeration benchmark.
+        (tmp_path / f"ordinary-{index:05}").touch()
     (tmp_path / "zz-exact-needle").mkdir()
-    assert search(search_binary, tmp_path, "needle", 1)[0]["path"] == "zz-exact-needle"
+    best = search(search_binary, tmp_path, "needle", 1)[0]
+    assert best["path"] == "zz-exact-needle" and best["directory"]
     assert len(search(search_binary, tmp_path, "ordinary", 20)) == 20
 
 
@@ -117,7 +143,7 @@ def test_cli_candidates_keep_native_ranking_and_normalization(search_binary, tmp
         ]
 
     rows = asyncio.run(collect("foo"))
-    assert rows[0].reference.label == "nested/foo.rs"
+    assert Path(rows[0].reference.label) == Path("nested") / "foo.rs"
     rows = asyncio.run(collect("cafe"))
     assert len(rows) == 1 and rows[0].reference.description == "Directory"
     assert rows[0].text == '"café 空目录"'

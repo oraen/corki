@@ -34,7 +34,16 @@ def test_repaired_skill_path_selection_is_injected_once_and_survives_cold_reopen
         beta.parent.mkdir(parents=True)
         beta.write_text("---\ndescription: Build for AWS: ECS\n---\nBODY beta", encoding="utf-8")
         link = root / "linked"
-        link.symlink_to(beta.parent, target_is_directory=True)
+        try:
+            link.symlink_to(beta.parent, target_is_directory=True)
+        except OSError as error:
+            if logical:
+                pytest.skip(f"Directory symlinks unavailable to this user: {error}")
+            # A canonical path does not require symlink privileges; still test
+            # selection from a discoverable skill directory on Windows.
+            beta = root / "beta/SKILL.md"
+            beta.parent.mkdir(parents=True)
+            beta.write_text("---\ndescription: Build for AWS: ECS\n---\nBODY beta", encoding="utf-8")
         locator = link / "SKILL.md" if logical else beta
         requests = []
 

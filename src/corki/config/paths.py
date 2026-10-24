@@ -90,4 +90,8 @@ class CorkiPaths:
             )
         # The provider table may contain a local-development API key. Keep
         # the file private even when the user's umask would create it as 0644.
+        if os.name == "nt":
+            from corki.platforms.windows_private_files import restrict_file
+
+            restrict_file(self.config_file)
         self.config_file.chmod(0o600)

@@ -185,20 +185,27 @@ def test_shell_review_contract_cannot_silently_become_executable(tmp_path, monke
 
 @pytest.mark.parametrize("ack", [None, False, "true", 1])
 def test_missing_or_untyped_admission_ack_prevents_process_creation(tmp_path, monkeypatch, ack):
+    from corki.execution import backend
     from corki.tools.builtin import process
 
     async def scenario():
-        compiler = tmp_path / "compiler"
+        compiler = tmp_path / "compiler.py"
         compiler.write_text(
-            f"#!{sys.executable}\n"
             "import json,sys\n"
             "request=json.loads(sys.stdin.readline())\n"
             "response={'command': request['command'], 'revision': 1, "
             "'profile': {'type':'disabled'}}\n"
             f"response.update(json.loads({json.dumps({'exec_policy_checked': ack})!r}))\n"
-            "print(json.dumps({'ok':response}))\n"
+            "print(json.dumps({'ok':response}))\n",
+            encoding="utf-8",
         )
-        compiler.chmod(0o700)
+        run_owned = backend.run_owned
+
+        async def run_python_compiler(argv, payload, **kwargs):
+            assert str(argv[0]) == str(compiler)
+            return await run_owned([sys.executable, *argv], payload, **kwargs)
+
+        monkeypatch.setattr(backend, "run_owned", run_python_compiler)
         spawned = []
 
         async def forbidden_spawn(*args, **kwargs):

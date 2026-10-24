@@ -28,28 +28,29 @@ def test_refresh_does_not_kill_old_stdio_process_with_an_in_flight_call(tmp_path
         monkeypatch.setattr("corki.mcp.manager.create_client", factory)
         registry = ToolRegistry()
         manager = MCPManager((settings("amber"),), registry)
-        await manager.start()
-        registry.seal()
-        first_process = clients[0]._process
-        entered, release = tmp_path / "entered", tmp_path / "release"
-        executor = ToolExecutor(registry, output_char_budget=1000)
-        task = asyncio.create_task(
-            executor.execute(
-                ToolCall(
-                    ToolCallId("in-flight"),
-                    "mcp__docs::lookup",
-                    {"entered": str(entered), "release": str(release)},
-                ),
-                ToolContext(cwd=tmp_path),
-            )
-        )
 
         async def wait_entered():
             while not entered.exists():
                 assert first_process.returncode is None
                 await asyncio.sleep(0.01)
 
+        task = None
         try:
+            await manager.start()
+            registry.seal()
+            first_process = clients[0]._process
+            entered, release = tmp_path / "entered", tmp_path / "release"
+            executor = ToolExecutor(registry, output_char_budget=1000)
+            task = asyncio.create_task(
+                executor.execute(
+                    ToolCall(
+                        ToolCallId("in-flight"),
+                        "mcp__docs::lookup",
+                        {"entered": str(entered), "release": str(release)},
+                    ),
+                    ToolContext(cwd=tmp_path),
+                )
+            )
             await asyncio.wait_for(wait_entered(), 3)
             manager.request_refresh((settings("cobalt"),))
             await manager.refresh_if_dirty()
@@ -64,8 +65,9 @@ def test_refresh_does_not_kill_old_stdio_process_with_an_in_flight_call(tmp_path
             assert await asyncio.wait_for(first_process.wait(), 3) is not None
             assert second_process.returncode is None
         finally:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
             await manager.aclose()
         assert all(client._process is None for client in clients)
         assert first_process.returncode is not None and second_process.returncode is not None

@@ -3,10 +3,13 @@
 import asyncio
 import json
 import re
+import shlex
+import sys
 from pathlib import Path
 
 import httpx
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
@@ -28,6 +31,17 @@ from corki.protocol.items import (
 from corki.protocol.tools import ToolCall
 
 
+def read_command(directory, paths):
+    if sys.platform == "win32":
+        return python_command(
+            directory,
+            "from pathlib import Path\n"
+            f"for name in {paths!r}:\n"
+            "    print(Path(name).read_text(encoding='utf-8'), end='')\n",
+        )
+    return shlex.join(["cat", *paths])
+
+
 @pytest.mark.parametrize("output", ["files", "json", "noop"])
 @pytest.mark.parametrize("extensions", [False, True])
 def test_full_policy_is_bound_to_shared_workspace_and_evidence_is_tool_read(
@@ -44,6 +58,10 @@ def test_full_policy_is_bound_to_shared_workspace_and_evidence_is_tool_read(
             source.write_text("LAZY_SOURCE_MARKER\n")
             (source.parent / "instructions.md").write_text("TEAM_INTERPRETATION_MARKER\n")
         requests, worker_roots = [], []
+        paths = ["phase2_workspace_diff.md", "raw_memories.md"]
+        if extensions:
+            paths += ["extensions/team/instructions.md", "extensions/team/resource.md"]
+        command = read_command(tmp_path, paths)
 
         class Main:
             async def stream(self, request):
@@ -89,9 +107,6 @@ def test_full_policy_is_bound_to_shared_workspace_and_evidence_is_tool_read(
                 if len(requests) == 1:
                     assert all("LAZY_SOURCE_MARKER" not in i.content for i in request.items)
                     assert all("TEAM_INTERPRETATION_MARKER" not in i.content for i in request.items)
-                    command = "cat phase2_workspace_diff.md raw_memories.md"
-                    if extensions:
-                        command += " extensions/team/instructions.md extensions/team/resource.md"
                     call = ToolCall(
                         new_tool_call_id(), "exec_command", {"cmd": command, "login": False}
                     )
@@ -173,8 +188,9 @@ def test_full_consolidation_policy_and_lazy_notes_on_actual_http(tmp_path, api_m
             (
                 "exec_command",
                 {
-                    "cmd": (
-                        "cat extensions/ad_hoc/instructions.md extensions/ad_hoc/notes/request.md"
+                    "cmd": read_command(
+                        tmp_path,
+                        ["extensions/ad_hoc/instructions.md", "extensions/ad_hoc/notes/request.md"],
                     ),
                     "login": False,
                 },

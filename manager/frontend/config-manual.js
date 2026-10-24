@@ -5,13 +5,14 @@ const choice = (...pairs) => pairs;
 
 export const manualSections = [
   {key:'default', title:'默认模型', fields:[
-    field('default.provider','默认供应商','新会话默认使用的供应商名称，必须与 providers 中的名称一致。','选择已经配置好连接的供应商'),
+    field('default.provider','默认供应商','新会话默认使用的供应商名称；未指定时按配置顺序使用第一个已开启的供应商。','选择已经配置好连接的供应商'),
     field('default.model','默认模型','新会话默认使用的模型名称，必须属于上面的供应商。','选择该供应商 models 中已配置的模型'),
   ]},
   {key:'providers', title:'供应商与模型', fields:[
     field('providers.[供应商]','供应商配置','以自定义名称组织连接信息和模型目录。','每个供应商使用一个容易辨认的名称','对象'),
     field('providers.[供应商].base_url','接口地址','模型服务的 HTTP(S) 基础地址。','填写供应商提供的官方 API 地址'),
     field('providers.[供应商].api_key','API Key','调用该供应商接口时使用的密钥。','填写对应供应商的密钥；不要分享配置文件'),
+    field('providers.[供应商].enabled','供应商启用状态','关闭后保留配置和模型，但不再供新任务使用。','true（默认）','布尔值'),
     field('providers.[供应商].api_mode','接口协议','Corki 向供应商发送请求时使用的 API 协议。','按供应商接口文档选择','枚举',choice(['chat_completions','OpenAI Chat Completions 兼容接口'],['responses','OpenAI Responses 接口'])),
     field('providers.[供应商].name','适配器名称','指定使用哪种供应商适配行为，与供应商配置名称可以不同。','一般留空；仅私有部署需要指定'),
     field('providers.[供应商].aliases','别名','保留旧名称供已有会话恢复时识别。','重命名供应商时才添加','文本数组'),
@@ -103,7 +104,11 @@ export const manualSections = [
     field('memories.max_unused_days','未使用保留天数','控制长期未使用记忆的清理期限。','30（默认）','整数'),
     field('memories.summary_token_limit','摘要 token 上限','限制记忆摘要生成的长度。','2500（默认）','正整数'),
   ]},
+  {key:'sessions', title:'会话清理', fields:[
+    field('sessions.auto_cleanup','自动清理会话','开启后，在管理页面打开时每天最多执行一次后台清理；永久删除超过 3 个月没有更新且未被占用的会话。','false（默认，按需开启）','布尔值'),
+  ]},
   {key:'other', title:'界面与其他', fields:[
+    field('features.self_evolution','自进化','保存 Corki 的全局自进化设置。','false（默认）','布尔值'),
     field('features.fast_mode','快速模式','对支持服务等级的模型优先使用快速档位。','true（默认）','布尔值'),
     field('features.code_mode.enabled','代码模式','启用代码编排能力；最终调用方式由 tools.mode 决定。','按模型和工具能力启用','布尔值'),
     field('features.token_budget','Token 预算','启用上下文预算提示，可用布尔值或详细对象配置。','false（默认）','布尔值或对象'),
@@ -195,6 +200,7 @@ const nestedInfo = {
   'features.token_budget':['Token 预算','预算提示的开关和细项设置；也可直接使用布尔值。'],
 };
 const defaults = {
+  'features.self_evolution':'false','sessions.auto_cleanup':'false',
   'features.goals':'true','goals.max_goal_token_budget':'null',
   'provider.api_mode':'"chat_completions"',
   'runtime.event_queue_size':'0','agents.interrupt_message':'true',
@@ -204,8 +210,9 @@ const defaults = {
   'realtime.max_inputs_per_turn':'16',
   'mcp_oauth_credentials_store':'"auto"',
   'mcp_optional_startup_grace_ms':'1000',
-  'default.provider':'无；配置 default 时必须填写',
+  'default.provider':'未指定时使用第一个已开启的供应商',
   'default.model':'无；配置 default 时必须填写',
+  'providers.[provider].enabled':'true',
   'providers':'{}','providers.[provider].aliases':'[]',
   'providers.[provider].api_mode':'"chat_completions"',
   'providers.[provider].max_retries':'5','providers.[provider].request_max_retries':'4',
@@ -250,7 +257,7 @@ const defaults = {
   'providers.[provider].models.[model].supported_reasoning_levels.[0].effort':'无；数组条目必须填写',
 };
 const required = {
-  'default.provider':'配置 default 时必填',
+  'default.provider':'否',
   'default.model':'配置 default 时必填',
   'execution.profile.type':'配置 execution.profile 时必填',
   'skills.config.[0].path':'与 name 二选一',

@@ -7,6 +7,7 @@ Scripted calls prove the harness contract, not model selection quality.
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from copy import deepcopy
 from dataclasses import replace
 
@@ -244,7 +245,7 @@ def test_legacy_apps_policy_cannot_override_ordinary_call_admission(
         assert all(client.is_closed for client in clients)
         assert isinstance(events[-1], TurnCompleted), events[-1]
         found = "policy:present" in outputs[0].content if mode == "code_mode" else bool(discovered)
-        with sqlite3.connect(tmp_path / "policy.db") as db:
+        with closing(sqlite3.connect(tmp_path / "policy.db")) as db:
             rows = db.execute(
                 "SELECT status,result_json FROM tool_executions WHERE tool_name LIKE 'mcp__%'"
             ).fetchall()

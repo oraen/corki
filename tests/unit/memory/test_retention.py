@@ -2,6 +2,7 @@
 
 import asyncio
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -57,7 +58,7 @@ def test_selection_uses_source_not_generation_and_last_use_overrides_source(tmp_
     database, repository, now = store
     recent = (now - timedelta(days=1)).isoformat()
     old = (now - timedelta(days=40)).isoformat()
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         seed(connection, tmp_path, "old-never-used", old, generated=recent)
         seed(connection, tmp_path, "fresh-unused", recent, generated=old)
         seed(connection, tmp_path, "stale-used", recent, used=old, count=99, generated=recent)
@@ -74,7 +75,7 @@ def test_selection_uses_source_not_generation_and_last_use_overrides_source(tmp_
 
 def test_selection_excludes_disabled_polluted_empty_before_limit(tmp_path, store):
     database, repository, now = store
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         for index, mode in enumerate(("disabled", "polluted")):
             seed(connection, tmp_path, f"ineligible-{index}", now.isoformat(), mode=mode, count=100)
         seed(connection, tmp_path, "empty", now.isoformat(), raw="  ", summary=" ", count=100)
@@ -91,7 +92,7 @@ def test_selection_excludes_disabled_polluted_empty_before_limit(tmp_path, store
 
 def test_top_n_ranking_and_stable_return_order_are_separate(tmp_path, store):
     database, repository, now = store
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         for name in ("a", "b", "c"):
             seed(connection, tmp_path, name, now.isoformat(), generated=now.isoformat())
 
@@ -110,7 +111,7 @@ def test_top_n_ranks_source_versions_at_microsecond_precision(tmp_path, store):
     database, repository, now = store
     older = now.replace(microsecond=100000).isoformat()
     newer = now.replace(microsecond=100001).isoformat()
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         # The thread-id tiebreaker favors z-old if the timestamps collapse.
         seed(connection, tmp_path, "z-old", older)
         seed(connection, tmp_path, "a-new", newer)
@@ -122,7 +123,7 @@ def test_top_n_ranks_source_versions_at_microsecond_precision(tmp_path, store):
 def test_prune_is_bounded_preserves_selected_and_success_watermarks(tmp_path, store):
     database, repository, now = store
     cutoff = now - timedelta(days=30)
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         for name in ("a-old", "b-old", "c-old"):
             seed(connection, tmp_path, name, (cutoff - timedelta(days=10)).isoformat())
         seed(connection, tmp_path, "selected", (cutoff - timedelta(days=5)).isoformat(), selected=1)
@@ -146,7 +147,7 @@ def test_prune_is_bounded_preserves_selected_and_success_watermarks(tmp_path, st
     async def scenario():
         assert await repository.prune_stage_one_outputs(max_unused_days=30, limit=0) == 0
         assert await repository.prune_stage_one_outputs(max_unused_days=30, limit=2) == 2
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             ids = connection.execute(
                 "SELECT thread_id FROM memory_stage1_outputs ORDER BY thread_id"
             ).fetchall()
@@ -154,7 +155,7 @@ def test_prune_is_bounded_preserves_selected_and_success_watermarks(tmp_path, st
                 (name,) for name in ("boundary", "c-old", "selected", "stale-used", "used")
             ]
         assert await repository.prune_stage_one_outputs(max_unused_days=30, limit=200) == 2
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             assert (
                 connection.execute("SELECT * FROM memory_jobs ORDER BY job_key").fetchall() == jobs
             )
@@ -178,7 +179,7 @@ def test_extraction_refresh_preserves_previous_selected_baseline_until_phase2_su
 ):
     database, repository, now = store
     source = now - timedelta(days=50)
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         seed(connection, tmp_path, "source", source.isoformat(), selected=1)
         connection.execute(
             "UPDATE memory_stage1_outputs SET selected_source_updated_at=source_updated_at"
@@ -199,7 +200,7 @@ def test_extraction_refresh_preserves_previous_selected_baseline_until_phase2_su
             claim.thread_id, tmp_path, claim.source_updated_at, "new raw", "new summary"
         )
         assert await repository.complete_extraction(claim, replacement)
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             assert connection.execute(
                 "SELECT selected_for_phase2,selected_source_updated_at FROM memory_stage1_outputs"
             ).fetchone() == (1, source.isoformat())
@@ -215,7 +216,7 @@ def test_extraction_refresh_preserves_previous_selected_baseline_until_phase2_su
 
 def test_usage_counts_each_signal_ignores_missing_and_uses_one_timestamp(tmp_path, store):
     database, repository, now = store
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         for name in ("a", "b"):
             seed(connection, tmp_path, name, (now - timedelta(days=60)).isoformat())
 

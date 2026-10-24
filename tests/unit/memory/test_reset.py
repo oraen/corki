@@ -81,7 +81,7 @@ def test_reset_scope_partial_failure_and_retry(tmp_path, monkeypatch, failure):
         else:
             with pytest.raises(MemoryResetError) as captured:
                 await resetter.reset()
-            assert captured.value.database_cleared is (failure != "db")
+            assert captured.value.database_cleared is (failure not in {"db", "root_link"})
             assert keep.read_text() == "outside"
             if failure == "root_link":
                 assert root.is_symlink()

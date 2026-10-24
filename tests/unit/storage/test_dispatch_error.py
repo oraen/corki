@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -22,14 +23,14 @@ def test_error_channel_survives_reopen_without_rewriting_legacy_rows(tmp_path, d
             call.id, call.name, "failure", is_error=True, dispatch_error=dispatch_error
         )
         await repository.complete_tool_call(thread, turn, result)
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             before = db.execute("SELECT result_json FROM tool_executions").fetchone()[0]
         assert ("dispatch_error" in json.loads(before)) == dispatch_error
         reopened = SQLiteSessionRepository(path)
         cached = await reopened.claim_tool_call(thread, turn, call)
         assert cached == result
         await reopened.complete_tool_call(thread, turn, cached)
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             after = db.execute("SELECT result_json FROM tool_executions").fetchone()[0]
         assert before == after, "absent legacy field must not be backfilled into immutable results"
 

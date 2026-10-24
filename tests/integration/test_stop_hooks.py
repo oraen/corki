@@ -2,11 +2,10 @@
 
 import asyncio
 import json
-import shlex
-import sys
 from hashlib import sha256
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
@@ -51,7 +50,7 @@ def test_stop_hook_continuation_requires_independent_user_approval(tmp_path, tru
             "print(json.dumps({} if p['stop_hook_active'] else "
             "{'decision':'block','reason':'VERIFY_BEFORE_FINISH'}))"
         )
-        command = shlex.join([sys.executable, "-c", script])
+        command = python_command(tmp_path, script)
         fingerprint, _ = command_identity({"type": "command", "command": command})
         if trust == "legacy":
             fingerprint = (

@@ -13,6 +13,7 @@ def _run_demo(name: str) -> dict[str, object]:
         check=False,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=20,
     )
     assert result.returncode == 0, result.stderr

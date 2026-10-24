@@ -50,6 +50,10 @@ class Cell:
             spawn = asyncio.create_task(
                 asyncio.create_subprocess_exec(
                     sys.executable,
+                    # JSON from the engine contains Unicode; isolated mode
+                    # ignores PYTHONUTF8, so select UTF-8 explicitly on argv.
+                    "-X",
+                    "utf8",
                     "-I",
                     "-u",
                     str(Path(__file__).with_name("worker.py")),

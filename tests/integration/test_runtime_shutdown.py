@@ -1,11 +1,11 @@
 """Shutdown must own work and persistence, independently of event consumption."""
 
 import asyncio
-import shlex
 import sys
 from pathlib import Path
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings, TokenBudgetConfig
 from corki.core import LangGraphRuntime
@@ -141,7 +141,7 @@ def test_runtime_interrupt_retains_but_close_terminates_real_exec_process(tmp_pa
     async def scenario():
         class ExecModel(ShutdownModel):
             async def stream(self, request):
-                command = shlex.join([sys.executable, "-c", "import time; time.sleep(30)"])
+                command = python_command(tmp_path, "import time; time.sleep(30)")
                 yield ModelCompleted(
                     (
                         ToolCallItem(
@@ -182,7 +182,7 @@ def test_runtime_interrupt_retains_but_close_terminates_real_exec_process(tmp_pa
 
         consumer = asyncio.create_task(consume())
         try:
-            await asyncio.wait_for(started.wait(), timeout=3)
+            await asyncio.wait_for(started.wait(), timeout=30 if sys.platform == "win32" else 3)
             sessions = tuple(runtime._process_manager._sessions.values())
             if action == "cancel":
                 await runtime.cancel_active()

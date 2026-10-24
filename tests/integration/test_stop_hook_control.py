@@ -2,10 +2,9 @@
 
 import asyncio
 import json
-import shlex
-import sys
 
 import pytest
+from platform_commands import python_command
 
 import corki.core.stop_hooks as stop_hooks
 from corki.config import CorkiSettings
@@ -36,14 +35,11 @@ def test_stop_outcomes_are_aggregated_before_feedback_is_committed(
                 }
             )
             output.update(systemMessage=f"DIAGNOSTIC_{index}", suppressOutput=True)
-            command = shlex.join(
-                [
-                    sys.executable,
-                    "-c",
-                    "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
-                    f"Path('hook-calls').open('a').write('{index}\\n'); "
-                    f"print(json.dumps({{}} if p['stop_hook_active'] else {output!r}))",
-                ]
+            command = python_command(
+                tmp_path,
+                "import json,sys; from pathlib import Path; p=json.load(sys.stdin); "
+                f"Path('hook-calls').open('a').write('{index}\\n'); "
+                f"print(json.dumps({{}} if p['stop_hook_active'] else {output!r}))",
             )
             definition += f"[[hooks.Stop.hooks]]\ntype='command'\ncommand={json.dumps(command)}\n"
             fingerprint = command_identity({"type": "command", "command": command})[0]

@@ -2,12 +2,10 @@
 
 import asyncio
 import json
-import os
-import shlex
-import sys
 from dataclasses import replace
 
 import pytest
+from platform_commands import python_command
 
 from corki.config import CorkiSettings
 from corki.config.layers import ConfigLayer, LocalConfigState
@@ -16,6 +14,7 @@ from corki.core.graph import GraphRunContext
 from corki.core.runtime import _initial_state
 from corki.core.stop_hooks import command_identity
 from corki.models import ModelCompleted
+from corki.platforms.liveness import process_alive
 from corki.protocol.events import HookCompleted, HookStarted, TurnCompleted, WarningEvent
 from corki.protocol.ids import new_turn_id
 from corki.protocol.items import UserMessageItem
@@ -42,18 +41,15 @@ def test_async_prompt_result_recovered_without_reexecution(
     async def scenario():
         source = tmp_path / "config.toml"
         command = (
-            shlex.join(
-                [
-                    sys.executable,
-                    "-c",
-                    "import json,os,sys,time; from pathlib import Path; "
-                    "payload=json.load(sys.stdin); "
-                    "Path('started-'+str(os.getpid())).write_text(json.dumps(payload)); "
-                    "exec(\"while not Path('release').exists(): time.sleep(0.01)\"); "
-                    "print(json.dumps({'continue':False,'systemMessage':'ASYNC_PROMPT_WARNING',"
-                    "'hookSpecificOutput':{'hookEventName':'UserPromptSubmit',"
-                    "'additionalContext':'ASYNC_PROMPT_CONTEXT'}}))",
-                ]
+            python_command(
+                tmp_path,
+                "import json,os,sys,time; from pathlib import Path; "
+                "payload=json.load(sys.stdin); "
+                "Path('started-'+str(os.getpid())).write_text(json.dumps(payload),encoding='utf-8'); "
+                "exec(\"while not Path('release').exists(): time.sleep(0.01)\"); "
+                "print(json.dumps({'continue':False,'systemMessage':'ASYNC_PROMPT_WARNING',"
+                "'hookSpecificOutput':{'hookEventName':'UserPromptSubmit',"
+                "'additionalContext':'ASYNC_PROMPT_CONTEXT'}}))",
             )
             if actual_process
             else "inspect"
@@ -161,8 +157,8 @@ def test_async_prompt_result_recovered_without_reexecution(
                 started = tuple(tmp_path.glob("started-*"))
                 assert len(started) == 1
                 pid = int(started[0].name.removeprefix("started-"))
-                os.kill(pid, 0)
-                calls.append(json.loads(started[0].read_text()))
+                assert process_alive(pid)
+                calls.append(json.loads(started[0].read_text(encoding="utf-8")))
                 assert warm._graph._stop_hooks._async._tasks
                 if committed:
                     (tmp_path / "release").touch()
@@ -178,8 +174,7 @@ def test_async_prompt_result_recovered_without_reexecution(
             await warm.aclose()
         if actual_process:
             assert not warm._graph._stop_hooks._async._tasks
-            with pytest.raises(ProcessLookupError):
-                os.kill(pid, 0)
+            assert not process_alive(pid)
         cold = await create(thread)
         projection_events = []
         if projection_fault:

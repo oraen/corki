@@ -1,3 +1,4 @@
+import { python } from './platform.mjs';
 import {_electron as electron} from 'playwright';
 import http from 'node:http';
 import {mkdtemp,writeFile,readFile} from 'node:fs/promises';
@@ -21,7 +22,7 @@ const config={default:{provider:'alpha',model:'model-a'},providers:{alpha:provid
 const original=JSON.stringify(config),file=path.join(home,'settings.json');await writeFile(file,original);
 let app;
 try{
- const env={...process.env,CORKI_HOME:home,CORKI_PYTHON:path.resolve('../.venv/bin/python')};delete env.ELECTRON_RUN_AS_NODE;
+ const env={...process.env,CORKI_HOME:home,CORKI_PYTHON:python};delete env.ELECTRON_RUN_AS_NODE;
  app=await electron.launch({args:[path.resolve('.')],env});
  await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1})});
  const page=await app.firstWindow();const input=page.getByRole('textbox',{name:'消息',exact:true});
@@ -43,13 +44,26 @@ try{
  await page.getByRole('button',{name:'选择模型',exact:true}).filter({hasText:'model-b'}).waitFor();
  const removed={...config,providers:{alpha:config.providers.alpha}};await writeFile(file,JSON.stringify(removed));
  await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
- await input.fill('deleted model cannot send');
- await page.waitForFunction(()=>document.querySelector('button[aria-label="发送消息"]')?.disabled);
- await page.getByRole('status').filter({hasText:'当前选择的供应商或模型已不可用'}).waitFor();
- assert.equal(requests.length,2);
+ await page.waitForTimeout(250);
+ await page.getByRole('button',{name:'选择模型',exact:true}).filter({hasText:'model-b'}).waitFor();
+ await input.fill('use admitted model until refresh');
+ await page.getByRole('button',{name:'发送消息'}).click();
+ await page.locator('.markdown').filter({hasText:'来自 model-b'}).nth(1).waitFor();
+ await page.getByRole('button',{name:'发送消息'}).waitFor();
+ assert.equal(requests.length,3);
+ assert.equal(requests[2].model,'model-b');
  await page.locator('.new-chat').click();
  await page.getByRole('button',{name:'选择模型',exact:true}).filter({hasText:'model-a'}).waitFor();
+ await page.locator('.thread-select[title="first turn"]').click();
+ await page.getByRole('button',{name:'选择供应商',exact:true}).filter({hasText:'alpha'}).waitFor();
+ await page.getByRole('button',{name:'选择模型',exact:true}).filter({hasText:'model-a'}).waitFor();
+ assert.equal(await page.getByText('当前选择的供应商或模型已不可用，请重新选择。',{exact:true}).count(),0);
+ await input.fill('historical model removed; use current default');
+ await page.getByRole('button',{name:'发送消息'}).click();
+ await page.locator('.markdown').filter({hasText:'来自 model-a'}).nth(1).waitFor();
+ await page.getByRole('button',{name:'发送消息'}).waitFor();
  await writeFile(file,original);
- assert.equal(requests.length,2);
- console.log('PASS model switch affects next turn only, exact model requests, unchanged global defaults, restored session choice, removed provider disables send, new chat uses default');
+ assert.equal(requests.length,4);
+ assert.equal(requests[3].model,'model-a');
+ console.log('PASS model switch affects next turn only, unchanged defaults, cached config until reload, unavailable historical choice falls back and sends with current default');
 }finally{release();if(app)await app.close();server.closeAllConnections();server.close();console.log('Disposable test home:',home)}
