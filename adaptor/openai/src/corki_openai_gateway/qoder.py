@@ -170,6 +170,17 @@ def forward(handler, endpoint):
     streaming = payload.get("stream", False)
     requested_model = payload["model"]
     payload["model"] = model_id(requested_model)
+    # Chat Completions permits an empty system message, which Corki emits when
+    # the model test has no instructions. Qoder's Kimi route rejects that row
+    # with provider_error; omitting it preserves the request's instructions.
+    payload["messages"] = [
+        message for message in payload["messages"]
+        if not (
+            isinstance(message, dict)
+            and message.get("role") == "system"
+            and message.get("content") == ""
+        )
+    ]
     request, session = str(uuid.uuid4()), str(uuid.uuid4())
     payload.update(
         stream=True,

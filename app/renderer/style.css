@@ -1348,6 +1348,9 @@ main {
 /* Reveal question time without moving the question or its fold control. */
 .message.user .user-message-meta .message-time{opacity:0;transition:opacity .15s ease}
 .message.user:hover .user-message-meta .message-time,.message.user:focus-within .user-message-meta .message-time{opacity:1}
+.message.assistant .assistant-message-meta{opacity:0;pointer-events:none;transition:opacity .15s ease}
+.message.assistant:hover .assistant-message-meta,.message.assistant:has(:focus-visible) .assistant-message-meta{opacity:1;pointer-events:auto}
+@media(prefers-reduced-motion:reduce){.message.assistant .assistant-message-meta{transition:none}}
 /* Keep user avatars level with the question bubble, below its metadata. */
 .message.user{padding-top:28px}
 .message.user .message-content{position:relative;padding-top:0}
@@ -1365,7 +1368,7 @@ main {
 .startup-screen { position: fixed; inset: 0; display: grid; place-items: center; overflow: hidden; background: #fcfbf9; }
 .startup-drag { position: absolute; inset: 0 0 auto; height: 64px; -webkit-app-region: drag; }
 .startup-identity { display: flex; flex-direction: column; align-items: center; padding: 32px; transform: translateY(-18px); }
-.startup-identity h1 { margin: 0; color: var(--accent); font-family: "Avenir Next", Avenir, "Century Gothic", sans-serif; font-size: clamp(96px, 8.5vw, 124px); line-height: 1.12; font-weight: 700; letter-spacing: -.065em; animation: startup-breathe 2.4s ease-in-out infinite; }
+.startup-identity h1 { margin: 0; color: var(--accent); font-family: "Corki Wordmark", "Avenir Next", sans-serif; font-size: clamp(96px, 8.5vw, 124px); line-height: 1.12; font-weight: 600; font-kerning: normal; letter-spacing: -.045em; white-space: nowrap; animation: startup-breathe 2.4s ease-in-out infinite; }
 @keyframes startup-breathe { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .startup-identity h1 { animation: none; } }
 

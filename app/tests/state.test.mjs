@@ -43,6 +43,21 @@ test("model failure budget is displayed as a normal reply without changing faile
   assert.equal(failed.status, "执行失败");
   assert.equal(failed.modelWarning, false);
 });
+test("model warning reason survives snapshot replay and distinguishes silence from failures", () => {
+  for (const reason of ["idle", "failure"]) {
+    const data = { warning: true, reason };
+    const warned = reduceEvent(emptyConversation(), event("model.health", data));
+    assert.equal(warned.modelWarningReason, reason);
+    const restored = conversationFromSnapshot({
+      threadId: "test", running: true, messages: [], pending: [],
+      live: [{ type: "model.health", data }],
+    });
+    assert.equal(restored.modelWarningReason, reason);
+    const cleared = reduceEvent(warned, event("model.health", { warning: false }));
+    assert.equal(cleared.modelWarningReason, undefined);
+    assert.equal(reduceEvent(warned, event("TurnCancelled", {})).modelWarningReason, undefined);
+  }
+});
 test("incremental assistant completion replaces partial content without duplicate", () => {
   let s = emptyConversation();
   s = reduceEvent(s, event("TurnStarted", { turn_id: "t" }));

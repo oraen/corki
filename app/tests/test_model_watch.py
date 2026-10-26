@@ -26,20 +26,45 @@ def test_failure_thresholds_and_wrapped_error_counting():
             warnings.append(value)
 
         watch = ModelCallWatch(notify)
-        assert (watch.warning_seconds, watch.failure_seconds) == (10, 20)
+        assert (watch.warning_seconds, watch.failure_seconds) == (30, 60)
         watch.begin()
-        for count in range(1, 20):
+        for count in range(1, 60):
             error = httpx.ConnectError("fixture refused")
             await watch.failure(error)
             wrapped = ModelError("wrapped")
             wrapped.__cause__ = error
             await watch.failure(wrapped)
             assert watch.failures == count
-            assert watch.warning == (count >= 10)
+            assert watch.warning == (count >= 30)
+            assert watch.warning_reason == ("failure" if count >= 30 else None)
         with pytest.raises(ModelError, match="^模型调用失败$") as failure:
-            await watch.failure(httpx.ConnectError("twentieth failure"))
+            await watch.failure(httpx.ConnectError("sixtieth failure"))
         assert not failure.value.retryable
         assert warnings == [True, False]
+        await watch.close()
+
+    asyncio.run(check())
+
+
+def test_warning_reason_changes_without_changing_failure_policy():
+    async def check():
+        warnings = []
+
+        async def notify(value):
+            warnings.append((value, watch.warning_reason))
+
+        watch = ModelCallWatch(notify)
+        watch.begin()
+        watch.warn(watch.generation)
+        await asyncio.sleep(0)
+        assert warnings == [(True, "idle")]
+        await watch.failure(httpx.ConnectError("fixture refused"))
+        assert warnings[-1] == (True, "failure")
+        assert watch.failures == 1 and not watch.expired
+        await watch.activity()
+        assert warnings[-1] == (False, None)
+        await watch.complete()
+        assert watch.failures == 0
         await watch.close()
 
     asyncio.run(check())
@@ -111,10 +136,10 @@ def test_actual_http_attempts_count_once(mode):
                 with pytest.raises(ModelError, match="^模型调用失败$"):
                     async with model_http_stream(
                         client, "http://fixture.invalid/responses", headers={}, payload={},
-                        max_retries=20, base_seconds=0,
+                        max_retries=60, base_seconds=0,
                     ):
                         pytest.fail("An unavailable peer cannot produce a response")
-            assert len(attempts) == 20 and warnings == [True, False]
+            assert len(attempts) == 60 and warnings == [True, False]
         finally:
             await watch.close()
             request_observer.reset(token)
@@ -234,6 +259,9 @@ def test_real_runtime_fails_durably_and_keeps_partial_answer(tmp_path, monkeypat
             health = [e["params"]["data"]["warning"] for e in events
                       if e.get("method") == "event" and e["params"]["type"] == "model.health"]
             assert health == [True, False]
+            reasons = [e["params"]["data"]["reason"] for e in events
+                       if e.get("method") == "event" and e["params"]["type"] == "model.health"]
+            assert reasons == ["failure" if mode == "connection" else "idle", None]
             history = await service.read_thread({"threadId": request["threadId"]})
             assert not history["running"]
             assert history["messages"][-1]["content"] == "模型调用失败"

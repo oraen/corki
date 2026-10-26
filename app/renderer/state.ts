@@ -28,6 +28,7 @@ export interface FollowUpState {
 }
 export interface Conversation {
   modelWarning?: boolean;
+  modelWarningReason?: "idle" | "failure";
   followUps: FollowUpState;
   messages: Message[];
   running: boolean;
@@ -105,7 +106,7 @@ export function conversationFromSnapshot(
           ? { ...message, streaming: false } : message);
     }
     messages.push(...data.messages.slice(cursor));
-    view = { ...view, status: replay.status || view.status, messages, modelWarning: replay.modelWarning };
+    view = { ...view, status: replay.status || view.status, messages, modelWarning: replay.modelWarning, modelWarningReason: replay.modelWarningReason };
 
   }
   // A submitted input is a temporary display item until canonical history owns it.
@@ -326,6 +327,7 @@ export function reduceEvent(
       break;
     case "model.health":
       s.modelWarning = !!d.warning;
+      s.modelWarningReason = d.warning ? (d.reason === "idle" ? "idle" : "failure") : undefined;
       break;
     case "UserInputRequested":
       s.pending = s.pending.filter((p) => p.request_id !== d.call_id);
@@ -355,6 +357,7 @@ export function reduceEvent(
     case "TurnFailed":
     case "host.error": {
       s.modelWarning = false;
+      s.modelWarningReason = undefined;
       const id = d.turn_id ? `error:${d.turn_id}` : `error:${event.sequence}`;
       const message = d.error || d.message || "执行失败";
       const modelFailure = message === "模型调用失败";
@@ -379,10 +382,12 @@ export function reduceEvent(
     }
     case "TurnCompleted":
       s.modelWarning = false;
+      s.modelWarningReason = undefined;
       s.status = "已完成";
       break;
     case "TurnCancelled":
       s.modelWarning = false;
+      s.modelWarningReason = undefined;
       s.status = "回答已停止";
       s.messages = s.messages.map((m) =>
         m.turnId === d.turn_id && m.streaming
@@ -402,6 +407,7 @@ export function reduceEvent(
       break;
     case "run.settled":
       s.modelWarning = false;
+      s.modelWarningReason = undefined;
       s.running = false;
       s.pending = [];
       s.messages = s.messages.map((m) =>

@@ -19,7 +19,7 @@ function providerIconId(baseUrl){
  return providerIconDomains.find(([,domains])=>domains.some(domain=>host===domain||host.endsWith('.'+domain)))?.[0]||'';
 }
 function providerCardIcon(provider,model=false,modelName=""){
- const name=(model&&window.CorkiModelAvatar.id(modelName))||(provider.id==='adaptor-openai'?'openai':providerIconId(provider.base_url));
+ const name=(model&&window.CorkiModelAvatar.id(modelName))||(provider.id==='adaptor-openai'?'openai':provider.id==='adaptor-qoder'?'qoder':providerIconId(provider.base_url));
  if(name)return `<span class="${model?'model-card-icon':'provider-logo'} has-brand-icon"><img src="/provider-icons/${name}.png" alt="" width="28" height="28"></span>`;
  return model?`<span class="model-card-icon">${icon('models')}</span>`:`<span class="provider-logo ${provider.id.includes('codex')?'dark':''}">${esc(provider.id.slice(0,1).toUpperCase())}</span>`;
 }

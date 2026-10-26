@@ -7,13 +7,17 @@ from corki.models.base import ModelError
 
 
 class ModelCallWatch:
-    def __init__(self, notify, *, warning_seconds=10.0, failure_seconds=20.0):
+    WARNING_FAILURES = 30
+    FAILURE_FAILURES = 60
+
+    def __init__(self, notify, *, warning_seconds=30.0, failure_seconds=60.0):
         self.notify = notify
         self.warning_seconds = warning_seconds
         self.failure_seconds = failure_seconds
         self.last_activity = None
         self.failures = 0
         self.warning = False
+        self.warning_reason = None
         self.expired = False
         self.last_error = None
         self.timer = None
@@ -43,12 +47,14 @@ class ModelCallWatch:
         async def notify():
             if (generation == self.generation and self.last_activity is not None
                     and not self.closed and not self.warning and not self.expired):
-                await self.set_warning(True)
+                await self.set_warning(True, "failure" if self.failures else "idle")
         self.notification = asyncio.create_task(notify())
 
-    async def set_warning(self, value):
-        if self.warning != value:
+    async def set_warning(self, value, reason="failure"):
+        reason = reason if value else None
+        if self.warning != value or self.warning_reason != reason:
             self.warning = value
+            self.warning_reason = reason
             await self.notify(value)
 
     async def fail(self):
@@ -83,7 +89,7 @@ class ModelCallWatch:
         # Bytes/lines prove responsiveness. Only a completed model response
         # resets the consecutive failure count (a 200 SSE error is still a failure).
         self.last_activity = asyncio.get_running_loop().time()
-        if self.failures < 10:
+        if self.failures < self.WARNING_FAILURES:
             await self.set_warning(False)
         self.schedule_warning()
 
@@ -100,10 +106,10 @@ class ModelCallWatch:
             current = current.__cause__
         self.last_error = error
         self.failures += 1
-        if self.failures >= 20:
+        if self.failures >= self.FAILURE_FAILURES:
             await self.fail()
-        if self.failures >= 10:
-            await self.set_warning(True)
+        if self.failures >= self.WARNING_FAILURES or self.warning:
+            await self.set_warning(True, "failure")
 
     async def complete(self):
         self.generation += 1

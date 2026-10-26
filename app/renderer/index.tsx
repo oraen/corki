@@ -943,7 +943,7 @@ function App() {
     <main className="startup-screen" aria-busy="true">
       <div className="startup-drag" aria-hidden="true" />
       <div className="startup-identity" role="status" aria-live="polite" aria-label="Corki 启动中">
-        <h1>Corki<span aria-hidden="true">.</span></h1>
+        <h1>Corki</h1>
       </div>
     </main>
   );
@@ -1061,12 +1061,12 @@ function App() {
             </button>
           </div>
         )}
-        {draft.modelNotice && !(conversation.running && conversation.modelWarning) && (
+        {draft.modelNotice && !(conversation.running && conversation.modelWarning && conversation.modelWarningReason !== "idle") && (
           <div className="banner model-health-banner" role="status" aria-live="polite">
             <span>{draft.modelNotice}</span>
           </div>
         )}
-        {conversation.running && conversation.modelWarning && (
+        {conversation.running && conversation.modelWarning && conversation.modelWarningReason !== "idle" && (
           <div className="banner model-health-banner" role="status" aria-live="polite">
             <span>模型调用失败，重试中</span>
           </div>

@@ -811,7 +811,7 @@ class Service:
         terminal = False
 
         async def health(warning):
-            data = {"warning": warning}
+            data = {"warning": warning, "reason": watch.warning_reason}
             if thread in self.live:
                 append_event(self.live[thread], "model.health", data)
             await self.emit("model.health", thread, data)

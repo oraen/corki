@@ -293,8 +293,11 @@ try {
   await page.evaluate(()=>{
     const threadId=window.__lastSubmission.threadId;
     window.__emit({type:'TurnStarted',instance:'test',sequence:Math.max(window.__sequence,1000)+1,threadId,data:{turn_id:'failure-fixture'}});
-    window.__emit({type:'model.health',instance:'test',sequence:window.__sequence+1,threadId,data:{warning:true}});
+    window.__emit({type:'model.health',instance:'test',sequence:window.__sequence+1,threadId,data:{warning:true,reason:'idle'}});
   });
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  assert.equal(await page.locator('.model-health-banner').count(),0,'Silence must not show a failure warning');
+  await page.evaluate(()=>window.__emit({type:'model.health',instance:'test',sequence:window.__sequence+1,threadId:window.__lastSubmission.threadId,data:{warning:true,reason:'failure'}}));
   const modelWarning=page.locator('.model-health-banner');
   await modelWarning.waitFor();
   assert(await modelWarning.evaluate(n=>n.classList.contains('banner')));

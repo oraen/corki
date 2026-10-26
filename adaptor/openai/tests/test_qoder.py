@@ -136,6 +136,35 @@ def gateway(tmp_path, upstream):
 
 
 @pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("instructions", ["", "Keep the answer concise."])
+def test_qoder_normalizes_empty_system_without_discarding_instructions(tmp_path, streaming, instructions):
+    expected = ([{"role": "system", "content": instructions}] if instructions else []) + [
+        {"role": "user", "content": "hello"}
+    ]
+
+    def upstream(request):
+        body = json.loads(request.content)
+        assert body["model"] == "kmodel"
+        assert body["messages"] == expected
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            content=stream_bytes({
+                "choices": [{"index": 0, "delta": {"content": "OK"}, "finish_reason": "stop"}]
+            }),
+        )
+
+    with gateway(tmp_path, upstream) as client:
+        response = client.post("/qoder/v1/chat/completions", json={
+            "model": "Kimi-K2.8-Preview", "stream": streaming,
+            "messages": [{"role": "system", "content": instructions}, {"role": "user", "content": "hello"}],
+        })
+        assert response.status_code == 200
+        result = collect(events([response.content]), "Kimi-K2.8-Preview") if streaming else response.json()
+        assert result["choices"][0]["message"]["content"] == "OK"
+
+
+@pytest.mark.parametrize("streaming", [False, True])
 def test_qoder_routes_real_chat_protocol_and_validates_local_key(tmp_path, streaming):
     def upstream(request):
         assert str(request.url) == UPSTREAM
