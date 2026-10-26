@@ -1409,3 +1409,4 @@ main {
 .process-heading > .turn-avatar{cursor:default}
 
 .model-health-banner{position:absolute;top:var(--topbar-height);left:0;right:0;z-index:80;margin:0;border-radius:0;border-left:0;border-right:0;pointer-events:none}
+.service-offline-banner{pointer-events:auto}

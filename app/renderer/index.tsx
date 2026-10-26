@@ -1033,7 +1033,7 @@ function App() {
           </button>
         </header>
         {offline && (
-          <div className="banner error">
+          <div className="banner model-health-banner service-offline-banner" role="status" aria-live="polite">
             <span>{offline}</span>
             <button
               onClick={() =>
