@@ -33,9 +33,9 @@ class CronService:
             if os.name != "nt"
             # A new process group still shares the parent's console. Detach so
             # closing that console does not terminate an independently owned run.
-            else {"creationflags": (
-                subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
-            )}
+            else {
+                "creationflags": (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS)
+            }
         )
         self.children.append(
             subprocess.Popen(
@@ -84,6 +84,8 @@ class CronService:
             self.dispatch(identity)
 
     def dispatch(self, identity):
+        if self.store.run(identity)["status"] != "claimed":
+            return  # A replacement is promoted by the ticker after old cleanup.
         try:
             self.launch(identity)
         except Exception:

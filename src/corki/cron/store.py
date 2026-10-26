@@ -43,14 +43,17 @@ class CronStore:
                     error TEXT NOT NULL DEFAULT '', session_id TEXT,
                     cancel INTEGER NOT NULL DEFAULT 0
                 );
-                CREATE UNIQUE INDEX IF NOT EXISTS one_active_job ON runs(job_id)
-                    WHERE status IN ('claimed','running');
+
                 CREATE UNIQUE INDEX IF NOT EXISTS one_occurrence ON runs(job_id, scheduled)
                     WHERE source='schedule';
                 CREATE INDEX IF NOT EXISTS run_history ON runs(job_id, created DESC);
+                CREATE INDEX IF NOT EXISTS run_status ON runs(status, created);
                 CREATE TABLE IF NOT EXISTS service (id INTEGER PRIMARY KEY, heartbeat REAL);
             """)
             connection.execute("BEGIN IMMEDIATE")
+            # Old databases enforced one active occurrence regardless of policy.
+            connection.execute("DROP INDEX IF EXISTS one_active_job")
+            connection.execute("CREATE INDEX IF NOT EXISTS active_job_runs ON runs(job_id, status)")
             columns = {row["name"] for row in connection.execute("PRAGMA table_info(runs)")}
             if "error_log" not in columns:
                 connection.execute("ALTER TABLE runs ADD COLUMN error_log TEXT NOT NULL DEFAULT ''")
@@ -67,6 +70,8 @@ class CronStore:
         result = dict(row)
         result.update(json.loads(result.pop("definition")))
         result["enabled"] = bool(result["enabled"])
+        result.setdefault("overlap_policy", "skip")
+        result.setdefault("timeout_seconds", 0)
         return result
 
     def save(self, values, identity=None, version=None, *, now=None):
@@ -103,12 +108,26 @@ class CronStore:
             if (
                 old
                 and db.execute(
-                    "SELECT 1 FROM runs WHERE job_id=? AND status IN ('claimed','running')",
+                    "SELECT 1 FROM runs WHERE job_id=? AND status IN "
+                    "('waiting','claimed','running')",
                     (identity,),
                 ).fetchone()
             ):
                 raise ValueError("任务正在执行，请先停止后再编辑")
             previous = self.job(old) if old else None
+            overlap_policy = values.get(
+                "overlap_policy", (previous or {}).get("overlap_policy", "skip")
+            )
+            timeout_seconds = values.get(
+                "timeout_seconds", (previous or {}).get("timeout_seconds", 0)
+            )
+            if overlap_policy not in ("skip", "allow", "restart"):
+                raise ValueError("重复执行策略无效")
+            if isinstance(timeout_seconds, str):
+                raw = timeout_seconds.strip()
+                timeout_seconds = int(raw) if raw.isdecimal() and len(raw) <= 10 else 0
+            if type(timeout_seconds) is not int or not 0 < timeout_seconds <= 2147483647:
+                timeout_seconds = 0
             requested_kind = values.get("schedule_kind")
             if requested_kind not in (None, "once", "interval", "cron"):
                 raise ValueError("执行方式无效")
@@ -141,6 +160,8 @@ class CronStore:
                 schedule=expression.strip(),
                 timezone=zone,
                 normalized=normalized,
+                overlap_policy=overlap_policy,
+                timeout_seconds=timeout_seconds,
             )
             if (
                 selection is None
@@ -181,6 +202,13 @@ class CronStore:
                     (row["id"],),
                 ).fetchone()
                 job["last_run"] = dict(last) if last else None
+                active = db.execute(
+                    "SELECT id,status FROM runs WHERE job_id=? AND status IN "
+                    "('waiting','claimed','running') "
+                    "ORDER BY (status='running') DESC,created DESC LIMIT 1",
+                    (row["id"],),
+                ).fetchone()
+                job["active_run"] = dict(active) if active else None
                 result.append(job)
             service = db.execute("SELECT heartbeat FROM service WHERE id=1").fetchone()
         return {
@@ -195,7 +223,7 @@ class CronStore:
             if row is None or row["version"] != version:
                 raise ValueError("任务已更新或删除，请刷新后重试")
             active = db.execute(
-                "SELECT id FROM runs WHERE job_id=? AND status IN ('claimed','running')",
+                "SELECT id FROM runs WHERE job_id=? AND status IN ('waiting','claimed','running')",
                 (identity,),
             ).fetchone()
             if action == "delete":
@@ -212,7 +240,16 @@ class CronStore:
                 )
             elif action == "stop":
                 if active:
-                    db.execute("UPDATE runs SET cancel=1 WHERE id=?", (active[0],))
+                    db.execute(
+                        "UPDATE runs SET cancel=1 WHERE job_id=? AND status IN "
+                        "('claimed','running')",
+                        (identity,),
+                    )
+                    db.execute(
+                        "UPDATE runs SET status='cancelled',cancel=1,finished=?,error='执行已取消' "
+                        "WHERE job_id=? AND status='waiting'",
+                        (time.time(), identity),
+                    )
             else:
                 raise ValueError("不支持的任务操作")
 
@@ -285,58 +322,107 @@ class CronStore:
             return result
 
     def claim(self, identity=None, *, now=None):
-        """Commit advance + attempt together before dispatch; collapse missed fires to one."""
+        """Atomically advance occurrences and admit or replace work, across processes."""
         now = time.time() if now is None else now
         with self.transaction() as db:
-            if (
-                db.execute(
-                    "SELECT count(*) FROM runs WHERE status IN ('claimed','running')"
-                ).fetchone()[0]
-                >= MAX_PARALLEL
-            ):
-                if identity:
-                    raise ValueError("已有两个任务执行中，请稍后重试")
-                return None
+            count = db.execute(
+                "SELECT count(*) FROM runs WHERE status IN ('claimed','running')"
+            ).fetchone()[0]
             if identity:
-                row = db.execute("SELECT * FROM jobs WHERE id=?", (identity,)).fetchone()
-                if row is None:
+                rows = db.execute("SELECT * FROM jobs WHERE id=?", (identity,)).fetchall()
+                if not rows:
                     raise ValueError("任务不存在")
             else:
-                row = db.execute(
-                    "SELECT * FROM jobs WHERE enabled=1 AND next_run<=? AND NOT EXISTS "
-                    "(SELECT 1 FROM runs WHERE job_id=jobs.id AND status IN ('claimed','running')) "
-                    "ORDER BY next_run LIMIT 1",
-                    (now,),
-                ).fetchone()
-                if row is None:
-                    return None
-            if db.execute(
-                "SELECT 1 FROM runs WHERE job_id=? AND status IN ('claimed','running')",
-                (row["id"],),
-            ).fetchone():
-                raise ValueError("该任务已在执行中")
-            run_id = uuid.uuid4().hex
-            definition = json.loads(row["definition"])
-            if not identity:
-                next_run = following(definition["normalized"], now, row["next_run"])
+                # Replacements survive manager restarts. Promote only after every
+                # previous execution has finished cleanup and released admission.
+                if count < MAX_PARALLEL:
+                    waiting = db.execute(
+                        "SELECT id FROM runs r WHERE status='waiting' AND NOT EXISTS "
+                        "(SELECT 1 FROM runs a WHERE a.job_id=r.job_id AND a.status IN "
+                        "('claimed','running')) "
+                        "ORDER BY created,rowid LIMIT 1"
+                    ).fetchone()
+                    if waiting:
+                        db.execute(
+                            "UPDATE runs SET status='claimed',heartbeat=? WHERE id=?",
+                            (now, waiting[0]),
+                        )
+                        return waiting[0]
+                rows = db.execute(
+                    "SELECT * FROM jobs WHERE enabled=1 AND next_run<=? ORDER BY next_run", (now,)
+                ).fetchall()
+            for row in rows:
+                definition = json.loads(row["definition"])
+                policy = definition.get("overlap_policy", "skip")
+                active = db.execute(
+                    "SELECT id FROM runs WHERE job_id=? AND status IN "
+                    "('waiting','claimed','running')",
+                    (row["id"],),
+                ).fetchall()
+                if active and policy == "skip" and identity:
+                    raise ValueError("该任务已在执行中，本次已放弃")
+                # Keep the existing global safety limit; replacement waits without
+                # consuming a worker slot. Unrelated jobs retain their own slots.
+                if count >= MAX_PARALLEL and not (active and policy in ("skip", "restart")):
+                    if identity:
+                        raise ValueError("已有两个任务执行中，请稍后重试")
+                    continue
+                if not identity:
+                    next_run = following(definition["normalized"], now, row["next_run"])
+                    db.execute(
+                        "UPDATE jobs SET next_run=?,enabled=?,version=version+1,updated=? "
+                        "WHERE id=?",
+                        (next_run, int(next_run is not None), now, row["id"]),
+                    )
+                status, error = "claimed", ""
+                if active and policy == "skip":
+                    status, error = "skipped", "上一次仍在执行，已放弃本次"
+                elif active and policy == "restart":
+                    db.execute(
+                        "UPDATE runs SET cancel=1 WHERE job_id=? AND status IN "
+                        "('claimed','running')",
+                        (row["id"],),
+                    )
+                    # Only one replacement is pending; a newer trigger supersedes it.
+                    db.execute(
+                        "UPDATE runs SET status='cancelled',cancel=1,finished=?,"
+                        "error='已被后续执行替代' "
+                        "WHERE job_id=? AND status='waiting'",
+                        (now, row["id"]),
+                    )
+                    status = "waiting"
+                run_id = uuid.uuid4().hex
                 db.execute(
-                    "UPDATE jobs SET next_run=?,enabled=?,version=version+1,updated=? WHERE id=?",
-                    (next_run, int(next_run is not None), now, row["id"]),
+                    "INSERT INTO "
+                    "runs(id,job_id,definition,source,scheduled,status,"
+                    "created,heartbeat,finished,error) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        run_id,
+                        row["id"],
+                        row["definition"],
+                        "manual" if identity else "schedule",
+                        None if identity else row["next_run"],
+                        status,
+                        now,
+                        now,
+                        now if status == "skipped" else None,
+                        error,
+                    ),
                 )
-            db.execute(
-                "INSERT INTO runs(id,job_id,definition,source,scheduled,status,created,heartbeat) "
-                "VALUES(?,?,?,?,?,'claimed',?,?)",
-                (
-                    run_id,
-                    row["id"],
-                    row["definition"],
-                    "manual" if identity else "schedule",
-                    None if identity else row["next_run"],
-                    now,
-                    now,
-                ),
-            )
-            return run_id
+                self.prune(db, row["id"])
+                if status != "skipped":
+                    return run_id
+            return None
+
+    @staticmethod
+    def prune(db, identity):
+        db.execute(
+            "DELETE FROM runs WHERE job_id=? AND status NOT IN ('waiting','claimed','running') "
+            "AND id NOT IN (SELECT id FROM runs WHERE job_id=? ORDER BY created DESC,rowid "
+            "DESC LIMIT 50)",
+            (identity, identity),
+        )
 
     def start_run(self, identity):
         with self.transaction() as db:
@@ -394,22 +480,28 @@ class CronStore:
             )
             if status == "unknown":
                 db.execute(
+                    "UPDATE runs SET "
+                    "status='cancelled',cancel=1,finished=?,"
+                    "error='前次执行结果未确认，已取消后续执行' "
+                    "WHERE job_id=? AND status='waiting'",
+                    (time.time(), row["job_id"]),
+                )
+                db.execute(
                     "UPDATE jobs SET enabled=0,pause_reason=?,version=version+1 WHERE id=?",
                     ("上次执行意外中断，确认结果后可重新开启", row[0]),
                 )
             if row["source"] == "schedule":
                 job = db.execute("SELECT * FROM jobs WHERE id=?", (row["job_id"],)).fetchone()
-                if job["next_run"] is not None and job["next_run"] <= time.time():
-                    normalized = json.loads(job["definition"])["normalized"]
-                    upcoming = following(normalized, time.time(), job["next_run"])
+                definition = json.loads(job["definition"])
+                # Legacy/default skip never catches up a fire missed while the ticker was down.
+                if (
+                    definition.get("overlap_policy", "skip") == "skip"
+                    and job["next_run"] is not None
+                    and job["next_run"] <= time.time()
+                ):
+                    upcoming = following(definition["normalized"], time.time(), job["next_run"])
                     db.execute(
                         "UPDATE jobs SET next_run=?,version=version+1 WHERE id=?",
                         (upcoming, row["job_id"]),
                     )
-            # Preserve at most 50 terminal results per job; active attempts are never pruned.
-            db.execute(
-                "DELETE FROM runs WHERE job_id=? AND status NOT IN ('claimed','running') "
-                "AND id NOT IN (SELECT id FROM runs WHERE job_id=? "
-                "ORDER BY created DESC,rowid DESC LIMIT 50)",
-                (row[0], row[0]),
-            )
+            self.prune(db, row["job_id"])

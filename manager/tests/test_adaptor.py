@@ -14,10 +14,11 @@ def store(tmp_path,monkeypatch):
  home=tmp_path/'home';home.mkdir()
  (home/'settings.json').write_text('// retain comment\n'+json.dumps({'default':{'provider':'existing','model':'fixture'},'providers':{'existing':{'api_key':'fixture-key','base_url':'https://api.example.invalid/v1','models':{'fixture':{'context_window':262144}}}},'unrelated':{'flag':True}}))
  store=module.Store(home,tmp_path)
- store.commands=[];store.service={'running':False,'port':17001};store.fail_start=None;store.auto_port=17001
- def control(action,*,port=None,install=False):
+ store.commands=[];store.checked_providers=[];store.service={'running':False,'port':17001};store.fail_start=None;store.auto_port=17001
+ def control(action,*,port=None,install=False,provider=None):
   store.commands.append((action,port))
-  if action=='check':return {'ready':True}
+  if action=='check':store.checked_providers.append(provider)
+  if action=='check':return {'ready':True,**({'models':{'auto':{'context_window':200000},'GLM-5.3':{'context_window':180000}}} if provider=='qoder' else {})}
   if action=='stop':store.service['running']=False
   if action=='start-auto':
    if not store.service['running']:
@@ -183,3 +184,45 @@ def test_gateway_power_does_not_enable_supplier(store):
  change(store,action='power',enabled=True)
  assert store.service['running']
  assert not module.document.loads(store.config_text())['providers']['adaptor-openai']['enabled']
+
+
+def test_qoder_creates_independent_chat_provider_and_checks_its_login(store):
+ change(store,action='power',enabled=True)
+ change(store,action='provider',provider='qoder',enabled=True)
+ profile=module.document.loads(store.config_text())['providers']['adaptor-qoder']
+ assert profile['api_mode']=='chat_completions'
+ assert profile['base_url']=='http://127.0.0.1:17001/qoder'
+ assert list(profile['models'])==['auto','GLM-5.3']
+ assert profile['api_key']==module.ADAPTOR_LOCAL_KEY
+ assert store.checked_providers[-1]=='qoder'
+ assert 'adaptor-openai' not in module.document.loads(store.config_text())['providers']
+ change(store,action='provider',provider='qoder',enabled=False)
+ assert store.service['running']
+ assert not module.document.loads(store.config_text())['providers']['adaptor-qoder']['enabled']
+ assert profile['models']==module.document.loads(store.config_text())['providers']['adaptor-qoder']['models']
+
+
+def test_qoder_login_failure_leaves_config_and_running_gateway_unchanged(store,monkeypatch):
+ change(store,action='power',enabled=True)
+ original=store.config_text()
+ control=store.adaptor.control
+ def reject(action,**kwargs):
+  if action=='check' and kwargs.get('provider')=='qoder':
+   raise ValueError('开启失败，没有检测到对应登录信息')
+  return control(action,**kwargs)
+ monkeypatch.setattr(store.adaptor,'control',reject)
+ with pytest.raises(ValueError,match='登录信息'):
+  change(store,action='provider',provider='qoder',enabled=True)
+ assert store.config_text()==original and store.service['running']
+
+
+def test_qoder_catalog_update_adds_models_without_replacing_custom_settings(store):
+ change(store,action='power',enabled=True)
+ config=module.document.loads(store.config_text())
+ config['providers']['adaptor-qoder']={'api_key':'fixture-local-key','base_url':'http://127.0.0.1:17001/qoder','api_mode':'chat_completions','enabled':False,'models':{'auto':{'context_window':123456,'description':'user settings'},'private-alias':{'context_window':131072}}}
+ store.config.write_text(module.document.dumps(config))
+ change(store,action='provider',provider='qoder',enabled=True)
+ models=module.document.loads(store.config_text())['providers']['adaptor-qoder']['models']
+ assert models['auto']=={'context_window':123456,'description':'user settings'}
+ assert models['private-alias']=={'context_window':131072}
+ assert models['GLM-5.3']=={'context_window':180000}

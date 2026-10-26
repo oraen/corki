@@ -22,6 +22,10 @@ def test_archive_migration_and_reopening_preserve_history_and_collection(tmp_pat
         history = (UserMessageItem("old history", new_turn_id()),)
         await sessions.append_items(thread, history)
         with closing(sqlite3.connect(database)) as db, db:
+            # Reconstruct the legacy schema, which had neither the archive
+            # column nor the newer partial indexes that refer to it.
+            db.execute("DROP INDEX threads_active_recency")
+            db.execute("DROP INDEX threads_active_cwd_recency")
             db.execute("ALTER TABLE threads DROP COLUMN archived_at")
         migrated = SQLiteSessionRepository(database)
         store = SQLiteThreadArchiveStore(database)

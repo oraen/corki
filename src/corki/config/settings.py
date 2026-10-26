@@ -83,6 +83,7 @@ class CorkiSettings:
     auto_compact_tokens: int | None = None
     auto_compact_token_limit_scope: str = "total"
     goals_enabled: bool = True
+    self_evolution_enabled: bool = False
     max_goal_token_budget: int | None = None
     token_budget_enabled: bool = False
     # Compatibility tombstone, never selects a model protocol.
@@ -184,6 +185,8 @@ class CorkiSettings:
             raise ValueError("provider.enabled must be a boolean")
         if type(self.personality_enabled) is not bool:
             raise ValueError("features.personality must be a boolean")
+        if type(self.self_evolution_enabled) is not bool:
+            raise ValueError("features.self_evolution must be a boolean")
         if self.personality not in (None, "none", "friendly", "pragmatic"):
             raise ValueError("personality must be none, friendly, pragmatic, or unset")
         if self.base_instructions is not None and not isinstance(self.base_instructions, str):
@@ -552,6 +555,7 @@ class CorkiSettings:
                     "auto_compact_token_limit_scope", defaults.auto_compact_token_limit_scope
                 ),
                 goals_enabled=features.get("goals", defaults.goals_enabled),
+                self_evolution_enabled=features.get("self_evolution", False),
                 max_goal_token_budget=goals.get("max_goal_token_budget"),
                 token_budget_enabled=budget_enabled,
                 effective_context_window_percent=agent.get(

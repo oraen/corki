@@ -108,7 +108,7 @@ export const manualSections = [
     field('sessions.auto_cleanup','自动清理会话','开启后，在管理页面打开时每天最多执行一次后台清理；永久删除超过 3 个月没有更新且未被占用的会话。','false（默认，按需开启）','布尔值'),
   ]},
   {key:'other', title:'界面与其他', fields:[
-    field('features.self_evolution','自进化','保存 Corki 的全局自进化设置。','false（默认）','布尔值'),
+    field('features.self_evolution','自进化','允许 Corki 将已验证的工作方法保存为扩展 Skills，并在任务完成后按需后台复盘。与记忆开关独立；关闭后已学习的 Skills 仍保留。','false（默认）','布尔值'),
     field('features.fast_mode','快速模式','对支持服务等级的模型优先使用快速档位。','true（默认）','布尔值'),
     field('features.code_mode.enabled','代码模式','启用代码编排能力；最终调用方式由 tools.mode 决定。','按模型和工具能力启用','布尔值'),
     field('features.token_budget','Token 预算','启用上下文预算提示，可用布尔值或详细对象配置。','false（默认）','布尔值或对象'),

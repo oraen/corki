@@ -3015,6 +3015,12 @@ use `skill_read` again. Mentions added through steering do not rerun turn-start
 injection either. They remain available for model-directed discovery and reading.
 # corki
 
+### 自进化
+
+在管理页主页“全局配置”开启自进化后，Corki 可以将经过验证的工作方法保存为扩展
+Skills，并在成功完成任务后按阈值后台复盘。默认关闭，与记忆开关独立；关闭后已有
+学习成果仍保留。使用方式、执行预算和恢复机制见[自进化说明](docs/self-evolution.md)。
+
 
 ### 持续目标（Goal）
 

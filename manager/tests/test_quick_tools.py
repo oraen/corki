@@ -273,8 +273,6 @@ def test_directory_picker_cancel_is_not_an_error(store, monkeypatch):
 @pytest.mark.parametrize("content", [
     "{not valid json", "{}",
     json.dumps({"default": {"provider": "missing", "model": "demo"}, "providers": {}}),
-    json.dumps({"default": {"provider": "fixture", "model": "missing"},
-                "providers": {"fixture": {"models": {"demo": {}}}}}),
 ])
 def test_launch_rejects_invalid_or_incomplete_config_before_side_effects(store, monkeypatch, content):
     store.config.write_text(content, encoding="utf-8")
@@ -349,3 +347,17 @@ def test_launch_accepts_implicit_first_provider_default(store, monkeypatch):
     assert store.quick_launch({})["terminal"] == "Terminal"
     assert len(calls) == 1
     assert store.snapshot()["default"] == {"provider": "fixture", "model": "demo"}
+
+
+def test_launch_uses_first_configured_model_when_default_model_was_removed(store, monkeypatch):
+    # The configured fallback is intentional; no model-availability request is needed.
+    content = json.dumps({"default": {"provider": "fixture", "model": "missing"},
+                          "providers": {"fixture": {"models": {"demo": {}}}}})
+    store.config.write_text(content, encoding="utf-8")
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(module.shutil, "which", lambda _: "/fixture/bin/corki")
+    calls = []
+    monkeypatch.setattr(store, "desktop_script", lambda *a, **k: calls.append(a))
+    store.quick_launch({"mode": "cli"})
+    assert len(calls) == 1
+    assert store.config.read_text(encoding="utf-8") == content

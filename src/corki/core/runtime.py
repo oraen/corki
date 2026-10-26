@@ -53,6 +53,7 @@ from corki.core.step_settings import (
 )
 from corki.core.step_tools import StepToolState
 from corki.core.turn_run import TurnRun
+from corki.evolution.controller import EvolutionController
 from corki.execution.backend import resolve_execution_permissions
 from corki.execution.rules import ExecPolicyHandle
 from corki.history_notes import HistoryNotesService, history_notes_requested
@@ -275,11 +276,14 @@ class AgentRuntime(Protocol):
 
 
 class _QueueEventSink(EventSink):
-    def __init__(self, queue: asyncio.Queue[RuntimeEvent], goals=None) -> None:
+    def __init__(self, queue: asyncio.Queue[RuntimeEvent], goals=None, observer=None) -> None:
         self._queue = queue
         self._goals = goals
+        self._observer = observer
 
     async def emit(self, event: RuntimeEvent) -> None:
+        if self._observer is not None:
+            self._observer(event)
         if self._goals is not None:
             await self._goals.observe(event)
         await self._queue.put(event)
@@ -324,6 +328,7 @@ class LangGraphRuntime:
         plugin_roots_base: tuple[Path | PluginStoreSource, ...] | None = None,
         plugin_catalog_base: MCPCatalog | None = None,
         plugin_discovery_enabled: bool = False,
+        evolution: EvolutionController | None = None,
     ) -> None:
         from corki.storage.forks import validate_fork
 
@@ -347,6 +352,7 @@ class LangGraphRuntime:
         self._session_source = session_source
         self._instruction_manager = context_builder.instruction_manager
         self._settings = settings
+        self._evolution = evolution
         self._hooks_reload_default = (
             settings.hooks_enabled
             if settings._hooks_reload_default is None
@@ -1131,6 +1137,25 @@ class LangGraphRuntime:
                 allow_input_mentions=not session_source.is_basic_guardian,
             )
         )
+        evolution = None
+        if (
+            not ephemeral
+            and not session_source.is_non_root_agent
+            and skill_service is not None
+            and session_source.kind != SessionSourceKind.EXEC
+            and not (
+                session_source.kind == SessionSourceKind.CUSTOM and session_source.value == "cron"
+            )
+        ):
+            evolution = EvolutionController(
+                home=capability_home,
+                settings=settings,
+                registry=actual_registry,
+                service=skill_service,
+                requirements=requirements_snapshot,
+            )
+            construction.append(evolution.aclose)
+            contributors.append(evolution)
         context_builder = ContextBuilder(
             contributors=(*contributors, *context_contributors),
             source_directory=context_source_directory,
@@ -1203,6 +1228,7 @@ class LangGraphRuntime:
                 plugin_manager=plugin_manager,
                 skill_service=skill_service,
                 skill_tool_owner=skill_tool_owner,
+                evolution=evolution,
                 plugin_roots_base=plugin_roots_base,
                 plugin_catalog_base=plugin_catalog_base,
                 plugin_discovery_enabled=load_plugins and settings.plugins_enabled,
@@ -1569,6 +1595,10 @@ class LangGraphRuntime:
                     return
                 self._admit_skill_configuration()
                 self._admit_model_settings(self.thread_settings)
+                if self._evolution is not None:
+                    if self._skill_service is not None:
+                        self._evolution.service = self._skill_service
+                    await self._evolution.before_turn()
                 turn_id = new_turn_id()
                 user_item = (
                     UserMessageItem(
@@ -1838,6 +1868,8 @@ class LangGraphRuntime:
         legacy_base_unknown: bool = False,
     ) -> AsyncIterator[RuntimeEvent]:
         run = TurnRun(turn_id, self._settings.event_queue_size)
+        if self._evolution is not None:
+            self._evolution.capture(turn_id)
         admitted = capture_model_settings(self._graph._settings)
         run.models = StepSettingsState(admitted, resumed_step_settings or admitted)
         compiled = self._compiled
@@ -1923,6 +1955,19 @@ class LangGraphRuntime:
             await run.join()
             if self._active_run is run:
                 self._active_run = None
+            if self._evolution is not None:
+                try:
+                    await self._evolution.after_turn(
+                        run.terminal,
+                        settings=self._settings,
+                        repository=self._repository,
+                        model=self._model_for_settings,
+                        operation=operation,
+                        turn_id=turn_id,
+                        selection=run.models.current,
+                    )
+                except Exception:
+                    _LOG.warning("Self-evolution turn observation failed", exc_info=True)
 
     async def _flush_realtime_inputs(self, context: GraphRunContext | None = None) -> None:
         from corki.core.prompt_hooks import inspect, ordered_inputs, receipt_key, rejected
@@ -1984,7 +2029,13 @@ class LangGraphRuntime:
         turn_id = run.turn_id
         terminal: RuntimeEvent | None = None
         graph_context = GraphRunContext(
-            events=_QueueEventSink(run.queue, self._goals),
+            events=_QueueEventSink(
+                run.queue,
+                self._goals,
+                self._evolution.observe
+                if self._evolution is not None and self._evolution.admitted
+                else None,
+            ),
             request_user_input=lambda call_id, questions, blocking: run.user_input.request(
                 self._thread_id,
                 run.turn_id,
@@ -3011,6 +3062,8 @@ class LangGraphRuntime:
         active = self._active_run
         if active is not None:
             active.cancel()
+        if self._evolution is not None:
+            await self._evolution.aclose()
         error = self._checkpoint_cleanup_error
         try:
             await self._turn_updates.aclose()

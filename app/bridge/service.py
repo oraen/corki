@@ -76,6 +76,8 @@ class Service:
         self.home = home.expanduser().resolve()
         self.home.mkdir(parents=True, exist_ok=True)
         self.database = self.home / "sessions/corki.db"
+        # Bootstrap once per backend startup; every conversation borrows this
+        # stateless, per-operation-connection repository instead of migrating again.
         self.repository = SQLiteSessionRepository(self.database)
         self.archive = SQLiteThreadArchiveStore(self.database)
         self.state = DesktopState(self.home)
@@ -715,6 +717,7 @@ class Service:
                 runtime = await self.factory(
                     settings=settings,
                     database_path=self.database,
+                    repository=self.repository,
                     home_path=self.home,
                     compatibility_home=Path.home(),
                     thread_id=ThreadId(thread),

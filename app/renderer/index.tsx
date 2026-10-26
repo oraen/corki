@@ -350,6 +350,7 @@ function App() {
     return data;
   }
   async function select(id: string, reloadConfiguration = id === "new") {
+    const resetModel = id === "new";
     const generation = ++loading.current;
     setHistoryReached(null);
     setHistoryScrollable(false);
@@ -382,16 +383,23 @@ function App() {
       // Typing can start before the directory/configuration request returns.
       const latestDraft = draftRef.current[id];
       if (latestDraft) stored = { ...stored, ...latestDraft };
-      if (!stored.provider || !result.providers.some(
+      if ((resetModel && !stored.request) || !stored.provider || !result.providers.some(
         provider => provider.id === stored.provider && provider.models.some(model => model.id === stored.model)
       )) {
         const historical = data?.model;
         const historyAvailable = historical && result.providers.some(
           provider => provider.id === historical.provider && provider.models.some(model => model.id === historical.model)
         );
-        const choice = !stored.provider && historyAvailable ? historical : result.default;
+        const choice = !resetModel && !stored.provider && historyAvailable ? historical : result.default;
+        const previous = stored.provider ? { provider: stored.provider, model: stored.model } : historical;
+        const unavailable = previous && !result.providers.some(
+          provider => provider.id === previous.provider && provider.models.some(model => model.id === previous.model)
+        );
         stored = {
           ...stored,
+          modelNotice: !resetModel && unavailable && choice
+            ? `此会话原使用的模型已不可用，已切换至 ${choice.provider} / ${choice.model}。`
+            : resetModel ? undefined : stored.modelNotice,
           directory,
           provider: choice?.provider || "",
           model: choice?.model || "",
@@ -400,6 +408,7 @@ function App() {
       }
       draftRef.current = { ...draftRef.current, [id]: stored };
       setDrafts(draftRef.current);
+      if (resetModel || stored.modelNotice) void persistDraft(id, stored);
       if (stored.request) {
         const known = await api.request("request.read", {
           requestId: stored.request.requestId,
@@ -698,7 +707,7 @@ function App() {
       reasoning: d.reasoning,
       attachments: d.attachments,
     };
-    const saved = { ...d, request };
+    const saved = { ...d, modelNotice: undefined, request };
     hiddenSubmissionText.current.add(request.requestId);
     let acknowledged = false;
     draftRef.current = { ...draftRef.current, [key]: saved };
@@ -1050,6 +1059,11 @@ function App() {
             >
               刷新配置
             </button>
+          </div>
+        )}
+        {draft.modelNotice && !(conversation.running && conversation.modelWarning) && (
+          <div className="banner model-health-banner" role="status" aria-live="polite">
+            <span>{draft.modelNotice}</span>
           </div>
         )}
         {conversation.running && conversation.modelWarning && (

@@ -23,6 +23,11 @@ class CronTool:
             "the saved provider/model (default model for legacy tasks) and configured permissions. "
             "The Manager or cron service must remain "
             "running to trigger tasks; list reports online. Missed fires collapse to one. "
+            "overlap_policy: skip (default), allow (subject to global concurrency limit), "
+            "or restart "
+            "(stop existing runs, then start after cleanup). "
+            "timeout_seconds: total runtime limit, "
+            "0 means unlimited; stopped work is not rolled back. "
             "Use list to obtain id/version before edits. Pausing does not cancel a running task. "
             "Never schedule a task merely to wait for a tool or to continue ordinary work.",
             {
@@ -54,6 +59,15 @@ class CronTool:
                             "timezone": {"type": "string"},
                             "workdir": {"type": "string"},
                             "enabled": {"type": "boolean"},
+                            "overlap_policy": {
+                                "type": "string",
+                                "enum": ["skip", "allow", "restart"],
+                            },
+                            "timeout_seconds": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 2147483647,
+                            },
                         },
                         "required": ["name", "prompt", "schedule", "timezone"],
                         "additionalProperties": False,

@@ -4,7 +4,7 @@
 Chat Completions 请求和 SSE 响应。支持 `/openai/responses`、`/openai/chat/completions`
 及它们的 `/openai/v1` 前缀。模型和 reasoning effort 由请求指定。
 
-这是独立 Python 项目，运行依赖只有 httpx 和 truststore；不依赖或导入 Corki。
+这是独立 Python 项目，运行依赖为 httpx、truststore 和 cryptography；不依赖或导入 Corki。
 安装 Corki 不会安装此网关，网关也不负责启动 Corki。可以单独复制本目录部署。
 
 ## 安装与运行
@@ -185,3 +185,51 @@ stdout 只输出一个 JSON 对象，均包含 `protocol_version: 1`。成功退
 错误对象包含安全的 `error` 文本。status 返回 running、occupied、port；check 仅返回 ready，
 不返回 Token 或账号。安装位置注册文件 `CORKI_HOME/gateway/installation.json` 只包含独立解释器路径。
 网关不依赖管理页、不导入 Corki 主包，也不修改 Corki 的供应商配置；这些配置由管理页独立维护。
+
+## Qoder 套餐适配
+
+管理页的套餐转发支持 Qoder。开启前会由独立网关验证 Qoder 登录信息，成功后创建或启用
+`adaptor-qoder`，地址为 `http://127.0.0.1:<实际端口>/qoder`，协议为 Chat Completions。
+开启 Qoder 时自动补全以下静态模型，已有模型配置和用户自定义项保持不变：
+
+| 模型 | 上游标识 |
+| --- | --- |
+| auto | auto |
+| ultimate | ultimate |
+| Kimi-K2.8-Preview | kmodel |
+| GLM-5.3 | gmodel |
+| DeepSeek-V4-Pro | dmodel |
+
+Auto 和 Ultimate 由 Qoder 路由选择实际模型；其他名称映射到对应的上游标识，响应仍保留用户选择的名称。
+目录来自本机 Qoder IDE 的普通 assistant 模型元数据，并经过当前 model-server 接口实际请求筛选。
+IDE 目录中的 Fast、Efficient、Sonus、Qwen、更新的 Kimi 和 Flash 等选项，目前在该接口被拒绝、后端失败或返回不完整，暂不自动添加；不将它们静默替换成 Auto。
+不混入 Quest / Experts 专用入口，不复制账号策略、登录信息或 GPT 模型列表。
+这是静态快照；厂商升级、账户权限或服务可用性变化可能需要重新验证和更新。
+
+支持 `/qoder/chat/completions` 和 `/qoder/v1/chat/completions`，包括 `stream=true/false`、
+工具定义、并行工具调用参数拼接、工具结果回传及用量。Qoder 路由目前不提供 Responses API。
+这里直接访问 Qoder 模型服务，不启动 Qoder Agent、不运行 Qoder 工具，也不读取项目上下文。
+
+凭据按以下顺序读取：
+
+1. `QODER_ACCESS_TOKEN` 环境变量。
+2. `QODER_AUTH_FILE` 指定的 JSON 文件（包含 `token` 或 `access_token`，可带账号 `id`）。
+3. `$QODER_HOME/credentials/auth.json`，默认根目录为 `~/.qoder`。仅有 `cleared` 标记不能代表有效登录。
+4. macOS 上读取 Qoder IDE 的加密登录缓存，通过系统钥匙串正常授权解密。可用
+   `QODER_IDE_STATE_DB` 指定 IDE 状态数据库。首次读取可能出现系统授权弹窗；拒绝或超时会提示失败。
+
+不写入、迁移或刷新 Qoder 登录文件，不把密码、Token 或刷新令牌写入网关配置。
+每次请求读取当前登录状态，加密内容未变化时复用内存缓存。切换账号需要重启网关。
+登录过期时应由 Qoder IDE 完成刷新或重新登录；网关不会竞争使用其刷新令牌。
+Windows/Linux 当前可通过显式 Token/JSON 文件接入，未实现这些平台 IDE 加密存储的自动读取。
+
+控制命令支持 `--provider auto|openai|qoder`；启动默认 `auto` 优先使用 Codex 登录，缺失时尝试
+Qoder，所以仅安装并登录 Qoder 也可以启动。单独验证登录可以执行：
+
+```bash
+.venv/bin/python -m corki_openai_gateway.control check --home ~/.corki --provider qoder
+```
+
+Qoder 上游默认 `https://api2-v2.qoder.sh/model/v1/chat/completions`。显式部署可通过
+`QODER_UPSTREAM` 指定其他 HTTPS 地址；下游请求不能改变上游地址，TLS 校验保持开启。
+该接口来自本机已安装 Qoder 的调用实现，属于厂商客户端协议，未来升级可能需要适配。

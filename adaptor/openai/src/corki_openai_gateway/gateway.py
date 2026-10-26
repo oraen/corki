@@ -30,7 +30,7 @@ from corki_openai_gateway.chat import chat_completion, chat_events, completed_re
 UPSTREAM = "https://chatgpt.com/backend-api/codex/responses"
 MAX_BODY = 16 * 1024 * 1024
 # Add a provider adapter here to opt it into routing; names never become URLs.
-PROVIDER_ROUTES = {"openai": "forward_openai"}
+PROVIDER_ROUTES = {"openai": "forward_openai", "qoder": "forward_qoder"}
 
 
 class CredentialsUnavailable(Exception):
@@ -85,18 +85,27 @@ class Gateway(ThreadingHTTPServer):
         credential_provider: Callable[[], Credentials] | None = None,
         control_token: str | None = None,
         owner: str = "",
+        qoder_credentials=None,
+        startup_provider="openai",
     ):
         self.instance = uuid.uuid4().hex
         self.control_token = control_token
         self.owner = owner
         self.auth_file = auth_file
         self.key = key
+        from corki_openai_gateway.qoder_credentials import QoderCredentialReader
+
+        self.qoder_credentials = qoder_credentials or QoderCredentialReader()
         if credential_provider is None:
             if auth_file is None:
                 raise CredentialsUnavailable("An auth file or credential provider is required.")
             credential_provider = partial(read_credentials, auth_file)
         self.credential_provider = credential_provider
-        self.account_id = credential_provider().account_id
+        self.account_id = None
+        if startup_provider == "qoder":
+            self.qoder_credentials()
+        else:
+            self.account_id = credential_provider().account_id
         self.client = client or httpx.Client(
             timeout=httpx.Timeout(120, connect=15),
             follow_redirects=False,
@@ -114,7 +123,9 @@ class Gateway(ThreadingHTTPServer):
 
     def credentials(self) -> Credentials:
         credentials = self.credential_provider()
-        if credentials.account_id != self.account_id:
+        if self.account_id is None:
+            self.account_id = credentials.account_id
+        elif credentials.account_id != self.account_id:
             raise CredentialsUnavailable("Codex account changed. Restart the gateway to use it.")
         return credentials
 
@@ -201,6 +212,11 @@ class Handler(BaseHTTPRequestHandler):
                 getattr(self, PROVIDER_ROUTES[provider])(endpoint)
         except (BrokenPipeError, ConnectionResetError, TimeoutError):
             self.close_connection = True
+
+    def forward_qoder(self, endpoint):
+        from corki_openai_gateway.qoder import forward
+
+        return forward(self, endpoint)
 
     def forward_openai(self, endpoint):
         self.close_connection = True
@@ -352,6 +368,7 @@ def main(argv: list[str] | None = None, *, serve: Callable[[Gateway], None] | No
     parser.add_argument("--auto-port", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--ready-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--port", type=int, default=17001)
+    parser.add_argument("--startup-provider", choices=("openai", "qoder"), default="openai")
     parser.add_argument("--key-file", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
@@ -367,7 +384,12 @@ def main(argv: list[str] | None = None, *, serve: Callable[[Gateway], None] | No
         provider = None
         if args.access_token_env is not None:
             provider = partial(environment_credentials, args.access_token_env, args.account_id_env)
-        options = dict(credential_provider=provider, control_token=control_token, owner=args.owner)
+        options = dict(
+            credential_provider=provider,
+            control_token=control_token,
+            owner=args.owner,
+            startup_provider=args.startup_provider,
+        )
         auth_file = None if provider else args.auth_file.expanduser()
         try:
             gateway = Gateway(auth_file, key, port=args.port, **options)

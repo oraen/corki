@@ -74,6 +74,7 @@ from corki.storage.display_pages import (
 )
 from corki.storage.file_lock import lock, open_lock, unlock_and_close
 from corki.storage.preview import migrate_thread_previews, user_preview
+from corki.storage.query_indexes import install_query_indexes
 
 
 class StorageIntegrityError(RuntimeError):
@@ -373,6 +374,8 @@ class SQLiteSessionRepository:
             )
             self._migrate_legacy_messages(connection)
             migrate_thread_previews(connection)
+            # Install only at bootstrap, after legacy columns are migrated.
+            install_query_indexes(connection)
 
     def _migrate_legacy_messages(self, connection: sqlite3.Connection) -> None:
         migration = "legacy_messages_to_conversation_items_v1"

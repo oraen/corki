@@ -18,7 +18,7 @@ const server=http.createServer(async(req,res)=>{
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const provider=model=>({base_url:`http://127.0.0.1:${server.address().port}/v1`,api_key:'fixture-not-a-credential',api_mode:'chat_completions',models:{[model]:{context_window:262144}}});
-const config={default:{provider:'alpha',model:'model-a'},providers:{alpha:provider('model-a'),beta:provider('model-b')},skills:{enabled:false},features:{goals:false,plugins:false},memories:{generate:false,use:false}};
+const config={default:{provider:'alpha',model:'model-a'},providers:{alpha:provider('model-a'),beta:provider('model-b'),'adaptor-qoder':provider('auto')},skills:{enabled:false},features:{goals:false,plugins:false},memories:{generate:false,use:false}};
 const original=JSON.stringify(config),file=path.join(home,'settings.json');await writeFile(file,original);
 let app;
 try{
@@ -58,6 +58,7 @@ try{
  await page.getByRole('button',{name:'选择供应商',exact:true}).filter({hasText:'alpha'}).waitFor();
  await page.getByRole('button',{name:'选择模型',exact:true}).filter({hasText:'model-a'}).waitFor();
  assert.equal(await page.getByText('当前选择的供应商或模型已不可用，请重新选择。',{exact:true}).count(),0);
+ await page.getByRole('status').filter({hasText:'此会话原使用的模型已不可用，已切换至 alpha / model-a。'}).waitFor();
  await input.fill('historical model removed; use current default');
  await page.getByRole('button',{name:'发送消息'}).click();
  await page.locator('.markdown').filter({hasText:'来自 model-a'}).nth(1).waitFor();
@@ -65,5 +66,17 @@ try{
  await writeFile(file,original);
  assert.equal(requests.length,4);
  assert.equal(requests[3].model,'model-a');
+ assert.equal(await page.getByRole('status').filter({hasText:'此会话原使用的模型已不可用'}).count(),0);
+ // Reset a still-valid blank-draft selection to the global default without losing text.
+ await page.locator('.new-chat').click();
+ await page.waitForTimeout(250);
+ await page.getByRole('button',{name:'选择供应商',exact:true}).click();
+ await page.getByRole('option',{name:'adaptor-qoder',exact:true}).click();
+ await page.waitForFunction(()=>{const image=document.querySelector('button[aria-label="选择供应商"] img');return image?.src.endsWith('/qoder.png') && image.naturalWidth>0;});
+ await input.fill('preserve this unsent draft');
+ await page.locator('.new-chat').click();
+ await page.getByRole('button',{name:'选择模型',exact:true}).filter({hasText:'model-a'}).waitFor();
+ assert.equal(await input.inputValue(),'preserve this unsent draft');
+ assert.equal(await readFile(file,'utf8'),original);
  console.log('PASS model switch affects next turn only, unchanged defaults, cached config until reload, unavailable historical choice falls back and sends with current default');
 }finally{release();if(app)await app.close();server.closeAllConnections();server.close();console.log('Disposable test home:',home)}

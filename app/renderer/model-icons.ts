@@ -1,4 +1,5 @@
 const brands: [string, RegExp][] = [
+  ["qoder", /qoder/i],
   ["qwen", /qwen/i],
   ["deepseek", /deepseek/i],
   ["kimi", /kimi|moonshot/i],

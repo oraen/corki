@@ -90,6 +90,7 @@ try {
             : path.join(buildPath, "resources");
         await mkdir(path.join(resources, "manager"), { recursive: true });
         await cp("../manager/server.py", path.join(resources, "manager", "server.py"));
+        await cp("../manager/resource_packages.py", path.join(resources, "manager", "resource_packages.py"));
         await cp("../manager/templates", path.join(resources, "manager", "templates"), { recursive: true });
         await cp("../manager/static", path.join(resources, "manager", "static"), { recursive: true });
         await cp(path.join(stage, "bridge"), path.join(resources, "bridge"), {

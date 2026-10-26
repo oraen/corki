@@ -10,6 +10,7 @@ import copy
 import hashlib
 import http.client
 import io
+import importlib.util
 import ipaddress
 import json
 import mimetypes
@@ -73,6 +74,13 @@ from corki.tools.custom import (
 )
 from corki.tools.executor import ToolExecutor
 from corki.tools.registry import ToolRegistry
+
+_package_spec = importlib.util.spec_from_file_location(
+    "corki_resource_packages", Path(__file__).with_name("resource_packages.py")
+)
+_package_module = importlib.util.module_from_spec(_package_spec)
+_package_spec.loader.exec_module(_package_module)
+ResourcePackages = _package_module.ResourcePackages
 
 STATIC = Path(__file__).parent / "static"
 # Windows registry associations can label .js as text/plain. With nosniff that
@@ -454,7 +462,7 @@ ADAPTOR_LOCAL_KEY = "sk-f127ac39ckkb278c8abddb4lbcc592zb"
 
 class GatewayManagement:
     """Invoke the independent gateway environment; never import its implementation."""
-    providers = {"openai": "OpenAI"}
+    providers = {"openai": "OpenAI", "qoder": "Qoder"}
 
     def __init__(self, store):
         self.store = store
@@ -517,7 +525,7 @@ class GatewayManagement:
             return str(python)
         raise ValueError("未找到转发网关，请先安装 adaptor/openai，或配置 CORKI_GATEWAY_PYTHON")
 
-    def control(self, action, *, port=None, install=False):
+    def control(self, action, *, port=None, install=False, provider=None):
         python = self.interpreter(install=install)
         if action in ("start", "check"):
             atomic(self.root / "installation.json", json.dumps({"python": python}), backup=False)
@@ -525,6 +533,8 @@ class GatewayManagement:
                    "--home", str(self.store.home)]
         if port is not None:
             command += ["--port", str(port)]
+        if provider is not None:
+            command += ["--provider", provider]
         result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=210,
                                 env={**os.environ, "CORKI_HOME": str(self.store.home)})
         try:
@@ -553,6 +563,7 @@ class GatewayManagement:
                     {"id": name, "name": label,
                      "enabled": config.get("providers", {}).get("adaptor-" + name, {}).get("enabled", False),
                      "configured": "adaptor-" + name in config.get("providers", {}),
+                     "login_name": "Qoder IDE" if name == "qoder" else "Codex",
                      "base_url": f"http://127.0.0.1:{port}/{name}"}
                     for name, label in self.providers.items()]}
 
@@ -577,20 +588,35 @@ class GatewayManagement:
             profiles = config.setdefault("providers", {})
             identity = "adaptor-" + provider
             existing = profiles.get(identity)
+            checked = None
             if enabled:
                 # Credentials are validated by the independent gateway before
                 # changing configuration or stopping any existing process.
-                self.control("check", install=True)
+                checked = self.control("check", install=True,
+                             provider=provider if action == "provider" else "auto")
             if action == "provider" and enabled:
                 if existing is None:
                     models = next((copy.deepcopy(p["models"]) for p in profiles.values()
                         if urlparse(p.get("base_url", "")).hostname in ("127.0.0.1", "localhost")
-                        and urlparse(p.get("base_url", "")).port == old_port and p.get("models")), None)
+                        and urlparse(p.get("base_url", "")).port == old_port
+                        and urlparse(p.get("base_url", "")).path.rstrip("/") in ("", "/v1", "/openai", "/openai/v1")
+                        and p.get("models")), None) if provider == "openai" else None
                     if not models:
-                        models = copy.deepcopy(next(p for p in self.store.quick_templates()["providers"]
-                                                    if p["id"] == provider)["models"])
+                        models = (copy.deepcopy(checked.get("models", {}))
+                                  if provider == "qoder" else copy.deepcopy(next(
+                                      p for p in self.store.quick_templates()["providers"]
+                                      if p["id"] == provider)["models"]))
                     existing = profiles.setdefault(identity, {"models": models})
-                existing.update(enabled=True, name=provider, api_mode="responses",
+                if provider == "qoder":
+                    catalog = checked.get("models")
+                    if not isinstance(catalog, dict) or not catalog:
+                        raise ValueError("请更新适配网关后重试，未获得 Qoder 模型列表")
+                    # Add missing defaults; keep the user's custom models and
+                    # existing settings instead of resetting the provider.
+                    for model, settings in catalog.items():
+                        existing.setdefault("models", {}).setdefault(model, copy.deepcopy(settings))
+                existing.update(enabled=True, name=provider,
+                    api_mode="chat_completions" if provider == "qoder" else "responses",
                     base_url=f"http://127.0.0.1:{old_port}/{provider}", api_key=ADAPTOR_LOCAL_KEY)
                 if not effective_default(document.loads(original)):
                     config["default"] = {"provider": identity, "model": next(iter(existing["models"]))}
@@ -673,6 +699,7 @@ class Store:
         self.cron_service = CronService(self.home)
         self.maintenance = SessionMaintenance(self)
         self.adaptor = GatewayManagement(self)
+        self.resource_packages = ResourcePackages(self)
 
     @property
     def knowledge_root(self):
@@ -1278,9 +1305,10 @@ end run'''
             "SELECT date(created_at,'localtime') AS day, "
             "coalesce(sum(input_tokens),0) AS input, "
             "coalesce(sum(output_tokens),0) AS output, count(*) AS steps "
-            "FROM model_steps WHERE date(created_at,'localtime') BETWEEN ? AND ? "
+            "FROM model_steps WHERE julianday(created_at)>=julianday(?,'utc') "
+            "AND julianday(created_at)<julianday(?,'utc') "
             "GROUP BY day",
-            (first.isoformat(), today.isoformat()),
+            (first.isoformat(), (today + timedelta(days=1)).isoformat()),
         )
         by_day = {row["day"]: row for row in rows}
         days = [(first + timedelta(days=index)).isoformat() for index in range(30)]
@@ -2138,6 +2166,9 @@ end run'''
                 self.validate_config(updated)
                 self.write_config(updated, data["revision"], "修改供应商启用状态")
                 return {"message": "配置已更新"}
+        if data.get("kind") == "resource-packages":
+            with LOCK:
+                return self.resource_packages.change(data)
         if data.get("kind") == "global-config":
             return self.mutate_global(data)
         if data.get("kind") == "hooks":
@@ -2157,7 +2188,9 @@ end run'''
                     raise ValueError("请选择模型供应商和运行模型")
                 identity = self.cron.save(data.get("values"), identity, data.get("version"))
             elif action == "run":
-                self.cron_service.run_now(identity)
+                run_id = self.cron_service.run_now(identity)
+                if self.cron.run(run_id)["status"] == "waiting":
+                    return {"message": "正在停止前次执行，结束后将开始本次任务", "id": identity}
             else:
                 self.cron.change(identity, action, data.get("version"))
             return {"message": {"save": "任务已保存", "run": "任务已开始", "pause": "任务已暂停",
@@ -2766,6 +2799,18 @@ class Handler(BaseHTTPRequestHandler):
                 if "id" in query:
                     return self.respond(200, self.server.store.cron.history(query["id"][0]))
                 return self.respond(200, self.server.store.cron.list())
+            if parsed.path == "/api/resource-packages":
+                with LOCK:
+                    return self.respond(200, self.server.store.resource_packages.listing())
+            if parsed.path == "/api/resource-package-inventory":
+                with LOCK:
+                    return self.respond(200, self.server.store.resource_packages.inventory())
+            if parsed.path == "/api/resource-package-export":
+                identities = parse_qs(parsed.query).get("id", [])
+                with LOCK:
+                    body, filename = self.server.store.resource_packages.export(identities)
+                return self.respond(200, body, "application/zip",
+                    {"Content-Disposition": "attachment; filename*=UTF-8''" + quote(filename, safe="")})
             if parsed.path == "/api/quick-templates":
                 return self.respond(200, self.server.store.quick_catalog())
             if parsed.path in ("/api/skill-package", "/api/skill-resource", "/api/skill-export"):
@@ -2853,10 +2898,12 @@ class Handler(BaseHTTPRequestHandler):
             if skill_import and not (
                 (data.get("kind") == "skills" and data.get("action") in ("import", "validate-import"))
                 or (data.get("kind") == "hooks" and data.get("action") == "upload-skill")
+                or (data.get("kind") == "resource-packages" and data.get("action") in ("create", "preview-import", "import"))
             ):
                 raise ValueError("无效的技能导入请求")
             if (
                 data.get("action") not in ("import", "validate-import", "parse-document", "upload-skill")
+                and not (data.get("kind") == "resource-packages" and data.get("action") in ("create", "preview-import", "import"))
                 and length > 2 * LIMIT
             ):
                 raise ValueError("请求体过大")

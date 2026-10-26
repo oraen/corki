@@ -5,6 +5,7 @@ import json
 import os
 from dataclasses import replace
 
+import pytest
 from test_thread_settings_update import settings
 
 from corki.core.runtime import LangGraphRuntime
@@ -86,7 +87,8 @@ def test_scheduled_real_runtime_has_isolated_history_and_shared_management(tmp_p
     asyncio.run(scenario())
 
 
-def test_detached_worker_finishes_after_launcher_exit(tmp_path):
+@pytest.mark.parametrize("timeout_seconds", [0, 1])
+def test_detached_worker_finishes_after_launcher_exit(tmp_path, timeout_seconds):
     import subprocess
     import sys
     import threading
@@ -144,6 +146,7 @@ def test_detached_worker_finishes_after_launcher_exit(tmp_path):
             "provider": "fixture",
             "model": "task-model",
             "prompt": "Return a short summary",
+            "timeout_seconds": timeout_seconds,
             "schedule": "every 1h",
             "timezone": "UTC",
         }
@@ -168,14 +171,19 @@ def test_detached_worker_finishes_after_launcher_exit(tmp_path):
         replacement = CronService(tmp_path)
         replacement.recover(now=time.time() + 100)
         assert store.history(job)[0]["status"] == "running"
-        release.set()
+        if not timeout_seconds:
+            release.set()
         for _ in range(600 if os.name == "nt" else 100):
             row = store.history(job)[0]
             if row["status"] not in {"claimed", "running"}:
                 break
             time.sleep(0.1)
-        assert row["status"] == "completed", row
-        assert store.run(row["id"])["output"] == "detached result"
+        assert row["status"] == ("failed" if timeout_seconds else "completed"), row
+        result = store.run(row["id"])
+        if timeout_seconds:
+            assert "超时时间" in result["error"]
+        else:
+            assert result["output"] == "detached result"
         assert len(store.history(job)) == 1
     finally:
         release.set()

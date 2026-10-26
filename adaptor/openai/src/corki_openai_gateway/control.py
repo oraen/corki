@@ -64,11 +64,13 @@ def exclusive(path):
 
 
 class Controller:
-    def __init__(self, home: Path):
+    def __init__(self, home: Path, *, provider="openai"):
         self.home = home.expanduser().resolve()
         self.root = self.home / "gateway"
         self.owner = hashlib.sha256(str(self.home).encode()).hexdigest()
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        self.provider = provider
+        self.startup_provider = "openai"
 
     def metadata(self):
         try:
@@ -189,6 +191,7 @@ class Controller:
             "--owner",
             self.owner,
         ]
+        args += ["--startup-provider", self.startup_provider]
         environment = {}
         if archive.exists():
             previous = plistlib.loads(archive.read_bytes())
@@ -262,7 +265,19 @@ class Controller:
 
     def check(self):
         auth = self.auth_file()
-        read_credentials(auth)
+        if self.provider in ("openai", "auto"):
+            try:
+                read_credentials(auth)
+            except CredentialsUnavailable:
+                if self.provider == "openai":
+                    raise
+            else:
+                self.startup_provider = "openai"
+                return auth
+        from corki_openai_gateway.qoder_credentials import QoderCredentialReader
+
+        QoderCredentialReader()()
+        self.startup_provider = "qoder"
         return auth
 
     def stop(self):
@@ -388,6 +403,7 @@ class Controller:
             self.owner,
         ]
         ready_file = self.root / ("service-ready-" + secrets.token_hex(12) + ".json")
+        args += ["--startup-provider", self.startup_provider]
         args += ["--ready-file", str(ready_file)]
         if auto_port:
             args += ["--auto-port"]
@@ -447,11 +463,16 @@ def main(argv=None):
     )
     parser.add_argument("--home", type=Path, required=True)
     parser.add_argument("--port", type=int)
+    parser.add_argument("--provider", choices=("auto", "openai", "qoder"))
     args = parser.parse_args(argv)
     try:
         if args.port is not None and (not 1 <= args.port <= 65535 or args.port == 17002):
             raise ValueError("请选择 1–65535 的端口，不能使用管理服务端口")
-        controller = Controller(args.home)
+        controller = Controller(
+            args.home,
+            provider=args.provider
+            or ("auto" if args.action in ("start", "start-auto") else "openai"),
+        )
         with exclusive(controller.root / "control.lock"):
             if args.action == "register":
                 write_private(
@@ -461,6 +482,10 @@ def main(argv=None):
             elif args.action == "check":
                 controller.check()
                 result = {"ready": True}
+                if controller.startup_provider == "qoder":
+                    from corki_openai_gateway.qoder_models import model_catalog
+
+                    result["models"] = model_catalog()
             elif args.action == "start-auto":
                 result = controller.start_auto()
             elif args.action == "start":

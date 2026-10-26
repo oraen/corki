@@ -530,7 +530,7 @@ def test_nonstream_tool_calls_refusal_and_buffer_bound():
         ("/v1/responses", "路径需要加入服务商"),
         ("/responses", "路径需要加入服务商"),
         ("/claude/v1/responses", "暂时不支持的供应商"),
-        ("/qoder/responses", "暂时不支持的供应商"),
+        ("/other/responses", "暂时不支持的供应商"),
     ],
 )
 def test_provider_namespace_required_and_no_upstream_call(tmp_path, path, message):
@@ -550,7 +550,7 @@ def test_health_contains_no_login_material(tmp_path):
         assert response.status_code == 200
         data = response.json()
         assert data["service"] == "corki-adaptor" and data["version"] == 2
-        assert data["providers"] == ["openai"]
+        assert data["providers"] == ["openai", "qoder"]
         assert "oauth-secret" not in response.text and "account-a" not in response.text
         assert (
             client.post("/__corki_gateway/stop", headers={"X-Corki-Control": "wrong"}).status_code

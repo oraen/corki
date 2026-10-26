@@ -2,6 +2,7 @@
 
 import asyncio
 import sys
+import time
 from contextlib import aclosing, suppress
 from dataclasses import replace
 from pathlib import Path
@@ -15,6 +16,10 @@ from .store import CronStore
 
 
 class JobStopped(Exception):
+    pass
+
+
+class JobTimedOut(Exception):
     pass
 
 
@@ -108,6 +113,8 @@ async def execute(store, identity, *, factory=None, settings_factory=None, idle_
 
 
 async def supervise(store, identity, **kwargs):
+    budget = store.run(identity)["definition"].get("timeout_seconds", 0)
+    deadline = time.monotonic() + budget if budget else None
     task = asyncio.create_task(execute(store, identity, **kwargs))
     try:
         while not task.done():
@@ -117,13 +124,29 @@ async def supervise(store, identity, **kwargs):
             store.heartbeat(identity)
             if store.run(identity)["cancel"]:
                 task.cancel()
-                with suppress(asyncio.CancelledError):
+                # Runtime may translate cancellation into TurnCancelled/JobStopped.
+                # Preserve the supervisor's original stop/timeout cause after cleanup.
+                with suppress(asyncio.CancelledError, Exception):
                     await task
                 raise JobStopped()
+            if deadline is not None and time.monotonic() >= deadline:
+                task.cancel()
+                # Runtime may translate cancellation into TurnCancelled/JobStopped.
+                # Preserve the supervisor's original stop/timeout cause after cleanup.
+                with suppress(asyncio.CancelledError, Exception):
+                    await task
+                raise JobTimedOut()
         output = await task
         store.finish(identity, "completed", output=output)
     except (JobStopped, asyncio.CancelledError):
         store.finish(identity, "cancelled", error="执行已停止，已完成的操作不会撤销")
+    except JobTimedOut:
+        store.finish(
+            identity,
+            "failed",
+            error=f"任务超过超时时间（{budget} 秒），已停止",
+            error_log=f"任务超过配置的总执行时限：{budget} 秒",
+        )
     except TimeoutError as error:
         store.finish(
             identity,

@@ -29,7 +29,7 @@ class FakeRuntime:
     def __init__(self, **kw):
         from corki.storage.sqlite import SQLiteSessionRepository
 
-        self.repository = SQLiteSessionRepository(kw["database_path"])
+        self.repository = kw.get("repository") or SQLiteSessionRepository(kw["database_path"])
         self.thread = kw["thread_id"]
         self.settings = kw["settings"]
         self.cancelled = False
@@ -112,14 +112,19 @@ def test_catalog_missing_and_invalid(tmp_path):
     asyncio.run(check())
 
 
-def test_catalog_uses_first_available_when_default_supplier_is_off(tmp_path):
+@pytest.mark.parametrize("default_case", ["disabled", "missing", "none"])
+def test_catalog_uses_first_available_when_default_supplier_is_off(tmp_path, default_case):
     async def check():
         setup(tmp_path)
         path = tmp_path / "settings.json"
         config = json.loads(path.read_text())
         profile = config["providers"]["test"]
-        config["providers"] = {"first": {**profile, "models": {"first-model": {}}},
+        config["providers"] = {"first": {**profile, "models": {"first-model": {}, "a-model": {}}},
                                "test": {**profile, "enabled": False}}
+        if default_case == "missing":
+            config["default"] = {"provider": "removed", "model": "removed"}
+        elif default_case == "none":
+            config.pop("default", None)
         path.write_text(json.dumps(config))
         original = path.read_bytes()
 
@@ -1259,4 +1264,107 @@ def test_display_pages_hide_compaction_copies_and_use_original_question(tmp_path
             assert [m["id"] for m in earlier["messages"]] == [str(question.id), str(progress.id)]
         finally:
             await service.close()
+    asyncio.run(check())
+
+
+def test_real_runtimes_share_startup_repository_without_reinitialization(tmp_path, monkeypatch):
+    from contextlib import closing
+    from dataclasses import replace
+
+    from corki.core.runtime import LangGraphRuntime
+    from corki.models import ModelCompleted
+    from corki.protocol.items import new_step_id
+    from corki.storage.sqlite import SQLiteSessionRepository
+    from corki.tools.registry import ToolRegistry
+
+    original = SQLiteSessionRepository._create_schema
+    initializations = []
+
+    def initialize(repository):
+        initializations.append(repository.path)
+        return original(repository)
+
+    monkeypatch.setattr(SQLiteSessionRepository, "_create_schema", initialize)
+
+    class Model:
+        async def stream(self, request):
+            turn = request.items[-1].turn_id
+            yield ModelCompleted((AssistantMessageItem("done", turn, new_step_id()),))
+
+        async def aclose(self):
+            pass
+
+    async def factory(**kw):
+        kw["settings"] = replace(
+            kw["settings"],
+            memories_enabled=False,
+            skills_enabled=False,
+            hooks_enabled=False,
+            goals_enabled=False,
+        )
+        return await LangGraphRuntime.acreate(
+            **kw, model=Model(), registry=ToolRegistry(), load_plugins=False
+        )
+
+    async def send(value):
+        pass
+
+    async def check():
+        setup(tmp_path)
+        service = Service(tmp_path, send, factory)
+        service.runtime_cache_limit = 1
+        try:
+            await service.catalog({})
+            for _ in range(3):
+                await service.submit(
+                    {
+                        "requestId": str(uuid.uuid4()),
+                        "threadId": str(uuid.uuid4()),
+                        "content": "fixture",
+                        "provider": "test",
+                        "model": "test-model",
+                    }
+                )
+                await asyncio.gather(*service.tasks.values())
+                assert all(r._repository is service.repository for r in service.runtimes.values())
+            assert len(initializations) == 1
+            statements = []
+            import sqlite3
+
+            connect = sqlite3.connect
+
+            def traced_connect(*args, **kw):
+                connection = connect(*args, **kw)
+                connection.set_trace_callback(statements.append)
+                return connection
+
+            with monkeypatch.context() as patch:
+                patch.setattr(sqlite3, "connect", traced_connect)
+                rows = (await service.list_threads({}))["threads"]
+                assert len(rows) == 3
+                assert (
+                    len((await service.list_threads({"directory": rows[0]["cwd"]}))["threads"]) == 3
+                )
+            queries = [
+                sql
+                for sql in statements
+                if sql.startswith("SELECT id,cwd,created_at,updated_at FROM threads WHERE")
+            ]
+            assert len(queries) == 2
+            with closing(connect(service.database)) as db:
+                for sql, index in zip(
+                    queries, ("threads_active_recency", "threads_active_cwd_recency"), strict=True
+                ):
+                    plan = "\n".join(row[3] for row in db.execute("EXPLAIN QUERY PLAN " + sql))
+                    assert index in plan, plan
+                    assert "TEMP B-TREE" not in plan, plan
+        finally:
+            await service.close()
+        restarted = Service(tmp_path, send, factory)
+        try:
+            assert len(initializations) == 2  # A new host startup still validates/migrates.
+            assert len((await restarted.list_threads({}))["threads"]) == 3
+        finally:
+            await restarted.close()
+
     asyncio.run(check())

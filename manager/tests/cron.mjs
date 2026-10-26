@@ -23,6 +23,10 @@ try {
  assert.equal(await evaluate(`document.querySelectorAll('#fields select').length`),0);
  assert.equal(await evaluate(`document.querySelector('[name=provider]').value`),'fixture');
  assert.equal(await evaluate(`document.querySelector('[name=model]').value`),'fixture-model');
+ assert.equal(await evaluate(`document.querySelector('[name=overlap_policy]').value`),'skip');
+ assert.equal(await evaluate(`document.querySelector('[name=timeout_seconds]').value`),'');
+ await evaluate(`document.querySelector('[name=overlap_policy]').closest('.cron-select').querySelector('.select-trigger').click();document.querySelector('[name=overlap_policy]').closest('.cron-select').querySelector('[data-value="restart"]').click();document.querySelector('[name=timeout_seconds]').value='90'`);
+
  await evaluate(`document.querySelector('[name=provider]').closest('.cron-select').querySelector('.select-trigger').click();document.querySelector('[name=provider]').closest('.cron-select').querySelector('[data-value="alternate"]').click()`);
  assert.equal(await evaluate(`document.querySelector('[name=model]').value`),'alternate-first');
  await evaluate(`document.querySelector('[name=mode]').closest('.cron-select').querySelector('.select-trigger').click();document.querySelector('[name=mode]').closest('.cron-select').querySelector('[data-value="hourly"]').click()`);
@@ -35,6 +39,7 @@ try {
  if(process.env.CRON_SCREENSHOT){const shot=await cdp('Page.captureScreenshot',{format:'png'});fs.writeFileSync(process.env.CRON_SCREENSHOT.replace('.png','-create.png'),Buffer.from(shot.data,'base64'));}
  await evaluate(`document.querySelector('[name=name]').value='浏览器定时测试';document.querySelector('[name=prompt]').value='请简要整理本次测试资料。';document.querySelector('[name=timing]').value='35';document.querySelector('#save').click()`);
  await wait(`!document.querySelector('#editor').open && [...document.querySelectorAll('.cron-task-row')].some(e=>e.textContent.includes('浏览器定时测试'))`);
+ assert(await evaluate(`fetch('/api/cron').then(r=>r.json()).then(r=>r.jobs.some(j=>j.name==='浏览器定时测试'&&j.overlap_policy==='restart'&&j.timeout_seconds===90))`));
  const jobId=await evaluate(`[...document.querySelectorAll('.cron-task-row')].find(e=>e.textContent.includes('浏览器定时测试')).querySelector('[data-id]').dataset.id`);
  await evaluate(`document.querySelector('[data-cron="pause"][data-id="${jobId}"]').click()`);
  await wait(`document.querySelector('[data-cron="resume"][data-id="${jobId}"]')`);

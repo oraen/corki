@@ -414,6 +414,7 @@ export function reduceEvent(
   return s;
 }
 export interface Draft {
+  modelNotice?: string;
   content: string;
   attachments: Attachment[];
   directory: string;

@@ -1,7 +1,7 @@
 'use strict';
 
 function quickToolsCards(){
- return `<section class="panel quick-tools-panel"><div class="panel-head"><h2>快捷工具</h2></div><div class="quick-tools-grid">${[
+ return `<section class="panel quick-tools-panel"><div class="panel-head"><h2>快速使用</h2></div><div class="quick-tools-grid">${[
   ['guide','使用指引','从首次配置到完成一个任务','knowledge'],
   ['setup','快速配置','快速使用厂商和模型初始化配置','config'],
   ['launch','快速启动','打开 CLI 或桌面应用','developer']
@@ -9,7 +9,7 @@ function quickToolsCards(){
 }
 
 function toolboxCards(){
- return `<section class="panel quick-tools-panel" aria-labelledby="toolbox-title"><div class="panel-head"><h2 id="toolbox-title">工具箱</h2></div><div class="quick-tools-grid"><button type="button" class="quick-tool-card toolbox-card" data-action="open-adaptor"><span class="quick-tool-icon">${icon('providers')}</span><strong>套餐转发</strong>${icon("arrow")}</button></div></section>`;
+ return `<section class="panel quick-tools-panel" aria-labelledby="toolbox-title"><div class="panel-head"><h2 id="toolbox-title">工具箱</h2></div><div class="quick-tools-grid"><button type="button" class="quick-tool-card toolbox-card" data-action="open-adaptor"><span class="quick-tool-icon">${icon('providers')}</span><strong>套餐转发</strong>${icon("arrow")}</button><button type="button" class="quick-tool-card toolbox-card" data-action="open-resource-packages"><span class="quick-tool-icon">${window.CorkiResourcePackages.icon()}</span><strong>插件管理</strong>${icon("arrow")}</button></div></section>`;
 }
 
 function guidePage(){
