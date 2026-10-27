@@ -44,7 +44,7 @@ test("model failure budget is displayed as a normal reply without changing faile
   assert.equal(failed.modelWarning, false);
 });
 test("model warning reason survives snapshot replay and distinguishes silence from failures", () => {
-  for (const reason of ["idle", "failure"]) {
+  for (const reason of ["idle", "failure", "connection"]) {
     const data = { warning: true, reason };
     const warned = reduceEvent(emptyConversation(), event("model.health", data));
     assert.equal(warned.modelWarningReason, reason);
@@ -633,4 +633,13 @@ test('queue changes do not insert unsubmitted questions into transcript', () => 
   assert.equal(next.followUps.paused,true);
   assert.equal(next.messages.length,0);
   assert.equal(original.followUps.messages.length,0);
+});
+
+
+test("network retry warning remains distinct from silent I/O", () => {
+  const s = reduceEvent(emptyConversation(), event("model.health", {
+    warning: true, reason: "connection"
+  }));
+  assert.equal(s.modelWarning, true);
+  assert.equal(s.modelWarningReason, "connection");
 });

@@ -705,7 +705,11 @@ class Service:
                     parts.append(f"\n\n附件 {name}:\n" + text(entry, "data", limit=200000))
                 else:
                     raise ValueError("不支持的附件类型")
-            if thread in self.tasks or (queued_id is None and self.followups.rows(thread)):
+            if queued_id is None:
+                self.followups.resume_for_input(thread)
+            waiting = any(r["state"] in ("queued", "dispatching", "delivered")
+                          for r in self.followups.rows(thread))
+            if thread in self.tasks or (queued_id is None and waiting):
                 if queued_id is not None and not force_steer:
                     self.followups.mark(queued_id, "queued")
                     return self.followups.receipt(queued_id)
@@ -780,6 +784,10 @@ class Service:
             self.tasks[thread] = asyncio.create_task(
                 self.run(thread, identity, runtime, content + "".join(parts), tuple(images))
             )
+            if queued_id is not None:
+                # Automatic handoff has no new composer admission/snapshot read.
+                # Promote its displayed input before removing the deferred copy.
+                await self.emit("UserMessageSubmitted", thread, self.live[thread][0]["data"])
             self.lifecycle_revision += 1
             return self.state.request(identity)
 

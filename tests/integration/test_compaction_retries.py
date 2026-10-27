@@ -104,6 +104,8 @@ def test_real_loop_retries_compaction_without_replaying_tools(tmp_path, failure)
                 # Keep this fixed schema/window fixture independent of Goal tools.
                 goals_enabled=False,
                 skills_enabled=False,
+                # Exercise retries, independent of bundled prompt wording/size.
+                base_instructions="B" * 4962,
                 context_window_tokens=8000,
                 auto_compact_tokens=3000,
                 model_max_retries=1,

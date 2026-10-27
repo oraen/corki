@@ -1,6 +1,7 @@
 """HTTP status remains authoritative when an error body cannot be read."""
 
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -80,3 +81,17 @@ def test_non_success_status_cannot_become_completion_or_transport_error(
             await client.aclose()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status,code,kind,retryable", [
+    (502, "upstream_connection_failed", "connection", True),
+    (502, None, "server", True),
+    (500, "upstream_connection_failed", "server", True),
+    (400, "upstream_connection_failed", "invalid_request", False),
+    (401, None, "authentication", False),
+])
+def test_gateway_network_metadata_is_distinct_from_plain_http_errors(status, code, kind, retryable):
+    from corki.models.http_errors import http_error
+    error = http_error(httpx.Response(status), json.dumps({
+        "error": {"code": code, "message": "fixture"}}))
+    assert (error.kind.value, error.retryable, error.status_code) == (kind, retryable, status)

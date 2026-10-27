@@ -220,6 +220,32 @@ def test_upstream_error_does_not_leak_body_or_auth(tmp_path):
         assert "private-upstream-body" not in response.text
 
 
+def test_budget_preflight_matches_final_upstream_bytes_and_never_calls_model(tmp_path):
+    sizes = []
+
+    def upstream(request):
+        sizes.append(len(request.content))
+        return httpx.Response(200, headers={"Content-Type": "text/event-stream"}, content=stream_bytes({
+            "choices": [{"index": 0, "delta": {"content": "OK"}, "finish_reason": "stop"}]
+        }))
+
+    payload = {"model": "Kimi-K2.8-Preview", "stream": False, "messages": [
+        {"role": "system", "content": ""}, {"role": "system", "content": "中文系统提示词"},
+        {"role": "user", "content": "中文、空格、引号：\"hello\""},
+    ], "tools": [{"type": "function", "function": {"name": "echo", "parameters": {"type": "object"}}}]}
+    with gateway(tmp_path, upstream) as client:
+        budget = client.post("/qoder/v1/request-budget", json=payload).json()
+        assert sizes == []
+        assert budget["protocol_version"] == 1 and budget["limit_bytes"] == 262144
+        assert 0 < budget["fixed_bytes"] < budget["request_bytes"]
+        assert client.post("/qoder/v1/chat/completions", json=payload).status_code == 200
+        assert sizes == [budget["request_bytes"]]
+        payload["messages"] = [m for m in payload["messages"] if m["role"] == "system"]
+        fixed = client.post("/qoder/request-budget", json=payload).json()
+        assert fixed["request_bytes"] == fixed["fixed_bytes"] == budget["fixed_bytes"]
+        assert len(sizes) == 1
+
+
 def test_qoder_only_gateway_does_not_require_codex_login(tmp_path, monkeypatch):
     from corki_openai_gateway.gateway import main
 
@@ -325,3 +351,29 @@ def test_explicit_unsupported_model_is_reported_before_stream_headers(tmp_path, 
             json={"model": "not-supported", "messages": [], "stream": streaming},
         )
         assert response.status_code == 400
+
+
+@pytest.mark.parametrize("failure", [httpx.ConnectError, httpx.ConnectTimeout])
+def test_qoder_connection_failure_has_explicit_retry_classification(tmp_path, failure):
+    def upstream(request):
+        raise failure("private diagnostic")
+    with gateway(tmp_path, upstream) as client:
+        response = client.post("/qoder/v1/chat/completions", json={
+            "model": "auto", "messages": [{"role": "user", "content": "hello"}]})
+        assert response.status_code == 502
+        assert response.json()["error"]["code"] == "upstream_connection_failed"
+        assert "private diagnostic" not in response.text
+
+
+def test_qoder_certificate_failure_is_not_classified_as_offline(tmp_path):
+    import ssl
+    def upstream(request):
+        try:
+            raise ssl.SSLCertVerificationError("fixture certificate")
+        except ssl.SSLCertVerificationError as cause:
+            raise httpx.ConnectError("private diagnostic") from cause
+    with gateway(tmp_path, upstream) as client:
+        response = client.post("/qoder/v1/chat/completions", json={
+            "model": "auto", "messages": [{"role": "user", "content": "hello"}]})
+        assert response.status_code == 424
+        assert "code" not in response.json()["error"]

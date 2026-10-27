@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Icon, MessageRow } from "./components";
+import { DeferredMessage } from "./pending-inputs";
 import type { TranscriptEntry } from "./transcript";
 
 function ProcessGroup({
@@ -80,10 +81,12 @@ export function TranscriptView({
   entries,
   active,
   onError,
+  onRetryInput,
 }: {
   entries: TranscriptEntry[];
   active: boolean;
   onError: (e: unknown) => void;
+  onRetryInput: (id: string) => Promise<void>;
 }) {
   const latestTurn = [...entries]
     .reverse()
@@ -122,6 +125,9 @@ export function TranscriptView({
     else groups.push([block]);
   }
   const renderBlock = (block: (typeof blocks)[number], showAvatar = false) => {
+    if (block.entries[0].message.pendingInput)
+      return <DeferredMessage key={block.key} message={block.entries[0].message}
+        retry={onRetryInput} onError={onError} />;
     const current = active && block.entries[0].message.turnId === latestTurn;
     return block.process ? (
       <ProcessGroup

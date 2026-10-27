@@ -1,4 +1,4 @@
-import { FollowUps } from "./followups";
+import { displayMessages } from "./pending-inputs";
 import { TranscriptView } from "./transcript-view";
 import { transcriptEntries } from "./transcript";
 import React, {
@@ -238,8 +238,8 @@ function App() {
   const composerContent = busy[selected] && draft.request &&
     hiddenSubmissionText.current.has(draft.request.requestId) ? "" : draft.content;
   const entries = useMemo(
-    () => transcriptEntries(conversation.messages),
-    [conversation.messages],
+    () => transcriptEntries(displayMessages(conversation.messages, conversation.followUps, conversation.running)),
+    [conversation.messages, conversation.followUps, conversation.running],
   );
   const thinking =
     !offline &&
@@ -608,7 +608,7 @@ function App() {
       }
     }
     if (node && follow.current) node.scrollTop = node.scrollHeight;
-  }, [conversation.messages, conversation.pending, selected, ready]);
+  }, [conversation.messages, conversation.pending, conversation.followUps, selected, ready]);
   useEffect(() => {
     const node = scroll.current;
     if (!node) return;
@@ -1068,7 +1068,7 @@ function App() {
         )}
         {conversation.running && conversation.modelWarning && conversation.modelWarningReason !== "idle" && (
           <div className="banner model-health-banner" role="status" aria-live="polite">
-            <span>模型调用失败，重试中</span>
+            <span>{conversation.modelWarningReason === "connection" ? "网络连接失败，重试中" : "模型调用失败，重试中"}</span>
           </div>
         )}
         <div
@@ -1089,6 +1089,7 @@ function App() {
         >
           <div className="conversation-inner">
             {!conversation.messages.length &&
+              !conversation.followUps.messages.length &&
               !conversation.pending.length &&
               !thinking ? (
               <div className="welcome">
@@ -1136,6 +1137,7 @@ function App() {
                     )
                   }
                   onError={report}
+                  onRetryInput={async id => { await api.request("queue.action", {threadId: selected, action: "send", id}); }}
                 />
                 {thinking && (
                   <div
@@ -1219,11 +1221,6 @@ function App() {
             </span>
             {selected === "new" && <Icon name="chevron" size={15} />}
           </button>
-          {selected !== "new" && conversation.followUps.messages.length > 0 &&
-            <FollowUps key={selected} value={conversation.followUps} running={conversation.running}
-              act={async (action, params = {}) => {
-                return await api.request("queue.action", {threadId: selected, action, ...params});
-              }} />}
           <div
             className="composer"
             onDragOver={(e) => {

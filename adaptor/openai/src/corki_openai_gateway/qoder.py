@@ -12,11 +12,12 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from corki_openai_gateway.gateway import MAX_BODY, CredentialsUnavailable
+from corki_openai_gateway.gateway import MAX_BODY, CredentialsUnavailable, certificate_failure
 from corki_openai_gateway.qoder_models import model_id
 
 UPSTREAM = "https://api2-v2.qoder.sh/model/v1/chat/completions"
 MAX_STREAM_BYTES = 64 * 1024 * 1024
+MAX_REQUEST_BYTES = 256 * 1024
 
 
 class ModelUnavailable(ValueError):
@@ -142,7 +143,8 @@ def forward(handler, endpoint):
         handler.headers.get("Authorization", "").encode(), ("Bearer " + handler.server.key).encode()
     ):
         return handler.error(401, "Invalid local gateway key.")
-    if endpoint not in {"/chat/completions", "/v1/chat/completions"}:
+    budget_only = endpoint in {"/request-budget", "/v1/request-budget"}
+    if not budget_only and endpoint not in {"/chat/completions", "/v1/chat/completions"}:
         return handler.error(404, "Qoder 适配请使用 Chat Completions 协议。")
     sizes = handler.headers.get_all("Content-Length", [])
     if handler.headers.get("Transfer-Encoding") or len(sizes) != 1:
@@ -195,6 +197,21 @@ def forward(handler, endpoint):
             }
         },
     )
+    if budget_only:
+        # Match HTTPX's actual JSON encoding after all gateway transformations.
+        # Never contact Qoder or read its credentials for a budget-only request.
+        def size(value):
+            return len(json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8"))
+        fixed = {**payload, "messages": [
+            m for m in payload["messages"]
+            if isinstance(m, dict) and m.get("role") in ("system", "developer")
+        ]}
+        try:
+            budget = {"protocol_version": 1, "request_bytes": size(payload),
+                      "fixed_bytes": size(fixed), "limit_bytes": MAX_REQUEST_BYTES}
+        except (ValueError, TypeError, UnicodeError):
+            return handler.error(400, "Invalid JSON request.")
+        return handler.json_response(200, budget)
     started = False
     try:
         token = handler.server.qoder_credentials().token
@@ -249,6 +266,13 @@ def forward(handler, endpoint):
     except CredentialsUnavailable:
         if not started:
             handler.error(401, "Qoder 登录信息不可用，请检查登录状态和系统钥匙串授权。")
+    except (httpx.ConnectError, httpx.ConnectTimeout) as error:
+        if not started:
+            if certificate_failure(error):
+                return handler.error(424, "Qoder upstream certificate verification failed; "
+                                     "check the system trust store.")
+            handler.error(502, "Cannot reach Qoder upstream; check network connectivity.",
+                          code="upstream_connection_failed")
     except (httpx.HTTPError, ValueError, TypeError, KeyError, AttributeError, StopIteration):
         if not started:
             handler.error(502, "Qoder 模型请求失败，或上游响应不完整。")

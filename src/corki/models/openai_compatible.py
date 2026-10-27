@@ -26,6 +26,7 @@ from corki.models.http_stream import model_http_stream
 from corki.models.media import chat_content
 from corki.models.namespaces import request_tool_aliases
 from corki.models.request_settings import resolve_reasoning, resolve_service_tier
+from corki.models.request_budget import local_gateway_budget
 from corki.models.request_watch import (
     request_completed,
     request_failed,
@@ -126,6 +127,11 @@ class OpenAICompatibleModel:
     def capabilities(self) -> ProviderCapabilities:
         """Actual transport capabilities, independent of the host's default provider."""
         return self._capabilities
+
+    async def request_byte_budget(self, request: ModelRequest):
+        return await local_gateway_budget(
+            self._client, self._base_url, self._api_key, self._build_payload, request
+        )
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelEvent]:
         if not self._base_url:

@@ -62,6 +62,49 @@ def test_disabled_profile_is_kept_and_model_creation_is_blocked(store):
  assert not any(owner=='adaptor-openai' for _,owner in settings.model_choices())
  with pytest.raises(ValueError,match='关闭'):_create_model(settings,_model_capabilities(settings))
 
+
+def test_adaptor_default_windows_use_512k_capped_by_known_maximum():
+ catalog={
+  'gpt-6.1-sol':{'context_window':262144,'description':'fixture'},
+  'gpt-6-astra':{'context_window':262144},
+  'gpt-5.5':{'context_window':262144},
+  'fixture-large':{'context_window':262144,'max_context_window':1000000},
+  'fixture-small':{'context_window':131072,'max_context_window':200000},
+ }
+ models=module.GatewayManagement.model_defaults(catalog,'openai')
+ assert models['gpt-6.1-sol']['context_window']==524288
+ assert models['gpt-6-astra']['context_window']==524288
+ assert models['gpt-5.5']['context_window']==272000
+ assert models['fixture-large']['context_window']==524288
+ assert models['fixture-small']['context_window']==200000
+ assert catalog['gpt-6.1-sol']['context_window']==262144
+ assert models['gpt-6.1-sol']['description']=='fixture'
+
+
+def test_qoder_defaults_honor_catalog_maximum_and_fallback_window():
+ models=module.GatewayManagement.model_defaults({
+  'fixture-large':{'context_window':180000,'max_context_window':1000000},
+  'fixture-small':{'context_window':180000,'max_context_window':131072},
+  'auto':{'context_window':200000},
+ },'qoder')
+ assert models['fixture-large']['context_window']==524288
+ assert models['fixture-small']['context_window']==131072
+ assert models['auto']['context_window']==200000
+
+
+def test_created_adaptor_windows_remain_editable_and_survive_reenable(store):
+ enable_provider(store)
+ models=module.document.loads(store.config_text())['providers']['adaptor-openai']['models']
+ assert models['gpt-6.1-sol']['context_window']==524288
+ store.mutate({'kind':'models','action':'save','id':'gpt-6.1-sol','provider':'adaptor-openai',
+               'values':{'context_window':131072,'reasoning_effort':'medium'},
+               'revision':module.revision(store.config_text())})
+ change(store,action='provider',enabled=False)
+ change(store,action='provider',provider='openai',enabled=True)
+ settings=CorkiSettings.for_directory(store.workspace,config_file=store.config,
+                                     provider='adaptor-openai',model='gpt-6.1-sol')
+ assert settings.model_context_info('gpt-6.1-sol').context_window==131072
+
 def test_model_management_cannot_toggle_system_provider(store):
  enable_provider(store)
  original=store.config_text();commands=list(store.commands)

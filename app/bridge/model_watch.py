@@ -1,24 +1,22 @@
-"""Desktop model failure budget, isolated from tools and user interactions."""
+"""Desktop connectivity notifications; retry timing belongs to the Runtime."""
 
 import asyncio
-import inspect
 
-from corki.models.base import ModelError
+import httpx
+
+from corki.models.base import ModelError, ModelErrorKind
 
 
 class ModelCallWatch:
     WARNING_FAILURES = 30
-    FAILURE_FAILURES = 60
 
-    def __init__(self, notify, *, warning_seconds=30.0, failure_seconds=60.0):
+    def __init__(self, notify, *, warning_seconds=30.0):
         self.notify = notify
         self.warning_seconds = warning_seconds
-        self.failure_seconds = failure_seconds
         self.last_activity = None
         self.failures = 0
         self.warning = False
         self.warning_reason = None
-        self.expired = False
         self.last_error = None
         self.timer = None
         self.notification = None
@@ -46,7 +44,7 @@ class ModelCallWatch:
         self.timer = None
         async def notify():
             if (generation == self.generation and self.last_activity is not None
-                    and not self.closed and not self.warning and not self.expired):
+                    and not self.closed and not self.warning):
                 await self.set_warning(True, "failure" if self.failures else "idle")
         self.notification = asyncio.create_task(notify())
 
@@ -57,47 +55,27 @@ class ModelCallWatch:
             self.warning_reason = reason
             await self.notify(value)
 
-    async def fail(self):
-        self.generation += 1
-        self.expired = True
-        if self.timer:
-            self.timer.cancel()
-        await self.set_warning(False)
-        raise ModelError("模型调用失败", retryable=False)
-
     async def wait(self, awaitable):
-        if self.closed:
-            return await awaitable
-        if self.expired:
-            if inspect.iscoroutine(awaitable):
-                awaitable.close()
-            raise ModelError("模型调用失败", retryable=False)
-        if self.last_activity is None:
-            return await awaitable
-        timeout = asyncio.timeout_at(self.last_activity + self.failure_seconds)
-        try:
-            async with timeout:
-                return await awaitable
-        except TimeoutError:
-            if not timeout.expired():
-                raise
-            await self.fail()
+        # Never time out Runtime backoff or replace HTTPX's own I/O timeouts.
+        # In particular, connection retries may legitimately wait indefinitely.
+        return await awaitable
 
     async def activity(self):
         if self.closed:
             return
-        # Bytes/lines prove responsiveness. Only a completed model response
-        # resets the consecutive failure count (a 200 SSE error is still a failure).
+        # Bytes/lines prove the connection recovered. Other error counts only
+        # reset after completion (a 200 SSE error is still a model failure).
+        if self.warning_reason == "connection":
+            self.failures = 0
+            self.last_error = None
         self.last_activity = asyncio.get_running_loop().time()
-        if self.failures < self.WARNING_FAILURES:
+        if self.warning_reason == "connection" or self.failures < self.WARNING_FAILURES:
             await self.set_warning(False)
         self.schedule_warning()
 
     async def failure(self, error):
         if self.closed:
             return
-        if self.expired:
-            raise ModelError("模型调用失败", retryable=False)
         # The transport may wrap the same physical failure in a ModelError.
         current = error
         while current is not None:
@@ -106,9 +84,20 @@ class ModelCallWatch:
             current = current.__cause__
         self.last_error = error
         self.failures += 1
-        if self.failures >= self.FAILURE_FAILURES:
-            await self.fail()
-        if self.failures >= self.WARNING_FAILURES or self.warning:
+        if isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout)) or (
+            isinstance(error, ModelError) and error.kind == ModelErrorKind.CONNECTION
+        ):
+            await self.set_warning(True, "connection")
+        elif isinstance(error, ModelError) and not error.retryable:
+            # Preserve recoverable context/image metadata for the core handler.
+            if error.kind in (ModelErrorKind.CONTEXT_WINDOW, ModelErrorKind.INVALID_IMAGE):
+                return
+            await self.set_warning(False)
+            raise ModelError(
+                "模型调用失败", kind=error.kind, status_code=error.status_code,
+                usage=error.usage, response_id=error.response_id,
+            ) from error
+        elif self.failures >= self.WARNING_FAILURES or self.warning:
             await self.set_warning(True, "failure")
 
     async def complete(self):

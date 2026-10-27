@@ -151,6 +151,7 @@ try {
     .fill("请介绍 Corki");
   await page.getByRole("button", { name: "发送消息" }).click();
   await page.locator(".markdown h1").waitFor();
+  await page.locator(".message.assistant").filter({has: page.getByRole("button", {name: "复制回答原文"})}).hover();
   await page.getByRole("button", { name: "复制回答原文" }).click();
   assert((await page.evaluate(() => window.__copied)).includes("**Agent**"));
   await page.screenshot({ path: path.join(os.tmpdir(), 'corki-desktop-chat.png') });

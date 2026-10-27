@@ -556,3 +556,14 @@ def test_health_contains_no_login_material(tmp_path):
             client.post("/__corki_gateway/stop", headers={"X-Corki-Control": "wrong"}).status_code
             == 403
         )
+
+
+@pytest.mark.parametrize("failure", [httpx.ConnectError, httpx.ConnectTimeout])
+def test_connection_failure_has_explicit_retry_classification(tmp_path, failure):
+    def upstream(request):
+        raise failure("private diagnostic")
+    with running(tmp_path, upstream) as (_, client, _):
+        response = client.post("/openai/v1/responses", json=body())
+        assert response.status_code == 502
+        assert response.json()["error"]["code"] == "upstream_connection_failed"
+        assert "private diagnostic" not in response.text

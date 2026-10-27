@@ -31,8 +31,7 @@ try {
   await input.fill('第一项测试任务');await input.press('Enter');await until(()=>requests.length===1);
   assert.equal(await page.getByRole('button',{name:'追加方式',exact:true}).count(),0);
   assert.equal(await page.locator('.followups').count(),0);
-  // Seed delayed messages through the host API to exercise queue management.
-  // The normal desktop composer always steers, even with a legacy queue preference.
+  // Deferred inputs are ordinary chat bubbles; no user-facing queue controls.
   const thread = (await page.evaluate(()=>window.corki.request('status'))).running[0];
   async function queue(content) {
     await page.evaluate(async ({thread,content})=>window.corki.request('turn.submit',{
@@ -40,36 +39,48 @@ try {
       reasoning:null,attachments:[],followUpMode:'queue'
     }),{thread,content});
   }
-  await queue('等待上一项完成');
-  await page.locator('.followup-row').filter({hasText:'等待上一项完成'}).waitFor();
-  assert.equal(await input.inputValue(),'');assert.equal(requests.length,1);
-  await page.getByRole('button',{name:'编辑',exact:true}).click();
-  await page.getByRole('textbox',{name:'编辑待发送消息'}).fill('修改后的排队任务');
-  await page.getByRole('button',{name:'保存',exact:true}).click();
-  await page.reload();await page.locator('.followup-row').filter({hasText:'修改后的排队任务'}).waitFor();
-  await page.getByRole('button',{name:'选择模型',exact:true}).filter({hasText:'fixture-model'}).waitFor();
-  await queue('第三项排队任务');
-  await page.locator('.followup-row').filter({hasText:'第三项排队任务'}).waitFor();
-  if(process.env.CORKI_QUEUE_CDP) {console.log('VISUAL_READY',home);await new Promise(r=>setTimeout(r,45000));}
+  async function noQueueUI() {
+    assert.equal(await page.locator('.followups,.followup-row').count(),0);
+    assert.equal(await page.getByText(/待发送 ·/).count(),0);
+    assert.equal(await page.getByRole('button',{name:'立即补充',exact:true}).count(),0);
+    assert.equal(await page.getByRole('button',{name:'恢复队列',exact:true}).count(),0);
+  }
+  // Even legacy queue preferences must now supplement the active task.
+  await queue('补充当前任务');
+  await page.locator('.user-text').filter({hasText:'补充当前任务'}).waitFor();
+  assert.equal(await page.locator('.pending-input').count(),0);
+  await noQueueUI();
+  assert.equal(requests.length,1);
+  await page.reload();
+  await page.locator('.user-text').filter({hasText:'补充当前任务'}).waitFor();
+  await noQueueUI();
   releases[0]();await until(()=>requests.length===2);
-  assert(JSON.stringify(requests[1].messages).includes('修改后的排队任务'));
+  assert(JSON.stringify(requests[1].messages).includes('补充当前任务'));
+  assert.equal(await page.locator('.user-text').filter({hasText:'补充当前任务'}).count(),1);
+  await queue('停止后保留的追问');
+  await page.locator('.user-text').filter({hasText:'停止后保留的追问'}).waitFor();
   await page.getByRole('button',{name:'停止执行',exact:true}).click();
-  await page.getByRole('button',{name:'恢复队列',exact:true}).waitFor();
-  await until(()=>releases.length===2);releases[1]();
   await page.getByRole('button',{name:'发送消息',exact:true}).waitFor();
-  assert.equal(requests.length,2);
-  await page.getByRole('button',{name:'恢复队列',exact:true}).click();await until(()=>requests.length===3);
-  await page.evaluate(thread=>window.corki.request('queue.action',{threadId:thread,action:'mode',mode:'queue'}),thread);
-  assert.equal(await page.getByRole('button',{name:'追加方式',exact:true}).count(),0);
+  releases[1]();
+  await noQueueUI();
+  // A fresh explicit send is never blocked by the previous stopped input.
+  await input.fill('停止后发送新消息');await input.press('Enter');await until(()=>requests.length===3);
+  assert(JSON.stringify(requests[2].messages).includes('停止后发送新消息'));
+  assert(!JSON.stringify(requests[2].messages).includes('停止后保留的追问'));
   await input.fill('补充：只回答一行');await input.press('Enter');
-  await page.getByText('补充：只回答一行',{exact:true}).waitFor();
+  await page.locator('.user-text').filter({hasText:'补充：只回答一行'}).waitFor();
+  await noQueueUI();
   releases[2]();await until(()=>requests.length===4);
   assert(JSON.stringify(requests[3].messages).includes('补充：只回答一行'));
   releases[3]();await page.getByRole('button',{name:'发送消息',exact:true}).waitFor();
-  await page.reload();await page.getByText('补充：只回答一行',{exact:true}).waitFor();
-  assert.equal(await page.getByText('补充：只回答一行',{exact:true}).count(),1);
-  assert.deepEqual(errors,[]);
-  console.log('PASS: queue, edit, reload, stop/resume, live steering, canonical recovery',home);
+  await page.reload();await page.locator('.user-text').filter({hasText:'补充：只回答一行'}).waitFor();
+  assert.equal(await page.locator('.user-text').filter({hasText:'补充：只回答一行'}).count(),1);
+  const questions=await page.locator('.user-text').allTextContents();
+  assert(questions.indexOf('停止后保留的追问') < questions.indexOf('停止后发送新消息'),
+    'An unsent older question must keep its position before later questions');
+  await noQueueUI();assert.deepEqual(errors,[]);
+  await page.screenshot({path:path.join(home,'hidden-followups.png')});
+  console.log('PASS: steering only, legacy queue preference ignored, reload, stop/new input, no duplicates',home);
 } catch(error) {
   console.log('FAIL_HOME',home);
   if(app) {const p=await app.firstWindow();console.log((await p.locator('body').innerText()).slice(-3000));await p.screenshot({path:path.join(home,'failure.png')});}

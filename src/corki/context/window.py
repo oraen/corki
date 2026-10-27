@@ -100,6 +100,9 @@ class ContextWindowManager:
         self._previous_model_lookup = previous_model_lookup or model_context_lookup
         self._provider_id = provider_id
         self._retained_turn_model: ModelContextInfo | None = None
+        # Shared by Turn-owned copies; ordinary turns/steps do no byte preflight.
+        self._byte_budget_checked = {}
+        self._byte_budget_active = False
         self._local_compaction_owner: ContextWindowManager | None = None
         self.token_budget_enabled = token_budget_enabled
         self._token_budget = token_budget or TokenBudgetConfig()
@@ -215,6 +218,13 @@ class ContextWindowManager:
         # summaries and ordinary requests must all see the same valid definitions.
         self._history_projector = history_projector
         all_items = await self._repository.load_items(thread_id)
+        identity = (self._provider_id, self._model_name)
+        prior = self._byte_budget_checked.get(thread_id)
+        if prior is None:
+            previous = model_transition.previous_model(all_items)
+            if previous is not None:
+                prior = (previous.get("provider", self._provider_id), previous["model"])
+        self._byte_budget_active = prior != identity
         if on_compact is not None:
             for marker in all_items:
                 if isinstance(marker, CompactionItem) and marker.turn_id == turn_id:
@@ -382,9 +392,13 @@ class ContextWindowManager:
         )
         protected_ids.update(item.id for item in protected_current)
         compactable = tuple(item for item in historical if item.id not in protected_ids)
+        byte_overflow = self._byte_budget_active and await self._check_request_bytes(
+            snapshot.instructions, candidate, tools
+        )
         if (
             (
-                scope_tokens >= self._auto_compact_tokens + self._fallback_buffer
+                byte_overflow
+                or scope_tokens >= self._auto_compact_tokens + self._fallback_buffer
                 or active_tokens >= self._context_window_tokens
                 or (
                     self.token_budget_enabled
@@ -524,6 +538,13 @@ class ContextWindowManager:
                     f"({compacted_estimate}/{self._context_window_tokens} estimated tokens)",
                     kind=ModelErrorKind.CONTEXT_WINDOW,
                 )
+            if self._byte_budget_active and await self._check_request_bytes(
+                snapshot.instructions, compacted_active, tools
+            ):
+                raise ModelError(
+                    "压缩后的请求仍超过接口大小限制，请减少当前输入或保留上下文。",
+                    kind=ModelErrorKind.CONTEXT_WINDOW, status_code=413,
+                )
             if on_compact is not None:
                 await on_compact(
                     "PostCompact",
@@ -545,6 +566,11 @@ class ContextWindowManager:
             if self._body_prefix is not None:
                 self._body_prefix.reset(str(checkpoint.id), estimated, usage)
         else:
+            if byte_overflow:
+                raise ModelError(
+                    "当前输入和保留上下文超过接口请求大小限制，没有可压缩的历史。",
+                    kind=ModelErrorKind.CONTEXT_WINDOW, status_code=413,
+                )
             appended = (*changed_context, *new_pending, *new_input_context)
             if appended:
                 # Match Codex's turn-start ordering: world-state/context changes
@@ -566,7 +592,25 @@ class ContextWindowManager:
             for key, message in snapshot.section_warnings
             if compacted or key in rendered_keys
         )
+        self._byte_budget_checked[thread_id] = identity
         return PreparedHistory(active, estimated, compacted, warnings)
+
+    async def _check_request_bytes(self, instructions, items, tools=()):
+        checker = getattr(self._model, "request_byte_budget", None)
+        if checker is None:
+            return False
+        request = ModelRequest(
+            model=self._model_name, instructions=instructions, context_items=(),
+            items=items, tools=tools,
+            **{key: value for key, value in self._remote_request_options.items()
+               if key in {"model_info", "reasoning_effort", "reasoning_summary", "service_tier",
+                          "fast_mode_enabled", "reasoning_effort_resolved", "thread_id", "content_item_kinds"}},
+        )
+        budget = await checker(request)
+        if budget is None:
+            return False
+        budget.check_fixed()
+        return budget.exceeded
 
     async def compact(
         self,
@@ -784,7 +828,9 @@ class ContextWindowManager:
         if self._local_compaction_owner is not None:
             # Native run_auto_compact passes StepContext.turn to compact.rs,
             # unlike remote/token-budget paths that consume StepContext.settings.
-            return await self._local_compaction_owner._summarize(
+            owner = copy(self._local_compaction_owner)
+            owner._byte_budget_active = self._byte_budget_active
+            return await owner._summarize(
                 items,
                 instructions=instructions,
                 turn_id=turn_id,
@@ -827,11 +873,20 @@ class ContextWindowManager:
                 ),
             )
             try:
+                if self._byte_budget_active and await self._check_request_bytes(
+                    instructions, request.items
+                ):
+                    raise ModelError(
+                        "摘要请求超过接口大小限制。",
+                        kind=ModelErrorKind.CONTEXT_WINDOW, status_code=413,
+                    )
                 return await self._summary_attempt(request, on_incomplete_usage)
             except ModelError as exc:
                 # User-required provider boundary: payment failures need an
                 # external account change, including during summary sampling.
-                if exc.status_code == 402:
+                if exc.status_code == 402 or (
+                    exc.status_code == 413 and exc.kind is ModelErrorKind.INVALID_REQUEST
+                ):
                     raise
                 if exc.kind in {
                     ModelErrorKind.OUTPUT_LIMIT,

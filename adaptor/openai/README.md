@@ -210,6 +210,16 @@ IDE 目录中的 Fast、Efficient、Sonus、Qwen、更新的 Kimi 和 Flash 等�
 工具定义、并行工具调用参数拼接、工具结果回传及用量。Qoder 路由目前不提供 Responses API。
 这里直接访问 Qoder 模型服务，不启动 Qoder Agent、不运行 Qoder 工具，也不读取项目上下文。
 
+Qoder 当前入口的请求体上限实测约为 256 KiB，与模型 Token 窗口不同。
+认证后的 `POST /qoder[/v1]/request-budget` 使用相同的 Chat Completions 请求体，
+返回 `protocol_version=1`、`request_bytes`、`fixed_bytes`、`limit_bytes`；
+它按网关转换后的完整 UTF-8 JSON 计数，不读取 Qoder 凭据、不调用上游模型。
+`fixed_bytes` 包含系统／开发者提示词、工具定义和其他请求参数，不包含可压缩历史。
+Corki 首次选择或切换供应商／模型后的首个请求使用该接口，超限时复用现有摘要压缩，
+并检查摘要输入与压缩后的请求。后续普通轮次不增加字节预检，原有 Token 压缩保持不变。
+固定部分超限时直接报错；摘要输入缩减只作用于请求副本，原始会话记录保留。
+新版本 Corki 使用该功能前，需要同步更新并重启独立网关。
+
 凭据按以下顺序读取：
 
 1. `QODER_ACCESS_TOKEN` 环境变量。
@@ -233,3 +243,8 @@ Qoder，所以仅安装并登录 Qoder 也可以启动。单独验证登录可�
 Qoder 上游默认 `https://api2-v2.qoder.sh/model/v1/chat/completions`。显式部署可通过
 `QODER_UPSTREAM` 指定其他 HTTPS 地址；下游请求不能改变上游地址，TLS 校验保持开启。
 该接口来自本机已安装 Qoder 的调用实现，属于厂商客户端协议，未来升级可能需要适配。
+
+上游连接建立失败（连接错误或连接超时）返回 HTTP 502，并携带
+`error.code: "upstream_connection_failed"`。调用方可以据此采用连接恢复策略；普通
+上游 5xx 和无效响应不使用该错误码。证书校验失败返回 424，需要修复系统信任配置，
+不视为临时断网。流式响应已经开始后仍以断流报告错误，不伪造成功结束。

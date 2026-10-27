@@ -66,7 +66,8 @@ class FollowUps:
             "messages": [
                 {
                     "id": r["id"],
-                    "content": json.loads(r["payload"])["content"][:4000],
+                    "content": json.loads(r["payload"])["content"],
+                    "createdAt": json.loads(r["payload"]).get("submittedAt"),
                     "attachments": [
                         a["name"] for a in json.loads(r["payload"]).get("attachments", [])
                     ],
@@ -90,15 +91,26 @@ class FollowUps:
 
     def stage(self, p, digest):
         thread = p["threadId"]
-        if len(self.rows(thread)) >= 50:
-            raise ValueError("待发送消息较多，请先处理队列")
+        if sum(r["state"] in ("queued", "dispatching", "delivered") for r in self.rows(thread)) >= 50:
+            raise ValueError("消息发送较多，请稍后再试")
         self.setting(thread)
         with closing(self.host.state.connect()) as db, db:
             db.execute(
                 "INSERT INTO followups(id,thread,payload,digest,position) VALUES "
                 "(?,?,?,?,(SELECT COALESCE(MAX(position),0)+1 FROM followups WHERE thread=?))",
-                (p["requestId"], thread, dumps(p), digest, thread),
+                (p["requestId"], thread, dumps({**p, "submittedAt": datetime.now(UTC).isoformat()}), digest, thread),
             )
+
+    def resume_for_input(self, thread, keep_id=None):
+        """A fresh send continues independently of old stopped/uncertain inputs."""
+        with closing(self.host.state.connect()) as db:
+            settings = db.execute("SELECT paused FROM followup_settings WHERE thread=?", (thread,)).fetchone()
+        if not settings or not settings[0]:
+            return
+        for row in self.rows(thread):
+            if row["state"] == "queued" and row["id"] != keep_id:
+                self.mark(row["id"], "failed", "上一轮已结束，这条消息尚未发送。")
+        self.setting(thread, paused=False)
 
     def mark(self, identity, state, error=None):
         with closing(self.host.state.connect()) as db, db:
@@ -133,26 +145,12 @@ class FollowUps:
         h, thread, identity = self.host, p["threadId"], p["requestId"]
         if not force:
             self.stage(p, digest)
-        mode = p.get("followUpMode", self.snapshot(thread)["mode"])
         running = thread in h.tasks
-        same_model = h.active_models.get(thread) == (
-            p.get("provider"),
-            p.get("model"),
-            p.get("reasoning"),
-        )
-        if force and running and not same_model:
-            raise ValueError("这条消息使用了不同的模型，请等待当前任务完成后发送")
-        may_steer = (
-            running
-            and same_model
-            and (
-                force
-                or (
-                    mode == "steer"
-                    and not self.final_answer(thread)
-                    and not self.snapshot(thread)["paused"]
-                )
-            )
+        # A follow-up belongs to the active task even if the selector changed.
+        # Only an already-final answer (or a closing runtime below) defers it.
+        # Ignore legacy queue preferences: desktop offers steering only.
+        may_steer = running and (
+            force or (not self.final_answer(thread) and not self.snapshot(thread)["paused"])
         )
         if may_steer:
             self.mark(identity, "dispatching")
@@ -204,8 +202,8 @@ class FollowUps:
         async with lock:
             if h.stopping or thread in h.tasks or self.snapshot(thread)["paused"]:
                 return
-            rows = [r for r in self.rows(thread) if r["state"] != "delivered"]
-            if not rows or rows[0]["state"] != "queued":
+            rows = [r for r in self.rows(thread) if r["state"] == "queued"]
+            if not rows:
                 return
             row = rows[0]
             self.mark(row["id"], "dispatching")
@@ -302,6 +300,7 @@ class FollowUps:
                 else:
                     # Reuse the complete submit validation, outside this lock.
                     self.mark(identity, "queued")
+                    self.resume_for_input(thread, keep_id=identity)
             elif action != "read":
                 raise ValueError("无效的队列操作")
         if action == "send":

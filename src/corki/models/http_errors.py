@@ -25,7 +25,11 @@ def http_error(
     if not isinstance(message, str) or not message.strip():
         message = body
     retryable = False
-    if status == 402:
+    if status == 502 and code == "upstream_connection_failed":
+        # Explicit gateway metadata, never infer connectivity from status/text alone.
+        kind = ModelErrorKind.CONNECTION
+        retryable = True
+    elif status == 402:
         # Payment is an external prerequisite, not a transient stream failure.
         # Apply equally to every ordinary compatible provider and response body.
         kind = ModelErrorKind.PROTOCOL

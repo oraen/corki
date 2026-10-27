@@ -39,9 +39,11 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import parse_qs, quote, urljoin, urlparse
 
 from corki.config import document
+from corki.config.bundled_models import BUNDLED_MODEL_CONTEXTS
 from corki.config.features import MCPServerSettings
 from corki.config.settings import CorkiSettings
 from corki.config.providers import effective_default
+from corki.config.model_context import match_model_context
 from corki.config.skills import disabled_skill_paths, parse_skill_rules
 from corki.core.runtime import _create_model, _model_capabilities
 from corki.cron.diagnostics import safe_log
@@ -464,6 +466,27 @@ class GatewayManagement:
     """Invoke the independent gateway environment; never import its implementation."""
     providers = {"openai": "OpenAI", "qoder": "Qoder"}
 
+    @staticmethod
+    def model_defaults(catalog, provider):
+        """Set new model windows only; never rewrite an existing model choice."""
+        models = copy.deepcopy(catalog)
+        for name, settings in models.items():
+            maximum = settings.get("max_context_window")
+            if maximum is None and provider == "openai":
+                reference = match_model_context(name, BUNDLED_MODEL_CONTEXTS)
+                if reference is not None:
+                    maximum = reference.max_context_window or reference.context_window
+            if maximum is None and provider != "openai":
+                # Independent gateway catalogs currently report their supported
+                # window in context_window when no separate maximum is present.
+                maximum = settings.get("context_window")
+            if maximum is not None and (
+                isinstance(maximum, bool) or not isinstance(maximum, int) or maximum <= 0
+            ):
+                raise ValueError("适配网关返回的模型上下文窗口无效")
+            settings["context_window"] = min(512 * 1024, maximum) if maximum else 512 * 1024
+        return models
+
     def __init__(self, store):
         self.store = store
         self.root = store.home / "gateway"
@@ -602,10 +625,11 @@ class GatewayManagement:
                         and urlparse(p.get("base_url", "")).path.rstrip("/") in ("", "/v1", "/openai", "/openai/v1")
                         and p.get("models")), None) if provider == "openai" else None
                     if not models:
-                        models = (copy.deepcopy(checked.get("models", {}))
-                                  if provider == "qoder" else copy.deepcopy(next(
+                        models = self.model_defaults(
+                                  checked.get("models", {})
+                                  if provider == "qoder" else next(
                                       p for p in self.store.quick_templates()["providers"]
-                                      if p["id"] == provider)["models"]))
+                                      if p["id"] == provider)["models"], provider)
                     existing = profiles.setdefault(identity, {"models": models})
                 if provider == "qoder":
                     catalog = checked.get("models")
@@ -613,7 +637,7 @@ class GatewayManagement:
                         raise ValueError("请更新适配网关后重试，未获得 Qoder 模型列表")
                     # Add missing defaults; keep the user's custom models and
                     # existing settings instead of resetting the provider.
-                    for model, settings in catalog.items():
+                    for model, settings in self.model_defaults(catalog, provider).items():
                         existing.setdefault("models", {}).setdefault(model, copy.deepcopy(settings))
                 existing.update(enabled=True, name=provider,
                     api_mode="chat_completions" if provider == "qoder" else "responses",

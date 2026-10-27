@@ -33,6 +33,17 @@ MAX_BODY = 16 * 1024 * 1024
 PROVIDER_ROUTES = {"openai": "forward_openai", "qoder": "forward_qoder"}
 
 
+def certificate_failure(error: BaseException) -> bool:
+    """A trust-store problem is permanent, not an offline retry condition."""
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        if isinstance(error, ssl.SSLCertVerificationError):
+            return True
+        error = error.__cause__ or error.__context__
+    return False
+
+
 class CredentialsUnavailable(Exception):
     """Safe error with no credential material attached."""
 
@@ -147,8 +158,11 @@ class Handler(BaseHTTPRequestHandler):
         # Neither prompts, Authorization headers nor upstream bodies enter logs.
         pass
 
-    def error(self, status: int, message: str):
-        body = json.dumps({"error": {"message": message, "type": "codex_gateway_error"}}).encode()
+    def error(self, status: int, message: str, *, code: str | None = None):
+        error = {"message": message, "type": "codex_gateway_error"}
+        if code is not None:
+            error["code"] = code
+        body = json.dumps({"error": error}).encode()
         self.close_connection = True
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -319,22 +333,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.error(401, str(exc))
         except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as exc:
             if not started:
-                cause = exc
-                seen = set()
-                while cause is not None and id(cause) not in seen:
-                    seen.add(id(cause))
-                    if isinstance(cause, ssl.SSLCertVerificationError):
-                        return self.error(
-                            424,
-                            "Codex upstream certificate verification failed. "
-                            "Check the system trust store; retrying will not fix this.",
-                        )
-                    cause = cause.__cause__ or cause.__context__
+                if certificate_failure(exc):
+                    return self.error(
+                        424,
+                        "Codex upstream certificate verification failed. "
+                        "Check the system trust store; retrying will not fix this.",
+                    )
                 self.error(
                     502,
                     "Cannot reach Codex upstream; check network connectivity."
                     if isinstance(exc, httpx.HTTPError)
                     else "Codex upstream returned an invalid or incomplete response.",
+                    code="upstream_connection_failed"
+                    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)) else None,
                 )
             # After headers, close the incomplete SSE stream. Never synthesize
             # response.completed or retry a request that may have executed.

@@ -3,6 +3,8 @@ export interface Message {
   id: string;
   turnId?: string;
   requestId?: string;
+  submissionId?: string;
+  pendingInput?: { id: string; state: string; error?: string; paused: boolean; blocked: boolean };
   threadId?: string;
   sourceId?: string;
   truncated?: boolean;
@@ -24,11 +26,11 @@ export interface Message {
 export interface FollowUpState {
   mode: "steer" | "queue";
   paused: boolean;
-  messages: { id: string; content: string; attachments: string[]; state: string; error?: string }[];
+  messages: { id: string; content: string; attachments: string[]; state: string; error?: string; createdAt?: string }[];
 }
 export interface Conversation {
   modelWarning?: boolean;
-  modelWarningReason?: "idle" | "failure";
+  modelWarningReason?: "idle" | "failure" | "connection";
   followUps: FollowUpState;
   messages: Message[];
   running: boolean;
@@ -227,7 +229,7 @@ export function reduceEvent(
       s.status = "正在思考";
       update(
         d.item_id || `submitted:${d.request_id}`,
-        (m) => ({ ...m, content: d.text, turnId: d.turn_id || undefined }),
+        (m) => ({ ...m, content: d.text, turnId: d.turn_id || undefined, submissionId: d.request_id }),
         {
           id: d.item_id || `submitted:${d.request_id}`,
           role: "user",
@@ -327,7 +329,7 @@ export function reduceEvent(
       break;
     case "model.health":
       s.modelWarning = !!d.warning;
-      s.modelWarningReason = d.warning ? (d.reason === "idle" ? "idle" : "failure") : undefined;
+      s.modelWarningReason = d.warning ? (d.reason === "idle" ? "idle" : d.reason === "connection" ? "connection" : "failure") : undefined;
       break;
     case "UserInputRequested":
       s.pending = s.pending.filter((p) => p.request_id !== d.call_id);

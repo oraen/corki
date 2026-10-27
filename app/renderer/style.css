@@ -1372,26 +1372,12 @@ main {
 @keyframes startup-breathe { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .startup-identity h1 { animation: none; } }
 
-/* Follow-ups share the composer surface; the queue is not another transcript. */
-.followups { margin: 0 0 10px; padding: 10px 14px; border: 1px solid var(--line, #e9e5e0); border-radius: 16px; background: #faf9f7; font-size: 12px; }
-.followups-header { display: flex; gap: 12px; align-items: center; color: #746e66; }
-.followups-header > span { margin-right: auto; }
-.followup-list { max-height: 220px; overflow-y: auto; }
-.followup-row { border-top: 1px solid #eeeae5; padding: 10px 0 5px; margin-top: 7px; }
-.followup-body { min-width: 0; }
-.followup-body p { margin: 0 0 5px; color: #37332f; white-space: pre-wrap; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
-.followup-actions { display: flex; gap: 12px; align-items: center; margin-top: 6px; }
-.followup-actions button, .queue-action { background: transparent; border: 0; padding: 3px 0; font: inherit; font-size: 12px; color: #776d64; cursor: pointer; }
-.followup-actions button:first-child, .queue-action { color: #be5100; }
-.followup-actions button:hover, .queue-action:hover { color: #ff6a00; }
-.followup-actions button:disabled, .queue-action:disabled { opacity: .4; cursor: not-allowed; }
-.queue-note { color: #8d857d; font-size: 11px; }
-.queue-error { display: block; font-size: 12px; color: #ac463e; margin: 4px 0; }
-.followup-editor { width: 100%; min-height: 70px; max-height: 160px; resize: vertical; padding: 10px; border: 1px solid #e0d7ce; border-radius: 10px; background: white; color: #37332f; font: inherit; outline: none; }
-.followup-editor:focus { border-color: #e89b62; box-shadow: 0 0 0 2px #ff6a0012; }
-.followup-send { margin-right: 8px; }
-
-.queue-up { display: inline-flex; transform: rotate(180deg); }
+/* Deferred submissions use ordinary chat bubbles; only failures need feedback. */
+.input-delivery-error{display:flex;justify-content:flex-end;align-items:center;gap:12px;margin:4px 50px 18px 0;color:#9b6a4a;font-size:12px;line-height:1.5}
+.input-delivery-error button{padding:3px 7px;border-radius:6px;color:var(--accent);font:inherit}
+.input-delivery-error button:hover{background:var(--soft)}
+.input-delivery-error button:disabled{opacity:.45;cursor:not-allowed}
+.followup-send{margin-right:8px}
 
 .manager-launch{width:430px;padding:28px;border-radius:20px}
 .manager-launch h2{font-size:18px;letter-spacing:0}
