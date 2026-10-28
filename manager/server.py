@@ -84,6 +84,13 @@ _package_module = importlib.util.module_from_spec(_package_spec)
 _package_spec.loader.exec_module(_package_module)
 ResourcePackages = _package_module.ResourcePackages
 
+_gateway_spec = importlib.util.spec_from_file_location(
+    "corki_channel_gateway_client", Path(__file__).with_name("channel_gateway.py")
+)
+_gateway_module = importlib.util.module_from_spec(_gateway_spec)
+_gateway_spec.loader.exec_module(_gateway_module)
+ChannelGateway = _gateway_module.ChannelGateway
+
 STATIC = Path(__file__).parent / "static"
 # Windows registry associations can label .js as text/plain. With nosniff that
 # prevents the UI from starting; shipped web assets have platform-neutral types.
@@ -724,6 +731,7 @@ class Store:
         self.maintenance = SessionMaintenance(self)
         self.adaptor = GatewayManagement(self)
         self.resource_packages = ResourcePackages(self)
+        self.channel_gateway = ChannelGateway(self.home)
 
     @property
     def knowledge_root(self):
@@ -2165,6 +2173,8 @@ end run'''
                 "global_config": global_configuration(document.loads(text))}
 
     def mutate(self, data):
+        if data.get("kind") == "channel-gateway":
+            return self.channel_gateway.request(data)
         if data.get("kind") == "adaptor":
             return self.adaptor.change(data)
         if data.get("kind") == "providers" and data.get("action") == "save":
@@ -2794,6 +2804,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(403, {"error": "仅允许本机同源访问"})
         parsed = urlparse(self.path)
         try:
+            if parsed.path == "/api/channel-gateway":
+                return self.respond(200, self.server.store.channel_gateway.request())
             if parsed.path == "/api/adaptor":
                 return self.respond(200, self.server.store.adaptor.status())
             if parsed.path == "/api/hooks":
@@ -2922,12 +2934,14 @@ class Handler(BaseHTTPRequestHandler):
             if skill_import and not (
                 (data.get("kind") == "skills" and data.get("action") in ("import", "validate-import"))
                 or (data.get("kind") == "hooks" and data.get("action") == "upload-skill")
+                or (data.get("kind") == "channel-gateway" and data.get("action") == "install")
                 or (data.get("kind") == "resource-packages" and data.get("action") in ("create", "preview-import", "import"))
             ):
                 raise ValueError("无效的技能导入请求")
             if (
                 data.get("action") not in ("import", "validate-import", "parse-document", "upload-skill")
                 and not (data.get("kind") == "resource-packages" and data.get("action") in ("create", "preview-import", "import"))
+                and not (data.get("kind") == "channel-gateway" and data.get("action") == "install")
                 and length > 2 * LIMIT
             ):
                 raise ValueError("请求体过大")

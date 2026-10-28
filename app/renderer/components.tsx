@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { ToolSummary } from "./tool-summary";
 import { useMessageLines } from "./message-lines";
 import { markdown, highlightedText } from "./markdown";
 import { toolTitle, formatToolText, formatElapsed, formatMessageTime } from "./transcript";
@@ -438,22 +439,11 @@ export const MessageRow = React.memo(function MessageRow({
       <details
         className={`activity tool-activity ${message.error || output?.error ? "failed" : ""}`}
       >
-        <summary>
-          <span className={message.streaming ? "pulse" : ""} />
-          <span className="activity-title" title={title}>
-            {title}
-          </span>
-          <span className="activity-end">
-            {message.error || output?.error
-              ? "失败"
-              : message.streaming
-                ? "执行中"
-                : output || message.completed
-                  ? "已结束"
-                  : "未收到结果"}
-          </span>
+        <ToolSummary title={title} streaming={message.streaming}
+          status={message.error || output?.error ? "失败" : message.streaming
+            ? "执行中" : output || message.completed ? "已结束" : "未收到结果"}>
           <Icon name="chevron" size={14} />
-        </summary>
+        </ToolSummary>
         <div className="tool-sections">
           <section>
             <header>调用参数</header>

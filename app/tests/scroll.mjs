@@ -117,7 +117,7 @@ try {
  assert.equal(await page.evaluate(()=>window.historyReads),2,'120 streamed chunks must not read history');
  const beforeWarning=await page.locator('.conversation-scroll').boundingBox();
  await page.evaluate(()=>window.emit({type:'model.health',threadId:'thread',instance:'fixture',sequence:123,data:{warning:true}}));
- await page.getByText('模型调用失败，重试中',{exact:true}).waitFor();
+ await page.getByText('当前模型响应较慢，请耐心等待',{exact:true}).waitFor();
  assert.deepEqual(await page.locator('.conversation-scroll').boundingBox(),beforeWarning,'Model warning overlay cannot shift the conversation');
  assert.equal(await page.locator('.model-health-banner').evaluate(n=>getComputedStyle(n).position),'absolute');
  await page.screenshot({path:path.join(os.tmpdir(),'corki-model-health-warning.png')});

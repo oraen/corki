@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "esbuild frontend/hooks-workspace.js frontend/knowledge-workspace.js frontend/config-workspace.js frontend/skill-workspace.js frontend/simple-chat.js frontend/database-workspace.js frontend/sql-workspace.js --bundle --format=iife --target=es2022 --minify --legal-comments=eof --outdir=static"
+    "build": "esbuild frontend/channel-markdown.js frontend/hooks-workspace.js frontend/knowledge-workspace.js frontend/config-workspace.js frontend/skill-workspace.js frontend/simple-chat.js frontend/database-workspace.js frontend/sql-workspace.js --bundle --format=iife --target=es2022 --minify --legal-comments=eof --outdir=static"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "6.2.5",

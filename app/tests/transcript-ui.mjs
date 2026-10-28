@@ -106,6 +106,8 @@ try {
                 content: "请查询公开统计数据",
                 turnId: "current",
               },
+              ...(window.snapshotTail ? [{id:'snapshot-tool',role:'tool',name:'exec_command',
+                content:'{"cmd":"echo authoritative-snapshot"}',turnId:'current',streaming:true}] : []),
             ],
             next: null,
             turns: [],
@@ -277,6 +279,33 @@ try {
   assert.equal(await page.locator('.tool-activity:visible').count(),1);
   assert.equal(await page.locator('.process-heading img[alt="Corki"]').count(),1);
   assert.equal(await page.locator('.process-body img[alt="Corki"]').count(),0);
+  // Multiple live supplements share a turn, but each response segment is a
+  // distinct React sibling. Switching to a draft must remove every old node.
+  await page.reload();
+  await page.locator('.thinking-indicator').waitFor();
+  for (let i=0;i<8;i++) {
+    await page.evaluate(i => {
+      window.emit('UserMessageSubmitted', {turn_id:'current',item_id:`supplement-${i}`,
+        request_id:`request-${i}`,text:`补充测试 ${i}`});
+      window.emit('ToolCallStarted', {turn_id:'current',tool_call_id:`segment-${i}`,
+        tool_name:'exec_command',arguments_preview:JSON.stringify({cmd:`echo segment-${i}`})});
+    },i);
+    await page.locator('.activity-title').filter({hasText:`echo segment-${i}`}).waitFor();
+  }
+  // A canonical snapshot can replace live segments (paging/reconciliation).
+  await page.evaluate(() => { window.snapshotTail = true; });
+  await page.locator('.thread-select').first().click();
+  await page.locator('.activity-title').filter({hasText:'echo authoritative-snapshot'}).waitFor();
+  await page.locator('.new-chat').click();
+  await page.locator('.welcome').waitFor();
+  assert.equal(await page.locator('.process-group').count(),0,
+    'New draft must not retain process nodes from a multi-input running turn');
+  await page.evaluate(() => window.emit('ToolCallStarted', {turn_id:'current',
+    tool_call_id:'background',tool_name:'exec_command',arguments_preview:'{"cmd":"echo background"}'}));
+  await page.waitForTimeout(80);
+  assert.equal(await page.locator('.process-group').count(),0,
+    'Background tool events must remain in their own conversation');
+
   console.log(
     "Transcript UI passed: turn errors, thinking, commentary, paired tools, highlight, copy, layout",
   );

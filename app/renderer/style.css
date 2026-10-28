@@ -1399,3 +1399,30 @@ main {
 
 .model-health-banner{position:absolute;top:var(--topbar-height);left:0;right:0;z-index:80;margin:0;border-radius:0;border-left:0;border-right:0;pointer-events:none}
 .service-offline-banner{pointer-events:auto}
+
+/* Full process commands: warm, quiet elevation without changing row layout. */
+.tool-command-tooltip {
+  position: fixed;
+  z-index: 300;
+  width: max-content;
+  max-width: min(560px, calc(100vw - 24px));
+  max-height: min(240px, calc(100vh - 24px));
+  overflow: auto;
+  padding: 11px 14px;
+  border: 1px solid #eaded2;
+  border-radius: 10px;
+  background: #fffcf8;
+  color: #57483d;
+  box-shadow: 0 6px 24px #55341c16, 0 2px 6px #55341c08;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  animation: tool-tooltip-in 120ms ease-out;
+}
+@keyframes tool-tooltip-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .tool-command-tooltip { animation: none; }
+}

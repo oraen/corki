@@ -156,7 +156,8 @@ export function TranscriptView({
         ) : (
           <div
             className={`reply-block ${group[0].process ? "starts-with-process" : ""}`}
-            key={`reply:${group[0].entries[0].message.turnId || group[0].key}`}
+            // Steered inputs share a turn; each response segment needs its own key.
+            key={`reply:${group[0].key}`}
           >
             {group.map((block, index) => renderBlock(block, index === 0 && group.some((b) => b.entries.some((entry) => entry.showAvatar))))}
           </div>

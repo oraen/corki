@@ -1,0 +1,13 @@
+{
+  "name": "corki-channel-connectors",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22"},
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "@larksuiteoapi/node-sdk": "1.76.0",
+    "qrcode": "1.5.4",
+    "pino": "9.14.0"
+  }
+}

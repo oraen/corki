@@ -9,7 +9,7 @@ function quickToolsCards(){
 }
 
 function toolboxCards(){
- return `<section class="panel quick-tools-panel" aria-labelledby="toolbox-title"><div class="panel-head"><h2 id="toolbox-title">工具箱</h2></div><div class="quick-tools-grid"><button type="button" class="quick-tool-card toolbox-card" data-action="open-adaptor"><span class="quick-tool-icon">${icon('providers')}</span><strong>套餐转发</strong>${icon("arrow")}</button><button type="button" class="quick-tool-card toolbox-card" data-action="open-resource-packages"><span class="quick-tool-icon">${window.CorkiResourcePackages.icon()}</span><strong>插件管理</strong>${icon("arrow")}</button></div></section>`;
+ return `<section class="panel quick-tools-panel" aria-labelledby="toolbox-title"><div class="panel-head"><h2 id="toolbox-title">工具箱</h2></div><div class="quick-tools-grid"><button type="button" class="quick-tool-card toolbox-card" data-action="open-adaptor"><span class="quick-tool-icon">${icon('providers')}</span><strong>套餐转发</strong>${icon("arrow")}</button><button type="button" class="quick-tool-card toolbox-card" data-action="open-resource-packages"><span class="quick-tool-icon">${window.CorkiResourcePackages.icon()}</span><strong>插件管理</strong>${icon("arrow")}</button><button type="button" class="quick-tool-card toolbox-card" data-action="open-channels"><span class="quick-tool-icon">${icon('tools')}</span><strong>转发网关</strong>${icon("arrow")}</button></div></section>`;
 }
 
 function guidePage(){

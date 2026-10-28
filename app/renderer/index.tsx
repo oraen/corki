@@ -1068,7 +1068,7 @@ function App() {
         )}
         {conversation.running && conversation.modelWarning && conversation.modelWarningReason !== "idle" && (
           <div className="banner model-health-banner" role="status" aria-live="polite">
-            <span>{conversation.modelWarningReason === "connection" ? "网络连接失败，重试中" : "模型调用失败，重试中"}</span>
+            <span>{conversation.modelWarningReason === "connection" ? "网络连接失败，重试中" : "当前模型响应较慢，请耐心等待"}</span>
           </div>
         )}
         <div

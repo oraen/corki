@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "corki-channel-gateway"
+version = "0.1.0"
+description = "Independent local messaging gateway for Corki"
+requires-python = ">=3.11"
+dependencies = ["corki>=0.1.0", "httpx>=0.28,<0.29"]
+
+[project.scripts]
+corki-gateway = "corki_gateway.control:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/corki_gateway"]
+[tool.hatch.build.targets.wheel.force-include]
+"connectors/dingtalk.mjs" = "corki_gateway/connectors/dingtalk.mjs"
+"connectors/feishu.mjs" = "corki_gateway/connectors/feishu.mjs"
+"connectors/main.mjs" = "corki_gateway/connectors/main.mjs"
+"connectors/package-lock.json" = "corki_gateway/connectors/package-lock.json"
+"connectors/package.json" = "corki_gateway/connectors/package.json"
+"connectors/protocol.mjs" = "corki_gateway/connectors/protocol.mjs"
+"connectors/telegram.mjs" = "corki_gateway/connectors/telegram.mjs"
+"connectors/wechat.mjs" = "corki_gateway/connectors/wechat.mjs"
+"connectors/whatsapp.mjs" = "corki_gateway/connectors/whatsapp.mjs"
+
+"connectors/packages" = "corki_gateway/connectors/packages"
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "bin", "connectors/*.mjs", "connectors/package*.json", "connectors/packages", "README.md", "PROTOCOL.md", "HTTP_PROTOCOL.md", "THIRD_PARTY_NOTICES.md", "examples", "pyproject.toml"]

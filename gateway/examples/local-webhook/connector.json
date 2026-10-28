@@ -1,0 +1,12 @@
+{
+  "protocol": 1,
+  "id": "local-webhook",
+  "name": "本地 Webhook 示例",
+  "description": "回环 HTTP 接入 · 私聊文本",
+  "runtime": "python",
+  "entry": "main.py",
+  "fields": [
+    {"key": "token", "label": "访问密钥", "secret": true, "required": true},
+    {"key": "port", "label": "监听端口（留空自动分配）"}
+  ]
+}
