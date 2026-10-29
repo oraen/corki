@@ -94,7 +94,7 @@ class StandardConnector:
             "type": "notice",
             "connection_id": self.id,
             "message_id": message["id"],
-            "reply_id": uuid.uuid4().hex,
+            "reply_id": params.get("notice_id") or uuid.uuid4().hex,
             "text": text,
         }
         ack = await self.post("reply_url", payload)
@@ -120,6 +120,13 @@ class StandardConnector:
                         await self.wake.wait()
                     continue
                 if row["phase"] == "ready":
+                    account = self.host.store.connection(self.id)
+                    if not self.host.store.allows_message(
+                        account, json.loads(row["payload"]), remember=False
+                    ):
+                        self.queue.update(self.id, row["id"], "skipped")
+                        self.host.store.finish(self.id, row["id"], "access_denied")
+                        continue
                     try:
                         await self.deliver(row)
                         self.host.store.finish(self.id, row["id"], "completed")
@@ -137,6 +144,9 @@ class StandardConnector:
                     self.queue.update(self.id, row["id"], "queued")
                     await self.sleep(1)
                     continue
+                if result.get("access_denied"):
+                    self.queue.update(self.id, row["id"], "skipped")
+                    continue
                 if result.get("thread"):
                     self.queue.bind_answer(self.id, row["id"], result["thread"])
                 task = self.host.tasks.get((self.id, row["id"]))
@@ -148,7 +158,13 @@ class StandardConnector:
                         error="消息已执行或结果未知，请检查会话后跳过；不会自动重复执行",
                     )
                     continue
-                await asyncio.shield(task)
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    # Revocation can cancel a task before execute() enters its handler.
+                    # Only the worker's own cancellation should stop queue processing.
+                    if asyncio.current_task().cancelling():
+                        raise
                 current = self.queue.get(self.id, row["id"])
                 if current and current["phase"] == "running":
                     with self.host.store.db() as db:
@@ -156,7 +172,9 @@ class StandardConnector:
                             "SELECT status FROM receipts WHERE channel=? AND id=?",
                             (self.id, row["id"]),
                         ).fetchone()
-                    if receipt and receipt[0] == "failed":
+                    if receipt and receipt[0] == "access_denied":
+                        self.queue.update(self.id, row["id"], "skipped")
+                    elif receipt and receipt[0] == "failed":
                         # Confirm an explicit failed result before the next message.
                         with contextlib.suppress(ValueError):
                             await self.call(

@@ -1426,3 +1426,8 @@ main {
 @media (prefers-reduced-motion: reduce) {
   .tool-command-tooltip { animation: none; }
 }
+
+/* Keep the answer actions optically aligned with its text column. */
+.assistant-message-meta{justify-content:flex-start}
+.assistant-message-meta .copy-button{padding-left:0}
+.assistant-message-meta .message-time{white-space:nowrap}

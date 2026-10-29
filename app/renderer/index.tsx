@@ -987,6 +987,12 @@ function App() {
             )}
             {!threads.length && ready && <p className="no-history">暂无会话</p>}
           </HistorySection>
+          <WorkspaceHistory
+            directory={{path: "", name: "机器人会话"}}
+            robot
+            revision={historyRevision}
+            renderThread={renderThread}
+          />
           {directories.map((directory) => (
             <WorkspaceHistory
               key={directory.path}
@@ -1312,9 +1318,9 @@ function App() {
                   value={draft.provider}
                   items={providerItems}
                   onChange={(provider) => {
-                    const first = catalog.providers.find(
-                      (p) => p.id === provider,
-                    )?.models[0];
+                    const profile = catalog.providers.find((p) => p.id === provider);
+                    const first = profile?.models.find((m) => m.id === profile.defaultModel)
+                      || profile?.models[0];
                     editDraft({
                       provider,
                       model: first?.id || "",

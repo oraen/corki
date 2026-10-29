@@ -1,6 +1,7 @@
 """The sole Corki adapter: reuse runtime, permissions, tools and durable sessions."""
 
 import asyncio
+import json
 from contextlib import aclosing
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -19,7 +20,6 @@ class Agent:
         from corki.core.runtime import LangGraphRuntime
         from corki.protocol.events import (
             AssistantMessageCompleted,
-            AssistantTextDelta,
             TurnCancelled,
             TurnCompleted,
             TurnFailed,
@@ -28,9 +28,16 @@ class Agent:
         from corki.protocol.ids import ThreadId
         from corki.protocol.session_source import SessionSource
 
+        from .model_selection import validate_selection
+
+        config = (self.host.store.connection(channel) or {}).get("config", {})
+        provider, model = config.get("agent_provider"), config.get("agent_model")
         settings = CorkiSettings.for_directory(
-            Path(workdir), config_file=self.host.store.home / "settings.json"
+            Path(workdir), config_file=self.host.store.home / "settings.json",
+            provider=provider or None, model=model or None,
         )
+        if provider or model:
+            validate_selection(json.loads(settings._provider_document), provider, model)
         # A remote chat must eventually settle even during an indefinite network outage.
         settings = replace(
             settings, model_unbounded_connection_retries=False, model_request_max_retries=3
@@ -68,32 +75,8 @@ class Agent:
             completed_messages = {}
             async with aclosing(runtime.stream(text)) as events:
                 async for event in events:
-                    if isinstance(event, (AssistantTextDelta, AssistantMessageCompleted)):
-                        from datetime import UTC, datetime
-
-                        key = str(event.item_id or event.turn_id)
-                        prior = self.host.live[thread].get(key, {})
-                        content = (
-                            (prior.get("content", "") + event.delta)
-                            if isinstance(event, AssistantTextDelta)
-                            else event.text
-                        )
-                        # Copy-on-write snapshots, bounded transient display data only.
-                        self.host.live[thread] = {
-                            **self.host.live[thread],
-                            key: {
-                                "id": key,
-                                "role": "assistant",
-                                "content": content[:120000],
-                                "created_at": prior.get(
-                                    "created_at", datetime.now(UTC).isoformat()
-                                ),
-                            },
-                        }
-                        if isinstance(event, AssistantMessageCompleted):
-                            completed_messages[str(event.turn_id)] = (event.item_id, event.text)
-                        if len(self.host.live[thread]) > 100:
-                            self.host.live[thread].pop(next(iter(self.host.live[thread])))
+                    if isinstance(event, AssistantMessageCompleted):
+                        completed_messages[str(event.turn_id)] = (event.item_id, event.text)
                     elif isinstance(event, UserInputRequested):
                         self.host.interactions[event.call_id] = {
                             "kind": "question",

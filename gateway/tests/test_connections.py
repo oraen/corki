@@ -47,7 +47,7 @@ def test_migration_preserves_old_state_and_route(tmp_path):
     assert len(Store(tmp_path).connections()) == 1
 
 
-def test_one_conversation_per_connection_and_directory_reset(tmp_path):
+def test_independent_conversations_per_user_and_directory_reset(tmp_path):
     s = Store(tmp_path)
     a = account(s, "one")
     group = s.connection(a)["conversation_id"]
@@ -55,7 +55,7 @@ def test_one_conversation_per_connection_and_directory_reset(tmp_path):
     cwd = str(tmp_path / "main/default")
     thread = s.admit(a, message(), cwd)
     assert s.admit(b, message(), cwd) != thread
-    assert s.admit(a, {**message("other"), "sender": "someone-else"}, cwd) == thread
+    assert s.admit(a, {**message("other"), "sender": "someone-else"}, cwd) != thread
     assert s.admit(a, message(), cwd) is None
     with pytest.raises(ValueError, match="同名"):
         account(s, "ONE")

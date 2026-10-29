@@ -70,11 +70,14 @@ try {
   assert.notEqual(created[0].id,created[1].id);
   await browser("click",'[data-config="'+created[0].id+'"]');
   await wait(`document.querySelector('.channel-management') && document.querySelector('[name="_name"]')`);
+  await browser("click",'[data-channel-tab="settings"]');
+  await browser("click",'[data-page-edit]');
   await browser("fill",'[name="_name"]',secondName);
   await browser("eval",'document.querySelector("[data-page-save]").scrollIntoView({block:"center"})');
   await browser("click",'[data-page-save]');
   await wait(`document.querySelector('.channel-form-error').textContent.includes('同名')`);
   await browser("fill",'[name="_name"]',firstName);
+  await browser("click",'[data-channel-tab="history"]');
   await browser("eval",'document.querySelector("[data-reset-conversation]").scrollIntoView({block:"center"})');
   await browser("click",'[data-reset-conversation]');
   await wait(`document.querySelector('.channel-dialog')`);

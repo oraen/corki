@@ -22,6 +22,7 @@ export interface Message {
   contextOnly?: boolean;
   startedAt?: number;
   elapsedSeconds?: number;
+  replyElapsedSeconds?: number;
 }
 export interface FollowUpState {
   mode: "steer" | "queue";
@@ -221,6 +222,12 @@ export function reduceEvent(
     }
   };
   const base = { turnId: d.turn_id, content: "" };
+  if (["TurnCompleted", "TurnCancelled", "TurnFailed"].includes(event.type)) {
+    s.messages = s.messages.map((m) => m.turnId === d.turn_id && m.role === "assistant"
+      ? { ...m, replyElapsedSeconds: d.replyElapsedSeconds ?? m.replyElapsedSeconds,
+          createdAt: d.replyFinishedAt || m.createdAt || d.createdAt }
+      : m);
+  }
   switch (event.type) {
     case "queue.changed":
       s.followUps = d as FollowUpState;
@@ -368,7 +375,8 @@ export function reduceEvent(
         error: !modelFailure,
         phase: modelFailure ? "final_answer" : undefined,
         streaming: false,
-        createdAt: d.createdAt,
+        createdAt: d.replyFinishedAt || d.createdAt,
+        replyElapsedSeconds: d.replyElapsedSeconds,
       };
       update(
         id,

@@ -592,7 +592,7 @@ class CorkiApplication:
         if not models:
             self._ui.show_notice("Provider is not configured or has no models.")
             return
-        model = current.model if current.model in models else models[0]
+        model = self._settings.for_model(provider, None).model
         await self._set_model(model, provider=provider)
 
     async def _set_model(self, model: str, *, reasoning_effort=UNSET, provider=None) -> None:

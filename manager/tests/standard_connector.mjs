@@ -52,6 +52,18 @@ try {
   assert(account.secrets.param_account);assert(!JSON.stringify(state).includes('demo user'));
   await click(`[data-config="${account.id}"]`);
   await wait(`document.querySelector('.channel-management')`);
+  await click('[data-channel-tab="settings"]');
+  await wait(`document.querySelector('[name="_name"]').readOnly`);
+  await click('.channel-reveal');
+  await wait(`document.querySelector('[name="param_account"]').value==='demo user' && document.querySelector('[name="param_account"]').type==='text'`);
+  await wait(`document.querySelector('[name="param_account"]').readOnly`);
+  await click('.channel-reveal');
+  await wait(`document.querySelector('[name="param_account"]').value==='' && document.querySelector('[name="param_account"]').type==='password'`);
+  await click('[data-channel-tab="settings"]');await click('[data-page-edit]');
+  await browser('fill','[name="_name"]','Unsaved edit');
+  await click('[data-page-cancel]');
+  await wait(`document.querySelector('[name="_name"]').readOnly && document.querySelector('[name="_name"]').value===${JSON.stringify(account.name)}`);
+  await click('[data-channel-tab="settings"]');await click('[data-page-edit]');
   await click('[data-disable-parameters]');
   await wait(`document.querySelector('[name="param_account"]').disabled`);
   await click('[data-page-save]');

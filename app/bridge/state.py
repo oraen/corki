@@ -18,6 +18,10 @@ class DesktopState:
                   thread_id TEXT NOT NULL, turn_id TEXT NOT NULL, message_id TEXT NOT NULL,
                   ordinal INTEGER NOT NULL, content TEXT NOT NULL,
                   PRIMARY KEY(thread_id,turn_id,message_id));
+                CREATE TABLE IF NOT EXISTS reply_timings (
+                  thread_id TEXT NOT NULL, turn_id TEXT NOT NULL,
+                  finished_at TEXT NOT NULL, elapsed_seconds INTEGER NOT NULL,
+                  PRIMARY KEY(thread_id,turn_id));
                 CREATE TABLE IF NOT EXISTS deleted_threads (id TEXT PRIMARY KEY);
                 CREATE TABLE IF NOT EXISTS metadata (id TEXT PRIMARY KEY, title TEXT);
                 CREATE TABLE IF NOT EXISTS values_store (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -33,6 +37,52 @@ class DesktopState:
         db = sqlite3.connect(self.path, timeout=10)
         db.row_factory = sqlite3.Row
         return db
+
+    def reply_timings(self, database, thread, turns):
+        """Cache terminal wall durations, including legacy history, without model calls."""
+        if not turns:
+            return {}
+        turns = set(turns)
+        placeholders = ",".join("?" for _ in turns)
+        with closing(self.connect()) as db:
+            cached = list(
+                db.execute(
+                    "SELECT turn_id,finished_at,elapsed_seconds FROM reply_timings "
+                    f"WHERE thread_id=? AND turn_id IN ({placeholders})",
+                    (thread, *turns),
+                )
+            )
+        missing = turns - {r[0] for r in cached}
+        if missing:
+            placeholders = ",".join("?" for _ in missing)
+            with closing(sqlite3.connect(database)) as core:
+                rows = core.execute(
+                    "SELECT t.id,t.updated_at,unixepoch(t.updated_at)-unixepoch("
+                    "(SELECT json_extract(i.payload_json,'$.created_at') "
+                    "FROM conversation_items i WHERE i.thread_id=t.thread_id AND i.turn_id=t.id "
+                    "AND i.kind='user_message' "
+                    "AND json_extract(i.payload_json,'$.retained_from_id') IS NULL "
+                    "ORDER BY i.sequence LIMIT 1)) FROM turns t WHERE t.thread_id=? "
+                    f"AND t.id IN ({placeholders}) "
+                    "AND t.status IN ('completed','cancelled','failed')",
+                    (thread, *missing),
+                ).fetchall()
+            valid = [
+                (turn, end, seconds)
+                for turn, end, seconds in rows
+                if seconds is not None and seconds >= 0
+            ]
+            if valid:
+                with closing(self.connect()) as db, db:
+                    db.executemany(
+                        "INSERT OR IGNORE INTO reply_timings VALUES (?,?,?,?)",
+                        [(thread, *row) for row in valid],
+                    )
+                cached.extend(valid)
+        return {
+            turn: {"replyElapsedSeconds": seconds, "replyFinishedAt": end}
+            for turn, end, seconds in cached
+        }
 
     def get(self, key, default=None):
         with closing(self.connect()) as db:
@@ -110,6 +160,7 @@ class DesktopState:
             db.execute("INSERT OR IGNORE INTO deleted_threads VALUES (?)", (thread,))
             db.execute("DELETE FROM metadata WHERE id=?", (thread,))
             db.execute("DELETE FROM requests WHERE thread_id=?", (thread,))
+            db.execute("DELETE FROM reply_timings WHERE thread_id=?", (thread,))
             db.execute("DELETE FROM interrupted_messages WHERE thread_id=?", (thread,))
             db.execute("DELETE FROM values_store WHERE key=?", ("draft:" + thread,))
             row = db.execute("SELECT value FROM values_store WHERE key='ui'").fetchone()

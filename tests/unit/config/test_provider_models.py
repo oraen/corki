@@ -246,3 +246,33 @@ def test_unavailable_default_falls_back_without_rewriting_config(tmp_path, defau
     assert path.read_bytes() == original
     explicit = CorkiSettings.for_directory(tmp_path, config_file=path, provider="closed")
     assert explicit.provider_id == "closed" and not explicit.provider_enabled
+
+
+def test_each_provider_has_independent_default_and_fallback(configured):
+    path, _ = configured
+    data = loads(path.read_text())
+    data["providers"]["a"]["default_model"] = "z"
+    data["providers"]["b"]["default_model"] = "aaa"
+    path.write_text(json.dumps(data))
+    settings = CorkiSettings.for_directory(path.parent, config_file=path)
+    assert (settings.provider_id, settings.model) == ("a", "z")
+    assert settings.for_model("b", None).model == "aaa"
+    assert settings.for_model("b", "shared").model == "shared"
+    data["providers"]["a"]["default_model"] = "removed"
+    data["providers"]["b"]["enabled"] = False
+    data["default"]["provider"] = "b"
+    path.write_text(json.dumps(data))
+    selected = CorkiSettings.for_directory(path.parent, config_file=path)
+    assert (selected.provider_id, selected.model) == ("a", "shared")
+    assert loads(path.read_text()) == data
+
+
+def test_saving_other_provider_preserves_legacy_provider_default(configured):
+    path, _ = configured
+    data = loads(path.read_text())
+    data['default']['model'] = 'z'
+    path.write_text(json.dumps(data))
+    save_model_default(path, 'b', 'aaa', None)
+    saved = loads(path.read_text())
+    assert saved['providers']['a']['default_model'] == 'z'
+    assert CorkiSettings.for_directory(path.parent, config_file=path).for_model('a', None).model == 'z'

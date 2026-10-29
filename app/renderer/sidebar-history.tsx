@@ -4,12 +4,14 @@ import { Icon } from "./components";
 export function HistorySection({
   name,
   title,
+  icon,
   initiallyOpen = false,
   onOpen,
   children,
 }: {
   name: string;
   title?: string;
+  icon?: string;
   initiallyOpen?: boolean;
   onOpen?: (open: boolean) => void;
   children: React.ReactNode;
@@ -26,7 +28,7 @@ export function HistorySection({
           onOpen?.(!open);
         }}
       >
-        <Icon name={title ? "folder" : "history"} size={16} />
+        <Icon name={icon || (title ? "folder" : "history")} size={16} />
         <span>{name}</span>
         <span className={`history-chevron ${open ? "expanded" : ""}`}>
           <Icon name="chevron" size={16} />
@@ -39,10 +41,12 @@ export function HistorySection({
 
 export function WorkspaceHistory({
   directory,
+  robot = false,
   revision,
   renderThread,
 }: {
   directory: { path: string; name: string };
+  robot?: boolean;
   revision: number;
   renderThread: (thread: any) => React.ReactNode;
 }) {
@@ -58,7 +62,7 @@ export function WorkspaceHistory({
     setError("");
     try {
       const result = await window.corki.request("threads.list", {
-        directory: directory.path,
+        ...(robot ? {group: "robot"} : {directory: directory.path}),
         offset,
         limit: 40,
       });
@@ -79,11 +83,12 @@ export function WorkspaceHistory({
     return () => {
       generation.current++;
     };
-  }, [open, directory.path, revision]);
+  }, [open, directory.path, robot, revision]);
   return (
     <HistorySection
       name={directory.name}
-      title={directory.path}
+      title={robot ? undefined : directory.path}
+      icon={robot ? "robot" : undefined}
       onOpen={setOpen}
     >
       {rows.map(renderThread)}
@@ -94,6 +99,7 @@ export function WorkspaceHistory({
         </div>
       )}
       {loading && <p className="no-history">加载中…</p>}
+      {robot && !loading && !error && !rows.length && <p className="no-history">暂无机器人会话</p>}
       {!loading && !error && next !== null && (
         <button className="more-history" onClick={() => void load(next)}>
           更多会话

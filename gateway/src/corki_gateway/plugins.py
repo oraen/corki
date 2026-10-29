@@ -47,7 +47,18 @@ def validate_manifest(value):
         if (
             not isinstance(field, dict)
             or not ID.fullmatch(str(field.get("key", "")))
-            or field["key"] in seen | {"workdir"}
+            or field["key"]
+            in seen
+            | {
+                "workdir",
+                "session_mode",
+                "agent_provider",
+                "agent_model",
+                "session_validation",
+                "validation_first_reply",
+                "validation_approved_reply",
+                "validation_disabled_reply",
+            }
         ):
             raise ValueError("配置字段名称无效或重复")
         if not isinstance(field.get("label"), str) or not 1 <= len(field["label"]) <= 60:

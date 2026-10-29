@@ -76,7 +76,7 @@ class SQLiteThreadDeleteStore:
             # cleanup succeeds, so interrupted deletion can safely be retried.
             self._ancillary(
                 "checkpoints.db",
-                ("writes", "checkpoints"),
+                ("writes", "checkpoints", "checkpoint_objects"),
                 [thread, *(f"{thread}:{turn}" for turn in turns)],
             )
             self._ancillary(

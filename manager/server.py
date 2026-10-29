@@ -42,7 +42,7 @@ from corki.config import document
 from corki.config.bundled_models import BUNDLED_MODEL_CONTEXTS
 from corki.config.features import MCPServerSettings
 from corki.config.settings import CorkiSettings
-from corki.config.providers import effective_default
+from corki.config.providers import effective_default, provider_default_model
 from corki.config.model_context import match_model_context
 from corki.config.skills import disabled_skill_paths, parse_skill_rules
 from corki.core.runtime import _create_model, _model_capabilities
@@ -1538,6 +1538,7 @@ end run'''
                     has_key=bool(p.get("api_key")),
                     enabled=p.get("enabled", True),
                     models=p.get("models", {}),
+                    default_model=provider_default_model(config, name, p),
                 )
             )
         files = self.files(redaction_secrets)
@@ -2306,9 +2307,20 @@ end run'''
             before = copy.deepcopy(config)
             values = data.get("values", {})
             identity = data.get("id", "")
+            if kind == "providers" and (action == "default" or data.get("make_default")):
+                old_default = effective_default(config)
+                old_profile = config.get("providers", {}).get(old_default.get("provider"), {})
+                if old_default.get("model") in old_profile.get("models", {}):
+                    old_profile.setdefault("default_model", old_default["model"])
             if kind == "providers":
                 providers = config.setdefault("providers", {})
-                if action == "delete":
+                if action == "default":
+                    profile = providers.get(identity)
+                    if not profile or not profile.get("enabled", True) or not profile.get("models"):
+                        raise ValueError("供应商不可用或没有模型")
+                    config["default"] = {"provider": identity,
+                                         "model": provider_default_model(config, identity, profile)}
+                elif action == "delete":
                     if config.get("default", {}).get("provider") == identity:
                         raise ValueError("请先切换默认模型，再删除供应商")
                     providers.pop(identity, None)
@@ -2376,8 +2388,7 @@ end run'''
                         models = provider.get("models", {})
                         if not models:
                             raise ValueError("请先为该供应商添加模型")
-                        current_model = config.get("default", {}).get("model")
-                        model = current_model if current_model in models else next(iter(models))
+                        model = provider_default_model(config, identity, provider)
                         config["default"] = {"provider": identity, "model": model}
 
                 else:
@@ -2392,7 +2403,9 @@ end run'''
                         raise ValueError("请先开启该供应商")
                     if identity not in models:
                         raise ValueError("模型不存在")
-                    config["default"] = {"provider": provider, "model": identity}
+                    config["providers"][provider]["default_model"] = identity
+                    if effective_default(before).get("provider") == provider:
+                        config["default"] = {"provider": provider, "model": identity}
                 elif action == "delete":
                     if config.get("default") == {"provider": provider, "model": identity}:
                         raise ValueError("不能删除当前默认模型")

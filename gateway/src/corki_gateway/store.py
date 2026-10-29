@@ -9,6 +9,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from .access import REPLY_DEFAULTS, AccessRequests
 from .connections import Connections, DuplicateAccount
 
 BUILTINS = {
@@ -51,7 +52,7 @@ def root(home):
     return path
 
 
-class Store(Connections):
+class Store(Connections, AccessRequests):
     def __init__(self, home):
         self.home = Path(home).resolve()
         self.root = root(home)
@@ -72,7 +73,47 @@ class Store(Connections):
                 CREATE TABLE IF NOT EXISTS package_jobs(channel TEXT PRIMARY KEY, token TEXT,
                     action TEXT, status TEXT, stage TEXT, updated REAL);
                 CREATE TABLE IF NOT EXISTS cursors(channel TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE IF NOT EXISTS access_requests(
+                    channel TEXT NOT NULL,sender_id TEXT NOT NULL,sender_name TEXT NOT NULL,
+                    first_message TEXT NOT NULL,first_message_id TEXT NOT NULL,
+                    external_conversation_id TEXT NOT NULL,created_at REAL NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('pending','approved','disabled')),
+                    PRIMARY KEY(channel,sender_id));
+                CREATE INDEX IF NOT EXISTS access_requests_channel ON access_requests(channel);
+                CREATE INDEX IF NOT EXISTS access_requests_status
+                    ON access_requests(channel,status);
+                CREATE TABLE IF NOT EXISTS access_delivery(
+                    channel TEXT NOT NULL,sender_id TEXT NOT NULL,message TEXT NOT NULL,
+                    notice_id TEXT UNIQUE,kind TEXT,text TEXT,status TEXT,error TEXT,
+                    updated REAL,PRIMARY KEY(channel,sender_id));
+                CREATE INDEX IF NOT EXISTS access_delivery_queue
+                    ON access_delivery(channel,status,updated);
+                CREATE TABLE IF NOT EXISTS access_notice_queue(
+                    notice_id TEXT PRIMARY KEY,channel TEXT NOT NULL,sender_id TEXT NOT NULL,
+                    message TEXT NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL,
+                    status TEXT NOT NULL,updated REAL NOT NULL);
+                CREATE INDEX IF NOT EXISTS access_notice_pending
+                    ON access_notice_queue(channel,status,updated);
+                INSERT OR IGNORE INTO access_notice_queue
+                    SELECT notice_id,channel,sender_id,message,kind,text,status,updated
+                    FROM access_delivery WHERE status IN ('queued','sending')
+                        AND notice_id IS NOT NULL;
+
             """)
+            # Add diagnostic identifiers without changing existing routing keys/threads.
+            # Old rows stay NULL until another message supplies the original values.
+            db.execute("BEGIN IMMEDIATE")
+            route_columns = {row["name"] for row in db.execute("PRAGMA table_info(routes)")}
+            for name, kind in (
+                ("sender_id", "TEXT"),
+                ("sender_name", "TEXT"),
+                ("external_conversation_id", "TEXT"),
+                ("workdir", "TEXT"),
+                ("binding_id", "TEXT"),
+                ("last_seen", "REAL"),
+            ):
+                if name not in route_columns:
+                    db.execute(f"ALTER TABLE routes ADD COLUMN {name} {kind}")
             for key, value in BUILTINS.items():
                 db.execute(
                     "INSERT INTO channels(id,manifest) VALUES(?,?) "
@@ -83,6 +124,7 @@ class Store(Connections):
         self.path.chmod(0o600)
         self.migrate_connections()
         self.ensure_conversations()
+        self.migrate_session_modes()
         from .standard import Queue
 
         self.http_queue = Queue(self)
@@ -175,6 +217,10 @@ class Store(Connections):
             raise ValueError("接入不存在或配置无效")
         allowed = {f["key"]: f for f in row["manifest"].get("fields", [])}
         allowed["workdir"] = {"label": "工作目录"}
+        allowed.update({"agent_provider": {}, "agent_model": {}})
+        allowed["session_validation"] = {"options": ["true", "false"]}
+        allowed.update({key: {} for key in REPLY_DEFAULTS})
+        allowed["session_mode"] = {"options": ["independent", "shared"]}
         standard = row["manifest"].get("transport") == "standard-http"
         if standard:
             allowed.update({"http_disable_parameters": {}, "http_retry_count": {}})
@@ -184,18 +230,35 @@ class Store(Connections):
         for key, value in values.items():
             if not isinstance(value, str) or len(value) > 8192:
                 raise ValueError("配置应为文本，最长 8192 字符")
+            if key in REPLY_DEFAULTS and len(value) > 2000:
+                raise ValueError("会话校验回复词最长 2000 字符")
             field = allowed[key]
             if field.get("secret") and not value:
                 continue  # Empty secret means keep; clearing uses explicit reset.
             if field.get("options") and value not in field["options"]:
                 raise ValueError("配置选项无效")
             config[key] = value.strip()
+        config.setdefault("session_mode", "independent")
+        if config["session_mode"] not in ("independent", "shared"):
+            raise ValueError("会话模式无效")
         if config.get("workdir"):
             directory = Path(config["workdir"]).expanduser().resolve()
             default = (self.home / "main/default").resolve()
             if not directory.is_dir() and (directory != default or directory.exists()):
                 raise ValueError("工作目录不存在")
             config["workdir"] = str(directory)
+        if {"agent_provider", "agent_model"} & values.keys():
+            from corki.config.layers import load_local_config
+
+            from .model_selection import validate_selection
+
+            provider, model = config.get("agent_provider", ""), config.get("agent_model", "")
+            if provider or model:
+                document, _ = load_local_config(
+                    Path(config.get("workdir") or self.home / "main/default"),
+                    self.home / "settings.json",
+                )
+                validate_selection(document, provider, model)
         if standard:
             if config.get("http_disable_parameters", "false") not in ("true", "false"):
                 raise ValueError("参数解析选项无效")
@@ -240,7 +303,7 @@ class Store(Connections):
             db.execute("UPDATE connections SET enabled=? WHERE id=?", (enabled, identity))
 
     def admit(self, channel, message, workdir):
-        # Include account/channel, conversation, sender and cwd; never merge principals.
+        # Retain per-sender route identities; thread sharing is an explicit account policy.
         connection = self.connection(channel)
         parts = [channel, message["conversation"], message["sender"], workdir]
         if connection and connection["conversation_id"]:
@@ -253,8 +316,26 @@ class Store(Connections):
             ).fetchone()
             if prior:
                 return None
+            name = message.get("name")
+            name = name[:80] if isinstance(name, str) else message["sender"][:80]
             db.execute(
-                "INSERT OR IGNORE INTO routes VALUES(?,?,?)", (key, str(uuid.uuid4()), channel)
+                "INSERT INTO routes(key,thread,channel,sender_id,sender_name,"
+                "external_conversation_id,workdir,binding_id,last_seen) VALUES(?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET sender_id=excluded.sender_id,"
+                "sender_name=excluded.sender_name,"
+                "external_conversation_id=excluded.external_conversation_id,"
+                "workdir=excluded.workdir,binding_id=excluded.binding_id,last_seen=excluded.last_seen",
+                (
+                    key,
+                    str(uuid.uuid4()),
+                    channel,
+                    message["sender"],
+                    name,
+                    message["conversation"],
+                    workdir,
+                    connection["conversation_id"] if connection else None,
+                    time.time(),
+                ),
             )
             row = db.execute(
                 "SELECT conversation_id FROM connections WHERE id=?", (channel,)
@@ -267,7 +348,20 @@ class Store(Connections):
             if group:
                 if group["workdir"] != workdir:
                     raise ValueError("共享对话的工作目录不一致")
-                db.execute("UPDATE routes SET thread=? WHERE key=?", (group["thread"], key))
+                thread = group["thread"]
+                if connection["config"].get("session_mode", "independent") == "independent":
+                    name = message.get("name") or message["sender"]
+                    name = name[:80] if isinstance(name, str) else message["sender"][:80]
+                    db.execute(
+                        "INSERT INTO user_sessions(binding,sender,name,thread) VALUES(?,?,?,?) "
+                        "ON CONFLICT(binding,sender) DO UPDATE SET name=excluded.name",
+                        (connection["conversation_id"], message["sender"], name, str(uuid.uuid4())),
+                    )
+                    thread = db.execute(
+                        "SELECT thread FROM user_sessions WHERE binding=? AND sender=?",
+                        (connection["conversation_id"], message["sender"]),
+                    ).fetchone()[0]
+                db.execute("UPDATE routes SET thread=? WHERE key=?", (thread, key))
             thread = db.execute("SELECT thread FROM routes WHERE key=?", (key,)).fetchone()[0]
             db.execute(
                 "INSERT INTO receipts VALUES(?,?,?,?,?,?,?)",

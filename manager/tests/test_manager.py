@@ -2207,3 +2207,18 @@ def test_windows_reserved_names_rejected_before_filesystem_write(store, monkeypa
         store.custom_tool_path(name)
     with pytest.raises(ValueError, match="Windows"):
         store.mutate_file({"kind": "knowledge", "action": "create", "name": name, "content": "test"})
+
+
+def test_provider_model_default_does_not_change_default_provider(store):
+    current = config(store)
+    current['providers']['other'] = {'models': {'first': {}, 'preferred': {}}}
+    store.config.write_text(json.dumps(current))
+    change(store, kind='models', action='default', provider='other', id='preferred')
+    assert config(store)['default'] == {'provider': 'local', 'model': 'model-a'}
+    assert config(store)['providers']['other']['default_model'] == 'preferred'
+    assert next(p for p in store.snapshot()['providers'] if p['id'] == 'other')['default_model'] == 'preferred'
+    change(store, kind='providers', action='default', id='other')
+    assert config(store)['default'] == {'provider': 'other', 'model': 'preferred'}
+    change(store, kind='providers', action='default', id='local')
+    change(store, kind='providers', action='default', id='other')
+    assert config(store)['default']['model'] == 'preferred'

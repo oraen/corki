@@ -386,6 +386,9 @@ def test_failed_answer_labels_survive_paging_reset_and_legacy_upgrade(tmp_path):
     async def scenario():
         h = Host(tmp_path, online=False)
         identity = h.store.connections(definition(h.store))[0]["id"]
+        h.store.save_connection(
+            {"id": identity, "name": "Reader", "values": {"session_mode": "shared"}}
+        )
         thread = next(
             g["thread"]
             for g in h.store.conversation_list()

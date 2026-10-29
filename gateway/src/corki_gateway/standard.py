@@ -57,6 +57,19 @@ def define(store, data):
         for key in ("pull_url", "reply_url")
     }
     parameters = sorted(set(PARAMETER.findall(" ".join(urls.values())))) if not disabled else []
+    if set(parameters) & {
+        "workdir",
+        "session_mode",
+        "agent_provider",
+        "agent_model",
+        "session_validation",
+        "validation_first_reply",
+        "validation_approved_reply",
+        "validation_disabled_reply",
+        "http_retry_count",
+        "http_disable_parameters",
+    }:
+        raise ValueError("参数名与接入配置保留字段重复")
     if len(parameters) > 24:
         raise ValueError("最多支持 24 个参数")
     retries = data.get("retry_count", 3)

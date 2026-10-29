@@ -44,7 +44,7 @@ export interface Model {
 export interface Catalog {
   valid: boolean;
   error?: string;
-  providers: { id: string; models: Model[] }[];
+  providers: { id: string; defaultModel?: string; models: Model[] }[];
   default?: { provider: string; model: string; reasoning: string | null };
   permissions?: string;
 }

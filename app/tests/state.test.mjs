@@ -643,3 +643,18 @@ test("network retry warning remains distinct from silent I/O", () => {
   assert.equal(s.modelWarning, true);
   assert.equal(s.modelWarningReason, "connection");
 });
+
+test("reply wall duration survives terminal events and snapshots", () => {
+  const source = emptyConversation();
+  source.messages = [{ id: 'answer', turnId: 't', role: 'assistant', content: 'Partial', streaming: true }];
+  for (const type of ['TurnCompleted', 'TurnCancelled', 'TurnFailed']) {
+    const result = reduceEvent(source, event(type, {
+      turn_id: 't', replyElapsedSeconds: 9193, replyFinishedAt: '2026-10-29 10:06:00', error: '模型调用失败',
+    }));
+    assert.equal(result.messages.find(m => m.id === 'answer').replyElapsedSeconds, 9193);
+    assert.equal(result.messages.find(m => m.id === 'answer').createdAt, '2026-10-29 10:06:00');
+  }
+  const restored = conversationFromSnapshot({threadId:'test', running:false,
+    messages:[{...source.messages[0], streaming:false, replyElapsedSeconds:9193}], pending:[], live:[]});
+  assert.equal(restored.messages[0].replyElapsedSeconds,9193);
+});

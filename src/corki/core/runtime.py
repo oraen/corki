@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from langgraph import errors as graph_errors
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from corki.code_mode.service import CodeModeService
 from corki.code_mode.tools import CodeModeExecTool, CodeModeWaitTool
@@ -35,8 +34,8 @@ from corki.context.user_instructions import (
     Instructions,
     UserInstructionsProvider,
 )
-from corki.core.checkpoint import checkpoint_serializer
 from corki.core.checkpoint_lifecycle import close_checkpoint, setup_checkpoint
+from corki.core.checkpoint_store import CompactSqliteSaver as AsyncSqliteSaver
 from corki.core.construction import create_owned, rollback_registry, synchronous_rollback
 from corki.core.graph import CorkiGraph, EventSink, GraphRunContext
 from corki.core.model_settings import (
@@ -2726,8 +2725,6 @@ class LangGraphRuntime:
             checkpointer = await checkpoint_context.__aenter__()
             if self._ephemeral:
                 await checkpointer.conn.execute("PRAGMA temp_store=MEMORY")
-            checkpointer.serde = checkpoint_serializer()
-            checkpointer.jsonplus_serde = checkpointer.serde
             await setup_checkpoint(checkpointer)
             if self._closed or initializing.cancelling():
                 raise asyncio.CancelledError

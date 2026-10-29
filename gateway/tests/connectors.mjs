@@ -344,3 +344,30 @@ test("DingTalk SDK swallowed connection failures are not marked online", async (
   try { await assert.rejects(adapter.start(), /not connected/); }
   finally { await adapter.close(); }
 });
+
+test("DingTalk captures HTTP details before SDK swallows failure", async () => {
+  const {create}=await import('../connectors/dingtalk.mjs');
+  class Client {
+    config={};connected=false;
+    registerCallbackListener(){}
+    async getEndpoint(){const error=new Error('Request failed');error.response={status:403,data:'blocked fixture-secret'};throw error;}
+    async connect(){try{await this.getEndpoint();}catch{}}
+    disconnect(){}
+  }
+  const adapter=await create({config:{client_id:'fixture-app',client_secret:'fixture-secret'},
+    require:()=>({DWClient:Client,TOPIC_ROBOT:'robot'}),incoming:async()=>{}});
+  const write=process.stdout.write, events=[];
+  process.stdout.write=function(chunk,...args){
+    try{events.push(JSON.parse(String(chunk)));}catch{}
+    return write.call(this,chunk,...args);
+  };
+  try{
+    await assert.rejects(adapter.start(),/not connected/);
+    const detail=events.find(e=>e.params?.detail)?.params.detail;
+    assert.equal(detail.status,403);
+    assert.equal(detail.url,'https://api.dingtalk.com/v1.0/gateway/connections/open');
+    assert.equal(detail.response,'blocked [已隐藏]');
+    assert.equal(detail.stage,'获取钉钉连接地址');
+  }
+  finally{process.stdout.write=write;await adapter.close();}
+});

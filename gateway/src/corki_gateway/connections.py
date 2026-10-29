@@ -23,6 +23,10 @@ class Connections:
                 CREATE TABLE IF NOT EXISTS conversations(
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, workdir TEXT NOT NULL,
                     thread TEXT NOT NULL UNIQUE);
+                CREATE TABLE IF NOT EXISTS user_sessions(
+                    binding TEXT NOT NULL, sender TEXT NOT NULL, name TEXT NOT NULL,
+                    thread TEXT NOT NULL UNIQUE, PRIMARY KEY(binding,sender));
+                CREATE INDEX IF NOT EXISTS user_sessions_binding ON user_sessions(binding);
             """)
             db.execute("BEGIN IMMEDIATE")
             if db.execute("SELECT 1 FROM gateway_meta WHERE key='connections-v1'").fetchone():
@@ -48,7 +52,7 @@ class Connections:
                             row["id"],
                             row["id"],
                             manifest["name"],
-                            row["config"],
+                            json.dumps({"session_mode": "shared", **json.loads(row["config"])}),
                             row["enabled"],
                             row["account"],
                             row["id"],
@@ -91,9 +95,90 @@ class Connections:
         self.ensure_conversations()
         return self.connection(identity)
 
+    def migrate_session_modes(self):
+        # Existing shared histories stay shared; new connections default to isolated.
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM gateway_meta WHERE key='session-modes-v1'").fetchone():
+                return
+            for row in db.execute("SELECT id,config FROM connections").fetchall():
+                config = json.loads(row["config"])
+                config.setdefault("session_mode", "shared")
+                db.execute(
+                    "UPDATE connections SET config=? WHERE id=?", (json.dumps(config), row["id"])
+                )
+            db.execute("INSERT INTO gateway_meta VALUES('session-modes-v1','1')")
+
+    def sessions_page(self, row, before=None):
+        if before is not None and (type(before) is not int or before < 1):
+            raise ValueError("会话列表游标无效")
+        with self.db() as db:
+            if row["config"].get("session_mode", "independent") == "shared":
+                group = db.execute(
+                    "SELECT thread FROM conversations WHERE id=?", (row["conversation_id"],)
+                ).fetchone()
+                return [{"thread": group[0], "name": "默认"}], None
+            rows = db.execute(
+                "SELECT rowid,thread,name,sender FROM user_sessions WHERE binding=? "
+                + ("AND rowid<? " if before else "")
+                + "ORDER BY rowid DESC LIMIT 101",
+                (row["conversation_id"], before) if before else (row["conversation_id"],),
+            ).fetchall()
+            return [dict(r) for r in rows[:100]], rows[99]["rowid"] if len(rows) > 100 else None
+
+    def session_thread(self, row, requested=None, sessions=None):
+        if requested is not None and (
+            not isinstance(requested, str) or not 1 <= len(requested) <= 100
+        ):
+            raise ValueError("会话标识无效")
+        if sessions is None:
+            sessions, _ = self.sessions_page(row)
+        if requested is None:
+            return sessions[0]["thread"] if sessions else None
+        with self.db() as db:
+            shared = db.execute(
+                "SELECT thread FROM conversations WHERE id=?", (row["conversation_id"],)
+            ).fetchone()[0]
+            own = db.execute(
+                "SELECT 1 FROM user_sessions WHERE binding=? AND thread=?",
+                (row["conversation_id"], requested),
+            ).fetchone()
+        if requested != shared and not own:
+            raise ValueError("会话不属于此接入或已重置")
+        if row["config"].get("session_mode", "independent") == "shared":
+            return shared
+        return requested if own else (sessions[0]["thread"] if sessions else None)
+
     def conversation_list(self):
         with self.db() as db:
             return [dict(r) for r in db.execute("SELECT * FROM conversations ORDER BY rowid")]
+
+    def execution_config(self, row, config):
+        result = {
+            k: v
+            for k, v in config.items()
+            if v
+            and k
+            not in (
+                "session_mode",
+                "agent_provider",
+                "agent_model",
+                "session_validation",
+                "validation_first_reply",
+                "validation_approved_reply",
+                "validation_disabled_reply",
+            )
+        }
+        result["workdir"] = str(
+            Path(config.get("workdir") or self.home / "main/default").expanduser().resolve()
+        )
+        for field in row["manifest"].get("fields", []):
+            if field.get("options"):
+                result.setdefault(field["key"], field["options"][0])
+        if row["manifest"].get("transport") == "standard-http":
+            result.setdefault("http_disable_parameters", "false")
+            result.setdefault("http_retry_count", str(row["manifest"]["retry_count"]))
+        return result
 
     def save_connection(self, data, *, validate_only=False):
         identity = data.get("id")
@@ -120,12 +205,11 @@ class Connections:
         )
         if old and old_workdir != workdir and data.get("confirm_reset") is not True:
             raise ValueError("修改工作目录会重置当前会话，请确认后保存")
-        changed = old and any(
-            config.get(k, "false" if k == "http_disable_parameters" else None)
-            != old["config"].get(k, "false" if k == "http_disable_parameters" else None)
-            for k in config.keys() | old["config"].keys()
-            if k not in ("workdir", "http_retry_count")
-        )
+        new_options = self.execution_config(row, config)
+        old_options = self.execution_config(row, old["config"]) if old else {}
+        changed = old and {
+            k: v for k, v in new_options.items() if k not in ("workdir", "http_retry_count")
+        } != {k: v for k, v in old_options.items() if k not in ("workdir", "http_retry_count")}
         binding = old["conversation_id"] if old else ""
         new_group = not binding or old_workdir != workdir or changed
         if new_group:
@@ -146,7 +230,15 @@ class Connections:
                     (binding, name, workdir, str(uuid.uuid4())),
                 )
             if changed:
-                for table in ("peers", "routes", "receipts", "cursors"):
+                for table in (
+                    "peers",
+                    "routes",
+                    "receipts",
+                    "cursors",
+                    "access_requests",
+                    "access_delivery",
+                    "access_notice_queue",
+                ):
                     db.execute(f"DELETE FROM {table} WHERE channel=?", (identity,))
             db.execute(
                 "INSERT INTO connections(id,type_id,name,config,state_key,conversation_id) "
@@ -162,7 +254,15 @@ class Connections:
 
     def remove_connection(self, identity):
         with self.db() as db:
-            for table in ("peers", "routes", "receipts", "cursors"):
+            for table in (
+                "peers",
+                "routes",
+                "receipts",
+                "cursors",
+                "access_requests",
+                "access_delivery",
+                "access_notice_queue",
+            ):
                 db.execute(f"DELETE FROM {table} WHERE channel=?", (identity,))
             db.execute("DELETE FROM connections WHERE id=?", (identity,))
 

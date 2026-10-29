@@ -37,7 +37,7 @@ def test_secrets_blank_preserve_and_account_isolation(tmp_path):
     assert store.admit("telegram", message("two"), str(tmp_path / "main/default")) == thread
     assert (
         store.admit("telegram", message("three", "different"), str(tmp_path / "main/default"))
-        == thread
+        != thread
     )
     store.account("telegram", "bot2")
     assert store.admit("telegram", message(), str(tmp_path / "main/default")) != thread
@@ -208,3 +208,26 @@ def test_approval_routes_to_owned_runtime_and_rejects_stale(tmp_path):
     }
     host.respond({"request_id": "two", "response": {"answers": {}}})
     assert calls[-1][0] == "input"
+
+
+def test_reveal_only_requested_secret_and_keep_it_out_of_snapshot(tmp_path):
+    from corki_gateway.control import control
+    from corki_gateway.store import Store
+
+    store = Store(tmp_path)
+    identity = store.save_connection(
+        {
+            "channel": "dingtalk",
+            "name": "Reveal fixture",
+            "values": {"client_id": "fixture-client", "client_secret": "fixture-private-value"},
+        }
+    )
+    assert "fixture-private-value" not in str(store.snapshot())
+    result = control(
+        tmp_path, {"action": "reveal-secret", "id": identity, "field": "client_secret"}
+    )
+    assert result == {"value": "fixture-private-value"}
+    import pytest
+
+    with pytest.raises(ValueError, match="密钥字段不存在"):
+        control(tmp_path, {"action": "reveal-secret", "id": identity, "field": "client_id"})

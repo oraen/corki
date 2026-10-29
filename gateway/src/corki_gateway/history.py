@@ -16,8 +16,12 @@ def history(store, identity, params, live):
     row = store.connection(identity)
     if not row:
         raise ValueError("接入不存在")
-    group = next(g for g in store.conversation_list() if g["id"] == row["conversation_id"])
-    thread = group["thread"]
+    sessions, sessions_before = store.sessions_page(row, params.get("sessions_before"))
+    thread = store.session_thread(row, params.get("session"), sessions)
+    mode = row["config"].get("session_mode", "independent")
+    session_info = {"sessions": sessions, "sessions_before": sessions_before, "mode": mode}
+    if thread is None:
+        return {**session_info, "thread": None, "messages": [], "before": None, "active": False}
     before = params.get("before")
     if before is not None and (type(before) is not int or not 0 <= before < 2**63):
         raise ValueError("历史游标无效")
@@ -55,7 +59,35 @@ def history(store, identity, params, live):
                 if before is not None
                 else None
             )
-        for item in HistoryProjection(page.leading_replacements).feed(page.items):
+        visible = HistoryProjection(page.leading_replacements).feed(page.items)
+        turn_ids = {str(item.turn_id) for item in visible if isinstance(item, AssistantMessageItem)}
+        turns = {}
+        if turn_ids:
+            with connect() as connection:
+                turns = {
+                    r["id"]: r
+                    for r in connection.execute(
+                        "SELECT t.id,t.status,(SELECT i.id FROM conversation_items i "
+                        "WHERE i.thread_id=t.thread_id AND i.turn_id=t.id "
+                        "AND i.kind='assistant_message' AND t.status='completed' "
+                        "AND json_extract(i.payload_json,'$.content')=t.final_answer "
+                        "ORDER BY i.sequence DESC LIMIT 1) AS answer_id "
+                        "FROM turns t WHERE t.thread_id=? AND t.id IN ("
+                        + ",".join("?" for _ in turn_ids)
+                        + ")",
+                        (thread, *turn_ids),
+                    )
+                }
+        for item in visible:
+            if isinstance(item, AssistantMessageItem):
+                turn = turns.get(str(item.turn_id))
+                if turn is not None:
+                    if turn["status"] != "completed" or str(item.id) != turn["answer_id"]:
+                        continue
+                elif item.phase == "commentary":
+                    # Legacy imports may have no turn metadata.
+                    continue
+
             if isinstance(item, (UserMessageItem, AssistantMessageItem)):
                 content = item.content or "\n".join(
                     getattr(p, "text", "") for p in getattr(item, "content_items", ())
@@ -68,9 +100,6 @@ def history(store, identity, params, live):
                         "created_at": item.created_at,
                     }
                 )
-    active = live.get(thread, {}) if before is None else {}
-    known = {m["id"] for m in messages}
-    messages.extend(dict(m) for key, m in active.items() if key not in known)
     failed = store.http_queue.failed_answers(
         identity, thread, [m["id"] for m in messages if m["role"] == "assistant"]
     )
@@ -88,7 +117,13 @@ def history(store, identity, params, live):
             }
         )
     messages.sort(key=lambda m: m["created_at"])
-    return {"thread": thread, "messages": messages, "before": cursor, "active": thread in live}
+    return {
+        **session_info,
+        "thread": thread,
+        "messages": messages,
+        "before": cursor,
+        "active": thread in live,
+    }
 
 
 def bind_legacy_failures(store, channel, rows):

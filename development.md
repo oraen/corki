@@ -1922,3 +1922,53 @@ API、审批/sandbox 和多 Agent 尚未进入本阶段。新增其中任何能�
 
 examples 不是替代测试的脚本。它们的 stdout 是稳定 JSON，`tests/e2e/test_examples.py` 会逐个
 作为独立进程执行；任何 demo 发现的 bug 还必须在更小的 unit/integration 层留下回归测试。
+
+### 19.2 Checkpoint 存储与恢复边界
+
+参考本地 Codex 源码快照 `bb64b894fd`：
+
+- `codex-rs/rollout/src/recorder.rs` 的 `record_canonical_items` / `RolloutWriterState`
+  追加新增的 durable items；写失败保留未写入后缀，恢复后重试。
+- `codex-rs/rollout/src/policy.rs` 保留消息、推理项、调用、结果、回合上下文及压缩标记；
+  流式 delta 和部分瞬态事件不作为持久历史。Paginated 模式的命令/MCP 展示结果可限长至
+  64 KiB，这不是对所有模型原始工具结果统一限长。
+- `codex-rs/core/src/session/rollout_reconstruction.rs` 从追加记录和最新可用的压缩边界重建历史，
+  还要处理 rollback、上下文基线与回合归属；不是保存每个执行节点的完整模型请求。
+
+Corki 的 canonical conversation、模型完成事实、工具收据和 UI 历史仍保存在 `corki.db`。
+LangGraph 的恢复信息还用于审批、失败重试、补充输入和异步 Hook 投影，不能直接按 Codex
+的事件过滤清单删减 `CorkiState`。`CompactSqliteSaver` 只改变物理表示，保留所有 checkpoint ID：
+
+| 内容 | 使用方与保留原因 | 存储方式 |
+| --- | --- | --- |
+| `request_items` | 下次模型请求、压缩、崩溃恢复；可能有媒体投影、临时或合成条目，不能仅按 canonical item ID 重新查库 | 每个实际序列化条目按内容哈希存一次，快照保存有序引用 |
+| `request_tools` / `dispatch_tools` | 当前 Step 准入的工具定义及分派权限；恢复不能换成今天的新目录 | 同上，完整保留 schema、权限和命名空间信息 |
+| 两份 instructions / tool inventory | 回合准入基线校验及恢复；不能删去其中一份来省空间 | 相同内容复用不可变对象 |
+| `last_model_items` / `streamed_tool_results` / pending input | 部分模型结果、已执行工具和追加输入的恢复边界 | 条目引用；不丢弃结果、错误或媒体 |
+| channel versions / versions seen / parent ID / pending writes | LangGraph 的调度与任务去重，Hook 投影还绑定具体 checkpoint ID | 保留原值，pending write 的 IGNORE/REPLACE 语义与上游一致 |
+| UI 展示文本和原始工具结果 | 展示与模型可见投影可能不同，不能推定二者可互相代替 | 不限长、不删除；对象内无损压缩 |
+
+`checkpoint_objects` 按 `(thread_id, checkpoint_ns, digest)` 隔离，哈希覆盖实际序列化类型与内容，
+不只信任消息 ID。相同消息 ID 的内容改变后会生成新对象。对象和快照/中间写入在同一个
+SQLite 事务提交；缺失、损坏或未知编码拒绝恢复，不能默默丢上下文后重跑工具。
+读取快照、中间写入和引用对象使用同一 SQLite 读取事务，避免其他进程删除会话时读到半份状态。
+压缩字节缓存最多 4 MiB / 4096 项；不缓存共享的可变反序列化对象，避免字段之间产生别名。
+新列举和恢复接口支持原有 msgpack/json 记录与新引用格式混用。会话物理删除也清理对象表。
+
+这不是自动删除旧快照的保留策略。保留所有 ID 避免破坏旧 checkpoint 读取与恢复投影；
+完整历史仅在物理层去重，继续运行的新版本会减少新增空间。旧格式的存量不会自动重写。
+更新后须重启使用该 Python 环境的 Corki 进程；旧版本不认识新的引用编码，不能用于降级读取。
+
+需要整理存量时，可在停止 Corki 后创建精简副本：
+
+```sh
+python -m corki.storage.checkpoint_migrate \
+  --source ~/.corki/sessions/checkpoints.db \
+  --destination ~/.corki/sessions/checkpoints.compact.db
+```
+
+工具只读源库，不覆盖原文件，也拒绝覆盖目标文件。它保留全部 checkpoint、原始 metadata、
+parent/namespace、pending writes 的任务 ID/索引（包括无对应 checkpoint 的中间写入），
+并校验目标 SQLite 完整性。失败只清除本次创建的未完成副本。运行中的源库可获得一致读取快照，
+但快照开始后的写入不在副本里，因此不能把运行中生成的副本直接拿来替换正在使用的库。
+该命令不负责自动切换文件、停止进程或删除原始数据。

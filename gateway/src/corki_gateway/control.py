@@ -96,6 +96,25 @@ def control(home, data):
     action = data.get("action", "status")
     if action == "status":
         return status(home)
+    if action == "reveal-secret":
+        store = Store(home)
+        row = store.connection(data.get("id"))
+        key = data.get("field")
+        if not row or not any(
+            field.get("key") == key and field.get("secret")
+            for field in row["manifest"].get("fields", [])
+        ):
+            raise ValueError("密钥字段不存在")
+        return {"value": row["config"].get(key, "")}
+    if action == "application-message":
+        return Store(home).application_message(data.get("id"), data.get("sender"))
+    if action == "applications":
+        return Store(home).applications(
+            data.get("id"),
+            data.get("before"),
+            name=data.get("name", ""),
+            status=data.get("status", ""),
+        )
     if action == "conversation":
         # Read-only polling must not contend with account edits or gateway lifecycle.
         try:

@@ -7,6 +7,7 @@ import { defaults, choices, formContent } from "./interactions";
 import type { Message } from "./state";
 export function Icon({ name, size = 20 }: { name: string; size?: number }) {
   const paths: Record<string, React.ReactNode> = {
+    robot: <><rect x="5" y="7" width="14" height="13" rx="4" /><path d="M12 3v4M2 11v5m20-5v5M9 16h6" /><circle cx="9" cy="12" r=".8" /><circle cx="15" cy="12" r=".8" /></>,
     model: (
       <>
         <rect x="4" y="4" width="16" height="16" rx="4" />
@@ -671,6 +672,7 @@ export const MessageRow = React.memo(function MessageRow({
             {formatMessageTime(message.createdAt) && (
               <time className="message-time" dateTime={message.createdAt} title="回复时间">
                 {formatMessageTime(message.createdAt)}
+                {message.replyElapsedSeconds != null && `（${formatElapsed(message.replyElapsedSeconds)}）`}
               </time>
             )}
           </div>

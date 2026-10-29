@@ -258,7 +258,8 @@ class Service:
                     )
                 if models:
                     providers.append(
-                        {"id": name, "models": sorted(models, key=lambda m: m["id"].casefold())}
+                        {"id": name, "defaultModel": settings.for_model(name, None).model,
+                         "models": sorted(models, key=lambda m: m["id"].casefold())}
                     )
             default = {
                 "provider": settings.provider_id,
@@ -286,6 +287,10 @@ class Service:
         limit = integer(p, "limit", 40, 100)
         titles = self.state.titles()
         directory = text(p, "directory") if "directory" in p else None
+        group = text(p, "group", default="normal")
+        if group not in ("normal", "robot"):
+            raise ValueError("Invalid session group")
+
         # URI support must be enabled on the main connection for ATTACH's
         # read-only file URI to work on Windows as well as macOS.
         with closing(sqlite3.connect(self.database.as_uri() + "?mode=rw", uri=True)) as db:
@@ -293,6 +298,9 @@ class Service:
             # Filter before pagination and grouping, without hiding or deleting history.
             visible = "archived_at IS NULL AND source != ? "
             parameters = (SessionSource.from_startup_arg("cron").storage_value,)
+            # Classify using host-owned provenance before pagination and grouping.
+            visible += "AND source " + ("= ? " if group == "robot" else "!= ? ")
+            parameters += (SessionSource.from_startup_arg("gateway").storage_value,)
             cron_database = self.home / "cron/cron.sqlite"
             if cron_database.is_file():
                 # Older workers did not record provenance. Their occurrence ID is
@@ -308,22 +316,33 @@ class Service:
                 + "ORDER BY updated_at DESC,id LIMIT ? OFFSET ?",
                 parameters + ((directory,) if directory is not None else ()) + (limit + 1, offset),
             ).fetchall()
+            robot_titles = {}
+            if group == "robot":
+                from robot_history import sender_titles
+
+                robot_titles = sender_titles(self.home, (row["id"] for row in rows[:limit]))
             result = []
             for row in rows[:limit]:
                 value = dict(row)
-                first = db.execute(
-                    "SELECT user_input FROM turns WHERE thread_id=? AND user_input!=? "
-                    "ORDER BY rowid LIMIT 1",
-                    (row["id"], ""),
-                ).fetchone()
-                value["title"] = titles.get(row["id"]) or (
-                    display_user_text(first[0]).strip().split("\n")[0][:60] if first else "新会话"
-                )
+                if group == "robot":
+                    value["title"] = (
+                        titles.get(row["id"]) or robot_titles.get(row["id"]) or "机器人会话"
+                    )
+                else:
+                    first = db.execute(
+                        "SELECT user_input FROM turns WHERE thread_id=? AND user_input!=? "
+                        "ORDER BY rowid LIMIT 1",
+                        (row["id"], ""),
+                    ).fetchone()
+                    value["title"] = titles.get(row["id"]) or (
+                        display_user_text(first[0]).strip().split("\n")[0][:60]
+                        if first else "新会话"
+                    )
                 value["running"] = row["id"] in self.tasks
                 result.append(value)
             directories = (
                 []
-                if directory is not None
+                if directory is not None or group == "robot"
                 else [
                     {"path": row[0], "name": Path(row[0]).name or row[0]}
                     for row in db.execute(
@@ -486,6 +505,15 @@ class Service:
                     "role": "stopped", "content": "回答已停止",
                 })
             rows[index:index] = additions
+        reply_timings = await asyncio.to_thread(
+            self.state.reply_timings, self.database, thread, {row["turnId"] for row in rows}
+        )
+        for row in rows:
+            if row["role"] == "assistant":
+                timing = reply_timings.get(row["turnId"], {})
+                row.update(timing)
+                if timing:
+                    row["createdAt"] = timing["replyFinishedAt"]
         model = await self.repository.load_thread_model_settings(ThreadId(thread))
         return {
             "threadId": thread,
@@ -868,6 +896,10 @@ class Service:
                             interrupted_messages(self.live[thread], str(event.turn_id)),
                         )
                     if kind in ("TurnCompleted", "TurnCancelled", "TurnFailed"):
+                        timing = await asyncio.to_thread(
+                            self.state.reply_timings, self.database, thread, {str(event.turn_id)}
+                        )
+                        data.update(timing.get(str(event.turn_id), {}))
                         terminal = True
                         self.followups.settle(thread, getattr(event, "unsubmitted_inputs", ()))
                         data.pop("unsubmitted_inputs", None)

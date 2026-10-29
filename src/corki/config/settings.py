@@ -773,14 +773,15 @@ class CorkiSettings:
             sorted(choices, key=lambda pair: (pair[0].casefold(), pair[1].casefold(), pair))
         )
 
-    def for_model(self, provider: str, model: str) -> CorkiSettings:
+    def for_model(self, provider: str, model: str | None) -> CorkiSettings:
         """Resolve only model resources from the admitted config; keep runtime policy."""
         identity = self.provider_id or self.provider_name or "default"
         if self._provider_document is None:
             if provider != identity:
                 raise ValueError("Provider is not configured")
-            return replace(self, model=model, _admitted_model_info=None)
+            return replace(self, model=model or self.model, _admitted_model_info=None)
         document = resolve_model_document(json.loads(self._provider_document), provider, model)
+        model = document["agent"]["model"]
         selected, profile = select_provider(document, provider)
         changes = provider_settings(
             selected, profile, CorkiSettings(self.working_directory, execution_permissions=None)

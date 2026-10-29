@@ -34,7 +34,13 @@ def test_real_runtime_tools_and_history(tmp_path, monkeypatch):
         "features": {"goals": False},
     }
     (tmp_path / "settings.json").write_text(json.dumps(config))
-    requests = []
+    config["providers"]["chosen"] = {
+        **config["providers"]["fixture"],
+        "models": {"custom-model": {"context_window": 131072}},
+    }
+    (tmp_path / "settings.json").write_text(json.dumps(config))
+    settings_before = (tmp_path / "settings.json").read_bytes()
+    requests, selected_models = [], []
 
     class Model:
         calls = 0
@@ -69,6 +75,7 @@ def test_real_runtime_tools_and_history(tmp_path, monkeypatch):
     factory = LangGraphRuntime.acreate
 
     async def create(**kwargs):
+        selected_models.append((kwargs["settings"].provider_id, kwargs["settings"].model))
         return await factory(**kwargs, model=Model(), compatibility_home=tmp_path)
 
     monkeypatch.setattr(LangGraphRuntime, "acreate", create)
@@ -86,7 +93,9 @@ def test_real_runtime_tools_and_history(tmp_path, monkeypatch):
         )
         texts = [i.content for i in requests[-1].items if isinstance(i, UserMessageItem)]
         assert "First question" in texts and "Second question" in texts
-        identity = host.store.save_connection({"channel": "wechat", "name": "Reader", "values": {}})
+        identity = host.store.save_connection(
+            {"channel": "wechat", "name": "Reader", "values": {"session_mode": "shared"}}
+        )
         with host.store.db() as db:
             db.execute(
                 "UPDATE conversations SET thread=? WHERE id=?",
@@ -128,6 +137,21 @@ def test_real_runtime_tools_and_history(tmp_path, monkeypatch):
             )
         with pytest.raises(ValueError, match="不存在"):
             await host.change({"action": "conversation", "id": "unknown"})
+        assert selected_models == [("fixture", "fixture"), ("fixture", "fixture")]
+        binding = host.store.connection(identity)["conversation_id"]
+        await host.change({"action": "save-connection", "id": identity, "name": "Reader",
+                           "values": {"agent_provider": "chosen", "agent_model": "custom-model"}})
+        assert host.store.connection(identity)["conversation_id"] == binding
+        await host.runner("model-thread", "Selected model question", str(tmp_path), identity)
+        assert selected_models[-1] == ("chosen", "custom-model")
+        await host.change({"action": "save-connection", "id": identity, "name": "Reader",
+                           "values": {"agent_provider": "", "agent_model": ""}})
+        await host.runner("model-thread", "Global model question", str(tmp_path), identity)
+        assert selected_models[-1] == ("fixture", "fixture")
+        assert "Selected model question" in [
+            i.content for i in requests[-1].items if isinstance(i, UserMessageItem)
+        ]
+        assert (tmp_path / "settings.json").read_bytes() == settings_before
         assert not host.runtimes
         await host.close()
 

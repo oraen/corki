@@ -91,62 +91,71 @@ def provider_settings(provider_id, provider_values, defaults):
     )
 
 
+def provider_default_model(document, identity, profile=None):
+    """Provider-local default, legacy global selection, then declaration order."""
+    if profile is None:
+        _, profile = select_provider(document, identity)
+    models = profile.get("models", {})
+    if not isinstance(models, dict) or not models:
+        return None
+    if "default_model" in profile:
+        preferred = profile["default_model"]
+    else:
+        legacy = document.get("default", {})
+        preferred = (
+            legacy.get("model")
+            if legacy.get("provider") in (identity, *profile.get("aliases", []))
+            else None
+        )
+    return preferred if preferred in models else next(iter(models))
+
+
 def effective_default(document):
-    """Resolve missing/unavailable defaults in declaration order, without writing."""
+    """Choose an enabled provider and its own default, without writing config."""
     default = document.get("default", {})
     if not isinstance(default, dict):
         raise ValueError("default must be an object with provider and model")
-    if any(key in default and (not isinstance(default[key], str) or not default[key].strip())
-           for key in ("provider", "model")):
-        return dict(default)  # Preserve structural errors for the validator.
+    if any(
+        key in default and (not isinstance(default[key], str) or not default[key].strip())
+        for key in ("provider", "model")
+    ):
+        return dict(default)
     profiles = document.get("providers", {})
     if not isinstance(profiles, dict) or not profiles:
         return dict(default)
-    if "provider" in default:
-        identity = default["provider"]
-        if not isinstance(identity, str) or not identity.strip():
-            return dict(default)  # Preserve structural errors for the validator.
-        selected = profiles.get(identity)
-        if selected is None:
-            selected = next((profile for profile in profiles.values()
-                if isinstance(profile, dict) and identity in profile.get("aliases", [])), None)
-        if isinstance(selected, dict) and selected.get("enabled", True):
-            models = selected.get("models", {})
-            if isinstance(models, dict) and models and "model" not in default:
-                return {**default, "model": next(iter(models))}
-            if not isinstance(default.get("model"), str) or not default["model"].strip():
-                return dict(default)
-            if not models or default.get("model") in models:
-                return dict(default)
-        fallback = next(((name, profile) for name, profile in profiles.items()
-            if isinstance(profile, dict) and profile.get("enabled", True)
-            and isinstance(profile.get("models"), dict) and profile["models"]), None)
-        if fallback is None:
-            return dict(default)
-        name, profile = fallback
-        return {**default, "provider": name, "model": next(iter(profile["models"]))}
     candidates = [
-        (name, profile) for name, profile in profiles.items() if isinstance(profile, dict)
+        (name, p)
+        for name, p in profiles.items()
+        if isinstance(p, dict)
+        and p.get("enabled", True)
+        and isinstance(p.get("models"), dict)
+        and p["models"]
     ]
     if not candidates:
+        # Keep a configured disabled profile visible to validation/model creation;
+        # never fall through to an implicit enabled transport when all are off.
+        closed = next(
+            ((name, p) for name, p in profiles.items() if isinstance(p, dict) and p.get("models")),
+            None,
+        )
+        if closed:
+            name, profile = closed
+            return {
+                **default,
+                "provider": name,
+                "model": provider_default_model(document, name, profile),
+            }
         return dict(default)
-    # Prefer enabled entries. Retain a disabled identity when all are off so the
-    # configuration remains editable; model construction still rejects it.
+    preferred = default.get("provider")
     name, profile = next(
-        ((name, profile) for name, profile in candidates if profile.get("enabled", True)),
+        (
+            (name, p)
+            for name, p in candidates
+            if preferred == name or preferred in p.get("aliases", [])
+        ),
         candidates[0],
     )
-    models = profile.get("models", {})
-    if "model" in default:
-        model = default["model"]
-    elif isinstance(models, dict) and models:
-        model = next(iter(models))
-    else:
-        agent = document.get("agent", {})
-        if not isinstance(agent, dict):
-            raise ValueError("agent must be an object")
-        model = agent.get("model", "gpt-5")
-    return {**default, "provider": name, "model": model}
+    return {**default, "provider": name, "model": provider_default_model(document, name, profile)}
 
 
 def resolve_model_document(document, provider=None, model=None):
@@ -181,6 +190,10 @@ def resolve_model_document(document, provider=None, model=None):
             raise ValueError("provider names must be non-empty strings")
         if type(profile.get("enabled", True)) is not bool:
             raise ValueError("provider.enabled must be a boolean")
+        if "default_model" in profile and (
+            not isinstance(profile["default_model"], str) or not profile["default_model"].strip()
+        ):
+            raise ValueError("provider.default_model must be a non-empty string")
         aliases = profile.get("aliases", [])
         if not isinstance(aliases, list) or any(
             not isinstance(alias, str) or not alias.strip() for alias in aliases
@@ -212,7 +225,7 @@ def resolve_model_document(document, provider=None, model=None):
             if catalog is not None and model is not None and model not in catalog:
                 raise ValueError("default.model is not configured under default.provider")
         if model is None and catalog is not None:
-            model = next(iter(catalog))
+            model = provider_default_model(result, identity, profile)
     if model is None:
         model = result.get("agent", {}).get("model", "gpt-5")
     if not isinstance(model, str) or not model.strip():

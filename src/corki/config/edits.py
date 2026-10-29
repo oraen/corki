@@ -64,10 +64,18 @@ def save_model_default(path: Path, provider: str, model: str, effort: str | None
         if provider not in profiles and (provider != inline_identity or not inline and profiles):
             raise ValueError("Selected provider is no longer configured; default was not saved")
         profile = profiles.get(provider, {})
+        from corki.config.providers import effective_default
+
+        previous = effective_default(values)
+        prior = profiles.get(previous.get("provider"), {})
+        if prior.get("models") and "default_model" not in prior:
+            contents = document.set_value(contents,
+                ("providers", previous["provider"], "default_model"), previous["model"])
         contents = document.set_value(
             contents, ("default",), {"provider": provider, "model": model}
         )
         if "models" in profile:
+            contents = document.set_value(contents, ("providers", provider, "default_model"), model)
             contents = document.set_value(
                 contents, ("providers", provider, "models", model, "reasoning_effort"), effort
             )

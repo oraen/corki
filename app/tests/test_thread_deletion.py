@@ -53,7 +53,7 @@ def test_archive_then_physical_delete(tmp_path):
             with closing(sqlite3.connect(service.database)) as db:
                 turn = db.execute("SELECT id FROM turns WHERE thread_id=?", (thread,)).fetchone()[0]
             for file, tables in (
-                ("checkpoints.db", ("checkpoints", "writes")),
+                ("checkpoints.db", ("checkpoints", "writes", "checkpoint_objects")),
                 ("goals_1.sqlite", ("thread_goals", "goal_usage", "goal_deferrals")),
                 ("corki.history-notes.db", ("notes",)),
             ):
@@ -230,6 +230,107 @@ def test_scheduled_threads_hidden_before_paging_and_directory_grouping(tmp_path)
             assert cron.run(legacy)["status"] == "running"
             # New provenance still filters a run after cron history has been pruned.
             assert all(r["id"] != "new-cron" for r in first["threads"])
+        finally:
+            await service.close()
+
+    asyncio.run(check())
+
+
+def test_robot_threads_have_separate_paginated_section_and_no_workspace_duplicates(tmp_path):
+    from corki.protocol.session_source import SessionSource
+
+    async def check():
+        async def send(_):
+            pass
+
+        service = Service(tmp_path, send)
+        try:
+            common = tmp_path / "shared"
+            bot_only = tmp_path / "robot-only"
+            for index in range(42):
+                await service.repository.create_thread(
+                    ThreadId(f"robot-{index:02}"), common if index % 2 else bot_only,
+                    session_source=SessionSource.from_startup_arg("gateway"),
+                )
+            await service.repository.create_thread(ThreadId("manual"), common)
+            await service.repository.create_thread(
+                ThreadId("scheduled"), bot_only,
+                session_source=SessionSource.from_startup_arg("cron"),
+            )
+            with closing(sqlite3.connect(service.database)) as db, db:
+                db.execute("UPDATE threads SET updated_at='2100-01-01' WHERE id LIKE 'robot-%'")
+            recent = await service.list_threads({"limit": 1})
+            assert [t["id"] for t in recent["threads"]] == ["manual"]
+            assert recent["next"] is None
+            assert recent["directories"] == [{"path": str(common), "name": "shared"}]
+            workspace = await service.list_threads({"directory": str(common)})
+            assert [t["id"] for t in workspace["threads"]] == ["manual"]
+            assert not (await service.list_threads({"directory": str(bot_only)}))["threads"]
+            first = await service.list_threads({"group": "robot", "limit": 40})
+            assert len(first["threads"]) == 40 and first["next"] == 40
+            assert first["directories"] == []
+            tail = await service.list_threads({"group": "robot", "offset": first["next"]})
+            assert len(tail["threads"]) == 2 and tail["next"] is None
+            assert len({r["id"] for r in first["threads"] + tail["threads"]}) == 42
+            with closing(sqlite3.connect(service.database)) as db, db:
+                db.execute("UPDATE threads SET archived_at='2100-01-01' WHERE id='robot-00'")
+            remaining = await service.list_threads({"group": "robot", "limit": 100})
+            assert len(remaining["threads"]) == 41
+            with pytest.raises(ValueError, match="Invalid session group"):
+                await service.list_threads({"group": "unknown"})
+            # Grouping is a read-only projection; all core records remain untouched.
+            assert await service.repository.thread_exists(ThreadId("robot-00"))
+        finally:
+            await service.close()
+
+    asyncio.run(check())
+
+
+def test_robot_titles_use_existing_nickname_and_preserve_manual_names(tmp_path):
+    from robot_history import sender_titles
+
+    from corki.protocol.session_source import SessionSource
+
+    async def check():
+        async def send(_):
+            pass
+
+        service = Service(tmp_path, send)
+        try:
+            for identity in ("individual", "shared", "legacy-shared", "unnamed", "renamed"):
+                await service.repository.create_thread(
+                    ThreadId(identity), tmp_path,
+                    session_source=SessionSource.from_startup_arg("gateway"),
+                )
+            assert sender_titles(tmp_path, ["individual"]) == {}
+            gateway = tmp_path / "gateway/gateway.db"
+            gateway.parent.mkdir(exist_ok=True)
+            with closing(sqlite3.connect(gateway)) as db, db:
+                db.executescript("""
+                    CREATE TABLE user_sessions(thread TEXT UNIQUE,name TEXT);
+                    CREATE TABLE routes(thread TEXT,sender_name TEXT,
+                        last_seen REAL,binding_id TEXT);
+                    CREATE TABLE conversations(id TEXT,thread TEXT);
+                    INSERT INTO user_sessions VALUES('individual','小林'),('renamed','昵称');
+                    INSERT INTO routes VALUES('individual','旧昵称',1,NULL),
+                        ('shared','旧发送人',1,NULL),('shared','新发送人',2,'binding');
+                    INSERT INTO conversations VALUES('binding','legacy-shared');
+                """)
+            service.state.rename("renamed", "手动设置的名字")
+            page = await service.list_threads({"group": "robot"})
+            names = {row["id"]: row["title"] for row in page["threads"]}
+            assert names == {"individual": "小林", "shared": "新发送人",
+                             "unnamed": "机器人会话", "renamed": "手动设置的名字",
+                             "legacy-shared": "新发送人"}
+            # Existing session names update from current sender metadata, no new turn needed.
+            with closing(sqlite3.connect(gateway)) as db, db:
+                db.execute("UPDATE user_sessions SET name='最新昵称' WHERE thread='individual'")
+            refreshed = await service.list_threads({"group": "robot"})
+            individual = next(r for r in refreshed["threads"] if r["id"] == "individual")
+            assert individual["title"] == "最新昵称"
+            with closing(sqlite3.connect(gateway)) as db, db:
+                db.execute("DROP TABLE user_sessions")
+            assert sender_titles(tmp_path, ["shared"])["shared"] == "新发送人"
         finally:
             await service.close()
 

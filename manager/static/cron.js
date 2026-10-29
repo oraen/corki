@@ -141,7 +141,7 @@ window.CorkiCron = (() => {
    const options=names.map(name=>[name,name]);
    if(selected&&!names.includes(selected))options.unshift([selected,selected+'（已移除）']);
    if(!options.length)options.push(['','暂无模型']);
-   $('#cron-model-field').innerHTML=picker('model','运行模型',options,selected??names[0]??'');
+   $('#cron-model-field').innerHTML=picker('model','运行模型',options,selected??providers.find(p=>p.id===$('[name=provider]').value)?.default_model??names[0]??'');
    bindCustomSelect($('#cron-model-field .cron-select'));
   };
   modelPicker(model);

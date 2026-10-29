@@ -6,10 +6,11 @@ const choice = (...pairs) => pairs;
 export const manualSections = [
   {key:'default', title:'默认模型', fields:[
     field('default.provider','默认供应商','新会话默认使用的供应商名称；未指定时按配置顺序使用第一个已开启的供应商。','选择已经配置好连接的供应商'),
-    field('default.model','默认模型','新会话默认使用的模型名称，必须属于上面的供应商。','选择该供应商 models 中已配置的模型'),
+    field('default.model','默认模型（旧配置）','兼容旧配置；供应商配置了 default_model 时优先使用该字段。','选择该供应商 models 中已配置的模型'),
   ]},
   {key:'providers', title:'供应商与模型', fields:[
     field('providers.[供应商]','供应商配置','以自定义名称组织连接信息和模型目录。','每个供应商使用一个容易辨认的名称','对象'),
+    field('providers.[供应商].default_model','供应商默认模型','切换到该供应商时使用的模型；未配置或已失效时使用该供应商的第一个模型。','填写该供应商 models 中的模型名称'),
     field('providers.[供应商].base_url','接口地址','模型服务的 HTTP(S) 基础地址。','填写供应商提供的官方 API 地址'),
     field('providers.[供应商].api_key','API Key','调用该供应商接口时使用的密钥。','填写对应供应商的密钥；不要分享配置文件'),
     field('providers.[供应商].enabled','供应商启用状态','关闭后保留配置和模型，但不再供新任务使用。','true（默认）','布尔值'),

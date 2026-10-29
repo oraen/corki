@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from . import package_jobs
+from .access_notifier import AccessNotifier
 from .connector import Connector
 from .plugins import (
     cleanup_legacy_dependencies,
@@ -29,6 +30,9 @@ class Host:
         self.connector_factory = connector_factory
         self.connectors, self.monitors, self.tasks, self.statuses = {}, {}, {}, {}
         self.runtimes, self.interactions, self.locks = {}, {}, {}
+        self.task_senders = {}
+        self.access_revocations = set()
+        self.access_notifier = AccessNotifier(self)
         self.lock_users = {}
         self.live = {}
         self.slots = asyncio.Semaphore(4)
@@ -51,6 +55,7 @@ class Host:
         await asyncio.to_thread(migrate_dependencies, self.store)
         await asyncio.to_thread(cleanup_legacy_dependencies, self.store)
         self.store.recover()
+        self.store.recover_access_notices()
         if self.runner is None:
             from .agent import Agent
 
@@ -76,6 +81,7 @@ class Host:
             except Exception:
                 pass
             finally:
+                await self.access_notifier.stop(identity)
                 self.connectors.pop(identity, None)
                 await connector.close()
             if self.stopping or not (self.store.connection(identity) or {}).get("enabled"):
@@ -133,7 +139,29 @@ class Host:
                 detail["status"] = code
         if detail:
             item["detail"] = detail
+        activity = value.get("activity")
+        if isinstance(activity, dict) and activity.get("phase") in (
+            "received",
+            "accepted",
+            "ignored_group",
+            "ignored_type",
+        ):
+            item["activity"] = {
+                "time": time.time(),
+                "phase": activity["phase"],
+                "message_type": activity.get("message_type")
+                if activity.get("message_type")
+                in ("text", "richText", "picture", "file", "audio", "video")
+                else "other",
+                "conversation_type": activity.get("conversation_type")
+                if activity.get("conversation_type") in ("1", "2")
+                else "other",
+            }
+        elif "activity" in self.statuses.get(identity, {}):
+            item["activity"] = self.statuses[identity]["activity"]
         self.statuses[identity] = item
+        if value["state"] == "online":
+            self.access_notifier.schedule(identity)
 
     def snapshot(self):
         return {
@@ -170,6 +198,12 @@ class Host:
         # declare this explicitly; no group identity may be silently treated as DM.
         if message.get("kind") != "direct":
             raise ValueError("当前仅支持私聊文本消息")
+        allowed = self.store.allows_message(row, message)
+        if row["config"].get("session_validation") == "true":
+            self.access_notifier.schedule(channel)
+        if not allowed:
+            self.store.deny_message(channel, message)
+            return {"accepted": True, "access_denied": True}
         if len(self.tasks) >= 100:
             raise ValueError("网关繁忙，请稍后重试")
         workdir = row["config"].get("workdir") or str(self.store.home / "main/default")
@@ -180,9 +214,11 @@ class Host:
         key = (channel, message["id"])
         task = asyncio.create_task(self.execute(channel, message, thread, workdir))
         self.tasks[key] = task
+        self.task_senders[key] = message["sender"]
 
         def done(_):
             self.tasks.pop(key, None)
+            self.task_senders.pop(key, None)
 
         task.add_done_callback(done)
         return {"accepted": True, "thread": thread}
@@ -195,8 +231,13 @@ class Host:
         try:
             async with lock, self.slots:
                 # Revocation and channel stop take effect before the next Agent turn.
-                if not (self.store.connection(channel) or {}).get("enabled"):
+                current = self.store.connection(channel)
+                if not (current or {}).get("enabled"):
                     raise asyncio.CancelledError()
+                if not self.store.allows_message(current, message, remember=False):
+                    self.store.finish(channel, message["id"], "access_denied")
+                    self.access_notifier.schedule(channel)
+                    return
                 self.deliveries[thread] = delivery_context
                 self.store.finish(channel, message["id"], "running")
                 answer = await asyncio.wait_for(
@@ -222,8 +263,12 @@ class Host:
                     raise ValueError("渠道未确认投递成功，结果保留在 Corki 会话中")
                 self.store.finish(channel, message["id"], "completed")
         except asyncio.CancelledError:
+            revoked = (channel, message["id"]) in self.access_revocations
             self.store.finish(
-                channel, message["id"], "cancelled", "执行已停止，已完成的操作不会撤销"
+                channel,
+                message["id"],
+                "access_denied" if revoked else "cancelled",
+                "会话访问已禁用" if revoked else "执行已停止，已完成的操作不会撤销",
             )
         except TimeoutError:
             self.store.finish(
@@ -250,6 +295,7 @@ class Host:
             ):
                 await self.notify(thread, safe)
         finally:
+            self.access_revocations.discard((channel, message["id"]))
             if self.deliveries.get(thread) is delivery_context:
                 self.deliveries.pop(thread, None)
             # Queued users share the same lock until the final waiter completes.
@@ -270,6 +316,7 @@ class Host:
                 await connector.call("send", {"message": message, "text": text}, timeout=15)
 
     async def stop_channel(self, identity):
+        await self.access_notifier.stop(identity)
         keys = [key for key, task in self.tasks.items() if key[0] == identity and not task.done()]
         work = [self.tasks[key] for key in keys]
         monitor = self.monitors.pop(identity, None)
@@ -286,6 +333,15 @@ class Host:
 
     async def change(self, data):
         action, identity = data.get("action"), data.get("id")
+        if action == "application-message":
+            return self.store.application_message(identity, data.get("sender"))
+        if action == "applications":
+            return self.store.applications(
+                identity,
+                data.get("before"),
+                name=data.get("name", ""),
+                status=data.get("status", ""),
+            )
         if action == "conversation":
             from .history import history
 
@@ -293,7 +349,28 @@ class Host:
         async with self.mutation:
             self.changing.add(identity)
             try:
-                if action == "create-standard":
+                if action == "application-status":
+                    sender, status = data.get("sender"), data.get("status")
+                    self.store.set_application_status(identity, sender, status)
+                    if status == "disabled":
+                        keys = [
+                            key
+                            for key in self.tasks
+                            if key[0] == identity
+                            and self.task_senders.get(key) == sender
+                            and not self.tasks[key].done()
+                        ]
+                        tasks = [self.tasks[key] for key in keys]
+                        self.access_revocations.update(keys)
+                        for task in tasks:
+                            task.cancel()
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                        # A task cancelled before its coroutine starts has no finally block.
+                        for key in keys:
+                            self.store.finish(*key, "access_denied", "会话访问已禁用")
+                            self.access_revocations.discard(key)
+                    self.access_notifier.schedule(identity)
+                elif action == "create-standard":
                     define(self.store, data)
                 elif action == "skip-http-message":
                     row = self.store.connection(identity)
@@ -317,6 +394,14 @@ class Host:
                     # Validate before stopping a healthy connection; mutations are serialized.
                     if old:
                         self.store.save_connection(data, validate_only=True)
+                        updated = self.store.validated_config(old, data.get("values", {}))
+                        settings_only = self.store.execution_config(
+                            old, updated
+                        ) == self.store.execution_config(old, old["config"])
+                        if settings_only:
+                            self.store.save_connection(data)
+                            self.access_notifier.schedule(identity)
+                            return self.snapshot()
                         await self.stop_channel(identity)
                     try:
                         identity = self.store.save_connection(data)
@@ -401,7 +486,14 @@ class Host:
                                     identity,
                                 ),
                             )
-                            for table in ("peers", "routes", "receipts"):
+                            for table in (
+                                "peers",
+                                "routes",
+                                "receipts",
+                                "access_requests",
+                                "access_delivery",
+                                "access_notice_queue",
+                            ):
                                 db.execute(f"DELETE FROM {table} WHERE channel=?", (identity,))
                 elif action == "delete":
                     if identity in BUILTINS or not any(
@@ -450,6 +542,7 @@ class Host:
 
     async def close(self):
         self.stopping = True
+        await self.access_notifier.stop()
         for identity in list(self.monitors):
             await self.stop_channel(identity)
 
