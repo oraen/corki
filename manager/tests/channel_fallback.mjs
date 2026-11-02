@@ -1,0 +1,44 @@
+// Isolated manager fixture only; no real configuration or outbound messages.
+import assert from 'node:assert/strict';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import os from 'node:os';
+import path from 'node:path';
+const base=process.env.MANAGER_TEST_URL;assert(base);
+assert((await(await fetch(base+'/api/config')).json()).path.includes('corki-channel-message-qa-'));
+const run=promisify(execFile),session='channel-fallback-'+process.pid;
+const browser=(...args)=>run('agent-browser',['--session',session,...args],{maxBuffer:1024*1024});
+const value=async code=>JSON.parse((await browser('eval',code)).stdout.trim());
+const wait=async code=>{for(let i=0;i<60;i++){if(await value(`Boolean(${code})`))return;await new Promise(r=>setTimeout(r,100));}throw Error(code);};
+const click=async s=>{await value(`document.querySelector(${JSON.stringify(s)}).scrollIntoView({block:'center'});true`);await browser('click',s);};
+try{
+ const status=await(await fetch(base+'/api/channel-gateway')).json();
+ const id=status.connections.find(c=>c.channel==='dingtalk').id;
+ await browser('open',base+'/#channels/'+id);await browser('set','viewport','1440','1000');
+ await wait(`document.querySelector('[data-channel-tab="settings"]')`);
+ await click('[data-channel-tab="settings"]');
+ assert.equal(await value(`document.querySelector('[name="unsupported_reply"]').value`),'暂不支持该格式的信息');
+ assert.equal(await value(`document.querySelector('[name="unsupported_reply"]').readOnly`),true);
+ assert.equal(await value(`document.querySelector('#channel-validation-replies').nextElementSibling.querySelector('h4').textContent`),'兜底文案');
+ await click('[data-page-edit]');
+ if(await value(`document.querySelector('[name="session_validation"]').checked`))await click('[name="session_validation"]');
+ assert.equal(await value(`document.querySelector('#channel-validation-replies').hidden`),true);
+ assert.equal(await value(`getComputedStyle(document.querySelector('.channel-fallback-replies')).display!=='none'`),true);
+ await browser('fill','[name="unsupported_reply"]','请发送文字或图片');
+ await click('[data-page-save]');
+ await wait(`document.querySelector('[name="unsupported_reply"]')?.readOnly && document.querySelector('[data-page-save]')?.closest('.channel-settings-foot').hidden`);
+ await browser('reload');await wait(`document.querySelector('[name="unsupported_reply"]')`);
+ assert.equal(await value(`document.querySelector('[name="unsupported_reply"]').value`),'请发送文字或图片');
+ await click('[data-page-edit]');await browser('fill','[name="unsupported_reply"]','Cancelled edit');
+ await click('[data-page-cancel]');
+ assert.equal(await value(`document.querySelector('[name="unsupported_reply"]').value`),'请发送文字或图片');
+ await click('[data-page-edit]');await browser('fill','[name="unsupported_reply"]','');
+ await click('[data-page-save]');
+ await wait(`document.querySelector('[name="unsupported_reply"]')?.value==='暂不支持该格式的信息' && document.querySelector('[data-page-save]')?.closest('.channel-settings-foot').hidden`);
+ assert.equal(await value(`document.querySelector('[name="unsupported_reply"]').value`),'暂不支持该格式的信息');
+ await click('[data-page-edit]');await click('[name="session_validation"]');
+ await value(`document.querySelector('.channel-fallback-replies').scrollIntoView({block:'end'});true`);
+ await browser('screenshot',path.join(os.tmpdir(),'corki-channel-fallback.png'));
+ await click('[data-page-cancel]');
+ console.log('PASS fallback placement, readonly/edit/save/reload/cancel, authorization independence and blank default');
+}finally{await browser('close').catch(()=>{});}

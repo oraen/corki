@@ -1,0 +1,60 @@
+// Run only against the isolated homepage fixture, never a real configuration.
+import assert from 'node:assert/strict';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+const base=process.env.MANAGER_TEST_URL;assert(base);
+const cfg=await(await fetch(base+'/api/config')).json();assert(cfg.path.includes('corki-homepage-qa-'));
+const run=promisify(execFile),session='homepage-usage-'+process.pid;
+const browser=(...args)=>run('agent-browser',['--session',session,...args],{maxBuffer:1024*1024});
+const value=async code=>JSON.parse((await browser('eval',code)).stdout.trim());
+const ready=()=>browser('wait','--fn',`!!document.querySelector('[data-default-field="provider"] .select-trigger:not(:disabled)')`);
+try{
+ await browser('open',base);await browser('set','viewport','1440','1000');await ready();
+ assert.equal(await value(`document.querySelectorAll('.usage-breakdown').length`),2);
+ assert.equal(await value(`document.querySelectorAll('.monthly-chart .chart-col').length`),30);
+ assert.equal(await value(`document.querySelectorAll('.dashboard-grid').length`),0);
+ const totals=await(await fetch(base+'/api/snapshot')).json();
+ const sum=totals.usage.reduce((s,r)=>s+r.input+r.output,0);
+ for(const key of ['providers','types'])assert.equal(totals.usage_breakdown[key].reduce((s,r)=>s+r.tokens,0),sum);
+ // Focus the actual SVG sector to verify its accessible and visible percentage.
+ await browser('eval',`document.querySelector('.usage-sector').focus()`);
+ assert.match(await value(`document.querySelector('.usage-pie-tip:not([hidden])').textContent`),/\d+(\.\d+)?%/);
+ await browser('hover','.usage-legend-item');
+ assert.equal(await value(`document.querySelector('.usage-pie-tip').hidden`),false);
+ await browser('click','[data-default-field="provider"] .select-trigger');
+ await browser('click','h2#global-config-title');
+ assert.equal(await value(`document.querySelector('[data-default-field="provider"] .select-menu').hidden`),true);
+ await browser('click','[data-default-field="provider"] .select-trigger');
+ await browser('click','[data-default-field="provider"] [data-value="beta"]');await ready();
+ let snapshot=await(await fetch(base+'/api/snapshot')).json();
+ assert.deepEqual(snapshot.default,{provider:'beta',model:'deep'});
+ await browser('click','[data-default-field="model"] .select-trigger');
+ await browser('click','[data-default-field="model"] [data-value="fast"]');await ready();
+ await browser('reload');await ready();
+ assert.equal(await value(`document.querySelector('[data-default-field="model"] input').value`),'fast');
+ const settings=JSON.parse((await(await fetch(base+'/api/config')).json()).content);
+ assert.equal(settings.providers.beta.default_model,'fast');
+ assert.equal(settings.default.provider,'beta');
+ assert.equal(settings.memories.enabled,false);assert.equal(settings.features.self_evolution,false);
+ // Four existing switches remain interactive after the selectors have rerendered.
+ await browser('click','[data-key="memories"]');
+ await browser('wait','--fn',`document.querySelector('[data-key="memories"]').getAttribute('aria-checked')==='true' && !document.querySelector('[data-key="memories"]').disabled`);
+ await browser('click','[data-key="memories"]');
+ await browser('wait','--fn',`document.querySelector('[data-key="memories"]').getAttribute('aria-checked')==='false' && !document.querySelector('[data-key="memories"]').disabled`);
+ await browser('click','[data-default-field="provider"] .select-trigger');
+ await browser('click','[data-default-field="provider"] [data-value="alpha"]');await ready();
+ assert.equal(await value(`document.querySelector('[data-default-field="model"] input').value`),'small');
+ await browser('screenshot',join(tmpdir(),'corki-homepage-usage-final.png'));
+ await browser('set','viewport','1280','800');
+ assert.equal(await value(`document.documentElement.scrollWidth<=innerWidth`),true);
+ await browser('screenshot',join(tmpdir(),'corki-homepage-usage-1280.png'));
+ await browser('click','a[href="#cron"]');await browser('wait','--fn',`!!document.querySelector('.cron-task-row')`);
+ assert.deepEqual(await value(`[...document.querySelectorAll('.cron-task-table th')].map(n=>n.textContent)`),['任务名称','执行计划','工作目录','下次运行','供应商','模型','token用量','启用','操作']);
+ assert.equal(await value(`document.querySelector('.cron-task-row .usage-value').textContent`),'1.2M');
+ await browser('click','[data-cron-view="records"]');await browser('wait','--fn',`document.querySelectorAll('.cron-record-table .usage-value').length===2`);
+ assert.deepEqual(await value(`[...document.querySelectorAll('.cron-record-table th')].map(n=>n.textContent)`),['任务名称','运行时间','结束时间','状态','token用量','操作']);
+ await browser('screenshot',join(tmpdir(),'corki-cron-usage-final.png'));
+ console.log('PASS dashboard sums, chart tooltip, selector immediate persistence/reload, existing switches, 1280 layout and both token columns');
+}finally{await browser('close').catch(()=>{});}

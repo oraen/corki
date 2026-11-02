@@ -176,8 +176,7 @@ def test_scoping_pagination_full_text_and_cleanup(tmp_path):
     assert len(store.applications(two)["requests"]) == 1
 
 
-@pytest.mark.parametrize("mode", ["independent", "shared"])
-def test_kick_cancels_only_sender_active_and_queued_work(tmp_path, mode):
+def test_kick_cancels_only_sender_active_and_queued_work(tmp_path):
     async def scenario():
         started = asyncio.Event()
         seen = []
@@ -190,7 +189,7 @@ def test_kick_cancels_only_sender_active_and_queued_work(tmp_path, mode):
             return text
 
         h = Host(tmp_path, runner=run, online=False)
-        identity = account(h.store, session_validation="true", session_mode=mode)
+        identity = account(h.store, session_validation="true")
         transport = Transport()
         h.connectors[identity] = transport
         for sender in ("alice", "bob"):
@@ -235,12 +234,12 @@ def test_enabling_gate_rechecks_already_queued_messages(tmp_path):
             return text
 
         h = Host(tmp_path, runner=run, online=False)
-        identity = account(h.store, session_mode="shared")
+        identity = account(h.store)
         h.connectors[identity] = Transport()
         try:
             await h.inbound(identity, message("1", text="running"))
             await started.wait()
-            await h.inbound(identity, message("2", "bob", "queued"))
+            await h.inbound(identity, message("2", "alice", "queued"))
             await h.change(
                 {
                     "action": "save-connection",
@@ -254,7 +253,7 @@ def test_enabling_gate_rechecks_already_queued_messages(tmp_path):
             await drain(h)
             assert calls == ["running"]
             assert status(h.store, identity, "2") == "access_denied"
-            assert h.store.applications(identity)["requests"][0]["sender_id"] == "bob"
+            assert h.store.applications(identity)["requests"][0]["sender_id"] == "alice"
         finally:
             release.set()
             await h.close()
@@ -408,6 +407,44 @@ def test_standard_http_kicked_task_does_not_stop_worker(tmp_path):
             await c.close()
 
     asyncio.run(scenario())
+
+
+def test_dingtalk_application_user_id_is_display_only_and_does_not_expose_reply_credentials(
+    tmp_path,
+):
+    store = Store(tmp_path)
+    identity = store.save_connection(
+        {
+            "channel": "dingtalk",
+            "name": "User ID fixture",
+            "values": {
+                "client_id": "fixture-app",
+                "client_secret": "fixture-secret",
+                "session_validation": "true",
+            },
+        }
+    )
+    store.enable(identity, True)
+    incoming = message("first", "encrypted-fixture")
+    incoming.update(staff_id="fixture-user-id", session_webhook="fixture-private-webhook")
+    store.allows_message(store.connection(identity), incoming)
+    row = store.applications(identity)["requests"][0]
+    assert row["user_id"] == "fixture-user-id"
+    assert row["sender_id"] == "encrypted-fixture"
+    assert "fixture-private-webhook" not in str(row)
+    store.set_application_status(identity, row["sender_id"], "approved")
+    assert store.applications(identity)["requests"][0]["status"] == "approved"
+    # DingTalk display never substitutes encrypted senderId for missing staff IDs.
+    store.allows_message(store.connection(identity), message("old", "legacy-fixture"))
+    assert store.applications(identity)["requests"][0]["user_id"] is None
+    for i, blank in enumerate(("", "   ")):
+        empty = message(f"empty-{i}", f"empty-sender-{i}")
+        empty["staff_id"] = blank
+        store.allows_message(store.connection(identity), empty)
+        assert store.applications(identity)["requests"][0]["user_id"] is None
+    other = account(store, session_validation="true")
+    store.allows_message(store.connection(other), message("other", "telegram-fixture"))
+    assert store.applications(other)["requests"][0]["user_id"] == "telegram-fixture"
 
 
 def test_application_filters_search_all_rows_and_combine_with_pagination(tmp_path):

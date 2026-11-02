@@ -386,14 +386,7 @@ def test_failed_answer_labels_survive_paging_reset_and_legacy_upgrade(tmp_path):
     async def scenario():
         h = Host(tmp_path, online=False)
         identity = h.store.connections(definition(h.store))[0]["id"]
-        h.store.save_connection(
-            {"id": identity, "name": "Reader", "values": {"session_mode": "shared"}}
-        )
-        thread = next(
-            g["thread"]
-            for g in h.store.conversation_list()
-            if g["id"] == h.store.connection(identity)["conversation_id"]
-        )
+        thread = h.store.admit(identity, {"id":"seed","sender":"remote","conversation":"remote","text":"seed"}, str(tmp_path / "main/default"))
         repo = SQLiteSessionRepository(tmp_path / "sessions/corki.db")
         await repo.create_thread(thread, tmp_path)
         first = AssistantMessageItem("identical answer", "turn-a", new_step_id())

@@ -77,6 +77,13 @@ from corki.tools.custom import (
 from corki.tools.executor import ToolExecutor
 from corki.tools.registry import ToolRegistry
 
+_usage_spec = importlib.util.spec_from_file_location(
+    "corki_usage_analytics", Path(__file__).with_name("usage_analytics.py")
+)
+_usage_module = importlib.util.module_from_spec(_usage_spec)
+_usage_spec.loader.exec_module(_usage_module)
+UsageAnalytics = _usage_module.UsageAnalytics
+
 _package_spec = importlib.util.spec_from_file_location(
     "corki_resource_packages", Path(__file__).with_name("resource_packages.py")
 )
@@ -1562,13 +1569,16 @@ end run'''
             )
         errors = []
         sessions, usage, totals, executions = [], [], {}, []
+        usage_breakdown = {"providers": [], "types": []}
         try:
             sessions = self.query("""SELECT t.id,t.cwd,t.updated_at,t.preview,
                 (SELECT status FROM turns WHERE thread_id=t.id
                     ORDER BY updated_at DESC LIMIT 1) AS status,
                 (SELECT model FROM thread_model_settings WHERE thread_id=t.id) AS model
                 FROM threads t ORDER BY t.updated_at DESC LIMIT 40""")
-            usage = self.monthly_usage()
+            analytics = UsageAnalytics(self.home).dashboard()
+            usage = analytics.pop("days")
+            usage_breakdown = analytics
             totals = next(
                 iter(
                     self.query(
@@ -1613,6 +1623,7 @@ end run'''
                         custom_tools=self.custom_tools(),
                         sessions=sessions,
                         usage=usage,
+                        usage_breakdown=usage_breakdown,
                         totals=totals,
                         executions=executions,
                         errors=errors,
@@ -2819,6 +2830,13 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parsed.path == "/api/channel-gateway":
                 return self.respond(200, self.server.store.channel_gateway.request())
+            if parsed.path == '/api/channel-image':
+                query=parse_qs(parsed.query)
+                info=self.server.store.channel_gateway.request({'action':'image-info',
+                    'id':query.get('channel',[''])[0],'asset':query.get('asset',[''])[0],
+                    'thumbnail':query.get('thumbnail',[''])[0]=='1'})
+                with Path(info['path']).open('rb') as source:
+                    return self.respond(200,source,info['mime'])
             if parsed.path == "/api/adaptor":
                 return self.respond(200, self.server.store.adaptor.status())
             if parsed.path == "/api/hooks":
@@ -2838,16 +2856,16 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/cron":
                 query = parse_qs(parsed.query)
                 if "records" in query:
-                    return self.respond(200, self.server.store.cron.records(
+                    return self.respond(200, UsageAnalytics(self.server.store.home).cron(self.server.store.cron.records(
                         offset=int(query.get("offset", ["0"])[0]),
                         query=query.get("query", [""])[0],
                         names=query.get("name", []),
-                    ))
+                    )))
                 if "run" in query:
                     return self.respond(200, self.server.store.cron_run(query["run"][0]))
                 if "id" in query:
                     return self.respond(200, self.server.store.cron.history(query["id"][0]))
-                return self.respond(200, self.server.store.cron.list())
+                return self.respond(200, UsageAnalytics(self.server.store.home).cron(self.server.store.cron.list(), jobs=True))
             if parsed.path == "/api/resource-packages":
                 with LOCK:
                     return self.respond(200, self.server.store.resource_packages.listing())

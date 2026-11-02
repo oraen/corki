@@ -1,4 +1,4 @@
-import { chunks, status, emit } from "./protocol.mjs";
+import { chunks, status, emit, unsupportedContent } from "./protocol.mjs";
 export async function create({ config, require, incoming, fatal = () => {} }) {
   const sdk = require("@larksuiteoapi/node-sdk");
   const options = {
@@ -30,18 +30,17 @@ export async function create({ config, require, incoming, fatal = () => {} }) {
             sender = data.sender;
           if (
             message?.chat_type !== "p2p" ||
-            message.message_type !== "text" ||
             sender?.sender_type !== "user"
           )
             return;
-          const content = JSON.parse(message.content || "{}");
-          if (typeof content.text !== "string" || !content.text.trim()) return;
+          const content = message.message_type==='text'?JSON.parse(message.content || "{}"):null;
+          if (content && (typeof content.text !== "string" || !content.text.trim())) return;
           await incoming({
             id: message.message_id,
             sender: sender.sender_id.open_id,
             conversation: message.chat_id,
             name: sender.sender_id.open_id,
-            text: content.text,
+            ...(content?{text:content.text}:unsupportedContent(message.message_type || 'unknown')),
             kind: "direct",
           });
         },

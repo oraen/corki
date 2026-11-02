@@ -1,4 +1,4 @@
-"""Account isolation, legacy migration and explicit shared conversation safety."""
+"""Account isolation, legacy migration and binding ownership."""
 
 import asyncio
 import json
@@ -42,7 +42,10 @@ def test_migration_preserves_old_state_and_route(tmp_path):
     row = migrated.connection("telegram")
     assert row["enabled"] and row["state_key"] == "telegram"
     assert row["config"]["token"] == "fixture" and row["account"] == "old-bot"
-    assert migrated.admit("telegram", message("next"), "/work") == thread
+    # Legacy aggregate context stays in history, never enters a new user's context.
+    assert migrated.admit("telegram", message("next"), "/work") != thread
+    with migrated.db() as db:
+        assert db.execute("SELECT thread FROM receipts WHERE channel='telegram' AND id='same'").fetchone()[0] == thread
     assert (directory / "login.json").read_text() == '{"fixture":true}'
     assert len(Store(tmp_path).connections()) == 1
 

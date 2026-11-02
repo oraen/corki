@@ -1,8 +1,11 @@
 """Notices use channel transport only, with durable decisions and no duplicate sends."""
 
 import asyncio
+import json
 
+import pytest
 from corki_gateway.access import REPLY_DEFAULTS
+from corki_gateway.errors import DeliveryError
 from corki_gateway.service import Host
 from corki_gateway.store import Store
 
@@ -45,6 +48,150 @@ class Transport:
         if self.fail:
             raise ValueError("fixture-private-credential")
         return {"sent": True}
+
+
+def test_manual_retry_preserves_permission_and_text_and_rejects_stale_requests(tmp_path):
+    async def scenario():
+        async def no_agent(*_):
+            raise AssertionError("notification retry must not execute Agent work")
+
+        h = Host(tmp_path, runner=no_agent, online=False)
+        channel = account(h.store)
+        transport = Transport()
+        transport.fail = True
+        h.connectors[channel] = transport
+        try:
+            await h.inbound(channel, message())
+            await flush(h)
+            row = h.store.applications(channel)["requests"][0]
+            assert row["notification_status"] == "failed"
+            retry = {
+                "action": "retry-access-notice",
+                "id": channel,
+                "sender": "alice",
+                "notice_id": row["notification_id"],
+            }
+            # Editing the configured wording must not change this failed notice.
+            with h.store.db() as db:
+                config = h.store.connection(channel)["config"]
+                config["validation_first_reply"] = "New wording"
+                db.execute(
+                    "UPDATE connections SET config=? WHERE id=?", (json.dumps(config), channel)
+                )
+            transport.fail = False
+            await h.change(retry)
+            with pytest.raises(ValueError, match="状态已更新"):
+                await h.change(retry)
+            await flush(h)
+            assert len(transport.sent) == 2
+            assert transport.sent[-1]["text"] == transport.sent[0]["text"]
+            row = h.store.applications(channel)["requests"][0]
+            assert row["status"] == "pending" and row["notification_status"] == "sent"
+            assert not h.tasks
+            with pytest.raises(ValueError, match="状态已更新"):
+                await h.change({**retry, "notice_id": row["notification_id"]})
+            # An old failure dialog cannot replay a superseded permission decision.
+            transport.fail = True
+            h.store.set_application_status(channel, "alice", "approved")
+            h.access_notifier.schedule(channel)
+            await flush(h)
+            failed = h.store.applications(channel)["requests"][0]
+            h.store.set_application_status(channel, "alice", "disabled")
+            with pytest.raises(ValueError, match="状态已更新"):
+                await h.change({**retry, "notice_id": failed["notification_id"]})
+            h.store.enable(channel, False)
+            with pytest.raises(ValueError, match="启用此接入"):
+                h.store.retry_access_notice(channel, "alice", failed["notification_id"])
+        finally:
+            await h.close()
+
+    asyncio.run(scenario())
+
+
+def test_dingtalk_retry_persists_proactive_mode_and_preserves_diagnostics(tmp_path):
+    async def scenario():
+        h = Host(tmp_path, runner=lambda *_: None, online=False)
+        channel = h.store.save_connection(
+            {
+                "channel": "dingtalk",
+                "name": "Fixture",
+                "values": {
+                    "client_id": "fixture-app",
+                    "client_secret": "fixture-secret",
+                    "session_validation": "true",
+                },
+            }
+        )
+        h.store.enable(channel, True)
+        h.store.allows_message(h.store.connection(channel), message(staff_id="fixture-user"))
+        notice = h.store.claim_access_notice(channel)
+        h.store.finish_access_notice(notice["notice_id"], "failed", "Original failure")
+        h.store.retry_access_notice(channel, "alice", notice["notice_id"])
+        # Mode survives a store/process reload without modifying original reply context.
+        with Store(tmp_path).db() as db:
+            queued = json.loads(db.execute("SELECT message FROM access_notice_queue").fetchone()[0])
+            original = json.loads(db.execute("SELECT message FROM access_delivery").fetchone()[0])
+        assert queued["_access_notice_mode"] == "proactive"
+        assert "_access_notice_mode" not in original
+
+        class Failure(Transport):
+            async def call(self, method, params, **_):
+                self.sent.append(params)
+                raise DeliveryError("钉钉消息发送失败\n原因：回复凭据过期")
+
+        transport = Failure()
+        h.connectors[channel] = transport
+        try:
+            h.access_notifier.schedule(channel)
+            await flush(h)
+            assert transport.sent[0]["proactive"] is True
+            assert "_access_notice_mode" not in transport.sent[0]["message"]
+            row = h.store.applications(channel)["requests"][0]
+            assert row["notification_error"] == "钉钉消息发送失败\n原因：回复凭据过期"
+            assert row["status"] == "pending"
+        finally:
+            await h.close()
+
+    asyncio.run(scenario())
+
+
+def test_only_dingtalk_admin_decisions_enable_session_fallback(tmp_path):
+    async def scenario():
+        h = Host(tmp_path, online=False)
+        channel = h.store.save_connection(
+            {
+                "channel": "dingtalk",
+                "name": "Fixture",
+                "values": {
+                    "client_id": "fixture-app",
+                    "client_secret": "fixture-secret",
+                    "session_validation": "true",
+                },
+            }
+        )
+        h.store.enable(channel, True)
+        transport = Transport()
+        h.connectors[channel] = transport
+        try:
+            await h.inbound(channel, message(staff_id="fixture-user"))
+            await flush(h)
+            assert not transport.sent[-1].get("fallback_proactive")
+            for status in ("approved", "disabled"):
+                await h.change(
+                    {
+                        "action": "application-status",
+                        "id": channel,
+                        "sender": "alice",
+                        "status": status,
+                    }
+                )
+                await flush(h)
+                assert transport.sent[-1]["fallback_proactive"] is True
+                assert not transport.sent[-1].get("proactive")
+        finally:
+            await h.close()
+
+    asyncio.run(scenario())
 
 
 def test_each_denied_question_deduplicated_default_and_custom_notices_no_agent(tmp_path):

@@ -17,10 +17,10 @@ def test_final_answers_hide_intermediate_and_live_text(tmp_path):
             {
                 "channel": "wechat",
                 "name": "Fixture",
-                "values": {"session_mode": "shared"},
+                "values": {},
             }
         )
-        thread = store.conversation_list()[0]["thread"]
+        thread = store.admit(identity, {"id":"fixture","sender":"reader","conversation":"reader","text":"Question"}, str(tmp_path / "main/default"))
         repo = SQLiteSessionRepository(tmp_path / "sessions/corki.db")
         await repo.create_thread(thread, tmp_path)
         items = (

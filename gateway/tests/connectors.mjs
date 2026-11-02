@@ -11,7 +11,7 @@ import { create as whatsapp } from "../connectors/whatsapp.mjs";
 import { chunks } from "../connectors/protocol.mjs";
 
 const reply = (value) => ({ ok: true, status: 200, json: async () => value });
-test("Telegram admits only direct human text, persists cursor after admission and splits replies", async () => {
+test("Telegram marks unsupported private media, filters groups and preserves text replies", async () => {
   const original = globalThis.fetch,
     calls = [];
   let adapter,
@@ -37,6 +37,11 @@ test("Telegram admits only direct human text, persists cursor after admission an
           },
           {
             update_id: 10,
+            message: {chat: {type: "private", id: 2}, from: {id: 1},
+                      video: {file_id: "fixture-video"}, caption: "A video"},
+          },
+          {
+            update_id: 11,
             message: {
               chat: { type: "private", id: 2 },
               from: { id: 1 },
@@ -53,14 +58,18 @@ test("Telegram admits only direct human text, persists cursor after admission an
       cursor: "8",
       incoming: async (m) => {
         received.push(m);
+        if(m.unsupported)return {accepted:true};
         await adapter.send({ message: m, text: "字".repeat(3200) });
         await adapter.close();
         return { accepted: true };
       },
     });
     await adapter.start();
-    assert.equal(received.length, 1);
-    assert.equal(received[0].id, "10");
+    assert.equal(received.length, 2);
+    assert.equal(received[0].unsupported,true);
+    assert.equal(received[0].text,"A video\n[视频消息]");
+    assert.equal(received[1].id, "11");
+    assert.equal(received[1].unsupported,undefined);
     assert.equal(calls.find((c) => c.method === "getUpdates").body.offset, 8);
     assert.equal(calls.filter((c) => c.method === "sendMessage").length, 2);
   } finally {
@@ -142,6 +151,10 @@ test("Feishu lifecycle callbacks, filtering and send request match SDK contract"
     message: { ...data.message, chat_type: "group" },
   });
   assert.equal(received.length, 1);
+  await dispatch["im.message.receive_v1"]({...data,message:{...data.message,
+    message_id:"video",message_type:"media",content:'{}'}});
+  assert.equal(received.length,2);
+  assert.equal(received[1].unsupported,true);
   await adapter.send({ message: received[0], text: "answer" });
   assert.equal(sent.params.receive_id_type, "chat_id");
   assert.equal(sent.data.receive_id, "room");
@@ -177,6 +190,8 @@ test("WeChat login, durable credentials, context-token reply and trusted redirec
     if (url.includes("getupdates"))
       return reply({
         msgs: [
+          {message_id: "fixture-video", message_type:1, from_user_id:"peer",
+           context_token:"fixture-context",item_list:[{type:2}]},
           {
             message_id: "fixture-id",
             message_type: 1,
@@ -202,13 +217,16 @@ test("WeChat login, durable credentials, context-token reply and trusted redirec
       }),
       incoming: async (m) => {
         seen.push(m);
+        if(m.unsupported)return {accepted:true};
         await adapter.send({ message: m, text: "reply" });
         await adapter.close();
         return { accepted: true };
       },
     });
     await adapter.start();
-    assert.equal(seen.length, 1);
+    assert.equal(seen.length, 2);
+    assert.equal(seen[0].unsupported,true);
+    assert.equal(seen[1].unsupported,undefined);
     assert.equal(sent.msg.context_token, "fixture-context");
     assert.equal(sent.msg.message_state, 2);
     assert.equal(
@@ -259,10 +277,12 @@ test("WhatsApp ignores own, group and history messages and does not log out on s
       { ...item, key: { ...item.key, fromMe: true } },
       { ...item, key: { ...item.key, remoteJid: "group@g.us" } },
       item,
+      {...item,key:{...item.key,id:'video'},message:{videoMessage:{caption:'A video'}}},
     ],
   });
   await new Promise((r) => setTimeout(r, 10));
-  assert.equal(received.length, 1);
+  assert.equal(received.length, 2);
+  assert.equal(received[1].unsupported,true);
   await adapter.send({ message: received[0], text: "answer" });
   assert.deepEqual(sent, ["peer@s.whatsapp.net", { text: "answer" }]);
   await adapter.close();
@@ -289,7 +309,7 @@ test("DingTalk admission ACK, private text, safe replies, token reuse and stop",
     incoming: async value => { if (failAdmission) throw new Error("busy"); admitted.push(value); },
   });
   const message = {
-    msgId:"fixture", senderId:"person", conversationId:"dm", conversationType:"1",
+    msgId:"fixture", senderId:"person", senderStaffId:"fixture-staff", robotCode:"fixture-robot", conversationId:"dm", conversationType:"1",
     msgtype:"text", text:{content:"Hello"}, sessionWebhook:"https://oapi.dingtalk.com/robot/sendBySession?session=fixture",
     sessionWebhookExpiredTime:Date.now()+3600000,
   };
@@ -300,14 +320,21 @@ test("DingTalk admission ACK, private text, safe replies, token reuse and stop",
     assert.equal(options.keepAlive,true);
     assert.deepEqual(options.subscriptions,[]);
     await callback(frame({...message,conversationType:"2"}));
-    await callback(frame({...message,msgtype:"image"}));
+    await callback(frame({...message,msgtype:""}));
     assert.equal(admitted.length,0);
     await callback(frame(message));
     assert.equal(admitted.length,1);
+    assert.equal(admitted[0].staff_id,"fixture-staff");
+    assert.equal(admitted[0].robot_code,"fixture-robot");
     assert.equal(ack.length,3);
+    await callback(frame({...message,msgId:'video-fixture',msgtype:"video"}));
+    assert.equal(admitted.length,2);
+    assert.equal(admitted[1].unsupported,true);
+    assert.equal(admitted[1].text,'[视频消息]');
+    assert.equal(ack.length,4);
     failAdmission = true;
     await callback(frame(message));
-    assert.equal(ack.length,3); // Failed durable admission must not be acknowledged.
+    assert.equal(ack.length,4); // Failed durable admission must not be acknowledged.
     for(const bad of ["http://oapi.dingtalk.com/robot/sendBySession","https://example.invalid/",
       "https://oapi.dingtalk.com.evil.invalid/robot/sendBySession",
       "https://oapi.dingtalk.com/other","https://user@oapi.dingtalk.com/robot/sendBySession"])

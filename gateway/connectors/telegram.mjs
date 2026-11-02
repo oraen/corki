@@ -1,4 +1,4 @@
-import { emit, status, chunks, sleep } from "./protocol.mjs";
+import { emit, status, chunks, sleep, unsupportedContent } from "./protocol.mjs";
 
 export async function create({ config, cursor, incoming }) {
   let stopped = false,
@@ -47,10 +47,12 @@ export async function create({ config, cursor, incoming }) {
           );
           for (const update of updates) {
             const message = update.message;
+            const media=['video','photo','audio','voice','document','sticker','animation','video_note',
+              'contact','location','venue','poll','dice'].find(key=>message?.[key]);
             if (
               message?.chat?.type === "private" &&
               !message.from?.is_bot &&
-              message.text
+              message.from?.id && (message.text || media)
             ) {
               await incoming({
                 id: String(update.update_id),
@@ -58,7 +60,7 @@ export async function create({ config, cursor, incoming }) {
                 conversation: String(message.chat.id),
                 name: message.from.first_name || String(message.from.id),
                 kind: "direct",
-                text: message.text,
+                ...(media?unsupportedContent(media,message.caption):{text:message.text}),
               });
             }
             offset = update.update_id + 1;

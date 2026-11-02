@@ -124,10 +124,19 @@ class Store(Connections, AccessRequests):
         self.path.chmod(0o600)
         self.migrate_connections()
         self.ensure_conversations()
-        self.migrate_session_modes()
+        self.migrate_user_sessions()
+        from .usage import UserUsage
+
+        self.user_usage = UserUsage(self)
         from .standard import Queue
 
         self.http_queue = Queue(self)
+        from .messages import Messages
+
+        self.messages = Messages(self)
+        from .images import Images
+
+        self.images = Images(self)
 
     @contextmanager
     def db(self):
@@ -219,8 +228,17 @@ class Store(Connections, AccessRequests):
         allowed["workdir"] = {"label": "工作目录"}
         allowed.update({"agent_provider": {}, "agent_model": {}})
         allowed["session_validation"] = {"options": ["true", "false"]}
+        allowed["unsupported_reply"] = {}
+        allowed["reply_guidance"] = {}
         allowed.update({key: {} for key in REPLY_DEFAULTS})
-        allowed["session_mode"] = {"options": ["independent", "shared"]}
+        if row.get("type_id", row.get("id")) == "dingtalk":
+            allowed.update(
+                {
+                    "ai_card_enabled": {"options": ["true", "false"]},
+                    "ai_card_template": {},
+                    "ai_card_content_key": {},
+                }
+            )
         standard = row["manifest"].get("transport") == "standard-http"
         if standard:
             allowed.update({"http_disable_parameters": {}, "http_retry_count": {}})
@@ -232,15 +250,14 @@ class Store(Connections, AccessRequests):
                 raise ValueError("配置应为文本，最长 8192 字符")
             if key in REPLY_DEFAULTS and len(value) > 2000:
                 raise ValueError("会话校验回复词最长 2000 字符")
+            if key == "unsupported_reply" and len(value) > 2000:
+                raise ValueError("兜底文案最长 2000 字符")
             field = allowed[key]
             if field.get("secret") and not value:
                 continue  # Empty secret means keep; clearing uses explicit reset.
             if field.get("options") and value not in field["options"]:
                 raise ValueError("配置选项无效")
             config[key] = value.strip()
-        config.setdefault("session_mode", "independent")
-        if config["session_mode"] not in ("independent", "shared"):
-            raise ValueError("会话模式无效")
         if config.get("workdir"):
             directory = Path(config["workdir"]).expanduser().resolve()
             default = (self.home / "main/default").resolve()
@@ -268,6 +285,16 @@ class Store(Connections, AccessRequests):
             from .standard import resolved
 
             resolved({**row, "config": config})
+        if row.get("type_id", row.get("id")) == "dingtalk":
+            template = config.get("ai_card_template", "")
+            key = config.get("ai_card_content_key", "content") or "content"
+            if template and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}\.schema", template):
+                raise ValueError("AI 卡片模板 ID 格式无效")
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", key):
+                raise ValueError("AI 卡片正文变量格式无效")
+            if config.get("ai_card_enabled") == "true" and not template:
+                raise ValueError("请填写已发布的 AI 卡片模板 ID")
+            config["ai_card_content_key"] = key
         return config
 
     def configure(self, identity, values):
@@ -303,7 +330,7 @@ class Store(Connections, AccessRequests):
             db.execute("UPDATE connections SET enabled=? WHERE id=?", (enabled, identity))
 
     def admit(self, channel, message, workdir):
-        # Retain per-sender route identities; thread sharing is an explicit account policy.
+        # Retain transport routes; all conversations resolve through a per-user binding.
         connection = self.connection(channel)
         parts = [channel, message["conversation"], message["sender"], workdir]
         if connection and connection["conversation_id"]:
@@ -347,22 +374,22 @@ class Store(Connections, AccessRequests):
             )
             if group:
                 if group["workdir"] != workdir:
-                    raise ValueError("共享对话的工作目录不一致")
-                thread = group["thread"]
-                if connection["config"].get("session_mode", "independent") == "independent":
-                    name = message.get("name") or message["sender"]
-                    name = name[:80] if isinstance(name, str) else message["sender"][:80]
-                    db.execute(
-                        "INSERT INTO user_sessions(binding,sender,name,thread) VALUES(?,?,?,?) "
-                        "ON CONFLICT(binding,sender) DO UPDATE SET name=excluded.name",
-                        (connection["conversation_id"], message["sender"], name, str(uuid.uuid4())),
-                    )
-                    thread = db.execute(
-                        "SELECT thread FROM user_sessions WHERE binding=? AND sender=?",
-                        (connection["conversation_id"], message["sender"]),
-                    ).fetchone()[0]
+                    raise ValueError("接入的工作目录不一致")
+                name = message.get("name") or message["sender"]
+                name = name[:80] if isinstance(name, str) else message["sender"][:80]
+                db.execute(
+                    "INSERT INTO user_sessions(binding,sender,name,thread) VALUES(?,?,?,?) "
+                    "ON CONFLICT(binding,sender) DO UPDATE SET name=excluded.name",
+                    (connection["conversation_id"], message["sender"], name, str(uuid.uuid4())),
+                )
+                thread = db.execute(
+                    "SELECT thread FROM user_sessions WHERE binding=? AND sender=?",
+                    (connection["conversation_id"], message["sender"]),
+                ).fetchone()[0]
                 db.execute("UPDATE routes SET thread=? WHERE key=?", (thread, key))
             thread = db.execute("SELECT thread FROM routes WHERE key=?", (key,)).fetchone()[0]
+            db.execute('INSERT OR IGNORE INTO user_usage_threads(thread,channel,sender) VALUES(?,?,?)',
+                       (thread, channel, message['sender']))
             db.execute(
                 "INSERT INTO receipts VALUES(?,?,?,?,?,?,?)",
                 (channel, message["id"], key, thread, "queued", time.time(), ""),

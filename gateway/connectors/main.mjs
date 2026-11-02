@@ -38,8 +38,21 @@ const incoming = protocol({
   async send(params) {
     if (!adapter || typeof params.text !== "string" || !params.message)
       throw new Error("not initialized");
-    await adapter.send(params);
-    return { sent: true };
+    const result = await adapter.send(params);
+    return { sent: true, ...(result?.receipt ? {receipt:result.receipt} : {}) };
+  },
+  async recall(params) {
+    if (!adapter || typeof adapter.recall !== "function") throw new Error("recall not supported");
+    return adapter.recall(params.receipt);
+  },
+  async progress(params) {
+    if (!adapter || !params.message || typeof adapter.progress !== "function")
+      return {supported:false};
+    return await adapter.progress(params);
+  },
+  async download_images(params) {
+    if(!adapter || typeof adapter.downloadImages!=='function')throw new Error('images not supported');
+    return adapter.downloadImages(params.images);
   },
   async verify(params) {
     await adapter?.verify?.(params.code);

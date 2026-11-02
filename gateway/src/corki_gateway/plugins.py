@@ -51,7 +51,7 @@ def validate_manifest(value):
             in seen
             | {
                 "workdir",
-                "session_mode",
+                "session_mode",  # Retired field; plugins must not reintroduce this setting.
                 "agent_provider",
                 "agent_model",
                 "session_validation",

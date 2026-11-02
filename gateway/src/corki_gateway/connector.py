@@ -11,6 +11,7 @@ import uuid
 from corki.platforms.processes import close_job, create_subprocess_exec
 
 from .connections import DuplicateAccount
+from .errors import delivery_error
 from .plugins import assets, dependency_directory
 from .programs import environment, find
 from .store import BUILTINS
@@ -125,7 +126,14 @@ class Connector:
                     if not future.done():
                         if "error" in value:
                             # Plugin errors can contain secrets; expose a fixed diagnostic.
-                            future.set_exception(ValueError("渠道请求失败，请检查登录状态或网络"))
+                            detail = (
+                                delivery_error(value.get("diagnostic"))
+                                if self.type_id == "dingtalk"
+                                else None
+                            )
+                            future.set_exception(
+                                detail or ValueError("渠道请求失败，请检查登录状态或网络")
+                            )
                         else:
                             future.set_result(value.get("result"))
         except (ValueError, OSError, asyncio.LimitOverrunError):

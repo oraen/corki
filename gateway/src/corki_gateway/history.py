@@ -14,19 +14,25 @@ from corki.storage.display_pages import read_display_items_page
 
 def history(store, identity, params, live):
     row = store.connection(identity)
+    if row and row["type_id"] == "dingtalk":
+        return store.messages.view(row, params, live, core_history)
+    return core_history(store, identity, params, live)
+
+
+def core_history(store, identity, params, live):
+    row = store.connection(identity)
     if not row:
         raise ValueError("接入不存在")
     sessions, sessions_before = store.sessions_page(row, params.get("sessions_before"))
     thread = store.session_thread(row, params.get("session"), sessions)
-    mode = row["config"].get("session_mode", "independent")
-    session_info = {"sessions": sessions, "sessions_before": sessions_before, "mode": mode}
+    session_info = {"sessions": sessions, "sessions_before": sessions_before}
+    if params.get("thread") not in (None, thread):
+        raise ValueError("会话已重置，请刷新")
     if thread is None:
         return {**session_info, "thread": None, "messages": [], "before": None, "active": False}
     before = params.get("before")
     if before is not None and (type(before) is not int or not 0 <= before < 2**63):
         raise ValueError("历史游标无效")
-    if params.get("thread") not in (None, thread):
-        raise ValueError("会话已重置，请刷新")
     database = store.home / "sessions/corki.db"
     messages, cursor = [], None
     start, end = None, None

@@ -94,12 +94,12 @@ def test_real_runtime_tools_and_history(tmp_path, monkeypatch):
         texts = [i.content for i in requests[-1].items if isinstance(i, UserMessageItem)]
         assert "First question" in texts and "Second question" in texts
         identity = host.store.save_connection(
-            {"channel": "wechat", "name": "Reader", "values": {"session_mode": "shared"}}
+            {"channel": "wechat", "name": "Reader", "values": {}}
         )
         with host.store.db() as db:
             db.execute(
-                "UPDATE conversations SET thread=? WHERE id=?",
-                ("fixture-thread", host.store.connection(identity)["conversation_id"]),
+                "INSERT INTO user_sessions(binding,sender,name,thread) VALUES(?,?,?,?)",
+                (host.store.connection(identity)["conversation_id"], "reader", "Reader", "fixture-thread"),
             )
         view = await host.change({"action": "conversation", "id": identity})
         assert [m["content"] for m in view["messages"] if m["role"] == "user"] == [

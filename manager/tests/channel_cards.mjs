@@ -1,0 +1,41 @@
+// Isolated manager only; no live credentials or outbound messages.
+import assert from 'node:assert/strict';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import os from 'node:os';
+import path from 'node:path';
+const base=process.env.MANAGER_TEST_URL;assert(base);
+const cfg=await(await fetch(base+'/api/config')).json();assert(/channel-qa-card-/.test(cfg.path));
+const run=promisify(execFile),session='card-settings-'+process.pid;
+const browser=(...args)=>run('agent-browser',['--session',session,...args],{maxBuffer:1024*1024});
+const value=async code=>JSON.parse((await browser('eval',code)).stdout.trim());
+const wait=async code=>{for(let i=0;i<60;i++){if(await value(`Boolean(${code})`))return;await new Promise(r=>setTimeout(r,100));}throw Error(code);};
+const click=async s=>{await value(`document.querySelector(${JSON.stringify(s)}).scrollIntoView({block:'center'});true`);await browser('click',s);};
+try{
+ await browser('open',base+'/#channels');await browser('set','viewport','1440','1000');
+ await wait(`document.querySelector('[data-act="add-connection"]')`);
+ await click('[data-act="add-connection"]');await click('.channel-dialog-foot .primary');
+ await wait(`document.querySelector('[name="ai_card_enabled"]')`);
+ assert.equal(await value(`document.querySelector('#channel-card-options').hidden`),true);
+ await browser('fill','[name="_name"]','Card fixture');
+ await browser('fill','[name="client_id"]','fixture-client');
+ await browser('fill','[name="client_secret"]','fixture-secret');
+ await click('[name="ai_card_enabled"]');
+ assert.equal(await value(`document.querySelector('[name="ai_card_template"]').required`),true);
+ await browser('fill','[name="ai_card_template"]','fixture-template.schema');
+ await browser('fill','[name="ai_card_content_key"]','content');
+ await click('.channel-dialog-foot .primary');
+ await wait(`document.querySelector('[data-config]')`);
+ await click('[data-config]');await wait(`document.querySelector('[data-channel-tab="settings"]')`);
+ await click('[data-channel-tab="settings"]');
+ assert.equal(await value(`document.querySelector('[name="ai_card_template"]').value`),'fixture-template.schema');
+ assert.equal(await value(`document.querySelector('[name="ai_card_enabled"]').checked`),true);
+ assert.equal(await value(`document.querySelector('[data-channel-tab="applications"]').textContent`),'会话授权');
+ await click('[data-page-edit]');await click('[name="ai_card_enabled"]');
+ assert.equal(await value(`document.querySelector('#channel-card-options').hidden`),true);
+ await click('[data-page-cancel]');
+ assert.equal(await value(`document.querySelector('#channel-card-options').hidden`),false);
+ assert.equal(await value(`document.querySelector('[name="ai_card_enabled"]').checked`),true);
+ await browser('screenshot',path.join(os.tmpdir(),'corki-card-settings.png'));
+ console.log('PASS AI card settings create, persist, readonly, cancel and authorization label');
+}finally{await browser('close').catch(()=>{});}

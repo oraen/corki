@@ -59,7 +59,7 @@ def define(store, data):
     parameters = sorted(set(PARAMETER.findall(" ".join(urls.values())))) if not disabled else []
     if set(parameters) & {
         "workdir",
-        "session_mode",
+        "session_mode",  # Retired field; cannot be reused as a connector parameter.
         "agent_provider",
         "agent_model",
         "session_validation",
@@ -322,12 +322,13 @@ class Queue:
 
             bind_legacy_failures(self.store, channel, legacy)
 
-    def skip_pending(self, channel):
+    def skip_pending(self, channel, sender=None):
         with self.store.db() as db:
             db.execute(
                 "UPDATE http_inbox SET phase='skipped',payload='{}',reply=NULL,updated=? "
-                "WHERE channel=? AND phase NOT IN ('sent','skipped','delivery_failed')",
-                (time.time(), channel),
+                "WHERE channel=? AND phase NOT IN ('sent','skipped','delivery_failed')"
+                + (" AND json_extract(payload,'$.sender')=?" if sender is not None else ""),
+                (time.time(), channel, *([sender] if sender is not None else [])),
             )
 
     def remove(self, channel):

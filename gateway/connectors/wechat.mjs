@@ -182,13 +182,14 @@ export async function create({ state_directory, cursor, require, incoming }) {
               .filter((i) => i.type === 1)
               .map((i) => i.text_item?.text || "")
               .join("\n");
-            if (!text.trim()) continue;
+            const unsupported=(item.item_list || []).some(i=>i.type!==1);
+            if (!text.trim() && !unsupported) continue;
             await incoming({
               id: String(item.message_id),
               sender: item.from_user_id,
               conversation: item.from_user_id,
               kind: "direct",
-              text,
+              ...(unsupported?{text:(text?text+'\n':'')+'[非文本消息]',unsupported:true}:{text}),
               context_token: item.context_token,
             });
           }

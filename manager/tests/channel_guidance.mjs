@@ -1,0 +1,47 @@
+// Isolated manager fixture only; no real account or outbound messages.
+import assert from 'node:assert/strict';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import os from 'node:os';
+import path from 'node:path';
+const base=process.env.MANAGER_TEST_URL;assert(base);
+assert((await(await fetch(base+'/api/config')).json()).path.includes('corki-channel-message-qa-'));
+const run=promisify(execFile),session='channel-guidance-'+process.pid;
+const browser=(...args)=>run('agent-browser',['--session',session,...args],{maxBuffer:1024*1024});
+const value=async code=>JSON.parse((await browser('eval',code)).stdout.trim());
+const wait=async code=>{for(let i=0;i<60;i++){if(await value(`Boolean(${code})`))return;await new Promise(r=>setTimeout(r,100));}throw Error(code);};
+const click=async s=>{await value(`document.querySelector(${JSON.stringify(s)}).scrollIntoView({block:'center'});true`);await browser('click',s);};
+const saved=()=>wait(`document.querySelector('[name="reply_guidance"]')?.readOnly && document.querySelector('.channel-settings-foot')?.hidden`);
+try{
+ const initial=await(await fetch(base+'/api/channel-gateway')).json();
+ const connection=initial.connections.find(c=>c.channel==='dingtalk');
+ await browser('open',base+'/#channels/'+connection.id);await browser('set','viewport','1440','1000');
+ await wait(`document.querySelector('[data-channel-tab="settings"]')`);await click('[data-channel-tab="settings"]');
+ assert.equal(await value(`document.querySelector('[name="reply_guidance"]').value`),'');
+ assert.equal(await value(`document.querySelector('[name="reply_guidance"]').readOnly`),true);
+ assert.equal(await value(`document.querySelector('.channel-fallback-replies').nextElementSibling.querySelector('h4').textContent`),'回答指引');
+ await click('[data-page-edit]');
+ if(await value(`document.querySelector('[name="session_validation"]').checked`))await click('[name="session_validation"]');
+ assert.equal(await value(`getComputedStyle(document.querySelector('.channel-guidance')).display!=='none'`),true);
+ const text='请用业务语言回答，先说结论。\n按需读取 Skills。\n<script>window.fixtureInjected=true</script>';
+ await browser('fill','[name="reply_guidance"]',text);await click('[data-page-save]');await saved();
+ await browser('reload');await wait(`document.querySelector('[name="reply_guidance"]')`);
+ assert.equal(await value(`document.querySelector('[name="reply_guidance"]').value`),text);
+ assert.equal(await value(`Boolean(window.fixtureInjected)`),false);
+ await click('[data-page-edit]');await browser('fill','[name="reply_guidance"]','Cancelled draft');
+ await click('[data-page-cancel]');
+ assert.equal(await value(`document.querySelector('[name="reply_guidance"]').value`),text);
+ await click('[data-page-edit]');await browser('fill','[name="reply_guidance"]',' \n\t');
+ await click('[data-page-save]');await saved();
+ assert.equal(await value(`document.querySelector('[name="reply_guidance"]').value`),'');
+ const result=await(await fetch(base+'/api/channel-gateway')).json();
+ assert.equal(result.connections.find(c=>c.id===connection.id).values.reply_guidance,'');
+ assert.deepEqual(result.conversations.map(c=>c.id),initial.conversations.map(c=>c.id));
+ await click('[data-page-edit]');
+ await browser('fill','[name="reply_guidance"]','面向业务和产品人员回答。\n先说明结论，再说明影响范围和建议。\n必要时查阅 Skills、代码和日志，最终用易懂的语言解释。');
+ await value(`document.querySelector('.channel-guidance').scrollIntoView({block:'end'});true`);
+ assert((await value(`parseFloat(getComputedStyle(document.querySelector('[name="reply_guidance"]')).height)`))>=120);
+ await browser('screenshot',path.join(os.tmpdir(),'corki-channel-guidance.png'));
+ await click('[data-page-cancel]');
+ console.log('PASS reply guidance: placement, empty, edit/save/reload/cancel, escaping and unchanged binding');
+}finally{await browser('close').catch(()=>{});}

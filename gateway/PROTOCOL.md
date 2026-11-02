@@ -90,3 +90,34 @@ stdin/stdout 双向 UTF-8 JSON Lines，一行一个 JSON，上限 1 MB。stderr 
 网关先请求关闭，再终止自己创建的进程组/Windows Job，不按进程名全局结束进程。
 
 详见 `examples/` 的最小连接器，它用于协议学习，不连接真实第三方渠道。
+
+### 内置钉钉的可选进度展示
+
+宿主可以向内置钉钉连接器发送 `progress`，参数包含原 `message`、当前任务的 `card`
+展示选项，以及 `phase`（start / working / waiting / answer / stopped / failed）、`text`。
+返回 `{ "supported": true }` 仅表示展示请求成功，不代表 Agent 或最终投递完成。
+任务最终结果仍使用 `send`，并携带 `final: true`；只有最终 `sent: true` 才结算投递。
+其他渠道及自定义连接器无需实现此扩展。卡片关闭时宿主不发送进度请求。
+
+内置钉钉授权通知的手动重发在 `send` 中额外携带 `proactive: true`，使用企业
+userId 主动发送。内置适配器可在失败响应附加 `diagnostic`（provider、message、code、
+status、path、request_id），保留已去除凭据的诊断；宿主仅信任内置钉钉的此扩展，
+自定义连接器原协议不变。
+
+内置钉钉 `inbound` 可携带 `image_refs:[{download_code:"..."}]`、`image_positions`
+（正文 `[Image #n]` 标记的 Unicode 字符偏移）及受控的 `media_error`。
+宿主先完成授权，随后调用 `download_images` 获取图片。连接器将文件写入自己的
+`state_directory/images`，仅返回内容哈希和字节大小，避免图片超过 JSON Lines 上限。
+宿主校验文件归属、哈希及图片内容后，复用运行时 `attachments` 输入。其他连接器不必
+实现此扩展；下载码、临时链接、原始路径和 Base64 不进入管理页消息列表。
+
+`inbound` 可选布尔值 `unsupported: true`，表示平台消息已识别但其内容格式当前无法
+交给 Agent。`text` 应包含简短的类型占位文字，不要带下载凭据。宿主先校验会话权限，
+再使用此接入的 `unsupported_reply`（缺省或留空时为“暂不支持该格式的信息”）通过
+`send` 回复，不调用 Agent；仍按原消息 ID 去重。未标记的普通文本与图片流程不变。
+
+钉钉内置连接器的可选扩展：`send`/`progress` 成功响应可附带
+`receipt: {robot_code, keys, complete}`，仅保存平台真实回执，不用消息 ID
+或卡片 outTrackId 替代。`recall` 请求传入服务端持久化的 `receipt`，返回
+`{recalled: [已确认撤回的 key], error: 失败原因}`。仅 HTTP 成功不足以判定
+撤回成功，须核对平台 `successResult` 与 `failedResult`。其他连接器无需实现。

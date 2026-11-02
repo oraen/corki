@@ -19,7 +19,7 @@ from corki_gateway.store import Store
 from corki.storage import SQLiteSessionRepository
 from corki.protocol.items import UserMessageItem,AssistantMessageItem,new_step_id
 home=Path(sys.argv[1]);s=Store(home);name='Session UI fixture '+str(__import__('time').time_ns())
-i=s.save_connection({'channel':'dingtalk','name':name,'values':{'client_id':'fixture-id','client_secret':'fixture-secret'}})
+i=s.save_connection({'channel':'telegram','name':name,'values':{'token':'fixture-token'}})
 async def seed():
  repo=SQLiteSessionRepository(home/'sessions/corki.db')
  threads={}
@@ -28,12 +28,7 @@ async def seed():
   await repo.create_thread(thread,home)
   await repo.append_items(thread,(UserMessageItem(who+' question','turn-'+who),AssistantMessageItem(who+' answer','turn-'+who,new_step_id())))
   threads[who]=thread
- s.save_connection({'id':i,'name':name,'values':{'session_mode':'shared'}})
- shared=s.admit(i,{'id':'shared','sender':'Alice','conversation':'Alice','text':'shared'},str(home/'main/default'))
- await repo.create_thread(shared,home)
- await repo.append_items(shared,(UserMessageItem('Shared question','shared-turn'),AssistantMessageItem('Shared answer','shared-turn',new_step_id())))
- s.save_connection({'id':i,'name':name,'values':{'session_mode':'independent'}})
- print(json.dumps({'id':i,**threads,'shared':shared}))
+ print(json.dumps({'id':i,**threads}))
 asyncio.run(seed())
 `,dirname(config.path)]);
 const fixture=JSON.parse(seed.stdout);
@@ -60,15 +55,8 @@ try {
  await new Promise(resolve=>setTimeout(resolve,200));
  assert.equal(await evaluate(`document.querySelector('.channel-chat-messages').textContent.includes('Alice answer')`),'false');
  await click('[data-channel-tab="settings"]');await click('[data-page-edit]');
- await click('.channel-session-mode summary');
- await browser('hover','.channel-mode-help');
- await wait(`getComputedStyle(document.querySelector('.channel-mode-help > span')).visibility==='visible'`);
- if(process.env.CHANNEL_SESSION_MENU_SCREENSHOT)await browser('screenshot',process.env.CHANNEL_SESSION_MENU_SCREENSHOT);
- await click('[data-option="shared"]');
+ assert.equal(await evaluate(`!!document.querySelector('[name="session_mode"]')`),'false');
  await click('[data-page-save]');await wait(`!document.querySelector('[data-page-edit]').hidden`);await click('[data-channel-tab="history"]');
- await wait(`document.querySelectorAll('[data-session]').length===1 && document.querySelector('.channel-chat-messages').textContent.includes('Shared answer')`);
- assert((await evaluate(`document.querySelector('.channel-session-list').textContent`)).includes('默认'));
- await click('[data-channel-tab="settings"]');await click('[data-page-edit]');await click('.channel-session-mode summary');await click('[data-option="independent"]');await click('[data-page-save]');await wait(`!document.querySelector('[data-page-edit]').hidden`);await click('[data-channel-tab="history"]');
  await wait(`document.querySelectorAll('[data-session]').length===2`);
  await click(`[data-session="${fixture.Alice}"]`);
  await wait(`document.querySelector('.channel-chat-messages').textContent.includes('Alice answer')`);
@@ -77,5 +65,5 @@ try {
  await click('[data-reset-conversation]');await click('.channel-dialog [type="submit"]');
  await wait(`!document.querySelector('.channel-dialog') && document.querySelectorAll('[data-session]').length===0 && !document.querySelector('.channel-history-error').textContent`);
  assert.equal((await(await fetch(base+'/api/config')).json()).revision,config.revision);
- console.log('PASS default independent, user selection, history isolation, help tooltip, mode switching/history retention, read-only after save, reset and core settings unchanged');
+ console.log('PASS default independent, user selection, history isolation, no mode selector, history retention, read-only after save, reset and core settings unchanged');
 } finally {await browser('close').catch(()=>{});}

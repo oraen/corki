@@ -1,4 +1,4 @@
-"""Account instances and explicit shared conversation bindings."""
+"""Account instances and per-user conversation bindings."""
 
 import json
 import uuid
@@ -52,7 +52,7 @@ class Connections:
                             row["id"],
                             row["id"],
                             manifest["name"],
-                            json.dumps({"session_mode": "shared", **json.loads(row["config"])}),
+                            row["config"],
                             row["enabled"],
                             row["account"],
                             row["id"],
@@ -95,29 +95,27 @@ class Connections:
         self.ensure_conversations()
         return self.connection(identity)
 
-    def migrate_session_modes(self):
-        # Existing shared histories stay shared; new connections default to isolated.
+    def migrate_user_sessions(self):
+        """Remove retired mode settings without copying mixed histories to users."""
         with self.db() as db:
             db.execute("BEGIN IMMEDIATE")
-            if db.execute("SELECT 1 FROM gateway_meta WHERE key='session-modes-v1'").fetchone():
+            if db.execute("SELECT 1 FROM gateway_meta WHERE key='user-sessions-only-v1'").fetchone():
                 return
-            for row in db.execute("SELECT id,config FROM connections").fetchall():
-                config = json.loads(row["config"])
-                config.setdefault("session_mode", "shared")
-                db.execute(
-                    "UPDATE connections SET config=? WHERE id=?", (json.dumps(config), row["id"])
-                )
-            db.execute("INSERT INTO gateway_meta VALUES('session-modes-v1','1')")
+            for table in ('connections', 'channels'):
+                for row in db.execute(f"SELECT id,config FROM {table}").fetchall():
+                    config = json.loads(row['config'])
+                    if 'session_mode' in config:
+                        config.pop('session_mode')
+                        db.execute(f"UPDATE {table} SET config=? WHERE id=?", (json.dumps(config), row['id']))
+            # Old aggregate thread IDs remain as historical metadata only.
+            db.execute("DELETE FROM user_sessions WHERE thread IN (SELECT thread FROM conversations)")
+            db.execute("DELETE FROM gateway_meta WHERE key='session-modes-v1'")
+            db.execute("INSERT INTO gateway_meta VALUES('user-sessions-only-v1','1')")
 
     def sessions_page(self, row, before=None):
         if before is not None and (type(before) is not int or before < 1):
             raise ValueError("会话列表游标无效")
         with self.db() as db:
-            if row["config"].get("session_mode", "independent") == "shared":
-                group = db.execute(
-                    "SELECT thread FROM conversations WHERE id=?", (row["conversation_id"],)
-                ).fetchone()
-                return [{"thread": group[0], "name": "默认"}], None
             rows = db.execute(
                 "SELECT rowid,thread,name,sender FROM user_sessions WHERE binding=? "
                 + ("AND rowid<? " if before else "")
@@ -136,22 +134,17 @@ class Connections:
         if requested is None:
             return sessions[0]["thread"] if sessions else None
         with self.db() as db:
-            shared = db.execute(
-                "SELECT thread FROM conversations WHERE id=?", (row["conversation_id"],)
-            ).fetchone()[0]
             own = db.execute(
                 "SELECT 1 FROM user_sessions WHERE binding=? AND thread=?",
                 (row["conversation_id"], requested),
             ).fetchone()
-        if requested != shared and not own:
+        if not own:
             raise ValueError("会话不属于此接入或已重置")
-        if row["config"].get("session_mode", "independent") == "shared":
-            return shared
-        return requested if own else (sessions[0]["thread"] if sessions else None)
+        return requested
 
     def conversation_list(self):
         with self.db() as db:
-            return [dict(r) for r in db.execute("SELECT * FROM conversations ORDER BY rowid")]
+            return [dict(r) for r in db.execute("SELECT id,name,workdir FROM conversations ORDER BY rowid")]
 
     def execution_config(self, row, config):
         result = {
@@ -160,13 +153,17 @@ class Connections:
             if v
             and k
             not in (
-                "session_mode",
+                "ai_card_enabled",
+                "ai_card_template",
+                "ai_card_content_key",
                 "agent_provider",
                 "agent_model",
                 "session_validation",
                 "validation_first_reply",
                 "validation_approved_reply",
                 "validation_disabled_reply",
+                "unsupported_reply",
+                "reply_guidance",
             )
         }
         result["workdir"] = str(
@@ -238,6 +235,7 @@ class Connections:
                     "access_requests",
                     "access_delivery",
                     "access_notice_queue",
+                    "user_usage_threads",
                 ):
                     db.execute(f"DELETE FROM {table} WHERE channel=?", (identity,))
             db.execute(
@@ -262,6 +260,10 @@ class Connections:
                 "access_requests",
                 "access_delivery",
                 "access_notice_queue",
+                "dingtalk_contacts",
+                "dingtalk_messages",
+                "dingtalk_assets",
+                "user_usage_threads",
             ):
                 db.execute(f"DELETE FROM {table} WHERE channel=?", (identity,))
             db.execute("DELETE FROM connections WHERE id=?", (identity,))
@@ -282,19 +284,9 @@ class Connections:
                         json.loads(row["config"]).get("workdir") or self.home / "main/default"
                     ).resolve()
                 )
-                # Preserve the latest legacy independent history.
-                # Other old histories remain in core storage.
-                previous = (
-                    db.execute(
-                        "SELECT thread FROM receipts WHERE channel=? ORDER BY updated DESC LIMIT 1",
-                        (row["id"],),
-                    ).fetchone()
-                    if not binding
-                    else None
-                )
-                thread = previous[0] if previous else str(uuid.uuid4())
-                if db.execute("SELECT 1 FROM conversations WHERE thread=?", (thread,)).fetchone():
-                    thread = str(uuid.uuid4())
+                # `thread` is a retired schema column, never an execution target.
+                # Keep schema compatibility without adopting any legacy mixed context.
+                thread = str(uuid.uuid4())
                 binding = uuid.uuid4().hex
                 db.execute(
                     "INSERT INTO conversations VALUES(?,?,?,?)", (binding, row["name"], cwd, thread)
@@ -303,6 +295,37 @@ class Connections:
                     "UPDATE connections SET conversation_id=? WHERE id=?", (binding, row["id"])
                 )
                 used.add(binding)
+
+    def current_session_target(self, identity, session):
+        row = self.connection(identity)
+        if not row:
+            raise ValueError("接入不存在")
+        if not isinstance(session, str) or not session:
+            raise ValueError("请选择当前会话")
+        if row['type_id'] == 'dingtalk':
+            peer = self.messages.peer(identity, session)
+            sender, name = peer['sender'], peer['name']
+        else:
+            thread = self.session_thread(row, session)
+            with self.db() as db:
+                own = db.execute('SELECT sender,name FROM user_sessions WHERE binding=? AND thread=?',
+                                 (row['conversation_id'], thread)).fetchone()
+            if not own or thread != session:
+                raise ValueError('会话不属于此接入或已重置')
+            sender, name = own['sender'], own['name']
+        return row, sender, name
+
+    def reset_current_session(self, identity, session):
+        row, sender, name = self.current_session_target(identity, session)
+        thread = str(uuid.uuid4())
+        with self.db() as db:
+            db.execute('INSERT INTO user_sessions(binding,sender,name,thread) VALUES(?,?,?,?) '
+                       'ON CONFLICT(binding,sender) DO UPDATE SET thread=excluded.thread',
+                       (row['conversation_id'], sender, name, thread))
+            # The canonical old history stays intact; only future routing changes.
+            db.execute('UPDATE routes SET thread=? WHERE channel=? AND binding_id=? AND sender_id=?',
+                       (thread, identity, row['conversation_id'], sender))
+        return session if row['type_id'] == 'dingtalk' else thread
 
     def reset_conversation(self, identity):
         row = self.connection(identity)

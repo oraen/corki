@@ -105,7 +105,13 @@ from corki.protocol.execution_identity import ExecutionIdentity
 from corki.protocol.ids import SessionId, ThreadId, TurnId, new_thread_id, new_turn_id
 from corki.protocol.input_images import validate_image_positions
 from corki.protocol.input_mentions import InputMention, validate_mentions
-from corki.protocol.items import ConversationItem, HostedToolItem, TurnAbortedItem, UserMessageItem
+from corki.protocol.items import (
+    ContextItem,
+    ConversationItem,
+    HostedToolItem,
+    TurnAbortedItem,
+    UserMessageItem,
+)
 from corki.protocol.memory import ThreadMemoryMode
 from corki.protocol.session_source import DEFAULT_SESSION_SOURCE, SessionSource, SessionSourceKind
 from corki.protocol.settings import (
@@ -328,6 +334,7 @@ class LangGraphRuntime:
         plugin_catalog_base: MCPCatalog | None = None,
         plugin_discovery_enabled: bool = False,
         evolution: EvolutionController | None = None,
+        request_context: tuple[ContextItem, ...] = (),
     ) -> None:
         from corki.storage.forks import validate_fork
 
@@ -347,6 +354,7 @@ class LangGraphRuntime:
             raise ValueError("ephemeral execution requires private volatile session storage")
         if ephemeral and (archive_store is not None or memory_repository is not None):
             raise ValueError("ephemeral sessions cannot bind persistent archive or memory state")
+        self._agents = None
         self._ephemeral = ephemeral
         self._session_source = session_source
         self._instruction_manager = context_builder.instruction_manager
@@ -559,6 +567,7 @@ class LangGraphRuntime:
             media_preparation=self._media,
         )
         window_manager = ContextWindowManager(
+            request_context=request_context,
             repository=repository,
             model=model,
             model_name=settings.model,
@@ -854,6 +863,7 @@ class LangGraphRuntime:
         mcp_runtime_context: MCPRuntimeContext | None = None,
         mcp_tool_catalog_cache: MCPToolCatalogCache | None = None,
         context_contributors: tuple[ContextContributor, ...] = (),
+        request_context: tuple[ContextItem, ...] = (),
         configured_skill_roots: tuple[Path, ...] = (),
         context_source_directory: Path | None = None,
         user_instructions_provider: UserInstructionsProvider | None = None,
@@ -873,6 +883,8 @@ class LangGraphRuntime:
         a separate thread; it never deletes history or resets long-term memory.
         A fork copies a source snapshot into a new identity, without executing
         source work. An optional zero-based boundary cuts before a user message.
+        request_context is a host-owned developer prefix for this Runtime's
+        sampling and compaction requests; it is budgeted but never archived.
         An explicit source repository is borrowed, never closed by this runtime;
         its history can seed an independent persistent or private ephemeral target.
         """
@@ -1210,6 +1222,7 @@ class LangGraphRuntime:
         assert actual_repository is not None
         try:
             runtime = cls(
+                request_context=request_context,
                 model_metadata_resolver=model_metadata_resolver,
                 exec_policy_config_folders=(
                     settings.configuration.rule_folders(capability_home.absolute())
@@ -1266,6 +1279,44 @@ class LangGraphRuntime:
                     ),
                 ),
             )
+            if registry is None and not session_source.is_non_root_agent and not ephemeral:
+                from corki.agents.controller import AgentController
+                from corki.agents.instructions import worker_context
+                from corki.agents.tools import agent_tools
+                from corki.protocol.session_source import SubAgentSource, ThreadSpawnSource
+
+                async def create_child(identity, tool_context):
+                    # Inherit admitted policy, not a newly loaded global configuration.
+                    child_settings = replace(
+                        runtime._settings,
+                        execution_permissions=tool_context.execution_permissions,
+                        self_evolution_enabled=False,
+                        memories_generate=False,
+                        memories_background_enabled=False,
+                        goals_enabled=False,
+                        model_unbounded_connection_retries=False,
+                    )
+                    return await cls.acreate(
+                        settings=child_settings,
+                        database_path=database_path,
+                        home_path=capability_home,
+                        compatibility_home=compatibility_home,
+                        thread_id=ThreadId(identity),
+                        session_source=SessionSource.subagent(SubAgentSource(
+                            "thread_spawn", ThreadSpawnSource(runtime.thread_id, 1)
+                        )),
+                        inherited_exec_policy=runtime.execution_policy_handle,
+                        inherited_user_instructions=runtime._instruction_manager.user_instructions,
+                        request_context=(*request_context, worker_context()),
+                        configured_skill_roots=configured_skill_roots,
+                        mcp_requirements=runtime._mcp_requirements_snapshot,
+                        load_plugins=load_plugins,
+                    )
+
+                runtime._agents = AgentController(create_child)
+                actual_registry.replace_owned(
+                    actual_registry.create_owner(), agent_tools(runtime._agents)
+                )
             runtime._owns_model_factory = model is None
             runtime._graph._stop_hooks.start_source = start_source
             return runtime
@@ -1690,6 +1741,8 @@ class LangGraphRuntime:
             self._active_run.cancel(reason=reason)
         else:
             self._mcp_manager.cancel_startup()
+        if self._agents is not None:
+            await self._agents.stop_all()
         if reason == "interrupted":
             await self._pause_goal_for_interrupt()
 
@@ -2381,6 +2434,13 @@ class LangGraphRuntime:
                         error_kind="storage",
                     )
 
+            if self._agents is not None and isinstance(terminal, (TurnCancelled, TurnFailed)):
+                try:
+                    await self._agents.stop_all()
+                except Exception as exc:
+                    run.cleanup_error = run.cleanup_error or exc
+                    _LOG.exception("Could not stop child agents")
+
             if isinstance(terminal, TurnCancelled):
                 try:
                     # Control state is not the optional model-visible interrupt
@@ -3062,6 +3122,11 @@ class LangGraphRuntime:
         if self._evolution is not None:
             await self._evolution.aclose()
         error = self._checkpoint_cleanup_error
+        if self._agents is not None:
+            try:
+                await self._agents.aclose()
+            except BaseException as exc:
+                error = error or exc
         try:
             await self._turn_updates.aclose()
         except BaseException as exc:

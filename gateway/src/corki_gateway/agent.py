@@ -15,7 +15,7 @@ class Agent:
         self.database = host.store.home / "sessions/corki.db"
         self.repository = SQLiteSessionRepository(self.database)
 
-    async def run(self, thread, text, workdir, channel):
+    async def run(self, thread, text, workdir, channel, *, attachments=(), image_positions=()):
         from corki.config.settings import CorkiSettings
         from corki.core.runtime import LangGraphRuntime
         from corki.protocol.events import (
@@ -29,20 +29,26 @@ class Agent:
         from corki.protocol.session_source import SessionSource
 
         from .model_selection import validate_selection
+        from .reply_guidance import request_context
 
         config = (self.host.store.connection(channel) or {}).get("config", {})
         provider, model = config.get("agent_provider"), config.get("agent_model")
         settings = CorkiSettings.for_directory(
-            Path(workdir), config_file=self.host.store.home / "settings.json",
-            provider=provider or None, model=model or None,
+            Path(workdir),
+            config_file=self.host.store.home / "settings.json",
+            provider=provider or None,
+            model=model or None,
         )
         if provider or model:
             validate_selection(json.loads(settings._provider_document), provider, model)
+        if attachments and not settings.supports_image_input:
+            raise ValueError("Agent 当前模型未声明支持图片输入，请切换支持图片的模型。")
         # A remote chat must eventually settle even during an indefinite network outage.
         settings = replace(
             settings, model_unbounded_connection_retries=False, model_request_max_retries=3
         )
         runtime = await LangGraphRuntime.acreate(
+            request_context=request_context(config.get("reply_guidance", "")),
             settings=settings,
             database_path=self.database,
             repository=self.repository,
@@ -61,6 +67,9 @@ class Agent:
                 **asdict(request),
             }
             try:
+                card = self.host.reply_cards.get(thread)
+                if card:
+                    card.waiting()
                 await self.host.notify(
                     thread, "本次任务需要确认，请在 Corki 管理页面的转发网关中处理。"
                 )
@@ -73,8 +82,13 @@ class Agent:
         try:
             completed, answer = False, ""
             completed_messages = {}
-            async with aclosing(runtime.stream(text)) as events:
+            async with aclosing(
+                runtime.stream(text, attachments=attachments, image_positions=image_positions)
+            ) as events:
                 async for event in events:
+                    card = self.host.reply_cards.get(thread)
+                    if card:
+                        card.offer(event)
                     if isinstance(event, AssistantMessageCompleted):
                         completed_messages[str(event.turn_id)] = (event.item_id, event.text)
                     elif isinstance(event, UserInputRequested):

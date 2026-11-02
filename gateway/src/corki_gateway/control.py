@@ -108,13 +108,24 @@ def control(home, data):
         return {"value": row["config"].get(key, "")}
     if action == "application-message":
         return Store(home).application_message(data.get("id"), data.get("sender"))
+    if action == "image-info":
+        from .images import asset_info
+
+        return asset_info(home, data.get("id"), data.get("asset"), data.get("thumbnail", False))
     if action == "applications":
-        return Store(home).applications(
-            data.get("id"),
-            data.get("before"),
-            name=data.get("name", ""),
-            status=data.get("status", ""),
-        )
+        try:
+            return request(home, data, timeout=10)
+        except (OSError, ConnectionError, http.client.HTTPException):
+            result = Store(home).applications(
+                data.get("id"), data.get("before"),
+                name=data.get("name", ""), status=data.get("status", ""),
+            )
+            result["reply_activity"] = {}
+            return result
+    if action == "stop-reply":
+        return request(home, data, timeout=10)
+    if action == "recall-message":
+        return request(home, data, timeout=75)
     if action == "conversation":
         # Read-only polling must not contend with account edits or gateway lifecycle.
         try:
@@ -134,6 +145,7 @@ def control(home, data):
         "delete-connection",
         "save-connection",
         "reset-conversation",
+        "reset-current-conversation",
         "prepare-uninstall",
     ):
         store = Store(home)

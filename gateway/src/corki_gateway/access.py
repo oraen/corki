@@ -119,7 +119,8 @@ class AccessRequests:
             )
 
     def applications(self, channel, before=None, *, name="", status=""):
-        if not self.connection(channel):
+        connection = self.connection(channel)
+        if not connection:
             raise ValueError("接入不存在")
         if before is not None and (type(before) is not int or not 0 < before < 2**63):
             raise ValueError("申请列表游标无效")
@@ -132,25 +133,46 @@ class AccessRequests:
             conditions.append("a.rowid<?")
             args.append(before)
         if name.strip():
-            conditions.append("instr(lower(a.sender_name),lower(?))>0")
-            args.append(name.strip())
+            user_id_search = (
+                "CASE WHEN json_valid(d.message) THEN json_extract(d.message,'$.staff_id') END"
+                if connection["type_id"] == "dingtalk"
+                else "a.sender_id"
+            )
+            conditions.append(
+                "(instr(lower(a.sender_name),lower(?))>0 OR "
+                f"instr(lower({user_id_search}),lower(?))>0)"
+            )
+            args.extend([name.strip(), name.strip()])
         if status:
             conditions.append("a.status=?")
             args.append(status)
+        user_id = (
+            "NULLIF(trim(CASE WHEN json_valid(d.message) "
+            "THEN json_extract(d.message,'$.staff_id') END),'')"
+            if connection["type_id"] == "dingtalk"
+            else "a.sender_id"
+        )
         with self.db() as db:
             rows = db.execute(
                 "SELECT a.rowid AS cursor,a.sender_id,a.sender_name,"
                 "substr(a.first_message,1,240) AS first_message,a.created_at,a.status,"
                 "d.status AS notification_status,d.error AS notification_error, "
-                "d.kind AS notification_kind,d.updated AS notification_time "
-                "FROM access_requests a LEFT JOIN access_delivery d "
+                "d.kind AS notification_kind,d.updated AS notification_time, "
+                "d.notice_id AS notification_id, "
+                + user_id
+                + " AS user_id "
+                + "FROM access_requests a LEFT JOIN access_delivery d "
                 "ON d.channel=a.channel AND d.sender_id=a.sender_id WHERE "
                 + " AND ".join(conditions)
                 + " ORDER BY a.rowid DESC LIMIT 101",
                 args,
             ).fetchall()
+        requests = [dict(r) for r in rows[:100]]
+        usage = self.user_usage.totals(channel, [r['sender_id'] for r in requests])
+        for row in requests:
+            row['token_usage'] = usage[row['sender_id']]
         return {
-            "requests": [dict(r) for r in rows[:100]],
+            "requests": requests,
             "before": rows[99]["cursor"] if len(rows) > 100 else None,
         }
 
@@ -177,6 +199,40 @@ class AccessRequests:
                 (status, channel, sender),
             )
             self.queue_access_notice(db, row, sender, status)
+
+    def retry_access_notice(self, channel, sender, notice_id):
+        if not isinstance(sender, str) or not isinstance(notice_id, str) or not notice_id:
+            raise ValueError("通知不存在")
+        row = self.connection(channel)
+        if not row or not row["enabled"]:
+            raise ValueError("请先启用此接入")
+        if row["config"].get("session_validation") != "true":
+            raise ValueError("此接入未开启会话校验")
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            # Only retry the failure the user opened. A newer decision or another
+            # retry must never be overwritten by a stale dialog or another window.
+            changed = db.execute(
+                "UPDATE access_delivery SET notice_id=?,status='queued',error='',updated=? "
+                "WHERE channel=? AND sender_id=? AND notice_id=? AND status='failed'",
+                (uuid.uuid4().hex, time.time(), channel, sender, notice_id),
+            ).rowcount
+            if not changed:
+                raise ValueError("通知状态已更新，请刷新后重试")
+            message = json.loads(
+                db.execute(
+                    "SELECT message FROM access_delivery WHERE channel=? AND sender_id=?",
+                    (channel, sender),
+                ).fetchone()[0]
+            )
+            if row["type_id"] == "dingtalk":
+                message["_access_notice_mode"] = "proactive"
+            # Keep the original text and newest saved reply credentials.
+            db.execute(
+                "INSERT INTO access_notice_queue SELECT notice_id,channel,sender_id,?,"
+                "kind,text,'queued',updated FROM access_delivery WHERE channel=? AND sender_id=?",
+                (json.dumps(message, ensure_ascii=False), channel, sender),
+            )
 
     def application_message(self, channel, sender):
         if not self.connection(channel) or not isinstance(sender, str):

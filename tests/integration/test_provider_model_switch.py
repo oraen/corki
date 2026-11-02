@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import sqlite3
+from contextlib import closing
 
 import pytest
 from test_resume_model_settings import host  # noqa: F401 - shared isolated HTTP host fixture
@@ -81,6 +83,16 @@ def test_switch_keeps_inflight_transport_then_changes_wire_and_compaction(host):
             assert isinstance([e async for e in runtime.stream("third")][-1], TurnCompleted)
             assert requests[-1][0] == "https://alpha.invalid/v1/responses"
             assert requests[-1][2] == "Bearer alpha-key"
+            with closing(sqlite3.connect(path.parent / "sessions/corki.db")) as db:
+                metadata = [
+                    json.loads(row[0])
+                    for row in db.execute("SELECT metadata_json FROM model_steps ORDER BY rowid")
+                ]
+            assert [m["_corki_usage"]["provider"] for m in metadata] == ["alpha", "beta", "alpha"]
+            assert all(m["_corki_usage"]["model"] == "shared" for m in metadata)
+            assert "alpha-key" not in json.dumps(metadata) and "beta-key" not in json.dumps(
+                metadata
+            )
         finally:
             release.set()
             await task

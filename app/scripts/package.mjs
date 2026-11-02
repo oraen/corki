@@ -94,6 +94,10 @@ try {
           path.join(resources, "manager", "server.py"),
         );
         await cp(
+          "../manager/usage_analytics.py",
+          path.join(resources, "manager", "usage_analytics.py"),
+        );
+        await cp(
           "../manager/channel_gateway.py",
           path.join(resources, "manager", "channel_gateway.py"),
         );

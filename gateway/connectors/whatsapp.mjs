@@ -52,14 +52,17 @@ export async function create({ state_directory, require, load, incoming }) {
               const body = api.normalizeMessageContent(item.message);
               const text =
                 body?.conversation || body?.extendedTextMessage?.text;
-              if (!text) continue;
+              const media=['imageMessage','videoMessage','audioMessage','documentMessage','stickerMessage',
+                'contactMessage','contactsArrayMessage','locationMessage','liveLocationMessage',
+                'pollCreationMessage','pollCreationMessageV2','pollCreationMessageV3'].find(key=>body?.[key]);
+              if (!text && !media) continue;
               await incoming({
                 id: item.key.id,
                 sender: jid,
                 conversation: jid,
                 name: item.pushName || jid,
                 kind: "direct",
-                text,
+                ...(media?{text:'[非文本消息]',unsupported:true}:{text}),
               });
             }
           })

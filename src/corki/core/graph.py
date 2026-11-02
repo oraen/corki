@@ -1078,7 +1078,7 @@ class CorkiGraph:
             service_tier=self._settings.session_service_tier,
             fast_mode_enabled=self._settings.fast_mode,
             instructions=state["context_instructions"],
-            context_items=(),
+            context_items=self._window_manager.request_context,
             items=request_items,
             tools=request_tools,
             tool_search_mode=self._settings.tool_search_mode,
@@ -1209,6 +1209,14 @@ class CorkiGraph:
             with suppress(Exception):
                 await self._memory_repository.mark_memories_used(cited_threads)
         if sampled:
+            # Host-owned usage provenance uses this step's frozen model settings,
+            # not the mutable session selection. Never persist credentials here.
+            provider = self._settings.provider_id or self._settings.provider_name
+            if provider:
+                completed = replace(completed, provider_metadata={
+                    **completed.provider_metadata,
+                    "_corki_usage": {"provider": provider, "model": self._settings.model},
+                })
             await self._repository.commit_model_step(
                 state["thread_id"],
                 state["turn_id"],

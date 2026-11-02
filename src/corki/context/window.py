@@ -37,6 +37,7 @@ from corki.protocol.items import (
     BudgetNoticeItem,
     CompactionItem,
     ContextItem,
+    ContextRole,
     ConversationItem,
     ToolCallItem,
     ToolResultItem,
@@ -91,7 +92,28 @@ class ContextWindowManager:
         model_context_lookup=None,
         previous_model_lookup=None,
         provider_id=None,
+        request_context: tuple[ContextItem, ...] = (),
     ) -> None:
+        if not isinstance(request_context, tuple) or any(
+            not isinstance(item, ContextItem)
+            or not isinstance(item.key, str)
+            or not item.key.strip()
+            or item.role is not ContextRole.DEVELOPER
+            or not isinstance(item.content, str)
+            or not item.content.strip()
+            or item.message_group_id is not None
+            or item.source_input_id is not None
+            or item.snapshot_state is not None
+            for item in request_context
+        ):
+            raise ValueError("request context must contain standalone developer messages")
+        if len({item.key for item in request_context}) != len(request_context):
+            raise ValueError("request context keys must be unique")
+        # Host-owned, immutable request prefix; never appended to conversation history.
+        self.request_context = request_context
+        # Turn/Step views share the first observed usage sample. A cold resume may
+        # have changed its prefix, so trust usage only after a fresh sampling result.
+        self._request_context_baseline = []
         self._repository = repository
         self._truncation_policy = truncation_policy or TruncationPolicy()
         self._history_notes = history_notes
@@ -543,7 +565,8 @@ class ContextWindowManager:
             ):
                 raise ModelError(
                     "压缩后的请求仍超过接口大小限制，请减少当前输入或保留上下文。",
-                    kind=ModelErrorKind.CONTEXT_WINDOW, status_code=413,
+                    kind=ModelErrorKind.CONTEXT_WINDOW,
+                    status_code=413,
                 )
             if on_compact is not None:
                 await on_compact(
@@ -569,7 +592,8 @@ class ContextWindowManager:
             if byte_overflow:
                 raise ModelError(
                     "当前输入和保留上下文超过接口请求大小限制，没有可压缩的历史。",
-                    kind=ModelErrorKind.CONTEXT_WINDOW, status_code=413,
+                    kind=ModelErrorKind.CONTEXT_WINDOW,
+                    status_code=413,
                 )
             appended = (*changed_context, *new_pending, *new_input_context)
             if appended:
@@ -600,11 +624,26 @@ class ContextWindowManager:
         if checker is None:
             return False
         request = ModelRequest(
-            model=self._model_name, instructions=instructions, context_items=(),
-            items=items, tools=tools,
-            **{key: value for key, value in self._remote_request_options.items()
-               if key in {"model_info", "reasoning_effort", "reasoning_summary", "service_tier",
-                          "fast_mode_enabled", "reasoning_effort_resolved", "thread_id", "content_item_kinds"}},
+            model=self._model_name,
+            instructions=instructions,
+            context_items=self.request_context,
+            items=items,
+            tools=tools,
+            **{
+                key: value
+                for key, value in self._remote_request_options.items()
+                if key
+                in {
+                    "model_info",
+                    "reasoning_effort",
+                    "reasoning_summary",
+                    "service_tier",
+                    "fast_mode_enabled",
+                    "reasoning_effort_resolved",
+                    "thread_id",
+                    "content_item_kinds",
+                }
+            },
         )
         budget = await checker(request)
         if budget is None:
@@ -715,9 +754,22 @@ class ContextWindowManager:
     async def _estimate_request_tokens(self, instructions, items, tools):
         if self._media is not None:
             items = await self._media.prepare_items(items, for_model=True)
+        if self.request_context:
+            items = (*self.request_context, *items)
         return estimate_request_tokens(instructions, items, tools)
 
     async def _context_tokens_from_usage(self, usage, stored, candidate):
+        if self.request_context:
+            if not self._request_context_baseline:
+                self._request_context_baseline.append(
+                    usage.sample_id if usage is not None else None
+                )
+            if (
+                usage is None
+                or usage.sample_id is None
+                or usage.sample_id == self._request_context_baseline[0]
+            ):
+                return None
         if usage is None:
             return None
         if self._media is not None:
@@ -857,7 +909,7 @@ class ContextWindowManager:
                 thread_id=self._remote_request_options.get("thread_id"),
                 content_item_kinds=self._remote_request_options.get("content_item_kinds", True),
                 instructions=instructions,
-                context_items=(),
+                context_items=self.request_context,
                 items=await self._media.prepare_items(request_items, for_model=True)
                 if self._media is not None
                 else request_items,
@@ -878,7 +930,8 @@ class ContextWindowManager:
                 ):
                     raise ModelError(
                         "摘要请求超过接口大小限制。",
-                        kind=ModelErrorKind.CONTEXT_WINDOW, status_code=413,
+                        kind=ModelErrorKind.CONTEXT_WINDOW,
+                        status_code=413,
                     )
                 return await self._summary_attempt(request, on_incomplete_usage)
             except ModelError as exc:

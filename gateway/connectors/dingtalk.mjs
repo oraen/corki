@@ -1,4 +1,6 @@
-import { chunks, emit, status } from "./protocol.mjs";
+import { aiCards } from "./dingtalk-cards.mjs";
+import {messageContent,imageDownloads} from './dingtalk-media.mjs';
+import { chunks, emit, status, unsupportedContent } from "./protocol.mjs";
 
 // Session callbacks are bearer credentials. Never accept arbitrary reply destinations.
 export function replyURL(value) {
@@ -10,7 +12,17 @@ export function replyURL(value) {
   return url.href;
 }
 
-export async function create({ config, require, incoming, fatal = () => {} }) {
+function expiredReply(error) {
+  if(error.code === "ReplySessionExpired") return true;
+  // Do not guess undocumented numeric codes. Require an explicit rejection of
+  // the session credential; a timeout or token/permission error is ambiguous.
+  let result={};
+  try {result=JSON.parse(error.response?.data || "{}");}catch {}
+  const reason=[result.code,result.errcode,result.message,result.errmsg,error.code,error.message].join(" ");
+  return /session|webhook|会话|回复凭据/i.test(reason) && /expir|invalid|过期|失效|无效/i.test(reason);
+}
+
+export async function create({ config, require, incoming, state_directory, fatal = () => {} }) {
   const { DWClient, TOPIC_ROBOT } = require("dingtalk-stream");
   const client = new DWClient({
     clientId: config.client_id, clientSecret: config.client_secret,
@@ -46,17 +58,19 @@ export async function create({ config, require, incoming, fatal = () => {} }) {
     };
   }
   const abort = new AbortController();
-  async function post(url, body, headers = {}) {
-    const response = await fetch(url, {
-      method: "POST", redirect: "error",
+  async function post(url, body, headers = {}, method = "POST", reportErrors = true) {
+    let response;
+    try {response = await fetch(url, {
+      method, redirect: "error",
       signal: AbortSignal.any([abort.signal, AbortSignal.timeout(15000)]),
       headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify(body),
-    });
+    });}catch(error) {error.requestPath=new URL(url).pathname;throw error;}
     if (!response.ok) {
       const error = new Error("DingTalk HTTP request failed");
       error.response={status:response.status,data:(await response.text()).slice(0,8192)};
-      report(error,url,"调用钉钉接口");
+      error.requestPath=new URL(url).pathname;
+      if(reportErrors) report(error,url,"调用钉钉接口");
       throw error;
     }
     return response.json();
@@ -76,17 +90,48 @@ export async function create({ config, require, incoming, fatal = () => {} }) {
     })().finally(() => { tokenRequest = null; });
     return tokenRequest;
   }
+  const cards = aiCards({clientId:config.client_id,directory:state_directory,
+    request:async(method,route,body)=>{
+      const access=await accessToken();
+      const result=await post("https://api.dingtalk.com"+route,body,
+        {"x-acs-dingtalk-access-token":access},method,false);
+      if(result.success===false || (result.errcode != null && result.errcode!==0) ||
+         (result.code && result.code!=="OK" && result.code!=="Success"))
+        {
+          const error=new Error("DingTalk card API failed");
+          if(typeof result.code==='string' && /^[A-Za-z0-9_.-]{1,100}$/.test(result.code)) error.code=result.code;
+          throw error;
+        }
+      return result;
+    }});
+  const downloadImages=imageDownloads({directory:state_directory,signal:abort.signal,request:async code=>{
+    const access=await accessToken();
+    return post('https://api.dingtalk.com/v1.0/robot/messageFiles/download',
+      {downloadCode:code,robotCode:config.client_id},{'x-acs-dingtalk-access-token':access},'POST',false);
+  }});
+  let cardFailed=false;
+  function cardUnavailable(error) {
+    cardFailed=true;
+    status("online",{card:{state:"fallback",status:error.response?.status,
+      code:typeof error.code==='string' && /^[A-Za-z0-9_.-]{1,100}$/.test(error.code)?error.code:"CardUnavailable"}});
+  }
+  function cardAvailable() {
+    if(cardFailed){cardFailed=false;status("online",{card:{state:"ready"}});}
+  }
   async function receive(data) {
     const activity = phase => status("online", {activity:{phase,
       message_type:data.msgtype, conversation_type:String(data.conversationType)}});
     activity("received");
-    if (String(data.conversationType) === "1" && data.msgtype === "text" &&
-        typeof data.text?.content === "string" && data.text.content.trim()) {
+    const content=messageContent(data) || (typeof data.msgtype==='string' && data.msgtype
+      ? {...unsupportedContent(data.msgtype),image_refs:[],image_positions:[]} : null);
+    if (String(data.conversationType) === "1" && content?.text.trim()) {
       const webhook = replyURL(data.sessionWebhook);
       await incoming({
         id:data.msgId, sender:data.senderId, conversation:data.conversationId,
-        name:data.senderNick || data.senderId, kind:"direct", text:data.text.content,
+        name:data.senderNick || data.senderId, kind:"direct", ...content,
         session_webhook:webhook, webhook_expires:data.sessionWebhookExpiredTime,
+        staff_id:data.senderStaffId || "",
+        robot_code:data.robotCode || config.client_id,
       });
       activity("accepted");
     } else activity(String(data.conversationType) !== "1" ? "ignored_group" : "ignored_type");
@@ -102,7 +147,24 @@ export async function create({ config, require, incoming, fatal = () => {} }) {
       if (!stopped) status("error", {code:"protocol"});
     } finally { pending--; }
   });
+  function deliveryDiagnostic(error, message={}, path="/v1.0/robot/otoMessages/batchRecall") {
+        let response;
+        try {response=JSON.parse(error.response?.data || "{}");}catch {response={};}
+        const secrets=[config.client_id,config.client_secret,token,message.session_webhook].filter(Boolean);
+        try {secrets.push(...new URL(message.session_webhook).searchParams.values());}catch {}
+        const clean=value=>{
+          let text=String(value ?? "");
+          for(const secret of secrets)text=text.split(secret).join("[已隐藏]");
+          return text.replace(/([?&](?:session|token|access_token|ticket)=)[^&\s"']*/gi,"$1[已隐藏]").slice(0,1000);
+        };
+        error.delivery={provider:"dingtalk",operation:path.includes("batchRecall")?"recall":"send",path:error.requestPath || path,status:error.response?.status,
+          code:clean(response.code || response.errcode || error.code || error.name),
+          message:clean(response.message || response.errmsg || error.message || "发送失败"),
+          request_id:clean(response.requestid || response.requestId || "")};
+    return error;
+  }
   return {
+    downloadImages,
     async start() {
       reported = false;
       status("connecting");
@@ -129,16 +191,95 @@ export async function create({ config, require, incoming, fatal = () => {} }) {
         throw error;
       } finally { clearTimeout(timer); }
     },
-    async send({ message, text }) {
-      const url = replyURL(message.session_webhook);
-      const expires = Number(message.webhook_expires);
-      if (!Number.isFinite(expires) || expires <= Date.now())
-        throw new Error("DingTalk reply session expired");
-      const access = await accessToken();
-      for (const part of chunks(text, 1000)) {
-        const result = await post(url, { msgtype: "text", text: { content: part } },
-          { "x-acs-dingtalk-access-token": access });
-        if (result.errcode !== 0) throw new Error("DingTalk delivery failed");
+    async progress(params) {
+      try {const result=await cards.progress(params);if(result.supported)cardAvailable();return result;}
+      catch(error) {cardUnavailable(error);return {supported:false};} // Presentation failure must not stop the Agent.
+    },
+    async send({ message, text, final, card, proactive, fallback_proactive }) {
+      let path = "/robot/sendBySession", deliveredChars = 0, missingReceipt=false;
+      const keys=[], robot_code=message.robot_code || config.client_id;
+      const resultReceipt=()=>({receipt:{robot_code,keys:[...new Set(keys)],complete:!missingReceipt && keys.length>0}});
+      const remember=key=>{if(typeof key==='string' && key)keys.push(key);else missingReceipt=true;};
+      try {
+        if(proactive===true) {
+          path="/v1.0/robot/oToMessages/batchSend";
+          if(typeof message.staff_id!=="string" || !message.staff_id.trim())
+            throw Object.assign(new Error("缺少接收者 userId，请让该用户重新向机器人发一条消息后再重发"),{code:"MissingStaffId"});
+          const access=await accessToken();
+          for(const part of chunks(text,1000)) {
+            const result=await post("https://api.dingtalk.com"+path,{
+              robotCode:message.robot_code || config.client_id,userIds:[message.staff_id],
+              msgKey:"sampleText",msgParam:JSON.stringify({content:part}),
+            },{"x-acs-dingtalk-access-token":access},"POST",false);
+            if(result.invalidStaffIdList?.length)
+              throw Object.assign(new Error("接收者 userId 无效或不在机器人可用范围内"),{code:"InvalidStaffId"});
+            if(result.flowControlledStaffIdList?.length)
+              throw Object.assign(new Error("钉钉已对接收者限流，请稍后重发"),{code:"RecipientFlowControlled"});
+            if(typeof result.processQueryKey!=="string" || !result.processQueryKey)
+              throw Object.assign(new Error(result.message || result.errmsg || "钉钉未返回消息受理回执"),{code:result.code || result.errcode || "MissingDeliveryAck"});
+            remember(result.processQueryKey);
+          }
+          return resultReceipt();
+        }
+        if(final===true && card?.enabled===true) {
+          try {
+            const finished=await cards.finish({message,text,card});
+            const receipt=await cards.receipt(message);
+            if(receipt?.complete)keys.push(...receipt.keys);else missingReceipt=true;
+            if(finished){cardAvailable();return resultReceipt();}
+          }
+          catch(error) {cardUnavailable(error); const receipt=await cards.receipt(message); if(receipt?.complete)keys.push(...receipt.keys); /* Preserve the final answer through ordinary text. */}
+        }
+        const url = replyURL(message.session_webhook);
+        const expires = Number(message.webhook_expires);
+        if (!Number.isFinite(expires) || expires <= Date.now())
+          throw Object.assign(new Error("回复凭据过期"),{code:"ReplySessionExpired"});
+        const access = await accessToken();
+        for (const part of chunks(text, 1000)) {
+          const result = await post(url, { msgtype: "text", text: { content: part } },
+            { "x-acs-dingtalk-access-token": access }, "POST", false);
+          if (result.errcode !== 0) throw Object.assign(new Error(result.errmsg || "钉钉消息发送失败"),{code:result.errcode});
+          remember(result.processQueryKey);
+          deliveredChars += part.length;
+        }
+        return resultReceipt();
+      } catch(error) {
+        if(fallback_proactive===true && path==="/robot/sendBySession" && expiredReply(error)) {
+          // Already acknowledged chunks must not be delivered a second time.
+          const rest=await this.send({message,text:text.slice(deliveredChars),proactive:true});
+          if(rest?.receipt?.complete)keys.push(...rest.receipt.keys);else missingReceipt=true;
+          return resultReceipt();
+        }
+        deliveryDiagnostic(error,message,path);
+        throw error;
+      }
+    },
+    async recall(receipt) {
+      const path='/v1.0/robot/otoMessages/batchRecall', recalled=[];
+      try {
+        if(!receipt || receipt.robot_code!==config.client_id || receipt.complete!==true ||
+           !Array.isArray(receipt.keys) || !receipt.keys.length || receipt.keys.length>200 ||
+           receipt.keys.some(k=>typeof k!=='string' || !k || k.length>1024))
+          throw Object.assign(Error('消息撤回凭据缺失或不属于当前机器人'),{code:'InvalidRecallReceipt'});
+        const access=await accessToken(), errors=[];
+        // Bounded batches and a deadline keep work inside the caller's timeout.
+        const keys=[...new Set(receipt.keys)],deadline=Date.now()+30000;
+        for(let offset=0;offset<keys.length;offset+=20) {
+          if(Date.now()>=deadline){errors.push('撤回超时，剩余消息尚未确认');break;}
+          const batch=keys.slice(offset,offset+20);
+          const response=await post('https://api.dingtalk.com'+path,
+            {robotCode:receipt.robot_code,processQueryKeys:batch},
+            {'x-acs-dingtalk-access-token':access},'POST',false);
+          for(const key of batch) {
+            if(Array.isArray(response.successResult) && response.successResult.includes(key) && !response.failedResult?.[key])recalled.push(key);
+            else errors.push(String(response.failedResult?.[key] || '钉钉未确认撤回成功').slice(0,1000));
+          }
+        }
+        return {recalled,error:errors.length?deliveryDiagnostic(Error(errors.join('；')),{},path).delivery.message:''};
+      } catch(error) {
+        const detail=deliveryDiagnostic(error,{},path);
+        if(recalled.length)return {recalled,error:detail.delivery.message};
+        throw detail;
       }
     },
     async close() {

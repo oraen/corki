@@ -3,6 +3,9 @@
 import asyncio
 import json
 
+from .errors import DeliveryError
+from .messages import send_logged
+
 
 class AccessNotifier:
     def __init__(self, host):
@@ -42,32 +45,49 @@ class AccessNotifier:
                 if not notice:
                     return
                 try:
+                    message = json.loads(notice["message"])
+                    proactive = message.pop("_access_notice_mode", None) == "proactive"
                     # A notice is not the Agent's final reply and must not acknowledge
                     # a standard HTTP inbox item or overwrite its saved answer.
                     async with asyncio.timeout(15):
-                        result = await connector.call(
-                            "send",
+                        result = await send_logged(
+                            host,
+                            channel,
                             {
-                                "message": json.loads(notice["message"]),
+                                "message": message,
                                 "text": notice["text"],
                                 "notice_id": notice["notice_id"],
+                                **({"proactive": True} if proactive else {}),
+                                **(
+                                    {"fallback_proactive": True}
+                                    if not proactive
+                                    and row["type_id"] == "dingtalk"
+                                    and notice["kind"] in ("approved", "disabled")
+                                    else {}
+                                ),
                             },
                             timeout=15,
+                            kind="notice",
                         )
                     if not isinstance(result, dict) or result.get("sent") is not True:
-                        raise ValueError("missing delivery acknowledgement")
+                        raise DeliveryError("通知未获发送成功回执")
                     host.store.finish_access_notice(notice["notice_id"], "sent")
                 except asyncio.CancelledError:
                     host.store.finish_access_notice(
                         notice["notice_id"], "failed", "通知发送中断，送达情况未知，未自动重发"
                     )
                     raise
-                except Exception:
+                except Exception as error:
                     # Connector exceptions may contain expiring tokens/webhook URLs.
+                    reason = "通知未获发送确认，请检查渠道连接或回复凭据是否过期"
+                    if isinstance(error, DeliveryError):
+                        reason = str(error)
+                    elif isinstance(error, TimeoutError):
+                        reason = "通知发送超时，送达情况未知"
                     host.store.finish_access_notice(
                         notice["notice_id"],
                         "failed",
-                        "通知未获发送确认，请检查渠道连接或回复凭据是否过期",
+                        reason,
                     )
         finally:
             self.tasks.pop(channel, None)

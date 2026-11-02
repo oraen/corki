@@ -9,6 +9,7 @@ from pathlib import Path
 from . import package_jobs
 from .access_notifier import AccessNotifier
 from .connector import Connector
+from .messages import manual_send, send_logged
 from .plugins import (
     cleanup_legacy_dependencies,
     dependencies_ready,
@@ -16,6 +17,8 @@ from .plugins import (
     installation_status,
     migrate_dependencies,
 )
+from .recall import recall_message
+from .reply_card import ReplyCard, card_options
 from .standard import define, is_standard
 from .standard_connector import StandardConnector
 from .store import BUILTINS, Store
@@ -26,12 +29,14 @@ class Host:
         self.store = Store(home)
         self.online = online
         self.deliveries = {}
+        self.reply_cards = {}
         self.runner = runner
         self.connector_factory = connector_factory
         self.connectors, self.monitors, self.tasks, self.statuses = {}, {}, {}, {}
         self.runtimes, self.interactions, self.locks = {}, {}, {}
         self.task_senders = {}
         self.access_revocations = set()
+        self.admin_stops = set()
         self.access_notifier = AccessNotifier(self)
         self.lock_users = {}
         self.live = {}
@@ -39,6 +44,7 @@ class Host:
         self.mutation = asyncio.Lock()
         self.stopping = False
         self.changing = set()
+        self.manual_tasks = {}
 
     def component_busy(self, identity):
         return (
@@ -56,6 +62,7 @@ class Host:
         await asyncio.to_thread(cleanup_legacy_dependencies, self.store)
         self.store.recover()
         self.store.recover_access_notices()
+        self.store.messages.recover()
         if self.runner is None:
             from .agent import Agent
 
@@ -159,6 +166,16 @@ class Host:
             }
         elif "activity" in self.statuses.get(identity, {}):
             item["activity"] = self.statuses[identity]["activity"]
+        card_status = value.get("card")
+        if isinstance(card_status, dict) and card_status.get("state") == "fallback":
+            item["card"] = {"state": "fallback"}
+            code = card_status.get("code", "")
+            if isinstance(code, str) and len(code) <= 100:
+                item["card"]["code"] = code
+            if type(card_status.get("status")) is int:
+                item["card"]["status"] = card_status["status"]
+        elif not isinstance(card_status, dict) and "card" in self.statuses.get(identity, {}):
+            item["card"] = self.statuses[identity]["card"]
         self.statuses[identity] = item
         if value["state"] == "online":
             self.access_notifier.schedule(identity)
@@ -170,7 +187,7 @@ class Host:
             "installed": installation_status(self.store),
             "package_jobs": package_jobs.snapshot(self.store),
             "statuses": self.statuses,
-            "active": len(self.tasks),
+            "active": len(self.tasks) + len(self.manual_tasks),
             "interactions": list(self.interactions.values()),
         }
 
@@ -186,6 +203,8 @@ class Host:
             raise ValueError("渠道已关闭")
         if not isinstance(message, dict):
             raise ValueError("消息格式无效")
+        if "unsupported" in message and type(message["unsupported"]) is not bool:
+            raise ValueError("消息类型标记无效")
         for key in ("id", "sender", "conversation", "text"):
             value = message.get(key)
             if (
@@ -194,18 +213,76 @@ class Host:
                 or len(value) > (100000 if key == "text" else 300)
             ):
                 raise ValueError("消息字段无效：" + key)
-        # First-party adapters currently admit direct text only. Custom adapters must
+        # First-party adapters admit direct messages only. Custom adapters must
         # declare this explicitly; no group identity may be silently treated as DM.
         if message.get("kind") != "direct":
-            raise ValueError("当前仅支持私聊文本消息")
+            raise ValueError("当前仅支持私聊消息")
+        if row["type_id"] == "dingtalk":
+            from .images import validate_refs
+
+            refs = validate_refs(message)
+            self.store.messages.contact(channel, message)
+            self.store.messages.record(
+                channel,
+                message,
+                "inbound:" + message["id"],
+                "user",
+                "user",
+                message["text"],
+                images=[
+                    {
+                        "status": "pending",
+                        **(
+                            {"position": message["image_positions"][i]}
+                            if i < len(message.get("image_positions", []))
+                            else {}
+                        ),
+                    }
+                    for i, _ in enumerate(refs)
+                ],
+            )
         allowed = self.store.allows_message(row, message)
         if row["config"].get("session_validation") == "true":
             self.access_notifier.schedule(channel)
         if not allowed:
+            if row["type_id"] == "dingtalk" and message.get("image_refs"):
+                self.store.images.update(
+                    channel,
+                    message,
+                    [
+                        {"status": "failed", "error": "会话未授权，未下载图片"}
+                        for _ in message["image_refs"]
+                    ],
+                )
             self.store.deny_message(channel, message)
             return {"accepted": True, "access_denied": True}
         if len(self.tasks) >= 100:
             raise ValueError("网关繁忙，请稍后重试")
+        if message.get("unsupported"):
+            from .fallback import reply, reserve
+
+            if not reserve(self.store, channel, message):
+                return {"accepted": True, "duplicate": True}
+            if row["type_id"] == "dingtalk" and message.get("image_refs"):
+                self.store.images.update(
+                    channel,
+                    message,
+                    [
+                        {"status": "failed", "error": "该消息包含不支持的附件类型"}
+                        for _ in message["image_refs"]
+                    ],
+                )
+            key = (channel, message["id"])
+            task = asyncio.create_task(reply(self, channel, message))
+            self.tasks[key] = task
+            self.task_senders[key] = message["sender"]
+
+            def done_fallback(_):
+                self.tasks.pop(key, None)
+                self.task_senders.pop(key, None)
+
+            task.add_done_callback(done_fallback)
+            return {"accepted": True, "unsupported": True}
         workdir = row["config"].get("workdir") or str(self.store.home / "main/default")
         Path(workdir).mkdir(parents=True, exist_ok=True)
         thread = self.store.admit(channel, message, workdir)
@@ -227,6 +304,7 @@ class Host:
         lock = self.locks.setdefault(thread, asyncio.Lock())
         self.lock_users[thread] = self.lock_users.get(thread, 0) + 1
         sending = False
+        card = None
         delivery_context = (channel, message)
         try:
             async with lock, self.slots:
@@ -235,19 +313,59 @@ class Host:
                 if not (current or {}).get("enabled"):
                     raise asyncio.CancelledError()
                 if not self.store.allows_message(current, message, remember=False):
+                    if current["type_id"] == "dingtalk" and message.get("image_refs"):
+                        self.store.images.update(
+                            channel,
+                            message,
+                            [
+                                {"status": "failed", "error": "会话未授权，未下载图片"}
+                                for _ in message["image_refs"]
+                            ],
+                        )
                     self.store.finish(channel, message["id"], "access_denied")
                     self.access_notifier.schedule(channel)
                     return
                 self.deliveries[thread] = delivery_context
                 self.store.finish(channel, message["id"], "running")
+                if message.get("media_error"):
+                    if message.get("image_refs"):
+                        self.store.images.update(
+                            channel,
+                            message,
+                            [
+                                {"status": "failed", "error": message["media_error"]}
+                                for _ in message["image_refs"]
+                            ],
+                        )
+                    raise ValueError("Agent " + message["media_error"])
+                attachments = (
+                    await self.store.images.load(channel, message, self.connectors.get(channel))
+                    if current["type_id"] == "dingtalk"
+                    else ()
+                )
+                options = card_options(current)
+                if options["enabled"] and self.connectors.get(channel):
+                    card = ReplyCard(self.connectors[channel], message, options)
+                    self.reply_cards[thread] = card
+                    card.offer()
+                inputs = (
+                    {
+                        "attachments": attachments,
+                        "image_positions": message.get("image_positions", ()),
+                    }
+                    if attachments
+                    else {}
+                )
                 answer = await asyncio.wait_for(
-                    self.runner(thread, message["text"], workdir, channel), timeout=1800
+                    self.runner(thread, message["text"], workdir, channel, **inputs), timeout=1800
                 )
                 if not (self.store.connection(channel) or {}).get("enabled"):
                     raise asyncio.CancelledError()
                 connector = self.connectors.get(channel)
                 if connector is None:
                     raise ValueError("渠道已断开，结果保留在 Corki 会话中")
+                if card:
+                    await card.settle()
                 self.store.finish(channel, message["id"], "sending")
                 # A timeout after sending is ambiguous. Do not automatically resend it.
                 sending = True
@@ -256,13 +374,24 @@ class Host:
                     if len(answer) <= 120000
                     else answer[:120000] + "\n（回复较长，完整内容已保存在 Corki 会话中）"
                 )
-                delivery = await connector.call(
-                    "send", {"message": message, "text": text, "final": True}, timeout=120
+                delivery = await send_logged(
+                    self,
+                    channel,
+                    {
+                        "message": message,
+                        "text": text,
+                        "final": True,
+                        "card": card.options if card else {"enabled": False},
+                    },
+                    timeout=120,
                 )
                 if not isinstance(delivery, dict) or delivery.get("sent") is not True:
                     raise ValueError("渠道未确认投递成功，结果保留在 Corki 会话中")
                 self.store.finish(channel, message["id"], "completed")
         except asyncio.CancelledError:
+            admin_stop = (channel, message["id"]) in self.admin_stops
+            stop_text = "回答已被管理员终止" if admin_stop else "回答已停止"
+            card_notified = await card.settle(stop_text, stopped=True) if card else False
             revoked = (channel, message["id"]) in self.access_revocations
             self.store.finish(
                 channel,
@@ -270,7 +399,26 @@ class Host:
                 "access_denied" if revoked else "cancelled",
                 "会话访问已禁用" if revoked else "执行已停止，已完成的操作不会撤销",
             )
+            if admin_stop:
+                key = "admin-stop:" + message["id"]
+                if card_notified:
+                    # The existing AI card already delivered the notice. Retain it
+                    # in transport history without sending a second text message.
+                    self.store.messages.record(
+                        channel, message, key, "assistant", "system", stop_text, "sent"
+                    )
+                    self.store.messages.finish(channel, key, "sent", delivery_receipt=card.receipt)
+                else:
+                    with contextlib.suppress(Exception):
+                        await send_logged(
+                            self, channel,
+                            {"message": message, "text": stop_text, "record_key": key,
+                             "fallback_proactive": True, "card": {"enabled": False}},
+                            timeout=15, kind="system",
+                        )
         except TimeoutError:
+            if card:
+                await card.settle("任务处理超时，请稍后重试。")
             self.store.finish(
                 channel, message["id"], "failed", "执行或投递超时，未自动重试；请查看会话记录"
             )
@@ -281,6 +429,7 @@ class Host:
                 if isinstance(error, ValueError) and str(error).startswith(("Agent", "渠道"))
                 else "任务失败，请查看 Corki 会话日志"
             )
+            card_notified = await card.settle(safe) if card else False
             failed_delivery = self.store.http_queue.get(channel, message["id"]) if sending else None
             state = (
                 "delivery_failed"
@@ -290,12 +439,18 @@ class Host:
             self.store.finish(channel, message["id"], state, safe)
             if (
                 not sending
+                and (not card_notified or message.get("image_refs") or message.get("media_error"))
                 and self.deliveries.get(thread) is delivery_context
                 and not is_standard(self.store.connection(channel) or {})
             ):
                 await self.notify(thread, safe)
         finally:
+            if card:
+                await card.close()
+                if self.reply_cards.get(thread) is card:
+                    self.reply_cards.pop(thread, None)
             self.access_revocations.discard((channel, message["id"]))
+            self.admin_stops.discard((channel, message["id"]))
             if self.deliveries.get(thread) is delivery_context:
                 self.deliveries.pop(thread, None)
             # Queued users share the same lock until the final waiter completes.
@@ -313,9 +468,21 @@ class Host:
         row = self.store.connection(channel)
         if connector and row and row["enabled"]:
             with contextlib.suppress(Exception):
-                await connector.call("send", {"message": message, "text": text}, timeout=15)
+                import uuid
+
+                await send_logged(
+                    self,
+                    channel,
+                    {"message": message, "text": text, "record_key": "system:" + uuid.uuid4().hex},
+                    timeout=15,
+                    kind="system",
+                )
 
     async def stop_channel(self, identity):
+        manual = [task for (channel, _), task in self.manual_tasks.items() if channel == identity]
+        for task in manual:
+            task.cancel()
+        await asyncio.gather(*manual, return_exceptions=True)
         await self.access_notifier.stop(identity)
         keys = [key for key, task in self.tasks.items() if key[0] == identity and not task.done()]
         work = [self.tasks[key] for key in keys]
@@ -331,17 +498,61 @@ class Host:
             self.store.finish(key[0], key[1], "cancelled", "执行已停止")
         self.statuses.pop(identity, None)
 
+    def reply_activity(self, channel):
+        # Deliveries only contains work that owns a session lock and execution slot.
+        # Queued messages and authorization notices are not Agent replies.
+        activity = {}
+        for owner, message in self.deliveries.values():
+            if owner != channel:
+                continue
+            task = self.tasks.get((owner, message["id"]))
+            if task is None or task.done():
+                continue
+            row = activity.setdefault(message["sender"], {"message_ids": [], "stopping": False})
+            row["message_ids"].append(message["id"])
+            row["stopping"] |= bool(task.cancelling())
+        return activity
+
     async def change(self, data):
         action, identity = data.get("action"), data.get("id")
+        if action == "recall-message":
+            return await recall_message(self, data)
+        if action == "manual-send":
+            return await manual_send(self, data)
         if action == "application-message":
             return self.store.application_message(identity, data.get("sender"))
         if action == "applications":
-            return self.store.applications(
+            result = await asyncio.to_thread(
+                self.store.applications,
                 identity,
                 data.get("before"),
                 name=data.get("name", ""),
                 status=data.get("status", ""),
             )
+            result["reply_activity"] = self.reply_activity(identity)
+            return result
+        if action == "stop-reply":
+            sender, message_ids = data.get("sender"), data.get("message_ids")
+            if not isinstance(sender, str) or not 1 <= len(sender) <= 300:
+                raise ValueError("用户 ID 无效")
+            if (
+                not isinstance(message_ids, list) or not 1 <= len(message_ids) <= 4
+                or any(not isinstance(value, str) or not value or len(value) > 1000 for value in message_ids)
+            ):
+                raise ValueError("回复标识无效")
+            if not self.store.connection(identity):
+                raise ValueError("接入不存在")
+            active = self.reply_activity(identity).get(sender, {}).get("message_ids", [])
+            requested = 0
+            for message_id in set(message_ids).intersection(active):
+                task = self.tasks[(identity, message_id)]
+                # Never cancel twice during cleanup, or target a newer reply after
+                # the confirmation dialog's original reply has already finished.
+                if not task.cancelling():
+                    self.admin_stops.add((identity, message_id))
+                    task.cancel()
+                requested += 1
+            return {"requested": requested, "reply_activity": self.reply_activity(identity)}
         if action == "conversation":
             from .history import history
 
@@ -349,7 +560,14 @@ class Host:
         async with self.mutation:
             self.changing.add(identity)
             try:
-                if action == "application-status":
+                if action == "retry-access-notice":
+                    if identity not in self.connectors:
+                        raise ValueError("请先开启网关并启用此接入")
+                    self.store.retry_access_notice(
+                        identity, data.get("sender"), data.get("notice_id")
+                    )
+                    self.access_notifier.schedule(identity)
+                elif action == "application-status":
                     sender, status = data.get("sender"), data.get("status")
                     self.store.set_application_status(identity, sender, status)
                     if status == "disabled":
@@ -429,6 +647,23 @@ class Host:
                     await self.stop_channel(identity)
                     if enabled and self.online:
                         self.monitors[identity] = asyncio.create_task(self.supervise(identity))
+                elif action == "reset-current-conversation":
+                    _, sender, _ = self.store.current_session_target(identity, data.get('session'))
+                    keys = [key for key, task in self.tasks.items()
+                            if key[0] == identity and not task.done()
+                            and self.task_senders.get(key) == sender]
+                    tasks = [self.tasks[key] for key in keys]
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    for key in keys:
+                        self.store.finish(*key, 'cancelled', '会话已重置')
+                    self.store.http_queue.skip_pending(identity, sender)
+                    session = self.store.reset_current_session(identity, data.get('session'))
+                    connector = self.connectors.get(identity)
+                    if connector and hasattr(connector, 'wake'):
+                        connector.wake.set()
+                    return {**self.snapshot(), 'reset_session': session}
                 elif action == "reset-conversation":
                     row = self.store.connection(identity)
                     if not row:
@@ -493,6 +728,9 @@ class Host:
                                 "access_requests",
                                 "access_delivery",
                                 "access_notice_queue",
+                                "dingtalk_contacts",
+                                "dingtalk_messages",
+                                "dingtalk_assets",
                             ):
                                 db.execute(f"DELETE FROM {table} WHERE channel=?", (identity,))
                 elif action == "delete":
@@ -542,6 +780,9 @@ class Host:
 
     async def close(self):
         self.stopping = True
+        for task in list(self.manual_tasks.values()):
+            task.cancel()
+        await asyncio.gather(*list(self.manual_tasks.values()), return_exceptions=True)
         await self.access_notifier.stop()
         for identity in list(self.monitors):
             await self.stop_channel(identity)

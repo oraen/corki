@@ -11,6 +11,12 @@ export const emit = (value) =>
 export const status = (state, extra = {}) =>
   emit({ method: "status", params: { state, ...extra } });
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+export function unsupportedContent(type,caption='') {
+  const label=({picture:'图片消息',image:'图片消息',photo:'图片消息',video:'视频消息',
+    audio:'音频消息',voice:'语音消息',file:'文件消息',document:'文件消息',
+    sticker:'贴纸消息',animation:'动画消息',location:'位置消息'})[type] || '不支持的消息类型';
+  return {text:(typeof caption==='string' && caption.trim()?caption+'\n':'')+'['+label+']',unsupported:true,message_type:type};
+}
 export function chunks(text, limit = 3000) {
   if (!Number.isInteger(limit) || limit < 2) throw new Error("invalid chunk limit");
   const output = [];
@@ -53,8 +59,9 @@ export function protocol(handlers) {
       if (!handler) throw new Error("unknown method");
       const result = await handler(value.params || {});
       emit({ id: value.id, result: result ?? {} });
-    } catch {
-      emit({ id: value?.id, error: "connector request failed" });
+    } catch (error) {
+      emit({ id: value?.id, error: "connector request failed",
+        ...(error?.delivery ? {diagnostic:error.delivery} : {}) });
     }
   });
   return (params) =>
