@@ -367,6 +367,7 @@ else {
     if (directory) pendingDirectory = directory;
     if (!window) createWindow();
     if (window?.isMinimized()) window.restore();
+    window?.show();
     window?.focus();
     if (directory && window && !window.webContents.isLoading())
       window.webContents.send("corki:event", {
@@ -445,7 +446,7 @@ else {
       }),
     );
     Menu.setApplicationMenu(
-      Menu.buildFromTemplate([
+      process.platform === "win32" ? null : Menu.buildFromTemplate([
         {
           label: "Corki",
           submenu: [
@@ -488,6 +489,9 @@ else {
   });
   app.on("activate", () => {
     if (!window) createWindow();
+    if (window?.isMinimized()) window.restore();
+    window?.show();
+    window?.focus();
   });
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();

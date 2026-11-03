@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
 from corki.cron.locking import FileLock
+from corki.platforms.processes import background_process_options
 
 from .programs import environment, find
 from .store import BUILTINS, ID
@@ -268,7 +269,10 @@ def install_dependencies(store, identity, progress=lambda stage: None):
     if not node:
         raise ValueError("请先安装 Node.js 22 或更新版本")
     try:
-        version = subprocess.run([node, "--version"], capture_output=True, text=True, timeout=5)
+        version = subprocess.run(
+            [node, "--version"], capture_output=True, text=True, timeout=5,
+            **background_process_options(),
+        )
         if version.returncode or int(version.stdout.strip().lstrip("v").split(".")[0]) < 22:
             raise ValueError("需要 Node.js 22 或更新版本")
     except (OSError, subprocess.TimeoutExpired) as error:
@@ -305,7 +309,8 @@ def install_dependencies(store, identity, progress=lambda stage: None):
             progress("正在下载并安装组件…")
             try:
                 result = subprocess.run(
-                    command, cwd=folder, capture_output=True, timeout=180, env=environment()
+                    command, cwd=folder, capture_output=True, timeout=180, env=environment(),
+                    **background_process_options(),
                 )
             except subprocess.TimeoutExpired as error:
                 raise ValueError("渠道安装超时，请检查网络后重试") from error

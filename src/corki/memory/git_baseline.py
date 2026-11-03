@@ -17,6 +17,7 @@ from corki.mcp.environment import NON_INHERITABLE
 from corki.memory import workspace
 from corki.platforms.cleanup import remove_owned_tree
 from corki.platforms.paths import is_link_metadata, is_link_path
+from corki.platforms.processes import background_process_options
 
 _MARKER = "corki-memory-baseline-v1\n"
 _LEGACY = ".consolidation-baseline.json"
@@ -71,6 +72,7 @@ def _git(root: Path, *args: str, data: bytes | None = None) -> bytes:
             capture_output=True,
             timeout=30,
             check=False,
+            **background_process_options(),
         )
     except FileNotFoundError as error:
         if root.is_dir() and shutil.which("git", path=env.get("PATH", os.defpath)) is None:

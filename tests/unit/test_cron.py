@@ -457,7 +457,7 @@ def test_unexpected_worker_failure_keeps_traceback(tmp_path):
     assert store.run(identity)["status"] == "failed"
 
 
-def test_windows_worker_detaches_from_scheduler_console(tmp_path, monkeypatch):
+def test_windows_worker_has_no_console(tmp_path, monkeypatch):
     import os
     from types import SimpleNamespace
 
@@ -467,14 +467,13 @@ def test_windows_worker_detaches_from_scheduler_console(tmp_path, monkeypatch):
     monkeypatch.setattr(module, "os", SimpleNamespace(
         name="nt", environ=os.environ, pathsep=os.pathsep,
     ))
-    monkeypatch.setattr(module.subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, raising=False)
-    monkeypatch.setattr(module.subprocess, "DETACHED_PROCESS", 0x8, raising=False)
+    monkeypatch.setattr(module, "background_process_options", lambda: {"creationflags": 0x08000000})
     monkeypatch.setattr(module.subprocess, "Popen", lambda *a, **k: calls.append((a, k)))
     service = module.CronService(tmp_path)
     service._launch("fixture-run")
     args, options = calls[0]
     assert args[0][-1] == "fixture-run"
-    assert options["creationflags"] == 0x208
+    assert options["creationflags"] == 0x08000000
     assert options["env"]["CORKI_HOME"] == str(service.store.home)
     assert options["stdin"] == module.subprocess.DEVNULL
     assert "shell" not in options

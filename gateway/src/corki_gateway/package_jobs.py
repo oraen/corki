@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from corki.cron.locking import FileLock
+from corki.platforms.processes import background_process_options
 
 from .store import BUILTINS, Store
 
@@ -77,7 +78,7 @@ def start(store, identity, action):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=os.name != "nt",
-            creationflags=(0x00000200 | 0x00000008) if os.name == "nt" else 0,
+            **background_process_options(),
         )
         # No browser/manager request waits for npm. The worker owns its lifecycle.
         process.poll()

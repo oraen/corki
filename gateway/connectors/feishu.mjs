@@ -1,5 +1,10 @@
 import { chunks, status, emit, unsupportedContent } from "./protocol.mjs";
 export async function create({ config, require, incoming, fatal = () => {} }) {
+  let startupTimer, closed = false;
+  const ready = () => {
+    clearTimeout(startupTimer);
+    if (!closed) status("online");
+  };
   const sdk = require("@larksuiteoapi/node-sdk");
   const options = {
     appId: config.app_id,
@@ -12,11 +17,12 @@ export async function create({ config, require, incoming, fatal = () => {} }) {
   const client = new sdk.Client(options),
     ws = new sdk.WSClient({
       ...options,
-      onReady: () => status("online"),
-      onReconnected: () => status("online"),
-      onReconnecting: () => status("connecting"),
+      onReady: ready,
+      onReconnected: ready,
+      onReconnecting: () => { if (!closed) status("connecting"); },
       onError: (error) => {
-        status("error", { code: "network" });
+        if (closed) return;
+        status("error", { code: "feishu_connection" });
         // The SDK has stopped retrying. Let the gateway supervisor restart it.
         if (/^WebSocket reconnect exhausted after \d+ attempts?/.test(error?.message || "") ||
             error?.message === "WebSocket connect failed and autoReconnect is disabled") fatal();
@@ -24,16 +30,28 @@ export async function create({ config, require, incoming, fatal = () => {} }) {
     });
   return {
     async start() {
+      startupTimer = setTimeout(() => {
+        if (closed) return;
+        status("error", { code: "feishu_setup" });
+        fatal();
+      }, 45000);
+      startupTimer.unref?.();
       const dispatcher = new sdk.EventDispatcher({}).register({
         "im.message.receive_v1": async (data) => {
           const message = data.message,
             sender = data.sender;
           if (
             message?.chat_type !== "p2p" ||
-            sender?.sender_type !== "user"
+            sender?.sender_type !== "user" ||
+            !sender?.sender_id?.open_id || !message.message_id || !message.chat_id
           )
             return;
-          const content = message.message_type==='text'?JSON.parse(message.content || "{}"):null;
+          let content = null;
+          if (message.message_type === 'text') {
+            try { content = JSON.parse(message.content || "{}"); }
+            catch { return; }
+            if (!content || typeof content !== 'object') return;
+          }
           if (content && (typeof content.text !== "string" || !content.text.trim())) return;
           await incoming({
             id: message.message_id,
@@ -63,6 +81,8 @@ export async function create({ config, require, incoming, fatal = () => {} }) {
       }
     },
     async close() {
+      closed = true;
+      clearTimeout(startupTimer);
       ws.close({ force: true });
     },
   };

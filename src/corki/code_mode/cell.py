@@ -12,6 +12,7 @@ from pathlib import Path
 from corki.code_mode.observation import CellObservation
 from corki.code_mode.output import truncate_cell_output
 from corki.code_mode.specs import nested_description
+from corki.platforms.processes import background_process_options
 from corki.protocol.audio import wav_duration_seconds
 from corki.protocol.tools import (
     AudioAttachment,
@@ -61,6 +62,7 @@ class Cell:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL,
                     limit=MAX_BUFFER + 1,
+                    **background_process_options(),
                     env={
                         key: value
                         for key, value in os.environ.items()

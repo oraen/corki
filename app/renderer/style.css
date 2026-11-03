@@ -280,6 +280,15 @@ main {
 .topbar-spacer {
   margin-left: auto;
 }
+.desktop.windows {
+  --topbar-height: 44px;
+}
+.desktop.windows .sidebar-drag {
+  display: none;
+}
+.desktop.windows .brand {
+  padding: 12px 20px 16px;
+}
 .conversation-scroll {
   overflow: auto;
   min-height: 0;

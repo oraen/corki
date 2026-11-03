@@ -26,6 +26,7 @@ export async function create({ state_directory, cursor, require, incoming }) {
     stopped = false,
     verifyCode = "",
     buffer = cursor;
+  let loginRequested = false, loginInProgress = false, wakeLogin, loginController;
   const controller = new AbortController();
   try {
     account = JSON.parse(await readFile(loginFile, "utf8"));
@@ -33,7 +34,7 @@ export async function create({ state_directory, cursor, require, incoming }) {
   } catch {
     account = null;
   }
-  async function api(base, endpoint, body, token, timeout = 35000) {
+  async function api(base, endpoint, body, token, timeout = 35000, signal) {
     const target = new URL(trustedBase(base) + "/" + endpoint);
     for (const key of [...target.searchParams.keys()]) {
       if (/token|qrcode|verify|key|secret/i.test(key)) target.searchParams.set(key, "[已隐藏]");
@@ -71,12 +72,14 @@ export async function create({ state_directory, cursor, require, incoming }) {
       redirect: "error",
       signal: AbortSignal.any([
         controller.signal,
+        ...(signal ? [signal] : []),
         AbortSignal.timeout(timeout),
       ]),
     }); } catch(error) {
-      status("error", {code:"network", detail:{...detail, error:redact(error.name + ": " + (error.cause?.code || error.message))}});
+      if (!stopped && !signal?.aborted) status("error", {code:"network", detail:{...detail, error:redact(error.name + ": " + (error.cause?.code || error.message))}});
       throw error;
     }
+    signal?.throwIfAborted();
     if (!response.ok) {
       const reader=response.body?.getReader();
       let text="";
@@ -90,57 +93,69 @@ export async function create({ state_directory, cursor, require, incoming }) {
       throw new Error("iLink request failed");
     }
     const value = await response.json();
+    signal?.throwIfAborted();
     if (value.ret || value.errcode) {
       if (value.errcode === -14 || value.ret === -14) {
-        status("error", { code: "credentials" });
-        stopped = true;
+        account = null;
+        status("login", { code: "credentials" });
       }
       throw new Error("iLink response error");
     }
     return value;
   }
-  async function login() {
+  async function login(signal) {
+    verifyCode = "";
     const base = "https://ilinkai.weixin.qq.com";
     const qr = await api(base, "ilink/bot/get_bot_qrcode?bot_type=3", {
       local_token_list: [],
-    });
-    status("qr", {
-      qr: await require("qrcode").toDataURL(qr.qrcode_img_content, {
+    }, undefined, 15000, signal);
+    const image = await require("qrcode").toDataURL(qr.qrcode_img_content, {
         width: 260,
         margin: 2,
-      }),
-    });
+      });
+    if (stopped || signal.aborted) return;
+    status("qr", { qr: image });
     let pollBase = base;
     const deadline = Date.now() + 300000;
-    while (!stopped && Date.now() < deadline) {
+    while (!stopped && !signal.aborted && Date.now() < deadline) {
       let value;
+      const submittedCode = verifyCode;
       try {
         value = await api(
           pollBase,
-          `ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qr.qrcode)}${verifyCode ? "&verify_code=" + encodeURIComponent(verifyCode) : ""}`,
+          `ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qr.qrcode)}${submittedCode ? "&verify_code=" + encodeURIComponent(submittedCode) : ""}`,
+          undefined, undefined, 35000, signal,
         );
       } catch {
-        if (stopped) return;
+        if (stopped || signal.aborted) return;
         await sleep(2000);
         continue;
       }
       if (value.status === "scaned_but_redirect")
         pollBase = trustedBase(`https://${value.redirect_host}`);
       if (value.status === "need_verifycode") {
-        verifyCode = "";
-        status("verification", { code: "verify" });
+        if (verifyCode === submittedCode) verifyCode = "";
+        status("verification", { code: submittedCode ? "verify_retry" : "verify" });
       }
-      if (value.status === "scaned") verifyCode = "";
+      if (signal.aborted || stopped) return;
+      if (value.status === "scaned") {
+        verifyCode = "";
+        status("scanned", { qr: image });
+      }
+      if (value.status === "binded_redirect") {
+        status("login", { code: "already_bound" });
+        return;
+      }
       if (
-        ["expired", "verify_code_blocked", "binded_redirect"].includes(
+        ["expired", "verify_code_blocked"].includes(
           value.status,
         )
       ) {
-        status("error", { code: "expired" });
-        stopped = true;
+        status("login", { code: "expired" });
         return;
       }
       if (value.status === "confirmed") {
+        if (stopped || signal.aborted) return;
         if (!value.bot_token || !value.ilink_bot_id)
           throw new Error("missing credentials");
         account = {
@@ -157,13 +172,34 @@ export async function create({ state_directory, cursor, require, incoming }) {
       await sleep(1000);
     }
     if (!account) {
-      status("error", { code: "expired" });
-      stopped = true;
+      if (!stopped && !signal.aborted) status("login", { code: "expired" });
+    }
+  }
+  async function waitForLogin() {
+    while (!account && !stopped) {
+      if (!loginRequested) {
+        await new Promise(resolve => {
+          wakeLogin = resolve;
+          if (loginRequested || stopped) resolve();
+        });
+        wakeLogin = null;
+      }
+      if (stopped) return;
+      loginRequested = false;
+      loginInProgress = true;
+      const attempt = loginController = new AbortController();
+      try { await login(attempt.signal); }
+      catch {
+        if (!stopped && !attempt.signal.aborted) status("login", { code: "login_failed" });
+      } finally { loginInProgress = false; }
     }
   }
   return {
     async start() {
-      if (!account) await login();
+      if (!account) {
+        status("login");
+        await waitForLogin();
+      }
       if (!account || stopped) return;
       emit({ method: "account", params: { id: account.id } });
       status("online");
@@ -201,10 +237,27 @@ export async function create({ state_directory, cursor, require, incoming }) {
           status("online");
         } catch {
           if (stopped) break;
+          if (!account) {
+            await waitForLogin();
+            if (stopped || !account) return;
+            emit({ method: "account", params: { id: account.id } });
+            status("online");
+            failures = 0;
+            continue;
+          }
           status("error", { code: "network" });
           await sleep(Math.min(60, 2 ** Math.min(++failures, 6)) * 1000);
         }
       }
+    },
+    async login({ refresh = false } = {}) {
+      if (stopped) throw new Error("connector stopped");
+      if (account || loginRequested || (loginInProgress && !refresh)) return { requested: false };
+      if (refresh) loginController?.abort();
+      loginRequested = true;
+      status("connecting");
+      wakeLogin?.();
+      return { requested: true };
     },
     async send({ message, text }) {
       if (!account || !message.context_token)
@@ -233,6 +286,7 @@ export async function create({ state_directory, cursor, require, incoming }) {
     },
     async close() {
       stopped = true;
+      wakeLogin?.();
       controller.abort();
     },
   };

@@ -103,11 +103,25 @@ class Host:
             "online",
             "qr",
             "verification",
+            "login",
+            "scanned",
             "error",
         ):
             return
         # No arbitrary HTML, URLs or third-party messages enter the management page.
         item = {"state": value["state"]}
+        if value["state"] in ("login", "scanned"):
+            row = self.store.connection(identity)
+            if not row or row["type_id"] != "wechat":
+                return
+            item["message"] = {
+                "expired": "二维码已过期，请点击重新获取",
+                "credentials": "微信登录已失效，请重新扫码登录",
+                "login_failed": "获取二维码失败，请点击重试",
+                "already_bound": "微信提示此账号已绑定。请在手机微信中检查原有连接，再重新扫码。",
+            }.get(value.get("code"), "点击扫码登录后获取二维码")
+            if value["state"] == "scanned":
+                item["message"] = "已扫码，请在手机微信上确认连接。"
         qr = value.get("qr", "")
         if isinstance(qr, str) and qr.startswith("data:image/png;base64,") and len(qr) < 180000:
             item["qr"] = qr
@@ -116,6 +130,7 @@ class Host:
             "credentials": "登录已失效，请重新连接",
             "network": "网络连接失败，正在重试",
             "verify": "请输入手机上显示的验证码",
+            "verify_retry": "验证尚未通过，请检查手机上的验证码后重新提交。",
             "expired": "二维码已过期，请重新连接",
             "dependencies": "请先安装渠道组件",
             "duplicate": "此平台账号已在其他接入中启用",
@@ -124,8 +139,10 @@ class Host:
             "http_pull": "拉取接口连接失败或返回格式无效，正在重试",
             "http": "渠道接口请求失败",
             "reconnect": "连接中断，正在重连",
+            "feishu_connection": "飞书长连接异常，正在重试。请检查网络、应用凭据及飞书 / Lark 区域。",
+            "feishu_setup": "飞书连接超时。请确认已启用机器人、使用长连接接收事件，并检查应用凭据与网络。",
         }
-        if code in messages:
+        if code in messages and value["state"] != "login":
             item["message"] = messages[code]
         detail = self.statuses.get(identity, {}).get("detail")
         incoming = value.get("detail")
@@ -639,13 +656,15 @@ class Host:
                     if self.online and self.store.connection(identity)["enabled"]:
                         self.monitors[identity] = asyncio.create_task(self.supervise(identity))
                 elif action == "channel":
+                    if self.stopping:
+                        raise ValueError("网关正在关闭，请稍后重试")
                     row = self.store.ensure_connection(identity)
                     enabled = data.get("enabled")
                     if enabled:
                         self.require_component(row["type_id"])
                     self.store.enable(identity, enabled)
                     await self.stop_channel(identity)
-                    if enabled and self.online:
+                    if enabled and self.online and not self.stopping:
                         self.monitors[identity] = asyncio.create_task(self.supervise(identity))
                 elif action == "reset-current-conversation":
                     _, sender, _ = self.store.current_session_target(identity, data.get('session'))
@@ -683,6 +702,28 @@ class Host:
                     for row in self.store.connections(identity):
                         self.store.enable(row["id"], False)
                         await self.stop_channel(row["id"])
+                elif action == "connection-reconnect":
+                    row = self.store.connection(identity)
+                    if not row or row["type_id"] not in ("wechat", "feishu"):
+                        raise ValueError("此操作仅支持微信和飞书接入")
+                    if not self.online or not row["enabled"] or self.stopping:
+                        raise ValueError("请先开启网关并启用此接入")
+                    await self.stop_channel(identity)
+                    self.connector_status(identity, {"state": "connecting"})
+                    self.monitors[identity] = asyncio.create_task(self.supervise(identity))
+                elif action == "wechat-login":
+                    row = self.store.connection(identity)
+                    if not row or row["type_id"] != "wechat":
+                        raise ValueError("此操作仅支持微信接入")
+                    if not self.online or not row["enabled"] or self.stopping:
+                        raise ValueError("请先开启网关并启用此微信接入")
+                    connector = self.connectors.get(identity)
+                    if (
+                        not connector
+                        or self.statuses.get(identity, {}).get("state") == "connecting"
+                    ):
+                        raise ValueError("微信连接器正在启动，请稍后重试")
+                    await connector.call("login", {"refresh": data.get("refresh") is True}, timeout=15)
                 elif action == "verification":
                     code = data.get("code", "")
                     if not isinstance(code, str) or not code.isdigit() or len(code) > 12:

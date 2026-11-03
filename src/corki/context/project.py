@@ -7,6 +7,8 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
+from corki.platforms.processes import background_process_options
+
 _GIT_TIMEOUT_SECONDS = 2.0
 _GIT_TERMINATE_GRACE_SECONDS = 1.0
 
@@ -53,6 +55,7 @@ async def _git(cwd: Path, *arguments: str) -> str | None:
             cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
+            **background_process_options(),
         )
         stdout, _ = await asyncio.wait_for(process.communicate(), timeout=_GIT_TIMEOUT_SECONDS)
     except TimeoutError:

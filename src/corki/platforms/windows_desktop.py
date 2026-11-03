@@ -7,6 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from corki.platforms.processes import background_process_options
 from corki.shell import ShellType, get_shell
 
 
@@ -30,6 +31,7 @@ try {
         result = subprocess.run(
             [str(shell.path), "-NoProfile", "-STA", "-EncodedCommand", encoded],
             capture_output=True, timeout=120, check=False,
+            **background_process_options(),
         )
     except subprocess.TimeoutExpired as error:
         raise ValueError("目录选择超时，请重试或手动输入工作目录") from error

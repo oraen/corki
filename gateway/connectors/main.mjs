@@ -57,6 +57,11 @@ const incoming = protocol({
   async verify(params) {
     await adapter?.verify?.(params.code);
   },
+    async login(params) {
+    if (channel !== "wechat" || !adapter || typeof adapter.login !== "function")
+      throw new Error("interactive login not supported");
+      return adapter.login({ refresh: params?.refresh === true });
+  },
   async shutdown() {
     await adapter?.close?.();
     setTimeout(() => process.exit(0), 20);

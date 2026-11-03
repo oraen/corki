@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from corki.cron.locking import FileLock
+from corki.platforms.processes import background_process_options
 
 from . import package_jobs
 from .store import Store, root
@@ -161,6 +162,11 @@ def control(home, data):
                 raise ValueError("渠道任务已失效")
         elif job and job["status"] in package_jobs.ACTIVE:
             raise ValueError("此渠道正在安装或卸载，请稍后重试")
+    if action in ("channel", "connection-reconnect") and status(home)["running"]:
+        # The live Host serializes mutations itself. Holding the process-wide
+        # lifecycle lock here rejects independent account operations while one
+        # connector is shutting down. Keep that lock for power/offline writes.
+        return request(home, data, timeout=210)
     guard = FileLock(root(home) / "control.lock")
     if not guard.acquire():
         raise ValueError("网关正在处理其他操作，请稍后重试")
@@ -194,7 +200,7 @@ def control(home, data):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=os.name != "nt",
-                creationflags=(0x00000200 | 0x00000008) if os.name == "nt" else 0,
+                **background_process_options(),
             )
             for _ in range(150):
                 if process.poll() is not None:
@@ -212,7 +218,7 @@ def control(home, data):
             return request(home, data, timeout=210)
         if action == "channel" and data.get("enabled"):
             raise ValueError("请先开启转发网关")
-        if action in ("interaction", "verification"):
+        if action in ("interaction", "verification", "wechat-login", "connection-reconnect"):
             raise ValueError("网关未开启")
         from .service import Host
 

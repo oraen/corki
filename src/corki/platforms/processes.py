@@ -2,8 +2,19 @@
 
 import asyncio
 import os
+import subprocess
 import weakref
 from contextlib import suppress
+
+
+def background_process_options():
+    """Hide Windows console children, including the venv launcher's real Python.
+
+    Do not combine this with DETACHED_PROCESS: Windows ignores CREATE_NO_WINDOW
+    in that case and a console grandchild may open its own visible window.
+    Processes with redirected streams still outlive their launcher on Windows.
+    """
+    return {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 
 
 async def create_subprocess_exec(*args, **kwargs):
@@ -17,7 +28,7 @@ async def create_subprocess_exec(*args, **kwargs):
     process = None
     # CREATE_SUSPENDED closes the assignment race: user code cannot spawn a
     # grandchild before it joins the job. No breakaway permission is granted.
-    kwargs["creationflags"] = kwargs.get("creationflags", 0) | 0x4
+    kwargs["creationflags"] = kwargs.get("creationflags", 0) | subprocess.CREATE_NO_WINDOW | 0x4
     spawn = asyncio.create_task(asyncio.create_subprocess_exec(*args, **kwargs))
     try:
         process = await asyncio.shield(spawn)

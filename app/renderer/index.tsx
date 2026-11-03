@@ -948,7 +948,7 @@ function App() {
     </main>
   );
   return (
-    <div className={`desktop ${collapsed ? "collapsed" : ""}`}>
+    <div className={`desktop ${navigator.platform.startsWith("Win") ? "windows" : ""} ${collapsed ? "collapsed" : ""}`}>
       <aside className="sidebar">
         <div className="sidebar-drag" />
         <div className="brand">

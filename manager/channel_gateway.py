@@ -8,6 +8,8 @@ import sys
 from contextlib import closing
 from pathlib import Path
 
+from corki.platforms.processes import background_process_options
+
 
 class ChannelGateway:
     def __init__(self, home):
@@ -28,6 +30,7 @@ class ChannelGateway:
                 encoding="utf-8",
                 timeout=220,
                 env={**os.environ, "PYTHONUTF8": "1"},
+                **background_process_options(),
             )
         except subprocess.TimeoutExpired as error:
             raise ValueError("网关操作尚未完成，请稍后刷新状态") from error

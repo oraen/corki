@@ -146,6 +146,8 @@ test("Feishu lifecycle callbacks, filtering and send request match SDK contract"
     sender: { sender_type: "user", sender_id: { open_id: "person" } },
   };
   await dispatch["im.message.receive_v1"](data);
+  await dispatch["im.message.receive_v1"]({...data,message:{...data.message,content:'{broken'}});
+  await dispatch["im.message.receive_v1"]({...data,sender:{sender_type:'user'}});
   await dispatch["im.message.receive_v1"]({
     ...data,
     message: { ...data.message, chat_type: "group" },
@@ -223,7 +225,9 @@ test("WeChat login, durable credentials, context-token reply and trusted redirec
         return { accepted: true };
       },
     });
-    await adapter.start();
+    const started = adapter.start();
+    await adapter.login();
+    await started;
     assert.equal(seen.length, 2);
     assert.equal(seen[0].unsupported,true);
     assert.equal(seen[1].unsupported,undefined);

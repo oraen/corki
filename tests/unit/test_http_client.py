@@ -9,6 +9,40 @@ from corki.http_client import OwnedHTTPClient
 from corki.models import OpenAICompatibleModel, OpenAIResponsesModel, resolve_capabilities
 
 
+def test_system_proxy_bypasses_local_services_but_preserves_remote_routing(monkeypatch):
+    # Mock the common HTTPX proxy discovery seam: on Windows it also reads the
+    # system registry, even when HTTP_PROXY is absent from the process environment.
+    monkeypatch.setattr(
+        "httpx._client.get_environment_proxies",
+        lambda: {"http://": "http://proxy.invalid:7890", "https://": "http://proxy.invalid:7890"},
+    )
+
+    async def scenario():
+        async with OwnedHTTPClient() as client:
+            for host in ("localhost", "127.0.0.1", "[::1]"):
+                for scheme in ("http", "https"):
+                    assert (
+                        client._transport_for_url(httpx.URL(f"{scheme}://{host}:17001"))
+                        is client._transport
+                    )
+            for host in ("remote.invalid", "localhost.remote.invalid", "127.0.0.1.remote.invalid"):
+                assert (
+                    client._transport_for_url(httpx.URL(f"https://{host}")) is not client._transport
+                )
+
+        async with OwnedHTTPClient(proxy="http://explicit.invalid:7890") as client:
+            assert (
+                client._transport_for_url(httpx.URL("http://127.0.0.1:17001"))
+                is not client._transport
+            )
+
+        transport = httpx.MockTransport(lambda _: httpx.Response(200))
+        async with OwnedHTTPClient(mounts={"all://localhost": transport}) as client:
+            assert client._transport_for_url(httpx.URL("http://localhost:17001")) is transport
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("follow", [False, True])
 def test_shared_client_preserves_httpx_redirect_choice_without_mcp_origin_policy(follow):
     async def scenario():

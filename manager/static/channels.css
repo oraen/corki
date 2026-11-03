@@ -796,7 +796,7 @@
 .channel-application-table th:nth-child(6) { width:110px; }
 .channel-application-table .channel-token-usage { font-variant-numeric:tabular-nums; white-space:nowrap; }
 .channel-application-table code { font-size:11px; line-height:1.6; color:#9b9187; }
-.channel-request-preview,.channel-request-id { display:block; width:100%; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.channel-request-preview,.channel-request-id,.channel-request-name { display:block; width:100%; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .channel-application-table .channel-request-id { color:var(--accent,#c64b00); cursor:help; }
 .channel-request-preview { border:0; padding:0; background:none; color:#655d54; font:inherit; line-height:1.7; text-align:left; cursor:pointer; }
 .channel-request-tooltip { position:fixed; inset:auto; margin:0; box-sizing:border-box; width:max-content; max-width:min(480px,calc(100vw - 24px)); max-height:min(300px,calc(100dvh - 24px)); overflow:auto; padding:12px 15px; border:1px solid #e9dfd4; border-radius:10px; background:#fffdf9; color:#51473e; box-shadow:0 8px 28px #392a181f; font-weight:400; font-family:inherit; font-size:13px; line-height:1.75; white-space:pre-wrap; overflow-wrap:anywhere; user-select:text; scrollbar-width:thin; }
