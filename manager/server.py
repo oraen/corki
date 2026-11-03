@@ -550,13 +550,15 @@ class GatewayManagement:
             if uv:
                 command = [uv, "sync", "--project", str(source), "--frozen", "--no-dev"]
                 env = {**os.environ, "UV_PROJECT_ENVIRONMENT": str(source / ".venv")}
-                result = subprocess.run(command, env=env, capture_output=True, timeout=180)
+                result = subprocess.run(command, env=env, capture_output=True, timeout=180,
+                                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
                 if result.returncode:
                     raise ValueError("转发网关安装失败，请检查网络或 Python 环境")
             else:
                 for command in ([sys.executable, "-m", "venv", str(source / ".venv")],
                                 [str(python), "-m", "pip", "install", str(source)]):
-                    if subprocess.run(command, capture_output=True, timeout=180).returncode:
+                    if subprocess.run(command, capture_output=True, timeout=180,
+                                      creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0).returncode:
                         raise ValueError("转发网关安装失败，请检查网络或 Python 环境")
             atomic(self.root / "installation.json", json.dumps({"python": str(python)}), backup=False)
             return str(python)
@@ -573,6 +575,7 @@ class GatewayManagement:
         if provider is not None:
             command += ["--provider", provider]
         result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=210,
+                                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                                 env={**os.environ, "CORKI_HOME": str(self.store.home)})
         try:
             value = json.loads(result.stdout)

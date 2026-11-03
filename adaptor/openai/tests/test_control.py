@@ -3,6 +3,7 @@
 import json
 import os
 import socket
+import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -27,6 +28,33 @@ def free_port():
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         return probe.getsockname()[1]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows console process semantics")
+def test_managed_gateway_has_no_console(controller, monkeypatch, tmp_path):
+    """Exercise the real venv launcher: detaching can override the hidden flag."""
+    state = tmp_path / "console.json"
+    popen = subprocess.Popen
+
+    def launch(args, **kwargs):
+        if args[1:3] == ["-m", "corki_openai_gateway"]:
+            probe = (
+                "import ctypes,json,pathlib,runpy; "
+                "api=ctypes.WinDLL('kernel32'); "
+                "api.GetConsoleWindow.restype=ctypes.c_void_p; "
+                f"pathlib.Path({str(state)!r}).write_text("
+                "json.dumps({'console':bool(api.GetConsoleWindow())})); "
+                "runpy.run_module('corki_openai_gateway',run_name='__main__')"
+            )
+            args = [args[0], "-c", probe, *args[3:]]
+        return popen(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", launch)
+    try:
+        assert controller.start(free_port())["running"]
+        assert json.loads(state.read_text()) == {"console": False}
+    finally:
+        controller.stop()
 
 
 def test_real_start_restart_stop_and_private_metadata(controller):

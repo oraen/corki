@@ -27,6 +27,10 @@ from http.server import HTTPServer,BaseHTTPRequestHandler
 p=argparse.ArgumentParser();p.add_argument('--home');p.add_argument('--workspace');p.add_argument('--port',type=int);a=p.parse_args()
 Path(a.home,'pid').write_text(str(os.getpid()))
 Path(a.home,'workspace').write_text(a.workspace)
+if os.name == 'nt':
+ import ctypes,json
+ api=ctypes.WinDLL('kernel32');api.GetConsoleWindow.restype=ctypes.c_void_p
+ Path(a.home,'console.json').write_text(json.dumps({'console':bool(api.GetConsoleWindow())}))
 time.sleep(.3)
 class Handler(BaseHTTPRequestHandler):
  def do_GET(self):
@@ -57,7 +61,7 @@ function launcher(port, home, extras = {}) {
     ...extras,
   });
 }
-test.after(() => rm(root, { recursive: true, force: true }));
+test.after(() => rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 }));
 test("existing service opens without startup", async () => {
   const { server, port } = await serve();
   let opens = 0;
@@ -112,6 +116,11 @@ test("cold start waits for readiness; concurrent clicks share launch; Unicode pa
     pid = Number(await readFile(path.join(home, "pid"), "utf8"));
     assert.equal(starts, 1);
     assert.equal(opens, 1);
+    if (process.platform === "win32")
+      assert.deepEqual(
+        JSON.parse(await readFile(path.join(home, "console.json"), "utf8")),
+        { console: false },
+      );
     assert.equal(
       await readFile(path.join(home, "workspace"), "utf8"),
       path.join(home, "main", "default"),

@@ -413,7 +413,9 @@ class Controller:
             "env": {**transport, **os.environ, "CORKI_HOME": str(self.home)},
         }
         if os.name == "nt":
-            options["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+            # Windows ignores CREATE_NO_WINDOW when DETACHED_PROCESS is also set.
+            # In particular, the venv launcher can then give Python a visible console.
+            options["creationflags"] = subprocess.CREATE_NO_WINDOW
         else:
             options["start_new_session"] = True
         with (self.root / "service.log").open("ab") as log:

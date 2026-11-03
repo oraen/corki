@@ -106,7 +106,8 @@ export class ManagerLauncher {
         ],
         {
           cwd: o.home,
-          detached: true,
+          // On Windows, detaching overrides windowsHide for console children.
+          detached: process.platform !== "win32",
           windowsHide: true,
           stdio: ["ignore", log.fd, log.fd],
           env: {
