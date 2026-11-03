@@ -1,0 +1,5 @@
+include README.md QUICKSTART.md pyproject.toml uv.lock
+recursive-include src *.py
+recursive-include bin *.sh *.ps1
+recursive-include tests *.py
+global-exclude __pycache__ *.py[cod]

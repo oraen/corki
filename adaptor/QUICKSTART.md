@@ -14,10 +14,10 @@ uv 可管理 Python；如果没有合适的解释器，可以先执行 `uv pytho
 
 ```bash
 git clone https://github.com/oraen/corki.git
-cd corki/adaptor/openai
+cd corki/adaptor
 ```
 
-如果已经拉取代码，直接进入 `adaptor/openai`。如果只复制了独立的 `openai` 目录，进入该目录即可。
+如果已经拉取代码，直接进入 `adaptor`。如果单独分发网关，请复制完整的 `adaptor` 目录，包含公共 `src`、`bin`、依赖和锁文件，不要只复制供应商子目录。
 **下文所有安装和控制命令，均在包含 `pyproject.toml` 的网关目录执行。**
 
 准备至少一种上游登录：
@@ -42,7 +42,7 @@ bash ./bin/install.sh
 bash ./bin/start.sh
 
 # 查询运行状态
-.venv/bin/python -m corki_openai_gateway.control status --home "${CORKI_HOME:-$HOME/.corki}"
+.venv/bin/python -m corki_adaptor.control status --home "${CORKI_HOME:-$HOME/.corki}"
 ```
 
 启动成功会输出 JSON，其中 `running` 为 `true`，`port` 为实际监听端口。
@@ -61,7 +61,7 @@ bash ./bin/stop.sh
 ```powershell
 .\bin\install.ps1
 .\bin\start.ps1
-.\.venv\Scripts\python.exe -m corki_openai_gateway.control status --home "$HOME\.corki"
+.\.venv\Scripts\python.exe -m corki_adaptor.control status --home "$HOME\.corki"
 
 # 停止时执行
 .\bin\stop.ps1
@@ -72,10 +72,10 @@ bash ./bin/stop.sh
 
 ```powershell
 uv sync --frozen --no-dev
-.\.venv\Scripts\python.exe -m corki_openai_gateway.control start --home "$HOME\.corki"
-.\.venv\Scripts\python.exe -m corki_openai_gateway.control status --home "$HOME\.corki"
+.\.venv\Scripts\python.exe -m corki_adaptor.control start --home "$HOME\.corki"
+.\.venv\Scripts\python.exe -m corki_adaptor.control status --home "$HOME\.corki"
 # 停止时执行：
-# .\.venv\Scripts\python.exe -m corki_openai_gateway.control stop --home "$HOME\.corki"
+# .\.venv\Scripts\python.exe -m corki_adaptor.control stop --home "$HOME\.corki"
 ```
 
 Windows 后台服务相关功能尚需真实 Windows 机器验收。
@@ -91,14 +91,14 @@ CORKI_GATEWAY_PORT=18001 bash ./bin/start.sh
 也可让系统自动选择空闲端口，启动后以返回的 `port` 为准：
 
 ```bash
-.venv/bin/python -m corki_openai_gateway.control start-auto --home "${CORKI_HOME:-$HOME/.corki}"
+.venv/bin/python -m corki_adaptor.control start-auto --home "${CORKI_HOME:-$HOME/.corki}"
 ```
 
 需要明确检查、使用 Codex 凭据启动时：
 
 ```bash
-.venv/bin/python -m corki_openai_gateway.control check --home "${CORKI_HOME:-$HOME/.corki}" --provider openai
-.venv/bin/python -m corki_openai_gateway.control start --home "${CORKI_HOME:-$HOME/.corki}" --provider openai --port 17001
+.venv/bin/python -m corki_adaptor.control check --home "${CORKI_HOME:-$HOME/.corki}" --provider openai
+.venv/bin/python -m corki_adaptor.control start --home "${CORKI_HOME:-$HOME/.corki}" --provider openai --port 17001
 ```
 
 `--provider` 选择启动时验证的凭据，服务启动后仍提供两种供应商路由；每条路由都需要对应的有效登录。
@@ -392,8 +392,8 @@ macOS / Linux 示例，路径替换为实际文件路径：
 
 ```bash
 export QODER_AUTH_FILE="/absolute/path/to/qoder-auth.json"
-.venv/bin/python -m corki_openai_gateway.control check --home "${CORKI_HOME:-$HOME/.corki}" --provider qoder
-.venv/bin/python -m corki_openai_gateway.control start --home "${CORKI_HOME:-$HOME/.corki}" --provider qoder --port 17001
+.venv/bin/python -m corki_adaptor.control check --home "${CORKI_HOME:-$HOME/.corki}" --provider qoder
+.venv/bin/python -m corki_adaptor.control start --home "${CORKI_HOME:-$HOME/.corki}" --provider qoder --port 17001
 ```
 
 PowerShell 对应使用 `$env:QODER_AUTH_FILE = 'C:\path\to\qoder-auth.json'`，
@@ -423,7 +423,7 @@ Hermes / OpenCode 不会自动获得 Corki 专用的字节预算压缩能力。�
 前台排查时，先停止后台实例，再执行：
 
 ```bash
-.venv/bin/python -m corki_openai_gateway \
+.venv/bin/python -m corki_adaptor \
   --port 17001 \
   --key-file "${CORKI_HOME:-$HOME/.corki}/gateway/local.key"
 ```

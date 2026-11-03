@@ -15,5 +15,5 @@ Write-Host "Gateway installed in $project\.venv"
 
 $corkiData = $env:CORKI_HOME
 if (-not $corkiData) { $corkiData = Join-Path $HOME '.corki' }
-& (Join-Path $project '.venv\Scripts\python.exe') -m corki_openai_gateway.control register --home $corkiData
+& (Join-Path $project '.venv\Scripts\python.exe') -m corki_adaptor.control register --home $corkiData
 if ($LASTEXITCODE -ne 0) { throw 'Gateway registration failed.' }

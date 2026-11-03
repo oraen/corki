@@ -8,5 +8,5 @@ $corkiData = $env:CORKI_HOME
 if (-not $corkiData) { $corkiData = Join-Path $HOME '.corki' }
 $gatewayArguments = @('start', '--home', $corkiData)
 if ($env:CORKI_GATEWAY_PORT) { $gatewayArguments += @('--port', $env:CORKI_GATEWAY_PORT) }
-& $python -m corki_openai_gateway.control @gatewayArguments
+& $python -m corki_adaptor.control @gatewayArguments
 if ($LASTEXITCODE -ne 0) { throw 'Gateway startup failed.' }

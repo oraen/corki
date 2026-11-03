@@ -12,7 +12,7 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from corki_openai_gateway.gateway import CredentialsUnavailable
+from corki_adaptor.common import CredentialsUnavailable
 
 
 @dataclass(frozen=True)

@@ -9,6 +9,7 @@ MODELS = (
     ("ultimate", "ultimate", "Qoder Ultimate 自动路由", 200000),
     ("fast", "fast", "Qoder Fast 快速路由", 200000),
     ("efficient", "efficient", "Qoder Efficient 路由", 200000),
+    ("Qwen", "qmodel", "Qwen，通过 Qoder 模型接口调用；具体版本由上游路由决定", 180000),
     ("Sonus", "smodel", "Sonus，通过 Qoder 套餐调用", 180000),
     ("Qwen3.8-Max", "qmodel_38max", "Qwen3.8-Max，通过 Qoder 套餐调用", 180000),
     ("Qwen3.8-Flash", "qfmodel", "Qwen3.8-Flash，通过 Qoder 套餐调用", 180000),
@@ -27,7 +28,7 @@ _ALIASES.update({identity.casefold(): identity for _, identity, _, _ in MODELS})
 # IDE-only aliases are recognized for explicit requests, but are not offered by
 # default until the model-server transport accepts them. Do not silently route
 # an unavailable selection to a different model.
-AVAILABLE = frozenset({"auto", "ultimate", "kmodel", "gmodel", "dmodel"})
+AVAILABLE = frozenset({"ultimate", "qmodel", "kmodel", "gmodel", "dmodel"})
 
 
 def model_catalog():

@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from corki_openai_gateway.control import LOCAL_KEY, Controller
-from corki_openai_gateway.gateway import CredentialsUnavailable
+from corki_adaptor.control import LOCAL_KEY, Controller
+from corki_adaptor.gateway import CredentialsUnavailable
 
 
 @pytest.fixture
@@ -37,14 +37,14 @@ def test_managed_gateway_has_no_console(controller, monkeypatch, tmp_path):
     popen = subprocess.Popen
 
     def launch(args, **kwargs):
-        if args[1:3] == ["-m", "corki_openai_gateway"]:
+        if args[1:3] == ["-m", "corki_adaptor"]:
             probe = (
                 "import ctypes,json,pathlib,runpy; "
                 "api=ctypes.WinDLL('kernel32'); "
                 "api.GetConsoleWindow.restype=ctypes.c_void_p; "
                 f"pathlib.Path({str(state)!r}).write_text("
                 "json.dumps({'console':bool(api.GetConsoleWindow())})); "
-                "runpy.run_module('corki_openai_gateway',run_name='__main__')"
+                "runpy.run_module('corki_adaptor',run_name='__main__')"
             )
             args = [args[0], "-c", probe, *args[3:]]
         return popen(args, **kwargs)
@@ -114,7 +114,7 @@ def test_foreign_listener_is_never_stopped(controller):
 
 
 def test_cli_start_reuses_manager_port_without_explicit_override(controller, monkeypatch, capsys):
-    from corki_openai_gateway.control import main
+    from corki_adaptor.control import main
 
     controller.root.mkdir(parents=True, exist_ok=True)
     (controller.root / "manager.json").write_text(json.dumps({"port": 18234}))
@@ -147,7 +147,7 @@ def test_migrated_login_job_is_scoped_and_disabled_before_stop(controller, tmp_p
     }
     (controller.root / "legacy-service.plist").write_bytes(plistlib.dumps(archive))
     # Exercise the native persistence format on macOS without loading any job.
-    import corki_openai_gateway.control as module
+    import corki_adaptor.control as module
 
     monkeypatch.setattr(module.sys, "platform", "darwin")
     controller.login_job(18236, controller.auth_file(), enabled=True)
@@ -172,7 +172,7 @@ def test_migrated_login_job_is_scoped_and_disabled_before_stop(controller, tmp_p
 def test_enable_reports_missing_login_without_starting_gateway(
     controller, monkeypatch, capsys, tokens
 ):
-    from corki_openai_gateway.control import main
+    from corki_adaptor.control import main
 
     auth = controller.root.parent / "missing-login.json"
     auth.parent.mkdir(parents=True, exist_ok=True)

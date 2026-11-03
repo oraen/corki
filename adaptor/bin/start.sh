@@ -7,4 +7,4 @@ gateway_args=(start --home "${CORKI_HOME:-$HOME/.corki}")
 if [[ -n "${CORKI_GATEWAY_PORT:-}" ]]; then
   gateway_args+=(--port "$CORKI_GATEWAY_PORT")
 fi
-exec "$python_bin" -m corki_openai_gateway.control "${gateway_args[@]}"
+exec "$python_bin" -m corki_adaptor.control "${gateway_args[@]}"

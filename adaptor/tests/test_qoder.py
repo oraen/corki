@@ -7,10 +7,10 @@ from contextlib import contextmanager
 import httpx
 import pytest
 
-from corki_openai_gateway.gateway import CredentialsUnavailable, Gateway
-from corki_openai_gateway.qoder import UPSTREAM, collect, events
-from corki_openai_gateway.qoder_credentials import QoderCredentialReader, QoderCredentials
-from corki_openai_gateway.qoder_models import MODELS
+from corki_adaptor.gateway import CredentialsUnavailable, Gateway
+from corki_adaptor.qoder.forward import UPSTREAM, collect, events
+from corki_adaptor.qoder.credentials import QoderCredentialReader, QoderCredentials
+from corki_adaptor.qoder.models import MODELS
 
 
 def stream_bytes(*rows, done=True):
@@ -247,7 +247,7 @@ def test_budget_preflight_matches_final_upstream_bytes_and_never_calls_model(tmp
 
 
 def test_qoder_only_gateway_does_not_require_codex_login(tmp_path, monkeypatch):
-    from corki_openai_gateway.gateway import main
+    from corki_adaptor.gateway import main
 
     monkeypatch.setenv("QODER_ACCESS_TOKEN", "fixture-qoder-token")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "no-codex"))
@@ -265,7 +265,7 @@ def test_qoder_only_gateway_does_not_require_codex_login(tmp_path, monkeypatch):
 
 
 def test_auto_controller_selects_qoder_without_modifying_credentials(tmp_path, monkeypatch):
-    from corki_openai_gateway.control import Controller
+    from corki_adaptor.control import Controller
 
     monkeypatch.setenv("QODER_ACCESS_TOKEN", "fixture-qoder-token")
     monkeypatch.setenv("CORKI_GATEWAY_AUTH_FILE", str(tmp_path / "missing-codex.json"))
@@ -315,14 +315,14 @@ def test_catalog_model_names_are_translated_to_wire_ids(
 def test_qoder_check_exposes_static_catalog_without_credentials_in_response(
     tmp_path, monkeypatch, capsys
 ):
-    from corki_openai_gateway.control import main
+    from corki_adaptor.control import main
 
     monkeypatch.setenv("QODER_ACCESS_TOKEN", "fixture-private-token")
     assert main(["check", "--home", str(tmp_path), "--provider", "qoder"]) == 0
     raw = capsys.readouterr().out
     response = json.loads(raw)
     assert len(response["models"]) == 5
-    assert "GLM-5.3" in response["models"] and "auto" in response["models"]
+    assert "GLM-5.3" in response["models"] and "auto" not in response["models"]
     assert "Qwen3.8-Max" not in response["models"]
     assert "fixture-private-token" not in raw
     assert not any(name.startswith(("quest-", "experts-")) for name in response["models"])
@@ -377,3 +377,28 @@ def test_qoder_certificate_failure_is_not_classified_as_offline(tmp_path):
             "model": "auto", "messages": [{"role": "user", "content": "hello"}]})
         assert response.status_code == 424
         assert "code" not in response.json()["error"]
+
+
+def test_fold_before_property_colon_is_not_lost_as_sse_comment():
+    raw = b'data: {"choices":[],"id"\n:"fixture","model"\n:"dmodel"}\n\ndata: [DONE]\n\n'
+    for size in (1, 7, len(raw)):
+        assert list(events(raw[i:i+size] for i in range(0,len(raw),size))) == [
+            {"choices": [], "id": "fixture", "model": "dmodel"}]
+    with pytest.raises(ValueError):
+        list(events([raw.replace(b'data: [DONE]\n\n', b'')]))
+
+
+def test_auto_is_not_advertised_by_gateway_catalog():
+    from corki_adaptor.qoder.models import model_catalog
+    catalog = model_catalog()
+    assert "auto" not in catalog
+    assert "ultimate" in catalog
+
+
+def test_verified_generic_qwen_route_is_distinct_from_ide_only_versions():
+    from corki_adaptor.qoder.models import model_catalog, model_id
+    assert "Qwen" in model_catalog()
+    assert model_id("Qwen") == "qmodel"
+    assert "Qwen3.8-Max" not in model_catalog()
+    assert "Qwen3.8-Flash" not in model_catalog()
+    assert model_id("Qwen3.8-Max") == "qmodel_38max"

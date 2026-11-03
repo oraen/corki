@@ -6,5 +6,5 @@ if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
 }
 $corkiData = $env:CORKI_HOME
 if (-not $corkiData) { $corkiData = Join-Path $HOME '.corki' }
-& $python -m corki_openai_gateway.control stop --home $corkiData
+& $python -m corki_adaptor.control stop --home $corkiData
 if ($LASTEXITCODE -ne 0) { throw 'Gateway shutdown failed.' }

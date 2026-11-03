@@ -537,11 +537,11 @@ class GatewayManagement:
             try:
                 plist = Path.home() / "Library/LaunchAgents/local.corki.codex-gateway.plist"
                 args = plistlib.loads(plist.read_bytes())["ProgramArguments"]
-                if args[args.index("-m") + 1] == "corki_openai_gateway" and Path(args[0]).is_file():
+                if args[args.index("-m") + 1] in {"corki_adaptor", "corki_openai_gateway"} and Path(args[0]).is_file():
                     return args[0]
             except (OSError, ValueError, IndexError, KeyError, TypeError):
                 pass
-        source = Path(corki.__file__).resolve().parents[2] / "adaptor/openai"
+        source = Path(corki.__file__).resolve().parents[2] / "adaptor"
         python = source / (".venv/Scripts/python.exe" if os.name == "nt" else ".venv/bin/python")
         if python.is_file():
             return str(python)
@@ -562,13 +562,13 @@ class GatewayManagement:
                         raise ValueError("转发网关安装失败，请检查网络或 Python 环境")
             atomic(self.root / "installation.json", json.dumps({"python": str(python)}), backup=False)
             return str(python)
-        raise ValueError("未找到转发网关，请先安装 adaptor/openai，或配置 CORKI_GATEWAY_PYTHON")
+        raise ValueError("未找到转发网关，请先安装 adaptor，或配置 CORKI_GATEWAY_PYTHON")
 
     def control(self, action, *, port=None, install=False, provider=None):
         python = self.interpreter(install=install)
         if action in ("start", "check"):
             atomic(self.root / "installation.json", json.dumps({"python": python}), backup=False)
-        command = [python, "-m", "corki_openai_gateway.control", action,
+        command = [python, "-m", "corki_adaptor.control", action,
                    "--home", str(self.store.home)]
         if port is not None:
             command += ["--port", str(port)]
@@ -652,6 +652,14 @@ class GatewayManagement:
                     catalog = checked.get("models")
                     if not isinstance(catalog, dict) or not catalog:
                         raise ValueError("请更新适配网关后重试，未获得 Qoder 模型列表")
+                    # Auto works through the IDE Agent but is not reliable on
+                    # this gateway's direct model-server transport.
+                    existing.setdefault("models", {}).pop("auto", None)
+                    if existing.get("default_model") == "auto":
+                        existing.pop("default_model")
+                    if config.get("default") == {"provider": identity, "model": "auto"}:
+                        config["default"] = {"provider": identity,
+                            "model": next(iter(existing["models"]), next(iter(catalog)))}
                     # Add missing defaults; keep the user's custom models and
                     # existing settings instead of resetting the provider.
                     for model, settings in self.model_defaults(catalog, provider).items():

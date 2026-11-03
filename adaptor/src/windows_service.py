@@ -14,7 +14,7 @@ import time
 from ctypes import wintypes as w
 from pathlib import Path
 
-from corki_openai_gateway.gateway import main as gateway_main
+from corki_adaptor.gateway import main as gateway_main
 
 
 def state_directory() -> Path:
@@ -113,7 +113,7 @@ def start(objects):
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / "windows-service.log").open("ab") as log:
         child = subprocess.Popen(
-            [sys.executable, "-m", "corki_openai_gateway.windows_service", "run"],
+            [sys.executable, "-m", "corki_adaptor.windows_service", "run"],
             stdin=subprocess.DEVNULL, stdout=log, stderr=log,
             creationflags=subprocess.CREATE_NO_WINDOW, close_fds=True,
         )
@@ -155,7 +155,7 @@ def main(argv=None):
         raise SystemExit("This entry point requires Windows; use the launchd scripts on macOS")
     args = sys.argv[1:] if argv is None else argv
     if args not in (["start"], ["stop"], ["run"]):
-        raise SystemExit("Usage: python -m corki_openai_gateway.windows_service start|stop|run")
+        raise SystemExit("Usage: python -m corki_adaptor.windows_service start|stop|run")
     objects = Handles()
     control = None
     try:

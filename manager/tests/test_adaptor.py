@@ -18,7 +18,7 @@ def store(tmp_path,monkeypatch):
  def control(action,*,port=None,install=False,provider=None):
   store.commands.append((action,port))
   if action=='check':store.checked_providers.append(provider)
-  if action=='check':return {'ready':True,**({'models':{'auto':{'context_window':200000},'GLM-5.3':{'context_window':180000}}} if provider=='qoder' else {})}
+  if action=='check':return {'ready':True,**({'models':{'ultimate':{'context_window':200000},'GLM-5.3':{'context_window':180000}}} if provider=='qoder' else {})}
   if action=='stop':store.service['running']=False
   if action=='start-auto':
    if not store.service['running']:
@@ -176,7 +176,7 @@ def test_independent_json_control_protocol_is_versioned(store,monkeypatch,versio
   assert store.adaptor.control('status')['running'] is False
  else:
   with pytest.raises(ValueError,match='版本'):store.adaptor.control('status')
- assert calls[0][:4]==['/fixture/gateway-python','-m','corki_openai_gateway.control','status']
+ assert calls[0][:4]==['/fixture/gateway-python','-m','corki_adaptor.control','status']
  assert '--home' in calls[0] and 'fixture-token' not in str(calls[0])
 
 
@@ -235,7 +235,7 @@ def test_qoder_creates_independent_chat_provider_and_checks_its_login(store):
  profile=module.document.loads(store.config_text())['providers']['adaptor-qoder']
  assert profile['api_mode']=='chat_completions'
  assert profile['base_url']=='http://127.0.0.1:17001/qoder'
- assert list(profile['models'])==['auto','GLM-5.3']
+ assert list(profile['models'])==['ultimate','GLM-5.3']
  assert profile['api_key']==module.ADAPTOR_LOCAL_KEY
  assert store.checked_providers[-1]=='qoder'
  assert 'adaptor-openai' not in module.document.loads(store.config_text())['providers']
@@ -266,6 +266,6 @@ def test_qoder_catalog_update_adds_models_without_replacing_custom_settings(stor
  store.config.write_text(module.document.dumps(config))
  change(store,action='provider',provider='qoder',enabled=True)
  models=module.document.loads(store.config_text())['providers']['adaptor-qoder']['models']
- assert models['auto']=={'context_window':123456,'description':'user settings'}
+ assert 'auto' not in models
  assert models['private-alias']=={'context_window':131072}
  assert models['GLM-5.3']=={'context_window':180000}

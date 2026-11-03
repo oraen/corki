@@ -7,7 +7,7 @@ from contextlib import contextmanager
 import httpx
 import pytest
 
-from corki_openai_gateway.gateway import UPSTREAM, Gateway, main
+from corki_adaptor.gateway import UPSTREAM, Gateway, main
 
 
 def test_service_cli_reads_environment_without_auth_file(tmp_path, monkeypatch):
@@ -226,7 +226,7 @@ def test_reload_credentials_between_requests(tmp_path):
 
 
 def test_environment_provider_rotates_token_and_fails_closed(tmp_path, monkeypatch):
-    from corki_openai_gateway.gateway import environment_credentials
+    from corki_adaptor.gateway import environment_credentials
 
     monkeypatch.setenv("GATEWAY_TEST_TOKEN", "first-token")
     monkeypatch.setenv("GATEWAY_TEST_ACCOUNT", "account-a")
@@ -256,7 +256,7 @@ def test_environment_provider_rotates_token_and_fails_closed(tmp_path, monkeypat
 
 
 def test_chat_conversion_preserves_images_and_structured_output():
-    from corki_openai_gateway.chat import to_responses
+    from corki_adaptor.openai.chat import to_responses
 
     payload = to_responses(
         {
@@ -283,7 +283,7 @@ def test_chat_conversion_preserves_images_and_structured_output():
 
 @pytest.mark.parametrize("ending", ["response.failed", "response.incomplete", "eof"])
 def test_chat_failed_stream_never_emits_done_or_success(ending):
-    from corki_openai_gateway.chat import chat_events
+    from corki_adaptor.openai.chat import chat_events
 
     lines = ['data: {"type":"response.output_text.delta","delta":"partial"}']
     if ending != "eof":
@@ -298,7 +298,7 @@ def test_chat_failed_stream_never_emits_done_or_success(ending):
 
 
 def test_system_text_parts_preserve_order_and_late_instruction_position():
-    from corki_openai_gateway.chat import to_responses
+    from corki_adaptor.openai.chat import to_responses
 
     result = to_responses(
         {
@@ -333,14 +333,14 @@ def test_system_text_parts_preserve_order_and_late_instruction_position():
     ],
 )
 def test_system_nontext_parts_still_rejected(part):
-    from corki_openai_gateway.chat import to_responses
+    from corki_adaptor.openai.chat import to_responses
 
     with pytest.raises(ValueError, match="only text parts"):
         to_responses({"messages": [{"role": "system", "content": [part]}]})
 
 
 def test_chat_conversion_forwards_model_effort_and_reports_actual_model():
-    from corki_openai_gateway.chat import chat_events, to_responses
+    from corki_adaptor.openai.chat import chat_events, to_responses
 
     request = to_responses(
         {
@@ -391,7 +391,7 @@ def test_gateway_default_client_uses_verified_system_trust(tmp_path, monkeypatch
         seen.append(kwargs)
         return real_client(transport=httpx.MockTransport(lambda request: sse()), **kwargs)
 
-    monkeypatch.setattr("corki_openai_gateway.gateway.httpx.Client", capture)
+    monkeypatch.setattr("corki_adaptor.gateway.httpx.Client", capture)
     server = Gateway(auth, "local-secret")
     try:
         context = seen[0]["verify"]
@@ -492,7 +492,7 @@ def test_nonstream_failure_never_returns_partial_success(tmp_path, event):
 
 
 def test_nonstream_tool_calls_refusal_and_buffer_bound():
-    from corki_openai_gateway.chat import chat_completion, completed_response
+    from corki_adaptor.openai.chat import chat_completion, completed_response
 
     response = {
         "output": [

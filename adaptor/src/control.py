@@ -16,7 +16,8 @@ import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
-from corki_openai_gateway.gateway import CredentialsUnavailable, read_credentials
+from corki_adaptor.common import CredentialsUnavailable
+from corki_adaptor.openai.credentials import read_credentials
 
 # Public local protocol key, never an upstream API credential or login token.
 LOCAL_KEY = "sk-f127ac39ckkb278c8abddb4lbcc592zb"
@@ -121,9 +122,10 @@ class Controller:
             module = args[args.index("-m") + 1]
             key = Path(args[args.index("--key-file") + 1]).resolve()
             if module not in (
-                "corki_openai_gateway",
+                "corki_adaptor",
                 "corki.codex_gateway",
                 "adaptor.openai",
+                "corki_openai_gateway",
             ) or not key.is_relative_to(self.home):
                 return None
             return path, value, args
@@ -133,7 +135,7 @@ class Controller:
     def migrate_legacy(self):
         if os.name == "nt":
             subprocess.run(
-                [sys.executable, "-m", "corki_openai_gateway.windows_service", "stop"],
+                [sys.executable, "-m", "corki_adaptor.windows_service", "stop"],
                 env={**os.environ, "CORKI_HOME": str(self.home)},
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -179,7 +181,7 @@ class Controller:
         args = [
             sys.executable,
             "-m",
-            "corki_openai_gateway",
+            "corki_adaptor",
             "--port",
             str(port),
             "--key-file",
@@ -274,7 +276,7 @@ class Controller:
             else:
                 self.startup_provider = "openai"
                 return auth
-        from corki_openai_gateway.qoder_credentials import QoderCredentialReader
+        from corki_adaptor.qoder.credentials import QoderCredentialReader
 
         QoderCredentialReader()()
         self.startup_provider = "qoder"
@@ -390,7 +392,7 @@ class Controller:
         args = [
             sys.executable,
             "-m",
-            "corki_openai_gateway",
+            "corki_adaptor",
             "--port",
             str(port),
             "--key-file",
@@ -485,7 +487,7 @@ def main(argv=None):
                 controller.check()
                 result = {"ready": True}
                 if controller.startup_provider == "qoder":
-                    from corki_openai_gateway.qoder_models import model_catalog
+                    from corki_adaptor.qoder.models import model_catalog
 
                     result["models"] = model_catalog()
             elif args.action == "start-auto":

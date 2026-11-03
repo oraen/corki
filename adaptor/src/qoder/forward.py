@@ -12,8 +12,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from corki_openai_gateway.gateway import MAX_BODY, CredentialsUnavailable, certificate_failure
-from corki_openai_gateway.qoder_models import model_id
+from corki_adaptor.common import MAX_BODY, CredentialsUnavailable, certificate_failure
+from corki_adaptor.qoder.models import model_id
 
 UPSTREAM = "https://api2-v2.qoder.sh/model/v1/chat/completions"
 MAX_STREAM_BYTES = 64 * 1024 * 1024
@@ -37,6 +37,14 @@ def events(chunks):
             line = line.removesuffix(b"\r")
             if line.startswith(b"data:"):
                 data.append(line[5:].removeprefix(b" "))
+            elif line.startswith(b":") and data and data[-1].rstrip().endswith(b'"'):
+                # Observed fold between a JSON property name and its colon.
+                # SSE would call this a comment; only join an unfinished JSON
+                # event, never append to an already complete payload.
+                try:
+                    json.loads(b"\n".join(data))
+                except (ValueError, UnicodeError):
+                    data[-1] += line
             elif line and data and not line.startswith((b":", b"event:", b"id:", b"retry:")):
                 # Model-server HTTP can fold one JSON data line into bare
                 # continuation lines (observed even inside the completion ID).
@@ -201,7 +209,9 @@ def forward(handler, endpoint):
         # Match HTTPX's actual JSON encoding after all gateway transformations.
         # Never contact Qoder or read its credentials for a budget-only request.
         def size(value):
-            return len(json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8"))
+            encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"),
+                                 allow_nan=False).encode("utf-8")
+            return len(encoded)
         fixed = {**payload, "messages": [
             m for m in payload["messages"]
             if isinstance(m, dict) and m.get("role") in ("system", "developer")

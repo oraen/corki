@@ -25,19 +25,19 @@ See [`manager/README.md`](manager/README.md) for capabilities and limitations.
 ### Optional standalone Codex-login gateway
 
 The optional gateway is a separate Python project in
-[`adaptor/openai`](adaptor/openai/README.md), with its own dependencies, lockfile,
+[`adaptor`](adaptor/README.md), with its own dependencies, lockfile,
 virtual environment, and service scripts. Installing Corki does not install it.
 Corki uses it through the ordinary HTTP provider configuration; it does not read
 Codex login tokens or import gateway implementation code.
 
 ```bash
-./adaptor/openai/bin/install.sh
-./adaptor/openai/bin/start.sh
+./adaptor/bin/install.sh
+./adaptor/bin/start.sh
 # Stop independently:
-./adaptor/openai/bin/stop.sh
+./adaptor/bin/stop.sh
 ```
 
-On Windows PowerShell, use `adaptor/openai/bin/install.ps1`, `start.ps1`, and
+On Windows PowerShell, use `adaptor/bin/install.ps1`, `start.ps1`, and
 `stop.ps1` instead. The gateway README covers the independent Windows environment.
 
 The local OpenAI forwarding endpoint is `http://127.0.0.1:17001/openai`. The manager

@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from corki_openai_gateway.windows_service import gateway_arguments, state_directory
+from corki_adaptor.windows_service import gateway_arguments, state_directory
 
 
 def test_arguments_follow_explicit_environment(tmp_path, monkeypatch):
@@ -58,7 +58,7 @@ def test_start_twice_stop_twice_without_upstream(tmp_path, entrypoint):
             (scripts / f"{action}.ps1").write_bytes((source / f"{action}.ps1").read_bytes())
 
     def command(action):
-        argv = [sys.executable, "-m", "corki_openai_gateway.windows_service", action]
+        argv = [sys.executable, "-m", "corki_adaptor.windows_service", action]
         if entrypoint.startswith("powershell"):
             argv = [
                 "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
