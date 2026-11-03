@@ -689,11 +689,6 @@ body.chat-route main{display:flex;flex-direction:column;flex:1;min-height:0;widt
 .adaptor-provider-switch.blocked::after{content:attr(data-tooltip);position:absolute;right:0;bottom:calc(100% + 10px);white-space:nowrap;padding:9px 12px;border-radius:8px;background:#303744;color:#fff;font-size:12px;line-height:1.6;box-shadow:0 5px 18px #1f293719;opacity:0;visibility:hidden;transform:translateY(3px);transition:opacity .15s,transform .15s;pointer-events:none;z-index:5}
 .adaptor-provider-switch.blocked:hover::after,.adaptor-provider-switch.blocked:focus-visible::after{opacity:1;visibility:visible;transform:translateY(0)}
 
-.adaptor-progress[open]{display:flex;align-items:center;gap:15px;width:max-content;min-width:260px;max-width:calc(100vw - 64px);padding:26px 30px;border:1px solid #efe6de;border-radius:16px;background:#fff;color:#444b58;box-shadow:0 16px 60px #30251b20;font-family:inherit;font-weight:500;font-size:14px;line-height:1.7}
-.adaptor-progress::backdrop{background:#272e3b24}
-.adaptor-progress .spinner{width:24px;height:24px;margin:0;flex-shrink:0;border-width:2px}
-.adaptor-progress:focus{outline:none}
-@media(prefers-reduced-motion:reduce){.adaptor-progress .spinner{animation-duration:2s}}
 
 .cron-form .cron-select{align-self:start}
 
@@ -743,3 +738,9 @@ body.chat-route main{display:flex;flex-direction:column;flex:1;min-height:0;widt
 @media(max-width:1200px){.usage-dashboard-body{grid-template-columns:minmax(260px,1fr) 170px 170px;gap:16px}.usage-breakdown{padding-left:16px}.usage-trend .chart-col label{font-size:9px}}
 .global-defaults .select-trigger>svg{transform:rotate(90deg);flex-shrink:0}
 .cron-record-table th.cron-token-column{width:100px}
+
+.adaptor-status.pending{color:#b96a25;background:#fff4e8}
+.adaptor-status .spinner{width:12px;height:12px;margin:0;flex-shrink:0}
+.adaptor-provider-switch .toggle[aria-busy="true"]{display:inline-flex;align-items:center;justify-content:center}
+.adaptor-provider-switch .toggle[aria-busy="true"]::after{visibility:hidden}
+.adaptor-provider-switch .toggle .spinner{width:13px;height:13px;margin:0;position:relative;z-index:1;color:var(--accent)}

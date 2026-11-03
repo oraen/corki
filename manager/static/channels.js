@@ -11,7 +11,7 @@ window.CorkiChannels = (() => {
     requestTipClose = () => {},
     loading = false,
     selected = null,
-    managementTab = "history",
+    managementTab = "applications",
     applicationRows = new Map(),
     applicationActivity = {},
     applicationBefore = null,
@@ -25,6 +25,7 @@ window.CorkiChannels = (() => {
     historyRevision = 0,
     historyLoading = false,
     selectedThread = null,
+    focusedSender = null,
     sessionItems = new Map(),
     sessionsBefore = undefined,
     threadGeneration = 0,
@@ -36,10 +37,10 @@ window.CorkiChannels = (() => {
   const rememberedTabs = new Map();
   const tabStorageKey = id => 'corki.channel.management-tab.' + id;
   function restoreTab(id) {
-    if(!id)return 'history';
+    if(!id)return 'applications';
     let tab=rememberedTabs.get(id);
     if(!tab) { try { tab=localStorage.getItem(tabStorageKey(id)); } catch {} }
-    return ['history','settings','applications'].includes(tab) ? tab : 'history';
+    return ['settings','applications'].includes(tab) ? tab : 'applications';
   }
   function rememberTab(id, tab) {
     if(!id || rememberedTabs.get(id)===tab)return;
@@ -139,8 +140,8 @@ window.CorkiChannels = (() => {
       }
       const validation=data.connections.find(c=>c.id===selected)?.values.session_validation==='true';
       const tab=root.querySelector('[data-channel-tab="applications"]');
-      if(tab)tab.hidden=!validation;
-      if(!validation && managementTab==='applications')root._showChannelTab?.('history');
+      if(tab)tab.hidden=false;
+
       updateQueue();
       return;
     }
@@ -631,13 +632,13 @@ window.CorkiChannels = (() => {
     }
     else {
       applicationRows=new Map();applicationActivity={};applicationBefore=null;applicationRevision++;
-      selectedThread=null;sessionItems=new Map();sessionsBefore=undefined;threadGeneration++;historyLoading=false;
+      selectedThread=null;focusedSender=null;sessionItems=new Map();sessionsBefore=undefined;threadGeneration++;historyLoading=false;
       root.innerHTML = `<div class="channel-management">
         <div class="channel-detail-toolbar"><div class="channel-detail-tabs" role="tablist" aria-label="接入管理">
-          <button type="button" role="tab" id="channel-tab-history" aria-controls="channel-pane-history" data-channel-tab="history">会话记录</button><button type="button" role="tab" id="channel-tab-settings" aria-controls="channel-pane-settings" data-channel-tab="settings">会话设置</button><button type="button" role="tab" id="channel-tab-applications" aria-controls="channel-pane-applications" data-channel-tab="applications" ${values.session_validation==='true'?'':'hidden'}>会话授权</button></div>
-          <div class="channel-history-actions"><span class="subtle" data-chat-state></span><button class="button" data-reset-current disabled>重置当前会话</button><button class="button channel-reset-all" data-reset-conversation>重置全部会话</button></div></div>
-        <div class="channel-queue-alert" hidden></div><div class="channel-manage-grid"><section class="panel channel-chat-panel" role="tabpanel" id="channel-pane-history" aria-labelledby="channel-tab-history">
-          <div class="channel-chat-layout"><nav class="channel-session-pane" aria-label="接入会话"><div class="channel-contacts-head"><span>联系人</span><button type="button" class="icon-button" data-fold-contacts aria-label="折叠联系人" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m14 6-6 6 6 6"/></svg></button></div><div class="channel-session-list"></div><button type="button" class="text-button" data-more-sessions hidden>加载更多会话</button></nav><div class="channel-transcript"><div class="channel-chat-scroll"><button class="text-button channel-more" hidden>加载更早的消息</button><div class="channel-chat-messages"></div><div class="channel-chat-empty">正在读取会话…</div></div>
+<button type="button" role="tab" id="channel-tab-settings" aria-controls="channel-pane-settings" data-channel-tab="settings">会话设置</button><button type="button" role="tab" id="channel-tab-applications" aria-controls="channel-pane-applications" data-channel-tab="applications" >会话管理</button></div>
+          <div class="channel-history-actions"><button type="button" class="button" data-chat-back>返回会话管理</button><strong data-chat-name></strong><span class="subtle" data-chat-state></span><button class="button" data-reset-current disabled>重置当前会话</button></div><button class="button channel-reset-all" data-reset-conversation>重置全部会话</button></div>
+        <div class="channel-queue-alert" hidden></div><div class="channel-manage-grid"><section class="panel channel-chat-panel" role="tabpanel" id="channel-pane-history" aria-label="会话">
+          <div class="channel-chat-layout channel-chat-single"><div class="channel-transcript"><div class="channel-chat-scroll"><button class="text-button channel-more" hidden>加载更早的消息</button><div class="channel-chat-messages"></div><div class="channel-chat-empty">正在读取会话…</div></div>
           ${c.id==='dingtalk'?`<form class="channel-message-composer"><textarea aria-label="发送钉钉消息" placeholder="选择联系人后发送消息" rows="2" maxlength="2000" disabled></textarea><div class="channel-composer-foot"><span data-message-recipient></span><button type="submit" class="button primary" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m21 3-7 18-4-7-7-4 18-7ZM10 14 21 3"/></svg><span>发送</span></button></div></form>`:''}<p class="channel-history-error" role="status"></p></div></div></section>
         <section class="panel channel-account-settings" role="tabpanel" id="channel-pane-settings" aria-labelledby="channel-tab-settings"><form><div class="panel-head"><h2>基本信息</h2><button type="button" class="button" data-page-edit>编辑</button></div><div class="channel-settings-scroll"><fieldset class="channel-basic-fields" disabled>${body}</fieldset></div><p class="channel-form-error" role="alert"></p><div class="channel-settings-foot" hidden><button class="button" type="button" data-page-cancel>取消</button><button class="button primary" type="submit" data-page-save>保存</button></div></form></section><section class="panel channel-applications" role="tabpanel" id="channel-pane-applications" aria-labelledby="channel-tab-applications" hidden><div class="channel-application-filters"><label class="channel-application-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input type="search" aria-label="搜索用户昵称或者ID" placeholder="搜索用户昵称或者ID" maxlength="80" value="${esc(applicationName)}"></label><div class="channel-application-status">${selectField('application_status',[['','全部状态'],['pending','审批中'],['approved','已接入'],['disabled','已禁用']],applicationStatus)}</div></div><div class="channel-applications-content" aria-live="polite"></div><button type="button" class="text-button" data-more-applications hidden>加载更多</button><p class="channel-applications-error" role="alert"></p></section></div></div>`;
       el = root.querySelector('.channel-account-settings');
@@ -645,7 +646,8 @@ window.CorkiChannels = (() => {
         requestTipClose();
         closeSelect();
         managementTab=tab;
-        rememberTab(id,tab);
+        if(tab!=='history')rememberTab(id,tab);
+        root.querySelector('.channel-detail-tabs').hidden=tab==='history';
         root.querySelectorAll('[data-channel-tab]').forEach(button=>{
           const active=button.dataset.channelTab===tab;
           button.setAttribute('aria-selected',String(active));button.tabIndex=active?0:-1;
@@ -654,6 +656,7 @@ window.CorkiChannels = (() => {
         el.hidden=tab!=='settings';
         root.querySelector('.channel-applications').hidden=tab!=='applications';
         root.querySelector('.channel-history-actions').hidden=tab!=='history';
+        root.querySelector('[data-reset-conversation]').hidden=tab!=='applications';
         if(tab==='history')void refreshHistory();
         if(tab==='applications')void refreshApplications();
       };
@@ -674,7 +677,7 @@ window.CorkiChannels = (() => {
       filters.querySelector('input[type="search"]').onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();filterApplications(false);}};
       wireSelect(filters,()=>filterApplications(false));
       root.querySelector('[data-more-applications]').onclick=()=>refreshApplications(true);
-      if(managementTab==='applications' && values.session_validation!=='true')managementTab='settings';
+
       showTab(managementTab);
 
       const setEditing = enabled => {
@@ -723,19 +726,12 @@ window.CorkiChannels = (() => {
         "<p>将停止此接入的所有任务、清空待处理消息，并重置全部用户会话。旧会话记录会保留。</p>",async () => {
           await change({action:"reset-conversation",id},"正在重置会话…",true);
           historyState=null;selectedThread=null;sessionItems.clear();sessionsBefore=undefined;
-          threadGeneration++;historyLoading=false;await refreshHistory();
+          threadGeneration++;historyLoading=false;await refreshApplications();
         },"重置会话");
-      const layout=root.querySelector('.channel-chat-layout'),fold=root.querySelector('[data-fold-contacts]');
-      const setFold=collapsed=>{
-        layout.classList.toggle('contacts-collapsed',collapsed);
-        fold.setAttribute('aria-expanded',String(!collapsed));fold.setAttribute('aria-label',collapsed?'展开联系人':'折叠联系人');
-        try{localStorage.setItem('corki.channel.contacts-folded.'+id,String(collapsed));}catch{}
-      };
-      let collapsed=false;try{collapsed=localStorage.getItem('corki.channel.contacts-folded.'+id)==='true';}catch{}
-      setFold(collapsed);fold.onclick=()=>setFold(!layout.classList.contains('contacts-collapsed'));
+      root.querySelector('[data-chat-back]').onclick=()=>{focusedSender=null;threadGeneration++;historyLoading=false;showTab('applications');};
       wireMessageComposer();
       root.querySelector('.channel-more').onclick = () => refreshHistory(true);
-      root.querySelector('[data-more-sessions]').onclick = () => refreshHistory(false,true);
+
       void refreshHistory();
     }
     const cardToggle=el.querySelector('[name="ai_card_enabled"]');
@@ -877,12 +873,21 @@ window.CorkiChannels = (() => {
   function renderApplications() {
     const pane=root?.querySelector('.channel-applications-content');if(!pane)return;
     const rows=[...applicationRows.values()].sort((a,b)=>b.cursor-a.cursor);
-    const html=rows.length?`<div class="table-wrap"><table class="channel-application-table"><thead><tr><th>用户 ID</th><th>用户昵称</th><th>请求消息</th><th>请求时间</th><th>状态</th><th>token用量</th><th>备注</th><th>操作</th></tr></thead><tbody>${rows.map(r=>`<tr><td><code class="channel-request-id" tabindex="0" data-request-id="${esc(r.user_id || '—')}">${esc(r.user_id || '—')}</code></td><td><span>${esc(r.sender_name || r.sender_id)}</span></td><td><button class="channel-request-preview" data-request-message="${esc(r.sender_id)}">${esc(r.first_message)}</button></td><td class="channel-request-time">${esc(date(r.created_at))}</td><td>${applicationReplyStatus(r)}</td><td class="channel-token-usage"><span aria-label="${esc(r.token_usage==null?'用量暂不可用':r.token_usage.toLocaleString('zh-CN')+' tokens')}">${tokenUsage(r.token_usage)}</span></td><td>${r.notification_status==='failed'?`<button type="button" class="channel-notice-failed" data-notice-error="${esc(r.sender_id)}">通知未送达</button>`:'<span class="subtle">—</span>'}</td><td data-request-actions="${esc(r.sender_id)}">${applicationActions(r)}</td></tr>`).join('')}</tbody></table></div>`:`<div class="channel-empty">${applicationName || applicationStatus?'没有符合条件的申请':'暂无会话授权'}</div>`;
+    const html=rows.length?`<div class="table-wrap"><table class="channel-application-table"><thead><tr><th>用户 ID</th><th>用户昵称</th><th>请求消息</th><th>请求时间</th><th>状态</th><th>token用量</th><th>备注</th><th>操作</th></tr></thead><tbody>${rows.map(r=>`<tr><td><code class="channel-request-id" tabindex="0" data-request-id="${esc(r.user_id || '—')}">${esc(r.user_id || '—')}</code></td><td><span>${esc(r.sender_name || r.sender_id)}</span></td><td><button class="channel-request-preview" data-request-message="${esc(r.sender_id)}">${esc(r.first_message)}</button></td><td class="channel-request-time">${esc(date(r.created_at))}</td><td>${applicationReplyStatus(r)}</td><td class="channel-token-usage"><span aria-label="${esc(r.token_usage==null?'用量暂不可用':r.token_usage.toLocaleString('zh-CN')+' tokens')}">${tokenUsage(r.token_usage)}</span></td><td>${r.notification_status==='failed'?`<button type="button" class="channel-notice-failed" data-notice-error="${esc(r.sender_id)}">通知未送达</button>`:'<span class="subtle">—</span>'}</td><td data-request-actions="${esc(r.sender_id)}"><div class="channel-user-actions"><span data-access-actions>${applicationActions(r)}</span><button type="button" class="channel-request-action chat" data-open-chat="${esc(r.sender_id)}">会话</button></div></td></tr>`).join('')}</tbody></table></div>`:`<div class="channel-empty">${applicationName || applicationStatus?'没有符合条件的会话':'暂无会话'}</div>`;
     if(pane._html!==html){
       const scroll=pane.querySelector('.table-wrap'),top=scroll?.scrollTop || 0,left=scroll?.scrollLeft || 0;
       requestTipClose();pane.innerHTML=html;pane._html=html;
       const next=pane.querySelector('.table-wrap');if(next){next.scrollTop=top;next.scrollLeft=left;}
     }
+    pane.querySelectorAll('[data-open-chat]').forEach(button=>button.onclick=()=>{
+      focusedSender=button.dataset.openChat;
+      const row=applicationRows.get(focusedSender);
+      selectedThread=null;historyState=null;threadGeneration++;historyLoading=false;
+      root.querySelector('.channel-chat-messages').replaceChildren();
+      const empty=root.querySelector('.channel-chat-empty');empty.hidden=false;empty.textContent='正在读取会话…';
+      root.querySelector('[data-chat-name]').textContent=row?.sender_name || row?.user_id || focusedSender;
+      root._showChannelTab('history');
+    });
     pane.querySelectorAll('[data-stop-reply]').forEach(button=>button.onclick=()=>{
       const sender=button.dataset.stopReply,row=applicationRows.get(sender),activity=applicationActivity[sender];
       if(!row || !activity?.message_ids?.length || activity.stopping)return;
@@ -943,7 +948,7 @@ window.CorkiChannels = (() => {
       applicationPending.set(sender,status==='approved'?'接入中':button.hasAttribute('data-request-deny')?'拒绝中':'踢出中');
       applicationRevision++;requestTipClose();
       // Update only this action cell; keep selection, scrolling and other controls usable.
-      button.closest('[data-request-actions]').innerHTML=applicationActions(row);
+      button.closest('[data-access-actions]').innerHTML=applicationActions(row);
       pane._html=null;
       try {
         const result=await host.api('mutate',{kind:'channel-gateway',action:'application-status',id:identity,sender,status});
@@ -983,22 +988,6 @@ window.CorkiChannels = (() => {
     }catch(error){if(generation===epoch && version===applicationRevision)root.querySelector('.channel-applications-error').textContent=error.message;}
     finally{if(generation===epoch && applicationLoading===flight)applicationLoading=false;}
   }
-  function renderSessions() {
-    const list=root?.querySelector('.channel-session-list');if(!list)return;
-    const rows=[...sessionItems.values()];
-    const html=rows.map(row=>`<button type="button" class="channel-session-item ${selectedThread===row.thread?'selected':''}" data-session="${esc(row.thread)}" title="${esc(row.name)}${row.sender?' · '+esc(row.sender):''}"><span class="channel-session-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5A8.5 8.5 0 0 1 10.5 3h2A8.5 8.5 0 0 1 21 11.5Z"/></svg></span><span>${esc(row.name)}</span></button>`).join('') || '<div class="channel-sessions-empty">暂无会话</div>';
-    if(list._html!==html) {
-      list.innerHTML=html;list._html=html;
-      list.querySelectorAll('[data-session]').forEach(button=>button.onclick=()=>{
-        if(selectedThread===button.dataset.session)return;
-        selectedThread=button.dataset.session;threadGeneration++;historyLoading=false;historyState=null;
-        root.querySelector('.channel-chat-messages').replaceChildren();
-        const empty=root.querySelector('.channel-chat-empty');empty.hidden=false;empty.textContent='正在读取会话…';
-        renderSessions();refreshComposer();void refreshHistory();
-      });
-    }
-    root.querySelector('[data-more-sessions]').hidden=sessionsBefore==null;
-  }
   async function refreshHistory(older = false, moreSessions = false) {
     if (!selected || !root || historyLoading || busy || managementTab!=="history") return;
     const current = epoch, id = selected, version = revision, view=threadGeneration, mutation=historyRevision;
@@ -1007,7 +996,7 @@ window.CorkiChannels = (() => {
     historyLoading = true;
     try {
       const value = await host.api("mutate", {kind:"channel-gateway",action:"conversation",id,
-        ...(selectedThread ? {session:selectedThread} : {}),
+        ...(focusedSender ? {sender:focusedSender} : selectedThread ? {session:selectedThread} : {}),
         ...(moreSessions && sessionsBefore!=null ? {sessions_before:sessionsBefore} : {}),
         ...(older ? {before,thread:historyState.thread} : {})});
       if (current !== epoch || version !== revision || id !== selected || view!==threadGeneration || mutation!==historyRevision || managementTab!=="history") return;
@@ -1016,7 +1005,7 @@ window.CorkiChannels = (() => {
       const newSessions=(value.sessions || []).some(session=>!sessionItems.has(session.thread));
       for(const session of value.sessions || []) sessionItems.set(session.thread,session);
       if(moreSessions || sessionsBefore===undefined || newSessions) sessionsBefore=value.sessions_before;
-      renderSessions();
+
       const fresh = !historyState || historyState.thread !== value.thread;
       if (fresh) historyState = {thread:value.thread, messages:new Map(), before:value.before};
       if (older || fresh || historyState.before == null) historyState.before = value.before;
@@ -1355,7 +1344,7 @@ window.CorkiChannels = (() => {
     requestTipClose();
     epoch++;
     selected = null; historyState = null; historyLoading = false;
-    selectedThread=null;sessionItems=new Map();sessionsBefore=undefined;threadGeneration++;
+    selectedThread=null;focusedSender=null;sessionItems=new Map();sessionsBefore=undefined;threadGeneration++;
     clearInterval(timer);
     closeDialog();
     root = null;

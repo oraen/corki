@@ -215,7 +215,19 @@ class Messages:
             {"thread": "dt:" + str(c["id"]), "name": c["name"], "sender": c["sender"]}
             for c in contacts[:100]
         ]
-        session = params.get("session") or (sessions[0]["thread"] if sessions else None)
+        sender = params.get("sender")
+        if sender is not None:
+            if not isinstance(sender, str) or not 1 <= len(sender) <= 2000:
+                raise ValueError("用户标识无效")
+            with self.store.db() as db:
+                contact = db.execute(
+                    "SELECT id FROM dingtalk_contacts WHERE channel=? AND sender=?",
+                    (row["id"], sender),
+                ).fetchone()
+            session = "dt:" + str(contact["id"]) if contact else None
+            sessions, contacts = [], []
+        else:
+            session = params.get("session") or (sessions[0]["thread"] if sessions else None)
         result = {
             "sessions": sessions,
             "sessions_before": contacts[99]["id"] if len(contacts) > 100 else None,

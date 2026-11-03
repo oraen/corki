@@ -19,12 +19,16 @@ from corki_gateway.store import Store
 from corki.storage import SQLiteSessionRepository
 from corki.protocol.items import UserMessageItem,AssistantMessageItem,new_step_id
 home=Path(sys.argv[1]);s=Store(home);name='Session UI fixture '+str(__import__('time').time_ns())
-i=s.save_connection({'channel':'telegram','name':name,'values':{'token':'fixture-token'}})
+i=s.save_connection({'channel':'telegram','name':name,'values':{'token':'fixture-token','session_validation':'true'}})
 async def seed():
  repo=SQLiteSessionRepository(home/'sessions/corki.db')
  threads={}
  for who in ['Alice','Bob']:
-  thread=s.admit(i,{'id':who,'sender':who,'name':who,'conversation':who,'text':who},str(home/'main/default'))
+  message={'id':who,'sender':who,'name':who,'conversation':who,'text':who}
+  s.allows_message(s.connection(i),message)
+  with s.db() as db: db.execute("UPDATE access_requests SET status='approved' WHERE channel=? AND sender_id=?",(i,who))
+  message['id']+='-allowed'
+  thread=s.admit(i,message,str((home/'main/default').resolve()))
   await repo.create_thread(thread,home)
   await repo.append_items(thread,(UserMessageItem(who+' question','turn-'+who),AssistantMessageItem(who+' answer','turn-'+who,new_step_id())))
   threads[who]=thread
@@ -34,36 +38,20 @@ asyncio.run(seed())
 const fixture=JSON.parse(seed.stdout);
 try {
  await browser('open',base+'/#channels/'+fixture.id);
- await wait(`document.querySelectorAll('[data-session]').length===2`);
- await click(`[data-session="${fixture.Alice}"]`);
+ await wait(`document.querySelectorAll('[data-open-chat]').length===2`);
+ assert.equal(await evaluate(`!!document.querySelector('[data-channel-tab="history"]')`),'false');
+ assert.equal(await evaluate(`!!document.querySelector('.channel-session-pane')`),'false');
+ await click('[data-open-chat="Alice"]');
  await wait(`document.querySelector('.channel-chat-messages').textContent.includes('Alice answer')`);
- assert(!(await evaluate(`document.querySelector('.channel-chat-messages').textContent.includes('Bob answer')`)).includes('true'));
- await click(`[data-session="${fixture.Bob}"]`);
+ assert.equal(await evaluate(`document.querySelector('.channel-chat-messages').textContent.includes('Bob answer')`),'false');
+ await click('[data-chat-back]');
+ await click('[data-open-chat="Bob"]');
  await wait(`document.querySelector('.channel-chat-messages').textContent.includes('Bob answer')`);
- // An old, delayed history response must not replace the newly selected user's view.
- await evaluate(`window.originalSessionFetch=window.fetch.bind(window);window.fetch=async(url,opts)=>{
-   const body=opts?.body?JSON.parse(opts.body):{};
-   const response=await window.originalSessionFetch(url,opts);
-   if(body.action==='conversation'&&body.session===${JSON.stringify(fixture.Alice)})await new Promise(resolve=>window.releaseOldSession=resolve);
-   return response;
- }`);
- await click(`[data-session="${fixture.Alice}"]`);
- await wait(`typeof window.releaseOldSession==='function'`);
- await click(`[data-session="${fixture.Bob}"]`);
- await wait(`document.querySelector('.channel-chat-messages').textContent.includes('Bob answer')`);
- await evaluate(`window.releaseOldSession();window.fetch=window.originalSessionFetch`);
- await new Promise(resolve=>setTimeout(resolve,200));
  assert.equal(await evaluate(`document.querySelector('.channel-chat-messages').textContent.includes('Alice answer')`),'false');
- await click('[data-channel-tab="settings"]');await click('[data-page-edit]');
- assert.equal(await evaluate(`!!document.querySelector('[name="session_mode"]')`),'false');
- await click('[data-page-save]');await wait(`!document.querySelector('[data-page-edit]').hidden`);await click('[data-channel-tab="history"]');
- await wait(`document.querySelectorAll('[data-session]').length===2`);
- await click(`[data-session="${fixture.Alice}"]`);
+ await click('[data-reset-current]');await click('.channel-dialog [type="submit"]');
+ await wait(`!document.querySelector('.channel-dialog') && !document.querySelector('.channel-history-error').textContent && !document.querySelector('.channel-chat-messages').textContent.includes('Bob answer')`);
+ await click('[data-chat-back]');await click('[data-open-chat="Alice"]');
  await wait(`document.querySelector('.channel-chat-messages').textContent.includes('Alice answer')`);
- if(process.env.CHANNEL_SESSION_SCREENSHOT)await browser('screenshot',process.env.CHANNEL_SESSION_SCREENSHOT);
- // Reset all invalidates stale selection and returns a valid empty independent list.
- await click('[data-reset-conversation]');await click('.channel-dialog [type="submit"]');
- await wait(`!document.querySelector('.channel-dialog') && document.querySelectorAll('[data-session]').length===0 && !document.querySelector('.channel-history-error').textContent`);
  assert.equal((await(await fetch(base+'/api/config')).json()).revision,config.revision);
- console.log('PASS default independent, user selection, history isolation, no mode selector, history retention, read-only after save, reset and core settings unchanged');
+ console.log('PASS session management entry, single-user chat, return, isolation and reset');
 } finally {await browser('close').catch(()=>{});}

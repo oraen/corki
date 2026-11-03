@@ -24,7 +24,19 @@ def core_history(store, identity, params, live):
     if not row:
         raise ValueError("接入不存在")
     sessions, sessions_before = store.sessions_page(row, params.get("sessions_before"))
-    thread = store.session_thread(row, params.get("session"), sessions)
+    sender = params.get("sender")
+    if sender is not None:
+        if not isinstance(sender, str) or not 1 <= len(sender) <= 2000:
+            raise ValueError("用户标识无效")
+        with store.db() as db:
+            own = db.execute(
+                "SELECT thread FROM user_sessions WHERE binding=? AND sender=?",
+                (row["conversation_id"], sender),
+            ).fetchone()
+        thread = own["thread"] if own else None
+        sessions, sessions_before = [], None
+    else:
+        thread = store.session_thread(row, params.get("session"), sessions)
     session_info = {"sessions": sessions, "sessions_before": sessions_before}
     if params.get("thread") not in (None, thread):
         raise ValueError("会话已重置，请刷新")

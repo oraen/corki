@@ -1,5 +1,8 @@
 # 本地 OpenAI 协议适配网关
 
+第一次使用请阅读 **[安装、启动与客户端接入指南](QUICKSTART.md)**，包含拉取代码、后台启动、
+HTTP 调用，以及 Hermes Agent / OpenCode 配置示例。
+
 `src/corki_openai_gateway/gateway.py` 提供只监听 `127.0.0.1` 的 HTTP 服务；`src/corki_openai_gateway/chat.py` 转换
 Chat Completions 请求和 SSE 响应。支持 `/openai/responses`、`/openai/chat/completions`
 及它们的 `/openai/v1` 前缀。模型和 reasoning effort 由请求指定。

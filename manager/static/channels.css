@@ -929,3 +929,17 @@ button.channel-reply-failed{border:0;cursor:pointer}
 .channel-chat-meta .channel-message-status.recall-error { color:#b76844; cursor:pointer; }
 .channel-message-status.recall-error:hover { text-decoration:underline; text-underline-offset:3px; }
 @media(prefers-reduced-motion:reduce) { .channel-message-toolbar { transition:none; } }
+
+.channel-management .channel-chat-single{grid-template-columns:minmax(0,1fr)}
+.channel-detail-tabs[hidden]{display:none}
+.channel-history-actions [data-chat-name]{font-size:14px;font-weight:500;margin-right:auto}
+.channel-history-actions:has([data-chat-back]){width:100%;gap:12px}
+
+.channel-user-actions,.channel-user-actions [data-access-actions]{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.channel-user-actions .channel-request-action,.channel-user-actions .channel-request-progress{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:30px;margin:0;padding:0 8px;font-family:inherit;font-size:13px;font-weight:400;line-height:1;vertical-align:middle;border-radius:6px}
+.channel-user-actions .channel-request-action.chat{color:var(--accent,#c64b00)}
+.channel-user-actions .channel-request-action.chat:hover{background:#fff2e6}
+.channel-application-table th:last-child{width:160px}
+
+.channel-detail-toolbar > [data-reset-conversation]{margin-left:auto;flex-shrink:0}
+.channel-detail-toolbar > [data-reset-conversation][hidden]{display:none}

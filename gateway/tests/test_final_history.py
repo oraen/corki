@@ -37,6 +37,12 @@ def test_final_answers_hide_intermediate_and_live_text(tmp_path):
         view = history(store, identity, {}, live)
         assert [m["content"] for m in view["messages"]] == ["Question"]
         assert view["active"]
+        own = history(store, identity, {"sender": "reader"}, live)
+        assert own["thread"] == thread
+        assert own["sessions"] == []
+        missing = history(store, identity, {"sender": "another-user"}, live)
+        assert missing["thread"] is None
+        assert missing["messages"] == []
         await repo.save_turn(
             TurnRecord("turn", thread, TurnStatus.COMPLETED, "Question", "Finished")
         )

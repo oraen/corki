@@ -222,3 +222,28 @@ def test_agent_final_answer_recorded_once_and_deleted_with_connection(tmp_path):
             await h.close()
 
     asyncio.run(scenario())
+
+
+def test_management_sender_selects_exact_dingtalk_contact(tmp_path):
+    store = Store(tmp_path)
+    channel = account(store)
+    other = account(store, name="Other")
+    for sender in ('alice', 'bob'):
+        incoming = message(sender=sender)
+        store.messages.contact(channel, incoming)
+        store.messages.record(channel, incoming, 'inbound:'+sender, 'user', 'user', sender+' question')
+        store.messages.record(channel, incoming, 'reply:'+sender, 'assistant', 'notice', sender+' reply')
+    store.messages.contact(other, message(sender='foreign'))
+    alice = history(store, channel, {'sender':'alice'}, {})
+    bob = history(store, channel, {'sender':'bob'}, {})
+    assert alice['thread'] != bob['thread']
+    assert [m['content'] for m in alice['messages']] == ['alice question', 'alice reply']
+    assert [m['content'] for m in bob['messages']] == ['bob question', 'bob reply']
+    assert alice['recipient'] == 'Alice'
+    assert alice['can_send']
+    assert alice['sessions'] == []
+    for sender in ('missing', 'foreign'):
+        result = history(store, channel, {'sender':sender}, {})
+        assert result['thread'] is None
+        assert result['messages'] == []
+        assert not result['can_send']
