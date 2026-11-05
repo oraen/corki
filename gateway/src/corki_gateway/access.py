@@ -170,6 +170,8 @@ class AccessRequests:
         requests = [dict(r) for r in rows[:100]]
         usage = self.user_usage.totals(channel, [r['sender_id'] for r in requests])
         for row in requests:
+            # Stable per-user management entry; Agent context IDs may change on reset.
+            row['conversation_id'] = str(row['cursor'])
             row['token_usage'] = usage[row['sender_id']]
         return {
             "requests": requests,

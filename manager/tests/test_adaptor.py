@@ -18,7 +18,7 @@ def store(tmp_path,monkeypatch):
  def control(action,*,port=None,install=False,provider=None):
   store.commands.append((action,port))
   if action=='check':store.checked_providers.append(provider)
-  if action=='check':return {'ready':True,**({'models':{'ultimate':{'context_window':200000},'GLM-5.3':{'context_window':180000}}} if provider=='qoder' else {})}
+  if action=='check':return {'ready':True,**({'models':{'ultimate':{'context_window':200000},'GLM-5.3':{'context_window':180000}}} if provider=='qoder' else {'models':{'gpt-6.1-sol':{'max_context_window':1050000},'gpt-6-astra':{'max_context_window':872000},'gpt-6-sol':{'max_context_window':872000},'gpt-6-luna':{'max_context_window':872000}}})}
   if action=='stop':store.service['running']=False
   if action=='start-auto':
    if not store.service['running']:
@@ -259,13 +259,85 @@ def test_qoder_login_failure_leaves_config_and_running_gateway_unchanged(store,m
  assert store.config_text()==original and store.service['running']
 
 
-def test_qoder_catalog_update_adds_models_without_replacing_custom_settings(store):
+def test_qoder_reenable_preserves_existing_models_without_catalog_updates(store):
  change(store,action='power',enabled=True)
  config=module.document.loads(store.config_text())
  config['providers']['adaptor-qoder']={'api_key':'fixture-local-key','base_url':'http://127.0.0.1:17001/qoder','api_mode':'chat_completions','enabled':False,'models':{'auto':{'context_window':123456,'description':'user settings'},'private-alias':{'context_window':131072}}}
  store.config.write_text(module.document.dumps(config))
  change(store,action='provider',provider='qoder',enabled=True)
  models=module.document.loads(store.config_text())['providers']['adaptor-qoder']['models']
- assert 'auto' not in models
+ assert models['auto']=={'context_window':123456,'description':'user settings'}
  assert models['private-alias']=={'context_window':131072}
- assert models['GLM-5.3']=={'context_window':180000}
+ assert 'GLM-5.3' not in models
+
+
+@pytest.mark.parametrize('provider,expected', [
+ ('openai', {'gpt-6.1-sol','gpt-6-astra','gpt-6-sol','gpt-6-luna'}),
+ ('qoder', {'ultimate','GLM-5.3'}),
+])
+def test_fresh_computer_gets_adapter_catalog_without_existing_user_models(store,provider,expected):
+ store.config.write_text('{}')
+ change(store,action='power',enabled=True)
+ change(store,action='provider',provider=provider,enabled=True)
+ config=module.document.loads(store.config_text())
+ profile=config['providers']['adaptor-'+provider]
+ assert set(profile['models'])==expected
+ assert config['default']['provider']=='adaptor-'+provider
+ assert config['default']['model'] in expected
+
+
+@pytest.mark.parametrize('legacy', [False,True])
+def test_openai_single_astra_profile_is_completed_without_overwriting_user_values(store,legacy):
+ config=module.document.loads(store.config_text())
+ identity='old-local' if legacy else 'adaptor-openai'
+ custom={'context_window':131072,'reasoning_effort':'low','description':'user description'}
+ config['providers'][identity]={'base_url':'http://127.0.0.1:17001' if legacy else 'http://127.0.0.1:17001/openai',
+  'api_key':'fixture','default_model':'gpt-6-astra','enabled':False,
+  'models':{'gpt-6-astra':custom,'gpt-5.6-sol':{'context_window':123456}}}
+ store.config.write_text(module.document.dumps(config))
+ enable_provider(store)
+ saved=module.document.loads(store.config_text())
+ profile=saved['providers']['adaptor-openai']
+ if legacy:assert {'gpt-6.1-sol','gpt-6-astra','gpt-6-sol','gpt-6-luna'}<=profile['models'].keys()
+ else:assert set(profile['models'])=={'gpt-6-astra','gpt-5.6-sol'}
+ assert profile['models']['gpt-6-astra']==custom
+ assert profile['models']['gpt-5.6-sol']=={'context_window':123456}
+ if not legacy:assert profile['default_model']=='gpt-6-astra'
+ assert saved['default']==config['default']
+ before=profile['models']
+ change(store,action='provider',provider='openai',enabled=False)
+ change(store,action='provider',provider='openai',enabled=True)
+ assert module.document.loads(store.config_text())['providers']['adaptor-openai']['models']==before
+
+
+@pytest.mark.parametrize('provider', ['openai','qoder'])
+@pytest.mark.parametrize('empty', [False,True])
+def test_user_deleted_models_never_return_on_reenable_or_gateway_restart(store,provider,empty):
+ change(store,action='power',enabled=True)
+ change(store,action='provider',provider=provider,enabled=True)
+ config=module.document.loads(store.config_text())
+ profile=config['providers']['adaptor-'+provider]
+ if empty:
+  profile['models']={}
+  profile.pop('default_model',None)
+  profile['enabled']=False
+ else:
+  model=next(iter(profile['models']))
+  profile['models']={model:{'context_window':123456,'reasoning_effort':'low','description':'custom'}}
+  profile['default_model']=model
+ expected=json.loads(json.dumps(profile['models']))
+ store.config.write_text(module.document.dumps(config))
+ if empty:
+  before=store.config_text()
+  with pytest.raises(ValueError,match='未配置模型'):
+   change(store,action='provider',provider=provider,enabled=True)
+  assert store.config_text()==before
+  return
+ change(store,action='provider',provider=provider,enabled=False)
+ change(store,action='provider',provider=provider,enabled=True)
+ change(store,action='power',enabled=False)
+ change(store,action='power',enabled=True)
+ change(store,action='provider',provider=provider,enabled=True)
+ saved=module.document.loads(store.config_text())['providers']['adaptor-'+provider]
+ assert saved['models']==expected
+ if not empty:assert saved['default_model']==model

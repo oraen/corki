@@ -488,8 +488,9 @@ def main(argv=None):
                 result = {"ready": True}
                 if controller.startup_provider == "qoder":
                     from corki_adaptor.qoder.models import model_catalog
-
-                    result["models"] = model_catalog()
+                else:
+                    from corki_adaptor.openai.models import model_catalog
+                result["models"] = model_catalog()
             elif args.action == "start-auto":
                 result = controller.start_auto()
             elif args.action == "start":

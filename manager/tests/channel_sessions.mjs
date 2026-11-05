@@ -10,7 +10,7 @@ const run=promisify(execFile),session='channel-sessions-'+process.pid;
 const browser=(...args)=>run('agent-browser',['--session',session,...args],{maxBuffer:1024*1024});
 const evaluate=async code=>(await browser('eval',code)).stdout.trim();
 const wait=async expr=>{for(let i=0;i<50;i++){if(await evaluate(`Boolean(${expr})`)==='true')return;await new Promise(r=>setTimeout(r,150));}throw Error(expr);};
-const click=async selector=>{await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);await browser('click',selector);};
+const click=async selector=>{await wait(`!!document.querySelector(${JSON.stringify(selector)})`);await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);await browser('click',selector);};
 const seed=await run('.venv/bin/python',['-c',`
 import sys,json,asyncio
 from pathlib import Path
@@ -37,21 +37,41 @@ asyncio.run(seed())
 `,dirname(config.path)]);
 const fixture=JSON.parse(seed.stdout);
 try {
- await browser('open',base+'/#channels/'+fixture.id);
- await wait(`document.querySelectorAll('[data-open-chat]').length===2`);
+ await browser('open',base+'/#channels');
+ await wait(`!!document.querySelector('[data-config="${fixture.id}"]')`);
+ assert.equal(await evaluate(`document.querySelector('[data-config="${fixture.id}"]').textContent.startsWith('Session UI fixture ')`),'true');
+ assert.equal(await evaluate(`!!document.querySelector('.actions [data-config]')`),'false');
+ if(process.env.MANAGER_TEST_SCREENSHOTS) await browser('screenshot',process.env.MANAGER_TEST_SCREENSHOTS+'/connections.png');
+ await click('[data-config="'+fixture.id+'"]');
+ await wait(`document.querySelectorAll('[data-open-chat]').length===6`);
  assert.equal(await evaluate(`!!document.querySelector('[data-channel-tab="history"]')`),'false');
+ assert.equal(await evaluate(`document.querySelectorAll('[data-request-actions] [data-open-chat]').length`),'0');
  assert.equal(await evaluate(`!!document.querySelector('.channel-session-pane')`),'false');
- await click('[data-open-chat="Alice"]');
- await wait(`document.querySelector('.channel-chat-messages').textContent.includes('Alice answer')`);
- assert.equal(await evaluate(`document.querySelector('.channel-chat-messages').textContent.includes('Bob answer')`),'false');
- await click('[data-chat-back]');
- await click('[data-open-chat="Bob"]');
- await wait(`document.querySelector('.channel-chat-messages').textContent.includes('Bob answer')`);
- assert.equal(await evaluate(`document.querySelector('.channel-chat-messages').textContent.includes('Alice answer')`),'false');
- await click('[data-reset-current]');await click('.channel-dialog [type="submit"]');
- await wait(`!document.querySelector('.channel-dialog') && !document.querySelector('.channel-history-error').textContent && !document.querySelector('.channel-chat-messages').textContent.includes('Bob answer')`);
- await click('[data-chat-back]');await click('[data-open-chat="Alice"]');
- await wait(`document.querySelector('.channel-chat-messages').textContent.includes('Alice answer')`);
+ if(process.env.MANAGER_TEST_SCREENSHOTS) await browser('screenshot',process.env.MANAGER_TEST_SCREENSHOTS+'/users.png');
+ await click('.channel-request-id[data-open-chat="Alice"]');
+ await wait(`document.querySelector('.channel-chat-messages')?.textContent.includes('Alice answer')`);
+ assert.equal(await evaluate(`document.querySelector('#crumb').textContent.startsWith('会话页')`),'true');
+ assert.equal(await evaluate(`!!document.querySelector('[data-reset-current], [data-chat-back], [data-chat-name]')`),'false');
+ assert.equal(await evaluate(`document.querySelector('.channel-detail-toolbar').hidden`),'true');
+ assert.equal(await evaluate(`getComputedStyle(document.querySelector('.channel-detail-toolbar')).display==='none'`),'true');
+ assert.equal(await evaluate(`Math.round(document.querySelector('.channel-chat-panel').getBoundingClientRect().top)`),'92');
+ assert.equal(await evaluate(`Math.abs(document.querySelector('.channel-transcript').getBoundingClientRect().bottom-document.querySelector('.channel-chat-panel').getBoundingClientRect().bottom)<=2`),'true');
+ if(process.env.MANAGER_TEST_SCREENSHOTS) await browser('screenshot',process.env.MANAGER_TEST_SCREENSHOTS+'/chat.png');
+ await browser('reload');
+ await wait(`document.querySelector('.channel-chat-messages')?.textContent.includes('Alice answer')`);
+ assert.equal(await evaluate(`document.querySelector('.channel-chat-messages')?.textContent.includes('Bob answer')`),'false');
+ await click('.header-back');
+ await click('.channel-request-name[data-open-chat="Bob"]');
+ await wait(`document.querySelector('.channel-chat-messages')?.textContent.includes('Bob answer')`);
+ assert.equal(await evaluate(`document.querySelector('.channel-chat-messages')?.textContent.includes('Alice answer')`),'false');
+ await click('.header-back');
+ await wait(`!!document.querySelector('[data-reset-chat="Bob"]')`);
+ await click('[data-reset-chat="Bob"]');await click('.channel-dialog [type="submit"]');
+ await wait(`!document.querySelector('.channel-dialog')`);
+ await click('.channel-request-name[data-open-chat="Bob"]');
+ await wait(`!!document.querySelector('.channel-chat-empty') && !document.querySelector('.channel-history-error').textContent && !document.querySelector('.channel-chat-messages')?.textContent.includes('Bob answer')`);
+ await click('.header-back');await click('.channel-request-id[data-open-chat="Alice"]');
+ await wait(`document.querySelector('.channel-chat-messages')?.textContent.includes('Alice answer')`);
  assert.equal((await(await fetch(base+'/api/config')).json()).revision,config.revision);
  console.log('PASS session management entry, single-user chat, return, isolation and reset');
 } finally {await browser('close').catch(()=>{});}

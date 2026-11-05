@@ -298,6 +298,14 @@ class Service:
             # Filter before pagination and grouping, without hiding or deleting history.
             visible = "archived_at IS NULL AND source != ? "
             parameters = (SessionSource.from_startup_arg("cron").storage_value,)
+            # Workers are persisted for recovery/audit, not independent user chats.
+            # Apply before LIMIT and workspace grouping so they cannot fill a page
+            # or create a workspace entry in either desktop history section.
+            visible += (
+                "AND CASE WHEN json_valid(source) THEN "
+                "json_type(source,'$.subagent') IS NULL "
+                "AND json_type(source,'$.internal') IS NULL ELSE 1 END "
+            )
             # Classify using host-owned provenance before pagination and grouping.
             visible += "AND source " + ("= ? " if group == "robot" else "!= ? ")
             parameters += (SessionSource.from_startup_arg("gateway").storage_value,)

@@ -113,7 +113,11 @@ test("WeChat click requests one QR; expiry waits for another click instead of fa
 test("WeChat QR request failure can be retried without toggling the connection", () => fixture(
   async ({ adapter, calls, states }) => {
     await adapter.login();
-    await until(() => states.some(s => s.code === "login_failed"));
+    await until(() => states.some(s => s.state === "error" && s.code === "network"));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(states.at(-1).state, "error", "network failure must not be overwritten by login state");
+    assert.equal(states.at(-1).detail.stage, "获取登录二维码");
+    assert.match(states.at(-1).detail.error, /fixture network failure/);
     assert.equal(calls.qr, 1);
     await adapter.login();
     await until(() => states.some(s => s.state === "online"));

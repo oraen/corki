@@ -27,6 +27,8 @@ export async function create({ state_directory, cursor, require, incoming }) {
     verifyCode = "",
     buffer = cursor;
   let loginRequested = false, loginInProgress = false, wakeLogin, loginController;
+  let errorRevision = 0;
+  const connectionError = extra => { errorRevision++; status("error", extra); };
   const controller = new AbortController();
   try {
     account = JSON.parse(await readFile(loginFile, "utf8"));
@@ -76,7 +78,7 @@ export async function create({ state_directory, cursor, require, incoming }) {
         AbortSignal.timeout(timeout),
       ]),
     }); } catch(error) {
-      if (!stopped && !signal?.aborted) status("error", {code:"network", detail:{...detail, error:redact(error.name + ": " + (error.cause?.code || error.message))}});
+      if (!stopped && !signal?.aborted) connectionError({code:"network", detail:{...detail, error:redact(error.name + ": " + (error.cause?.code || error.message))}});
       throw error;
     }
     signal?.throwIfAborted();
@@ -88,7 +90,7 @@ export async function create({ state_directory, cursor, require, incoming }) {
         try { while(text.length<8192) { const {done,value}=await reader.read();if(done)break;text+=decoder.decode(value,{stream:true}); } }
         finally { await reader.cancel().catch(()=>{}); }
       }
-      status("error", {code:"http", detail:{...detail,status:response.status,
+      connectionError({code:"http", detail:{...detail,status:response.status,
         content_type:response.headers.get("content-type") || "",response:redact(text)}});
       throw new Error("iLink request failed");
     }
@@ -188,9 +190,12 @@ export async function create({ state_directory, cursor, require, incoming }) {
       loginRequested = false;
       loginInProgress = true;
       const attempt = loginController = new AbortController();
+      const beforeError = errorRevision;
       try { await login(attempt.signal); }
       catch {
-        if (!stopped && !attempt.signal.aborted) status("login", { code: "login_failed" });
+        // Preserve the actual HTTP/network failure and its diagnostic details.
+        if (!stopped && !attempt.signal.aborted && errorRevision === beforeError)
+          connectionError({ code: "login_failed" });
       } finally { loginInProgress = false; }
     }
   }

@@ -127,6 +127,7 @@ class Host:
             item["qr"] = qr
         code = value.get("code")
         messages = {
+            "login_failed": "获取登录二维码失败，请重试",
             "credentials": "登录已失效，请重新连接",
             "network": "网络连接失败，正在重试",
             "verify": "请输入手机上显示的验证码",

@@ -636,39 +636,33 @@ class GatewayManagement:
                              provider=provider if action == "provider" else "auto")
             if action == "provider" and enabled:
                 if existing is None:
+                    # Initialize once only. An existing empty/reduced catalog is
+                    # a user choice, not an invitation to restore deleted models.
+                    catalog = checked.get("models")
+                    if not isinstance(catalog, dict) or not catalog:
+                        raise ValueError(f"请更新适配网关后重试，未获得 {self.providers[provider]} 模型列表")
+                    # Retain models from legacy local OpenAI profiles, then fill in
+                    # current defaults too; a one-model legacy profile is not a catalog.
                     models = next((copy.deepcopy(p["models"]) for p in profiles.values()
                         if urlparse(p.get("base_url", "")).hostname in ("127.0.0.1", "localhost")
                         and urlparse(p.get("base_url", "")).port == old_port
                         and urlparse(p.get("base_url", "")).path.rstrip("/") in ("", "/v1", "/openai", "/openai/v1")
-                        and p.get("models")), None) if provider == "openai" else None
-                    if not models:
-                        models = self.model_defaults(
-                                  checked.get("models", {})
-                                  if provider == "qoder" else next(
-                                      p for p in self.store.quick_templates()["providers"]
-                                      if p["id"] == provider)["models"], provider)
+                        and p.get("models")), {}) if provider == "openai" else {}
                     existing = profiles.setdefault(identity, {"models": models})
-                if provider == "qoder":
-                    catalog = checked.get("models")
-                    if not isinstance(catalog, dict) or not catalog:
-                        raise ValueError("请更新适配网关后重试，未获得 Qoder 模型列表")
-                    # Auto works through the IDE Agent but is not reliable on
-                    # this gateway's direct model-server transport.
-                    existing.setdefault("models", {}).pop("auto", None)
-                    if existing.get("default_model") == "auto":
-                        existing.pop("default_model")
-                    if config.get("default") == {"provider": identity, "model": "auto"}:
-                        config["default"] = {"provider": identity,
-                            "model": next(iter(existing["models"]), next(iter(catalog)))}
-                    # Add missing defaults; keep the user's custom models and
-                    # existing settings instead of resetting the provider.
                     for model, settings in self.model_defaults(catalog, provider).items():
-                        existing.setdefault("models", {}).setdefault(model, copy.deepcopy(settings))
+                        existing["models"].setdefault(model, copy.deepcopy(settings))
+                if not existing.get("models"):
+                    raise ValueError("此供应商未配置模型，请先在模型管理中添加模型")
                 existing.update(enabled=True, name=provider,
                     api_mode="chat_completions" if provider == "qoder" else "responses",
                     base_url=f"http://127.0.0.1:{old_port}/{provider}", api_key=ADAPTOR_LOCAL_KEY)
                 if not effective_default(document.loads(original)):
-                    config["default"] = {"provider": identity, "model": next(iter(existing["models"]))}
+                    models = existing.get("models", {})
+                    default_model = existing.get("default_model")
+                    if default_model not in models:
+                        default_model = next(iter(models), None)
+                    if default_model is not None:
+                        config["default"] = {"provider": identity, "model": default_model}
             elif action == "provider" and existing is not None:
                 existing["enabled"] = False
             if action == "power" and not enabled:

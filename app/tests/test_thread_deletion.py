@@ -335,3 +335,57 @@ def test_robot_titles_use_existing_nickname_and_preserve_manual_names(tmp_path):
             await service.close()
 
     asyncio.run(check())
+
+
+def test_internal_worker_sessions_never_leak_into_desktop_navigation(tmp_path):
+    from corki.protocol.session_source import SessionSource, SubAgentSource, ThreadSpawnSource
+
+    async def check():
+        async def send(_):
+            pass
+
+        service = Service(tmp_path, send)
+        try:
+            common = tmp_path / 'common'
+            worker_only = tmp_path / 'workers'
+            await service.repository.create_thread(ThreadId('manual-parent'), common)
+            await service.repository.create_thread(
+                ThreadId('robot-parent'), common,
+                session_source=SessionSource.from_startup_arg('gateway'),
+            )
+            for parent in ('manual-parent', 'robot-parent'):
+                for index in range(3):
+                    await service.repository.create_thread(
+                        ThreadId(f'{parent}-child-{index}'), worker_only,
+                        session_source=SessionSource.subagent(SubAgentSource(
+                            'thread_spawn', ThreadSpawnSource(ThreadId(parent), 1),
+                        )),
+                    )
+            await service.repository.create_thread(
+                ThreadId('background-worker'), worker_only,
+                session_source=SessionSource.internal('memory_consolidation'),
+            )
+            with closing(sqlite3.connect(service.database)) as db, db:
+                db.execute("UPDATE threads SET updated_at='2100-01-01' WHERE cwd=?",
+                           (str(worker_only),))
+            recent = await service.list_threads({'limit': 1})
+            assert [t['id'] for t in recent['threads']] == ['manual-parent']
+            assert recent['next'] is None
+            assert recent['directories'] == [{'path': str(common), 'name': 'common'}]
+            assert not (await service.list_threads({'directory': str(worker_only)}))['threads']
+            robots = await service.list_threads({'group': 'robot', 'limit': 1})
+            assert [t['id'] for t in robots['threads']] == ['robot-parent']
+            assert robots['next'] is None
+            assert await service.repository.thread_exists(ThreadId('robot-parent-child-0'))
+            # A user-supplied source label is not typed internal provenance.
+            await service.repository.create_thread(
+                ThreadId('custom-label'), common,
+                session_source=SessionSource.from_startup_arg('subagent'),
+            )
+            assert 'custom-label' in {
+                t['id'] for t in (await service.list_threads({}))['threads']
+            }
+        finally:
+            await service.close()
+
+    asyncio.run(check())

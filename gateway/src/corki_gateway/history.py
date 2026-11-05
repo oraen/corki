@@ -13,6 +13,22 @@ from corki.storage.display_pages import read_display_items_page
 
 
 def history(store, identity, params, live):
+    conversation = params.get("conversation_id")
+    if conversation is not None:
+        if (
+            not isinstance(conversation, str) or not conversation.isascii()
+            or not conversation.isdigit() or len(conversation) > 19
+            or not 0 < int(conversation) < 2**63
+        ):
+            raise ValueError("会话 ID 无效")
+        with store.db() as db:
+            target = db.execute(
+                "SELECT sender_id FROM access_requests WHERE channel=? AND rowid=?",
+                (identity, int(conversation)),
+            ).fetchone()
+        if target is None:
+            raise ValueError("会话不存在或不属于此接入")
+        params = {**params, "sender": target["sender_id"]}
     row = store.connection(identity)
     if row and row["type_id"] == "dingtalk":
         return store.messages.view(row, params, live, core_history)
