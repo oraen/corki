@@ -237,13 +237,22 @@ window.CorkiResourcePackages = (() => {
       }
     };
   }
+  function resourceChoices(data) {
+    const groups = [
+      {kind:"skills", title:"扩展 Skills", items:data.skills.filter(item=>item.group==="corki")},
+      {kind:"skills", title:"公共 Skills", items:data.skills.filter(item=>item.group==="public")},
+      {kind:"mcp", title:"MCP", items:data.mcp},
+      {kind:"hooks", title:"Hooks", items:data.hooks},
+    ];
+    return groups.map(group=>`<section class="package-resource-section"><h3>${group.title}<small>${group.items.length}</small></h3><div class="package-resource-cards">${group.items.length ? group.items.map(item=>`<label class="package-resource-option package-resource-tile package-check ${item.valid===false?'is-unavailable':''}" data-package-name="${esc(item.name.toLowerCase())}"><span class="package-resource-monogram" aria-hidden="true">${esc(item.name.slice(0,2).toUpperCase())}</span><span class="package-resource-copy"><strong title="${esc(item.name)}">${esc(item.name)}</strong>${item.description?`<small>${esc(item.description)}</small>`:''}</span><input type="checkbox" name="resource:${group.kind}" value="${esc(item.id)}" aria-label="选择 ${esc(item.name)}" ${item.valid===false?'disabled':''}></label>`).join('') : '<p class="package-resource-empty">暂无'+group.title+'</p>'}</div></section>`).join('');
+  }
   async function create() {
     const data = await api("resource-package-inventory");
     if (!root?.isConnected) return;
     let files = [];
     showDialog(
       "创建插件",
-      `<div class="package-create-form">${field("package_name", "插件名称", "", "text", "", false, "输入插件名称")}${field("package_description", "描述", "", "text", "", false, "可选")}<div class="package-resource-heading"><strong>选择资源</strong><label class="search">${icon("search")}<input type="search" placeholder="搜索资源" aria-label="搜索资源" id="package-resource-search"></label></div><div class="package-resource-groups">${["skills", "mcp", "hooks"].map((kind) => `<details open class="package-resource-group"><summary><span>${icon(kind === "mcp" ? "tools" : kind)}</span><strong>${labels[kind]}</strong><small>${data[kind].length}</small>${icon("chevron")}</summary><div>${data[kind].length ? data[kind].map((item) => `<label class="package-resource-option package-check" data-package-name="${esc(item.name.toLowerCase())}"><input type="checkbox" name="resource:${kind}" value="${esc(item.id)}" ${item.valid === false ? "disabled" : ""}><span><strong>${esc(item.name)}</strong>${item.description ? `<small>${esc(item.description)}</small>` : ""}</span></label>`).join("") : '<p class="subtle">暂无资源</p>'}</div></details>`).join("")}</div><div class="package-local-heading"><strong>本地文件</strong><span class="subtle">可选</span></div>${uploadHTML()}</div>`,
+      `<div class="package-create-form"><div class="field-grid">${field("package_name", "插件名称", "", "text", "", false, "输入插件名称")}${field("package_description", "描述", "", "text", "", false, "可选")}</div><div class="package-resource-heading"><strong>选择资源</strong><label class="search">${icon("search")}<input type="search" placeholder="搜索资源" aria-label="搜索资源" id="package-resource-search"></label></div><div class="package-resource-groups">${resourceChoices(data)}</div><div class="package-local-heading"><strong>本地文件</strong><span class="subtle">可选</span></div>${uploadHTML()}</div>`,
       async (form) => {
         const result = await request("create", {
           name: form.get("package_name"),

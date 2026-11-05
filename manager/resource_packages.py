@@ -26,7 +26,7 @@ from corki.skills.frontmatter import parse as parse_skill
 FORMAT = "corki-resource-package"
 KINDS = ("skills", "mcp", "hooks")
 TITLES = {"skills": "Skills", "mcp": "MCP", "hooks": "Hooks"}
-IGNORED = {".DS_Store", "__MACOSX", ".git", "__pycache__", ".manager-backups"}
+IGNORED = {".DS_Store", "__MACOSX", ".git", "__pycache__", ".manager-backups", ".venv"}
 TOKEN = "${PACKAGE_ROOT}/"
 
 
@@ -98,7 +98,8 @@ def read_tree(root):
         dirs[:] = [d for d in dirs if d not in IGNORED]
         for name in [*dirs, *files]:
             if is_link_path(Path(parent) / name):
-                raise ValueError("请移除资源目录中的符号链接后重试")
+                relative = (Path(parent) / name).relative_to(root).as_posix()
+                raise ValueError(f"资源目录包含符号链接：{relative}，请移除后重试")
         for name in files:
             path = Path(parent) / name
             if not path.is_file():
@@ -159,7 +160,10 @@ class ResourcePackages:
 
     def inventory(self):
         config = document.loads(self.store.config_text())
-        skills = [f for f in self.store.files() if f["kind"] == "skills"]
+        skills = [
+            f for f in self.store.files()
+            if f["kind"] == "skills" and f["group"] != "builtin"
+        ]
         hooks = self.store.hooks_document()["entries"]
         return {
             "skills": [
@@ -230,6 +234,8 @@ class ResourcePackages:
             item = all_skills.get(identity)
             if not item:
                 raise ValueError("所选 Skill 已更新或删除，请重新选择")
+            if item["group"] == "builtin":
+                raise ValueError("内置 Skills 不能添加到插件")
             prefix = "skills/" + item["name"]
             self.add_tree(files, prefix, read_tree(Path(item["path"]).parent))
             manifest["skills"].append({"name": item["name"], "path": prefix})
