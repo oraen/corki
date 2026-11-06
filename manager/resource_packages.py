@@ -161,8 +161,7 @@ class ResourcePackages:
     def inventory(self):
         config = document.loads(self.store.config_text())
         skills = [
-            f for f in self.store.files()
-            if f["kind"] == "skills" and f["group"] != "builtin"
+            f for f in self.store.files() if f["kind"] == "skills" and f["group"] != "builtin"
         ]
         hooks = self.store.hooks_document()["entries"]
         return {
@@ -206,13 +205,11 @@ class ResourcePackages:
                 raise ValueError("插件包含重名资源")
             files[target] = value
 
-    def create(self, data):
+    def build(self, data):
         name = component_name(data.get("name"))
         description = data.get("description", "")
         if not isinstance(description, str) or len(description) > 1000:
             raise ValueError("插件描述最多 1000 个字符")
-        if any(row["name"].casefold() == name.casefold() for row in self.listing()["packages"]):
-            raise ValueError("已存在同名插件")
         manifest = {
             "format": FORMAT,
             "version": 1,
@@ -275,6 +272,17 @@ class ResourcePackages:
                 self.add_tree(expanded, PurePosixPath(path).stem, unzip(content))
             else:
                 expanded[path] = (content, executable)
+        if any(PurePosixPath(path).name == "plugin.json" for path in expanded):
+            imported, imported_files = self.validate(expanded)
+            for kind in KINDS:
+                manifest[kind].extend(imported[kind])
+            for path, value in imported_files.items():
+                if path == "plugin.json":
+                    continue
+                if path in files:
+                    raise ValueError("插件包含重名资源：" + path)
+                files[path] = value
+            expanded = {}
         covered = set()
         for path, (content, _) in expanded.items():
             if PurePosixPath(path).name == "SKILL.md":
@@ -330,8 +338,75 @@ class ResourcePackages:
         manifest, files = self.validate(files)
         if not any(manifest[k] for k in KINDS) and len(files) == 1:
             raise ValueError("请至少选择一项资源或添加本地文件")
+        return manifest, files
+
+    def create(self, data):
+        name = component_name(data.get("name"))
+        if any(row["name"].casefold() == name.casefold() for row in self.listing()["packages"]):
+            raise ValueError("已存在同名插件")
+        manifest, files = self.build(data)
         identity = self.save(manifest, files)
-        return {"id": identity, "message": "插件已创建", "packages": self.listing()["packages"]}
+        return {"id": identity, "message": "插件已创建", **self.listing()}
+
+    def detail(self, identity):
+        manifest, files = self.source({"id": identity})
+        record = next(row for row in self.listing()["packages"] if row["id"] == identity)
+        prefixes = [row["path"] + "/" for row in manifest["skills"]]
+        return {
+            **record,
+            "files": [
+                {"name": path, "bytes": len(value[0])}
+                for path, value in sorted(files.items())
+                if path != "plugin.json" and not any(path.startswith(p) for p in prefixes)
+            ],
+        }
+
+    def update(self, data):
+        identity = data.get("id")
+        detail = self.detail(identity)
+        if data.get("revision") != detail["digest"]:
+            raise ValueError("插件已发生变化，请刷新后重试")
+        manifest, files = self.source({"id": identity})
+        removed = data.get("remove", {})
+        if not isinstance(removed, dict) or any(
+            key not in (*KINDS, "resources")
+            or not isinstance(value, list)
+            or any(not isinstance(name, str) for name in value)
+            for key, value in removed.items()
+        ):
+            raise ValueError("待移除组件无效")
+        for kind in KINDS:
+            names = set(removed.get(kind, []))
+            if names - {row["name"] for row in manifest[kind]}:
+                raise ValueError("待移除组件不存在，请刷新后重试")
+            if kind == "skills":
+                prefixes = [row["path"] + "/" for row in manifest[kind] if row["name"] in names]
+                files = {
+                    p: value
+                    for p, value in files.items()
+                    if not any(p.startswith(prefix) for prefix in prefixes)
+                }
+            manifest[kind] = [row for row in manifest[kind] if row["name"] not in names]
+        for path in removed.get("resources", []):
+            if path not in {row["name"] for row in detail["files"]}:
+                raise ValueError("待移除文件不存在")
+            files.pop(path)
+        if data.get("selection") or data.get("files") or data.get("archive"):
+            additions, extra = self.build(
+                {**data, "name": manifest["name"], "description": manifest.get("description", "")}
+            )
+            for kind in KINDS:
+                manifest[kind].extend(additions[kind])
+            for path, value in extra.items():
+                if path == "plugin.json":
+                    continue
+                if path in files:
+                    raise ValueError("插件包含重名资源：" + path)
+                files[path] = value
+        files["plugin.json"] = (json.dumps(manifest, ensure_ascii=False).encode(), False)
+        manifest, files = self.validate(files)
+        self.save(manifest, files, identity=identity)
+        return {"message": "插件已保存", **self.detail(identity)}
 
     def validate(self, files):
         files = clean_files(
@@ -480,7 +555,7 @@ class ResourcePackages:
             **{k: [{"name": row["name"]} for row in manifest[k]] for k in KINDS},
         }
 
-    def save(self, manifest, files):
+    def save(self, manifest, files, *, identity=None):
         # Strip workbench-only validation material before generating the backup.
         exported = copy.deepcopy(manifest)
         for rows in (exported[k] for k in KINDS):
@@ -492,14 +567,18 @@ class ResourcePackages:
         }
         raw = pack(files)
         digest = hashlib.sha256(raw).hexdigest()
+        previous = None
         for row in self.listing()["packages"]:
+            if row["id"] == identity:
+                previous = row
+                continue
             if row["digest"] == digest:
                 return row["id"]
             if row["name"].casefold() == manifest["name"].casefold():
                 raise ValueError("已存在同名插件，请更换插件名称")
         self.root.mkdir(parents=True, exist_ok=True)
         stage = Path(tempfile.mkdtemp(prefix=".create-", dir=self.root))
-        identity = uuid.uuid4().hex
+        identity = identity or uuid.uuid4().hex
         try:
             (stage / "package.zip").write_bytes(raw)
             (stage / "package.zip").chmod(0o600)
@@ -507,13 +586,25 @@ class ResourcePackages:
                 **self.public_manifest(manifest),
                 "digest": digest,
                 "bytes": len(raw),
-                "created": datetime.now(UTC).isoformat(),
+                "created": previous["created"] if previous else datetime.now(UTC).isoformat(),
+                "updated": datetime.now(UTC).isoformat(),
                 "resources": sum(p.startswith("resources/") for p in files),
             }
             (stage / "record.json").write_text(
                 json.dumps(record, ensure_ascii=False), encoding="utf-8"
             )
-            os.rename(stage, self.root / identity)
+            destination = self.root / identity
+            if previous:
+                backup = self.root / (".replace-" + uuid.uuid4().hex)
+                os.rename(destination, backup)
+                try:
+                    os.rename(stage, destination)
+                except BaseException:
+                    os.rename(backup, destination)
+                    raise
+                shutil.rmtree(backup)
+            else:
+                os.rename(stage, destination)
         finally:
             if stage.exists():
                 shutil.rmtree(stage)
@@ -562,6 +653,10 @@ class ResourcePackages:
         action = data.get("action")
         if action == "create":
             return self.create(data)
+        if action == "detail":
+            return self.detail(data.get("id"))
+        if action == "update":
+            return self.update(data)
         if action == "delete":
             path = self.directory(data.get("id"))
             shutil.rmtree(path)

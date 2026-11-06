@@ -44,6 +44,25 @@ try {
  if(process.env.MANAGER_TEST_SCREENSHOTS) await browser('screenshot',process.env.MANAGER_TEST_SCREENSHOTS+'/connections.png');
  await click('[data-config="'+fixture.id+'"]');
  await wait(`document.querySelectorAll('[data-open-chat]').length===6`);
+ assert.equal(await evaluate(`document.querySelector('.channel-application-table').textContent.includes('备注')`),'false');
+ assert.equal(await evaluate(`document.querySelector('.channel-application-table').textContent.includes('接入消息')`),'true');
+ assert.equal(await evaluate(`document.querySelector('.channel-application-table').textContent.includes('上次对话')`),'true');
+ assert.equal(await evaluate(`document.querySelector('[name="application_sort"]').value==='id'`),'true');
+ for(const [selector,hint] of [['.channel-application-status','状态筛选'],['.channel-application-sort','排序方式']]){
+  await click(selector+' summary');
+  await wait(`document.querySelector('${selector} [popover]').matches(':popover-open')`);
+  assert.equal(await evaluate(`document.querySelector('${selector} .channel-select-hint').textContent===${JSON.stringify(hint)}`),'true');
+  assert.equal(await evaluate(`(()=>{const box=document.querySelector('${selector} summary').getBoundingClientRect(), menu=document.querySelector('${selector} [popover]').getBoundingClientRect();return Math.min(Math.abs(menu.top-box.bottom),Math.abs(menu.bottom-box.top))<=1})()`),'true');
+  if(process.env.MANAGER_TEST_SCREENSHOTS && selector.includes('sort'))await browser('screenshot',process.env.MANAGER_TEST_SCREENSHOTS+'/sort-menu.png');
+  await browser('press','Escape');
+ }
+ await click('.channel-application-sort summary');
+ await click('.channel-application-sort [data-option="tokens"]');
+ await wait(`document.querySelector('[name="application_sort"]').value==='tokens' && document.querySelectorAll('[data-open-chat]').length===6`);
+ await click('.channel-application-sort summary');
+ await click('.channel-application-sort [data-option="id"]');
+ await wait(`document.querySelector('[name="application_sort"]').value==='id' && document.querySelectorAll('[data-open-chat]').length===6`);
+
  assert.equal(await evaluate(`!!document.querySelector('[data-channel-tab="history"]')`),'false');
  assert.equal(await evaluate(`document.querySelectorAll('[data-request-actions] [data-open-chat]').length`),'0');
  assert.equal(await evaluate(`!!document.querySelector('.channel-session-pane')`),'false');

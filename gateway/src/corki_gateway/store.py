@@ -127,6 +127,9 @@ class Store(Connections, AccessRequests):
         self.migrate_user_sessions()
         from .usage import UserUsage
 
+        with self.db() as db:
+            db.execute("CREATE INDEX IF NOT EXISTS routes_user_activity "
+                       "ON routes(channel,sender_id,last_seen DESC)")
         self.user_usage = UserUsage(self)
         from .standard import Queue
 

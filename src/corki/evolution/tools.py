@@ -62,7 +62,11 @@ class SkillManageTool:
                 "List/read existing skills; create a skill with complete SKILL.md "
                 "frontmatter (name and description); patch or write_file only after read with its "
                 "revision; history/restore provide reversible edits. Built-in, public/shared, "
-                "project and plugin skills are read-only. Never alter global memory or config."
+                "project and plugin skills are read-only through this automatic-learning tool. "
+                "editable describes this tool only, not global file permissions. If the user "
+                "explicitly requests editing a particular skill, use ordinary file-editing "
+                "tools under normal permissions instead. Never alter global memory or config "
+                "as automatic self-evolution."
             ),
             parameters={
                 "type": "object",

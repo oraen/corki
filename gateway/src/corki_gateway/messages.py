@@ -24,6 +24,8 @@ class Messages:
                     event_key TEXT NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,
                     content TEXT NOT NULL,created_at TEXT NOT NULL,status TEXT NOT NULL,
                     error TEXT NOT NULL DEFAULT '',UNIQUE(channel,event_key));
+                CREATE INDEX IF NOT EXISTS dingtalk_message_activity
+                    ON dingtalk_messages(channel,sender,created_at DESC);
                 CREATE INDEX IF NOT EXISTS dingtalk_message_page
                     ON dingtalk_messages(channel,sender,id DESC);
                 CREATE TABLE IF NOT EXISTS dingtalk_history_meta(key TEXT PRIMARY KEY,value REAL);

@@ -97,6 +97,19 @@ class DesktopState:
                 (key, json.dumps(value, ensure_ascii=False)),
             )
 
+    def directory_aliases(self):
+        prefix = "directoryAlias:"
+        with closing(self.connect()) as db:
+            rows = db.execute(
+                "SELECT key,value FROM values_store WHERE key>=? AND key<?",
+                (prefix, "directoryAlias;"),
+            ).fetchall()
+        return {
+            row[0][len(prefix):]: value
+            for row in rows
+            if isinstance(value := json.loads(row[1]), str) and value.strip()
+        }
+
     def request(self, identity):
         with closing(self.connect()) as db:
             row = db.execute("SELECT * FROM requests WHERE id=?", (identity,)).fetchone()

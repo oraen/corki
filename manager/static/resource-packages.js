@@ -18,7 +18,8 @@ window.CorkiResourcePackages = (() => {
   let root = null,
     epoch = 0,
     rows = [],
-    selected = new Set();
+    selected = new Set(),
+    detailId = null;
   const formatBytes = (n) =>
     n < 1024
       ? `${n} B`
@@ -46,7 +47,8 @@ window.CorkiResourcePackages = (() => {
       selected = new Set(
         [...selected].filter((id) => rows.some((row) => row.id === id)),
       );
-      draw();
+      if (detailId) await drawDetail();
+      else draw();
     } catch (error) {
       if (ticket === epoch && root)
         root.innerHTML = `<section class="panel package-empty">${symbol()}<p>${esc(error.message)}</p><button class="button" id="package-retry">重试</button></section>`;
@@ -61,19 +63,14 @@ window.CorkiResourcePackages = (() => {
         transferIcon("download") +
         `批量导出${selected.size ? "（" + selected.size + "）" : ""}`;
     }
-    const toggle = root?.querySelector("#package-select-all");
-    if (toggle) {
-      toggle.checked = !!rows.length && selected.size === rows.length;
-      toggle.indeterminate = !!selected.size && selected.size < rows.length;
-    }
   }
   function draw() {
-    root.innerHTML = `<section class="panel package-panel"><div class="package-heading"><div class="package-title"><span class="package-mark">${symbol()}</span><h2>插件管理</h2></div><div class="package-actions"><button type="button" class="button" id="package-export-selected" disabled>${transferIcon("download")}批量导出</button><button type="button" class="button" id="package-create">${icon("plus")}创建插件</button><button type="button" class="button primary" id="package-import">${transferIcon("upload")}导入插件</button></div></div>${
+    root.innerHTML = `<section class="panel package-panel"><div class="package-heading"><div class="package-title"><span class="package-mark">${symbol()}</span><h2>插件管理<span class="package-count">${rows.length}</span></h2></div><div class="package-actions"><button type="button" class="button" id="package-export-selected" disabled>${transferIcon("download")}批量导出</button><button type="button" class="button" id="package-create">${icon("plus")}创建插件</button><button type="button" class="button primary" id="package-import">${transferIcon("upload")}导入插件</button></div></div>${
       rows.length
-        ? `<div class="package-list-bar"><label class="package-check"><input id="package-select-all" type="checkbox"><span>全选</span></label><span class="subtle">${rows.length} 个插件</span></div><div class="package-grid">${rows
+        ? `<div class="package-grid">${rows
             .map(
               (row) =>
-                `<article class="package-card"><div class="package-card-top"><span class="package-mark">${symbol()}</span><div class="package-card-name"><h3 title="${esc(row.name)}">${esc(row.name)}</h3><time>${esc(when(row.created))}</time></div><label class="package-check package-card-check"><input type="checkbox" data-package-select="${row.id}" aria-label="选择 ${esc(row.name)}" ${selected.has(row.id) ? "checked" : ""}></label></div>${row.description ? `<p class="package-description">${esc(row.description)}</p>` : ""}<div class="package-tags">${Object.entries(
+                `<article class="package-card" data-package-open="${row.id}" tabindex="0" role="link" aria-label="打开插件 ${esc(row.name)}"><div class="package-card-top"><span class="package-mark">${symbol()}</span><div class="package-card-name"><h3 title="${esc(row.name)}">${esc(row.name)}</h3><time>${esc(when(row.created))}</time></div><label class="package-check package-card-check"><input type="checkbox" data-package-select="${row.id}" aria-label="选择 ${esc(row.name)}" ${selected.has(row.id) ? "checked" : ""}></label></div>${row.description ? `<p class="package-description">${esc(row.description)}</p>` : ""}<div class="package-tags">${Object.entries(
                   labels,
                 )
                   .filter(([kind]) =>
@@ -85,7 +82,7 @@ window.CorkiResourcePackages = (() => {
                   )
                   .join(
                     "",
-                  )}</div><details class="package-contents"><summary>资源清单${icon("chevron")}</summary><div>${["skills", "mcp", "hooks"].map((kind) => (row[kind]?.length ? `<section><strong>${labels[kind]}</strong>${row[kind].map((item) => `<span title="${esc(item.name)}">${esc(item.name)}</span>`).join("")}</section>` : "")).join("")}${row.resources ? `<section><strong>本地资源</strong><span>${row.resources} 个文件</span></section>` : ""}</div></details><div class="package-card-bottom"><small>${formatBytes(row.bytes)}</small><div><button type="button" class="text-button" data-package-action="apply" data-id="${row.id}">导入资源</button><button type="button" class="text-button" data-package-action="export" data-id="${row.id}">导出</button><button type="button" class="text-button danger" data-package-action="delete" data-id="${row.id}">删除</button></div></div></article>`,
+                  )}</div><div class="package-card-bottom"><small>${formatBytes(row.bytes)}</small><div><button type="button" class="text-button" data-package-action="apply" data-id="${row.id}">导入资源</button><button type="button" class="text-button" data-package-action="export" data-id="${row.id}">导出</button><button type="button" class="text-button danger" data-package-action="delete" data-id="${row.id}">删除</button></div></div></article>`,
             )
             .join("")}</div>`
         : `<div class="package-empty"><span>${symbol()}</span><h3>暂无插件</h3><p>导入资源包，或将现有资源保存为插件</p></div>`
@@ -95,20 +92,6 @@ window.CorkiResourcePackages = (() => {
     root.querySelector("#package-import").onclick = () => importDialog();
     root.querySelector("#package-export-selected").onclick = () =>
       download([...selected]);
-    root
-      .querySelector("#package-select-all")
-      ?.addEventListener("change", (event) => {
-        selected = event.target.checked
-          ? new Set(rows.map((row) => row.id))
-          : new Set();
-        root
-          .querySelectorAll("[data-package-select]")
-          .forEach(
-            (input) =>
-              (input.checked = selected.has(input.dataset.packageSelect)),
-          );
-        updateSelection();
-      });
     root.querySelectorAll("[data-package-select]").forEach(
       (input) =>
         (input.onchange = () => {
@@ -127,7 +110,60 @@ window.CorkiResourcePackages = (() => {
           else importDialog({ id: row.id });
         }),
     );
+    root.querySelectorAll("[data-package-open]").forEach((card) => {
+      const open = (event) => {
+        if (event.target.closest("button,input,label,a")) return;
+        location.hash = "#plugins/" + card.dataset.packageOpen;
+      };
+      card.onclick = open;
+      card.onkeydown = (event) => {
+        if (event.target === card && event.key === "Enter") {
+          event.preventDefault();
+          open(event);
+        }
+      };
+    });
     updateSelection();
+  }
+  async function drawDetail() {
+    const ticket = epoch,
+      node = root;
+    const data = await request("detail", { id: detailId });
+    if (ticket !== epoch || node !== root || !node?.isConnected) return;
+    const crumb = document.querySelector("#crumb");
+    if (crumb) crumb.textContent = data.name;
+    root.innerHTML = `<section class="panel package-panel package-detail"><div class="package-heading"><div class="package-title"><span class="package-mark">${symbol()}</span><div><h2>${esc(data.name)}</h2>${data.description ? `<p class="package-detail-description">${esc(data.description)}</p>` : ""}</div></div><div class="package-actions"><button class="button" id="package-detail-export">${transferIcon("download")}导出</button><button class="button primary" id="package-add">${icon("plus")}添加组件</button></div></div><div class="package-detail-sections">${[
+      ...Object.keys(labels),
+    ]
+      .map((kind) => {
+        const items = kind === "resources" ? data.files : data[kind];
+        return `<section class="package-detail-group"><div class="package-detail-group-heading"><h3>${labels[kind]}<span>${items.length}</span></h3></div>${items.length ? `<div class="package-component-list">${items.map((item) => `<div class="package-component"><span class="package-component-icon">${kind === "resources" ? transferIcon("download") : symbol()}</span><div><strong title="${esc(item.name)}">${esc(item.name)}</strong>${kind === "resources" ? `<small>${formatBytes(item.bytes)}</small>` : ""}</div><button class="text-button danger" data-remove-component data-kind="${kind}" data-name="${esc(item.name)}" aria-label="移除 ${esc(item.name)}">移除</button></div>`).join("")}</div>` : '<div class="package-group-empty">暂无' + labels[kind] + "</div>"}</section>`;
+      })
+      .join("")}</div></section>`;
+    root.querySelector("#package-detail-export").onclick = () =>
+      download([data.id]);
+    root.querySelector("#package-add").onclick = () =>
+      create(data).catch((error) => toast(error.message));
+    root.querySelectorAll("[data-remove-component]").forEach(
+      (button) =>
+        (button.onclick = () => {
+          showDialog(
+            "移除组件",
+            `<div class="package-delete"><span class="package-delete-mark">${icon("trash")}</span><h3>移除「${esc(button.dataset.name)}」？</h3><p>将从此插件中移除，已安装的资源不受影响。</p></div>`,
+            async () => {
+              await request("update", {
+                id: data.id,
+                revision: data.digest,
+                remove: { [button.dataset.kind]: [button.dataset.name] },
+              });
+              toast("组件已移除");
+              await load();
+            },
+            "",
+          );
+          $("#save").textContent = "移除";
+        }),
+    );
   }
   async function encode(file, path) {
     const bytes = new Uint8Array(await file.arrayBuffer());
@@ -239,30 +275,55 @@ window.CorkiResourcePackages = (() => {
   }
   function resourceChoices(data) {
     const groups = [
-      {kind:"skills", title:"扩展 Skills", items:data.skills.filter(item=>item.group==="corki")},
-      {kind:"skills", title:"公共 Skills", items:data.skills.filter(item=>item.group==="public")},
-      {kind:"mcp", title:"MCP", items:data.mcp},
-      {kind:"hooks", title:"Hooks", items:data.hooks},
+      {
+        kind: "skills",
+        title: "扩展 Skills",
+        items: data.skills.filter((item) => item.group === "corki"),
+      },
+      {
+        kind: "skills",
+        title: "公共 Skills",
+        items: data.skills.filter((item) => item.group === "public"),
+      },
+      { kind: "mcp", title: "MCP", items: data.mcp },
+      { kind: "hooks", title: "Hooks", items: data.hooks },
     ];
-    return groups.map(group=>`<section class="package-resource-section"><h3>${group.title}<small>${group.items.length}</small></h3><div class="package-resource-cards">${group.items.length ? group.items.map(item=>`<label class="package-resource-option package-resource-tile package-check ${item.valid===false?'is-unavailable':''}" data-package-name="${esc(item.name.toLowerCase())}"><span class="package-resource-monogram" aria-hidden="true">${esc(item.name.slice(0,2).toUpperCase())}</span><span class="package-resource-copy"><strong title="${esc(item.name)}">${esc(item.name)}</strong>${item.description?`<small>${esc(item.description)}</small>`:''}</span><input type="checkbox" name="resource:${group.kind}" value="${esc(item.id)}" aria-label="选择 ${esc(item.name)}" ${item.valid===false?'disabled':''}></label>`).join('') : '<p class="package-resource-empty">暂无'+group.title+'</p>'}</div></section>`).join('');
+    return groups
+      .map(
+        (group) =>
+          `<section class="package-resource-section"><h3>${group.title}<small>${group.items.length}</small></h3><div class="package-resource-cards">${group.items.length ? group.items.map((item) => `<label class="package-resource-option package-resource-tile package-check ${item.valid === false ? "is-unavailable" : ""}" data-package-name="${esc(item.name.toLowerCase())}"><span class="package-resource-monogram" aria-hidden="true">${esc(item.name.slice(0, 2).toUpperCase())}</span><span class="package-resource-copy"><strong title="${esc(item.name)}">${esc(item.name)}</strong>${item.description ? `<small>${esc(item.description)}</small>` : ""}</span><input type="checkbox" name="resource:${group.kind}" value="${esc(item.id)}" aria-label="选择 ${esc(item.name)}" ${item.valid === false ? "disabled" : ""}></label>`).join("") : '<p class="package-resource-empty">暂无' + group.title + "</p>"}</div></section>`,
+      )
+      .join("");
   }
-  async function create() {
+  async function create(target = null) {
     const data = await api("resource-package-inventory");
+    if (target)
+      for (const kind of ["skills", "mcp", "hooks"])
+        data[kind] = data[kind].filter(
+          (item) =>
+            !target[kind].some(
+              (saved) => saved.name.toLowerCase() === item.name.toLowerCase(),
+            ),
+        );
     if (!root?.isConnected) return;
     let files = [];
     showDialog(
-      "创建插件",
-      `<div class="package-create-form"><div class="field-grid">${field("package_name", "插件名称", "", "text", "", false, "输入插件名称")}${field("package_description", "描述", "", "text", "", false, "可选")}</div><div class="package-resource-heading"><strong>选择资源</strong><label class="search">${icon("search")}<input type="search" placeholder="搜索资源" aria-label="搜索资源" id="package-resource-search"></label></div><div class="package-resource-groups">${resourceChoices(data)}</div><div class="package-local-heading"><strong>本地文件</strong><span class="subtle">可选</span></div>${uploadHTML()}</div>`,
+      target ? "添加组件" : "创建插件",
+      `<div class="package-create-form">${target ? "" : `<div class="field-grid">${field("package_name", "插件名称", "", "text", "", false, "输入插件名称")}${field("package_description", "描述", "", "text", "", false, "可选")}</div>`}<div class="package-resource-heading"><strong>选择资源</strong><label class="search">${icon("search")}<input type="search" placeholder="搜索资源" aria-label="搜索资源" id="package-resource-search"></label></div><div class="package-resource-groups">${resourceChoices(data)}</div><div class="package-local-heading"><strong>本地文件</strong><span class="subtle">可选</span></div>${uploadHTML()}</div>`,
       async (form) => {
-        const result = await request("create", {
+        const selection = Object.fromEntries(
+          ["skills", "mcp", "hooks"].map((kind) => [
+            kind,
+            form.getAll("resource:" + kind),
+          ]),
+        );
+        const result = await request(target ? "update" : "create", {
+          ...(target ? { id: target.id, revision: target.digest } : {}),
           name: form.get("package_name"),
           description: form.get("package_description"),
-          selection: Object.fromEntries(
-            ["skills", "mcp", "hooks"].map((kind) => [
-              kind,
-              form.getAll("resource:" + kind),
-            ]),
-          ),
+          ...(Object.values(selection).some((items) => items.length)
+            ? { selection }
+            : {}),
           files,
         });
         toast(result.message);
@@ -270,10 +331,12 @@ window.CorkiResourcePackages = (() => {
       },
       "",
     );
-    $("#save").textContent = "创建插件";
-    $("[name=package_name]").required = true;
-    $("[name=package_name]").maxLength = 300;
-    $("[name=package_description]").maxLength = 1000;
+    $("#save").textContent = target ? "添加" : "创建插件";
+    if (!target) {
+      $("[name=package_name]").required = true;
+      $("[name=package_name]").maxLength = 300;
+      $("[name=package_description]").maxLength = 1000;
+    }
     $("#package-resource-search").oninput = (event) => {
       const query = event.target.value.toLowerCase();
       $("#fields")
@@ -365,8 +428,9 @@ window.CorkiResourcePackages = (() => {
     );
   }
   return {
-    mount(node) {
+    mount(node, options = {}) {
       root = node;
+      detailId = options.id || null;
       load();
     },
     unmount() {

@@ -348,11 +348,14 @@ class Service:
                     )
                 value["running"] = row["id"] in self.tasks
                 result.append(value)
+            aliases = (
+                self.state.directory_aliases() if directory is None and group == "normal" else {}
+            )
             directories = (
                 []
                 if directory is not None or group == "robot"
                 else [
-                    {"path": row[0], "name": Path(row[0]).name or row[0]}
+                    {"path": row[0], "name": aliases.get(row[0]) or Path(row[0]).name or row[0]}
                     for row in db.execute(
                         "SELECT cwd FROM threads WHERE " + visible
                         + "GROUP BY cwd ORDER BY MAX(updated_at) DESC,cwd",
@@ -1050,7 +1053,7 @@ class Service:
     async def read_state(self, p):
         key = text(p, "key")
         if key not in ("ui", "recentDirectories", "deleteConfirmationUntil") and not key.startswith(
-            "draft:"
+            ("draft:", "directoryAlias:")
         ):
             raise ValueError("Invalid state key")
         return self.state.get(key)
@@ -1058,10 +1061,18 @@ class Service:
     async def write_state(self, p):
         key = text(p, "key")
         if key not in ("ui", "recentDirectories", "deleteConfirmationUntil") and not key.startswith(
-            "draft:"
+            ("draft:", "directoryAlias:")
         ):
             raise ValueError("Invalid state key")
         value = p.get("value")
+        if key.startswith("directoryAlias:"):
+            if not key[len("directoryAlias:"):] or not isinstance(value, str):
+                raise ValueError("工作目录显示名称无效")
+            value = value.strip()
+            if len(value) > 200 or any(char in value for char in "\x00\r\n"):
+                raise ValueError("工作目录显示名称最多 200 个字符，不能包含换行")
+            self.state.put(key, value)
+            return {}
         if key.startswith("draft:") and self.state.is_deleted(key[6:]):
             raise ValueError("此会话已删除")
         if key == "deleteConfirmationUntil" and (

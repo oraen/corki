@@ -1440,3 +1440,9 @@ main {
 .assistant-message-meta{justify-content:flex-start}
 .assistant-message-meta .copy-button{padding-left:0}
 .assistant-message-meta .message-time{white-space:nowrap}
+
+.workspace-context-menu{position:fixed;z-index:1000;min-width:150px;padding:5px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:0 6px 22px #24241a18}
+.workspace-context-menu button{width:100%;padding:9px 12px;justify-content:flex-start;border-radius:6px;color:#30332d;font-size:13px}
+.workspace-context-menu button:hover,.workspace-context-menu button:focus-visible{background:#fff3e9;outline:none}
+.history-heading-editing{display:flex;align-items:center;background:#fff4eb}
+.history-heading-editing input{flex:1;min-width:0;width:0;padding:3px 5px;border:1px solid #e9ac80;border-radius:5px;background:#fff;color:#30332d;font:inherit;outline:none}

@@ -2994,12 +2994,12 @@ class Handler(BaseHTTPRequestHandler):
                 (data.get("kind") == "skills" and data.get("action") in ("import", "validate-import"))
                 or (data.get("kind") == "hooks" and data.get("action") == "upload-skill")
                 or (data.get("kind") == "channel-gateway" and data.get("action") == "install")
-                or (data.get("kind") == "resource-packages" and data.get("action") in ("create", "preview-import", "import"))
+                or (data.get("kind") == "resource-packages" and data.get("action") in ("create", "update", "preview-import", "import"))
             ):
                 raise ValueError("无效的技能导入请求")
             if (
                 data.get("action") not in ("import", "validate-import", "parse-document", "upload-skill")
-                and not (data.get("kind") == "resource-packages" and data.get("action") in ("create", "preview-import", "import"))
+                and not (data.get("kind") == "resource-packages" and data.get("action") in ("create", "update", "preview-import", "import"))
                 and not (data.get("kind") == "channel-gateway" and data.get("action") in ("install", "image-upload", "file-upload"))
                 and length > 2 * LIMIT
             ):

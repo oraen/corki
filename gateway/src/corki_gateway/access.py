@@ -1,6 +1,7 @@
 """Per-connection admission decisions and bounded notification state."""
 
 import json
+import math
 import time
 import uuid
 
@@ -118,20 +119,29 @@ class AccessRequests:
                 (time.time() - 30 * 86400,),
             )
 
-    def applications(self, channel, before=None, *, name="", status=""):
+    def applications(self, channel, before=None, *, name="", status="", sort="id"):
         connection = self.connection(channel)
         if not connection:
             raise ValueError("接入不存在")
-        if before is not None and (type(before) is not int or not 0 < before < 2**63):
-            raise ValueError("申请列表游标无效")
+        if sort not in ("id", "last_chat", "tokens"):
+            raise ValueError("会话排序方式无效")
+        if before is not None:
+            if sort == "id":
+                valid = type(before) is int and 0 < before < 2**63
+            else:
+                valid = (
+                    isinstance(before, dict) and before.get("sort") == sort
+                    and type(before.get("id")) is int and 0 < before["id"] < 2**63
+                    and type(before.get("value")) in (int, float)
+                    and math.isfinite(before["value"]) and before["value"] >= 0
+                )
+            if not valid:
+                raise ValueError("申请列表游标无效")
         if not isinstance(name, str) or len(name) > 80:
             raise ValueError("用户名称搜索最长 80 字符")
         if status not in ("", "pending", "approved", "disabled"):
             raise ValueError("申请筛选状态无效")
         conditions, args = ["a.channel=?"], [channel]
-        if before is not None:
-            conditions.append("a.rowid<?")
-            args.append(before)
         if name.strip():
             user_id_search = (
                 "CASE WHEN json_valid(d.message) THEN json_extract(d.message,'$.staff_id') END"
@@ -152,31 +162,67 @@ class AccessRequests:
             if connection["type_id"] == "dingtalk"
             else "a.sender_id"
         )
+        # Latest message includes user input, Agent replies and manually sent messages.
+        # Historical accounts without a message ledger fall back to their last route/input.
+        last_chat = (
+            "max(a.created_at,coalesce((SELECT unixepoch(max(m.created_at)) "
+            "FROM dingtalk_messages m WHERE m.channel=a.channel AND m.sender=a.sender_id),0),"
+            "coalesce((SELECT max(r.last_seen) FROM routes r "
+            "WHERE r.channel=a.channel AND r.sender_id=a.sender_id),0))"
+        )
+        field = {"id": "cursor", "last_chat": "last_chat_at", "tokens": "token_sort"}[sort]
         with self.db() as db:
+            prefix, usage_join, token_value = "", "", "0"
+            query_args = list(args)
+            database = self.home / "sessions/corki.db"
+            if sort == "tokens" and database.is_file():
+                db.execute("ATTACH DATABASE ? AS usage_core", (database.as_uri() + "?mode=ro",))
+                prefix = (
+                    "user_totals AS (SELECT u.sender,sum(s.input_tokens+s.output_tokens) AS tokens "
+                    "FROM user_usage_threads u CROSS JOIN usage_core.model_steps s "
+                    "ON s.thread_id=u.thread WHERE u.channel=? GROUP BY u.sender),"
+                )
+                query_args.insert(0, channel)
+                usage_join = " LEFT JOIN user_totals u ON u.sender=a.sender_id "
+                token_value = "coalesce(u.tokens,0)"
+            boundary = ""
+            if before is not None:
+                if sort == "id":
+                    boundary = "WHERE cursor<? "
+                    query_args.append(before)
+                else:
+                    boundary = f"WHERE ({field},cursor)<(?,?) "
+                    query_args.extend((before["value"], before["id"]))
             rows = db.execute(
+                "WITH " + prefix + "candidates AS ("
                 "SELECT a.rowid AS cursor,a.sender_id,a.sender_name,"
                 "substr(a.first_message,1,240) AS first_message,a.created_at,a.status,"
                 "d.status AS notification_status,d.error AS notification_error, "
                 "d.kind AS notification_kind,d.updated AS notification_time, "
-                "d.notice_id AS notification_id, "
-                + user_id
-                + " AS user_id "
-                + "FROM access_requests a LEFT JOIN access_delivery d "
-                "ON d.channel=a.channel AND d.sender_id=a.sender_id WHERE "
-                + " AND ".join(conditions)
-                + " ORDER BY a.rowid DESC LIMIT 101",
-                args,
+                "d.notice_id AS notification_id, " + user_id + " AS user_id, "
+                + last_chat + " AS last_chat_at," + token_value + " AS token_sort "
+                "FROM access_requests a LEFT JOIN access_delivery d "
+                "ON d.channel=a.channel AND d.sender_id=a.sender_id " + usage_join + " WHERE "
+                + " AND ".join(conditions) + ") SELECT * FROM candidates " + boundary
+                + f"ORDER BY {field} DESC,cursor DESC LIMIT 101", query_args,
             ).fetchall()
         requests = [dict(r) for r in rows[:100]]
-        usage = self.user_usage.totals(channel, [r['sender_id'] for r in requests])
+        usage = (self.user_usage.totals(channel, [r['sender_id'] for r in requests])
+                 if sort != "tokens" else {})
         for row in requests:
-            # Stable per-user management entry; Agent context IDs may change on reset.
             row['conversation_id'] = str(row['cursor'])
-            row['token_usage'] = usage[row['sender_id']]
-        return {
-            "requests": requests,
-            "before": rows[99]["cursor"] if len(rows) > 100 else None,
-        }
+            row['token_usage'] = (
+                row.pop('token_sort') if sort == "tokens" else usage[row['sender_id']]
+            )
+            row.pop('token_sort', None)
+        cursor = None
+        if len(rows) > 100:
+            last = requests[-1]
+            cursor = (last['cursor'] if sort == "id" else {
+                "sort": sort, "id": last['cursor'],
+                "value": last['last_chat_at'] if sort == "last_chat" else last['token_usage'],
+            })
+        return {"requests": requests, "before": cursor}
 
     def set_application_status(self, channel, sender, status):
         if not isinstance(sender, str) or not 1 <= len(sender) <= 300:

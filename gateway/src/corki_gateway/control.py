@@ -124,6 +124,7 @@ def control(home, data):
             result = Store(home).applications(
                 data.get("id"), data.get("before"),
                 name=data.get("name", ""), status=data.get("status", ""),
+                sort=data.get("sort", "id"),
             )
             result["reply_activity"] = {}
             return result

@@ -32,5 +32,33 @@ try {
  await wait(`!document.querySelector('#editor').open && document.querySelectorAll('.package-card').length===1`);
  const {packages}=await(await fetch(base+'/api/resource-packages')).json();
  assert.deepEqual(packages[0].skills.map(s=>s.name).sort(),['fixture-extension','fixture-public']);
- console.log('PASS grouped cards, built-in exclusion, search preserves selection and package creation');
+ assert.equal(await evaluate(`!!document.querySelector('#package-select-all, .package-contents')`),'false');
+ await browser('click','.package-card-name');
+ await wait(`!!document.querySelector('#package-add')`);
+ assert.equal(await evaluate(`document.querySelector('#header-navigation .header-back').getAttribute('href')`),'"#plugins"');
+ assert.equal(await evaluate(`document.querySelectorAll('.package-component').length`),'2');
+ await browser('click','[data-remove-component][data-name="fixture-public"]');
+ await browser('click','#save');
+ await wait(`!document.querySelector('#editor').open && document.querySelectorAll('.package-component').length===1`);
+ await browser('click','#package-add');
+ await wait(`!!document.querySelector('[data-package-name="fixture-public"]')`);
+ assert.equal(await evaluate(`!!document.querySelector('[data-package-name="fixture-extension"]')`),'false');
+ await browser('click','[data-package-name="fixture-public"]');
+ await browser('click','#save');
+ await wait(`!document.querySelector('#editor').open && document.querySelectorAll('.package-component').length===2`);
+ // Import a local file through the same upload control, then inspect the saved ZIP.
+ await browser('click','#package-add');
+ await wait(`!!document.querySelector('[data-package-files]')`);
+ await evaluate(`(()=>{const input=document.querySelector('[data-package-files]');const transfer=new DataTransfer();transfer.items.add(new File(['fixture note'],'note.txt',{type:'text/plain'}));input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+ await wait(`document.querySelector('.package-uploaded').textContent.includes('note.txt') && !document.querySelector('#save').disabled`);
+ await browser('click','#save');
+ await wait(`!document.querySelector('#editor').open && document.querySelectorAll('.package-component').length===3`);
+ if(process.env.MANAGER_TEST_SCREENSHOT)await browser('screenshot',process.env.MANAGER_TEST_SCREENSHOT.replace('.png','-detail.png'));
+ await browser('reload');
+ await wait(`document.querySelectorAll('.package-component').length===3`);
+ const detail=await(await fetch(base+'/api/mutate',{method:'POST',headers:{'Content-Type':'application/json','X-Corki-Manager':'1'},body:JSON.stringify({kind:'resource-packages',action:'detail',id:packages[0].id})})).json();
+ assert.equal(detail.files[0].name,'resources/local/note.txt');
+ await browser('click','#header-navigation .header-back');
+ await wait(`!!document.querySelector('#package-create')`);
+ console.log('PASS plugin creation, details, component removal, selection/upload additions, persistence and navigation');
 }finally{await browser('close').catch(()=>{});}

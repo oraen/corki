@@ -41,6 +41,9 @@ class Model:
         turn, step = request.items[-1].turn_id, new_step_id()
         if "bounded, background procedural-learning reviewer" in request.instructions:
             self.reviews.append(request)
+            assert (
+                "This background review has no live user authorizing edits" in request.instructions
+            )
             assert {t.name for t in request.tools} == {"skill_manage"}
             self.review_started.set()
             if self.stall:
@@ -71,6 +74,14 @@ class Model:
                 yield ModelCompleted((AssistantMessageItem("Saved verified checks", turn, step),))
         else:
             self.foreground.append(request)
+            assert "explicit instruction to edit a particular skill" in request.instructions
+            assert (
+                "Actual\nfilesystem permissions, sandbox limits, execution approvals"
+                in request.instructions
+            )
+            for tool in request.tools:
+                if tool.name == "skill_manage":
+                    assert "not global file permissions" in tool.description
             yield ModelCompleted((AssistantMessageItem("Done", turn, step),))
 
     async def aclose(self):

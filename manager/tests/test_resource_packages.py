@@ -463,49 +463,178 @@ def test_invalid_existing_skill_is_still_skipped_by_name(store):
 
 
 def test_create_skips_local_virtual_environment_without_losing_skill_sources(store):
-    skill = store.home / 'skills/fixture-skill'
-    environment = skill / '.venv/bin'
+    skill = store.home / "skills/fixture-skill"
+    environment = skill / ".venv/bin"
     environment.mkdir(parents=True)
-    executable = store.home / 'fixture-python'
-    executable.write_text('local runtime, not skill source')
+    executable = store.home / "fixture-python"
+    executable.write_text("local runtime, not skill source")
     try:
-        (environment / 'python').symlink_to(executable)
+        (environment / "python").symlink_to(executable)
     except OSError:
-        pytest.skip('symbolic links unavailable')
-    (environment / 'runtime-data').write_text('must not be packaged')
+        pytest.skip("symbolic links unavailable")
+    (environment / "runtime-data").write_text("must not be packaged")
     identity = make(store)
     raw, _ = store.resource_packages.export([identity])
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-        assert 'skills/fixture-skill/SKILL.md' in archive.namelist()
-        assert 'skills/fixture-skill/scripts/fixture.py' in archive.namelist()
-        assert not any('.venv' in Path(name).parts for name in archive.namelist())
-    assert (environment / 'python').is_symlink()
+        assert "skills/fixture-skill/SKILL.md" in archive.namelist()
+        assert "skills/fixture-skill/scripts/fixture.py" in archive.namelist()
+        assert not any(".venv" in Path(name).parts for name in archive.namelist())
+    assert (environment / "python").is_symlink()
 
 
 def test_create_rejects_actual_resource_symlink_and_identifies_relative_path(store):
-    skill = store.home / 'skills/fixture-skill'
-    target = store.home / 'outside-resource'
-    target.write_text('not selected')
+    skill = store.home / "skills/fixture-skill"
+    target = store.home / "outside-resource"
+    target.write_text("not selected")
     try:
-        (skill / 'scripts/linked.py').symlink_to(target)
+        (skill / "scripts/linked.py").symlink_to(target)
     except OSError:
-        pytest.skip('symbolic links unavailable')
-    with pytest.raises(ValueError, match=r'符号链接：scripts/linked.py'):
+        pytest.skip("symbolic links unavailable")
+    with pytest.raises(ValueError, match=r"符号链接：scripts/linked.py"):
         make(store)
-    assert not store.resource_packages.listing()['packages']
+    assert not store.resource_packages.listing()["packages"]
 
 
 def test_inventory_groups_external_skills_and_blocks_builtin_selection(store):
-    builtin = store.home / 'skills/.system/fixture-builtin'
-    public = store.compatibility_home / '.agents/skills/fixture-public'
-    for path, name in ((builtin, 'fixture-builtin'), (public, 'fixture-public')):
+    builtin = store.home / "skills/.system/fixture-builtin"
+    public = store.compatibility_home / ".agents/skills/fixture-public"
+    for path, name in ((builtin, "fixture-builtin"), (public, "fixture-public")):
         path.mkdir(parents=True, exist_ok=True)
-        (path/'SKILL.md').write_text(f'---\nname: {name}\ndescription: Fixture\n---\nBody\n')
-    inventory=store.resource_packages.inventory()['skills']
-    assert any(row['name']=='fixture-skill' and row['group']=='corki' for row in inventory)
-    assert any(row['name']=='fixture-public' and row['group']=='public' for row in inventory)
-    assert all(row['group']!='builtin' for row in inventory)
-    identity=next(row['id'] for row in store.files() if row['name']=='fixture-builtin')
-    with pytest.raises(ValueError,match='内置 Skills 不能添加到插件'):
-        store.resource_packages.create({'name':'Forbidden fixture','selection':{'skills':[identity]}})
-    assert not store.resource_packages.listing()['packages']
+        (path / "SKILL.md").write_text(f"---\nname: {name}\ndescription: Fixture\n---\nBody\n")
+    inventory = store.resource_packages.inventory()["skills"]
+    assert any(row["name"] == "fixture-skill" and row["group"] == "corki" for row in inventory)
+    assert any(row["name"] == "fixture-public" and row["group"] == "public" for row in inventory)
+    assert all(row["group"] != "builtin" for row in inventory)
+    identity = next(row["id"] for row in store.files() if row["name"] == "fixture-builtin")
+    with pytest.raises(ValueError, match="内置 Skills 不能添加到插件"):
+        store.resource_packages.create(
+            {"name": "Forbidden fixture", "selection": {"skills": [identity]}}
+        )
+    assert not store.resource_packages.listing()["packages"]
+
+
+def test_edit_package_components_are_independent_and_survive_reload(store):
+    packages = store.resource_packages
+    identity = make(store)
+    before_config = store.config_text()
+    detail = packages.detail(identity)
+    removed = detail["skills"][0]["name"]
+    updated = packages.change(
+        {
+            "action": "update",
+            "id": identity,
+            "revision": detail["digest"],
+            "remove": {"skills": [removed], "mcp": ["fixture-mcp"]},
+        }
+    )
+    assert not updated["skills"] and not updated["mcp"]
+    assert updated["hooks"] == detail["hooks"]
+    assert updated["created"] == detail["created"]
+    assert updated["digest"] != detail["digest"]
+    assert (store.home / "skills/fixture-skill/SKILL.md").exists()
+    assert store.config_text() == before_config
+    raw, _ = packages.export([identity])
+    assert not any(
+        p.startswith("skills/fixture-skill/") for p in zipfile.ZipFile(io.BytesIO(raw)).namelist()
+    )
+    skill_id = packages.inventory()["skills"][0]["id"]
+    packages.change(
+        {
+            "action": "update",
+            "id": identity,
+            "revision": updated["digest"],
+            "selection": {"skills": [skill_id]},
+            "files": [{"path": "notes.txt", "data": base64.b64encode(b"fixture note").decode()}],
+        }
+    )
+    reloaded = module.ResourcePackages(store).detail(identity)
+    assert reloaded["skills"] == [{"name": removed}]
+    assert reloaded["files"] == [{"name": "resources/local/notes.txt", "bytes": 12}]
+    packages.change(
+        {
+            "action": "update",
+            "id": identity,
+            "revision": reloaded["digest"],
+            "remove": {"resources": ["resources/local/notes.txt"]},
+        }
+    )
+    assert not packages.detail(identity)["files"]
+    assert store.config_text() == before_config
+
+
+def test_package_edit_conflicts_and_duplicates_do_not_change_backup(store):
+    packages = store.resource_packages
+    identity = make(store)
+    detail = packages.detail(identity)
+    raw = (packages.directory(identity) / "package.zip").read_bytes()
+    with pytest.raises(ValueError, match="发生变化"):
+        packages.change({"action": "update", "id": identity, "revision": "stale"})
+    with pytest.raises(ValueError, match="重名"):
+        packages.change(
+            {
+                "action": "update",
+                "id": identity,
+                "revision": detail["digest"],
+                "selection": {"mcp": ["fixture-mcp"]},
+            }
+        )
+    with pytest.raises(ValueError, match="不存在"):
+        packages.change(
+            {
+                "action": "update",
+                "id": identity,
+                "revision": detail["digest"],
+                "remove": {"resources": ["../settings.json"]},
+            }
+        )
+    assert (packages.directory(identity) / "package.zip").read_bytes() == raw
+
+
+def test_package_edit_imports_another_package_and_can_become_empty(store):
+    packages = store.resource_packages
+    identity = make(store)
+    source, _ = packages.export([identity])
+    detail = packages.detail(identity)
+    cleared = packages.change(
+        {
+            "action": "update",
+            "id": identity,
+            "revision": detail["digest"],
+            "remove": {
+                kind: [row["name"] for row in detail[kind]] for kind in ("skills", "mcp", "hooks")
+            },
+        }
+    )
+    assert all(not cleared[kind] for kind in ("skills", "mcp", "hooks"))
+    restored = packages.change(
+        {
+            "action": "update",
+            "id": identity,
+            "revision": cleared["digest"],
+            "files": [{"path": "bundle.zip", "data": base64.b64encode(source).decode()}],
+        }
+    )
+    assert all(restored[kind] == detail[kind] for kind in ("skills", "mcp", "hooks"))
+
+
+def test_package_edit_preserves_referenced_resources(store):
+    packages = store.resource_packages
+    identity = make(
+        store, files=[{"path": "note.txt", "data": base64.b64encode(b"fixture").decode()}]
+    )
+    manifest, files = packages.source({"id": identity})
+    manifest["mcp"][0]["config"]["args"] = ["${PACKAGE_ROOT}/resources/local/note.txt"]
+    files["plugin.json"] = (json.dumps(manifest).encode(), False)
+    manifest, files = packages.validate(files)
+    packages.save(manifest, files, identity=identity)
+    detail = packages.detail(identity)
+    with pytest.raises(ValueError, match="引用的本地资源不存在"):
+        packages.change(
+            {
+                "action": "update",
+                "id": identity,
+                "revision": detail["digest"],
+                "remove": {"resources": ["resources/local/note.txt"]},
+            }
+        )
+    assert packages.detail(identity)["digest"] == detail["digest"]

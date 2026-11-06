@@ -389,3 +389,45 @@ def test_internal_worker_sessions_never_leak_into_desktop_navigation(tmp_path):
             await service.close()
 
     asyncio.run(check())
+
+
+def test_workspace_display_aliases_persist_without_changing_paths(tmp_path):
+    async def check():
+        async def send(_):
+            pass
+        service=Service(tmp_path,send)
+        first=tmp_path/'one'/'same-name'
+        second=tmp_path/'two'/'same-name'
+        first.mkdir(parents=True)
+        second.mkdir(parents=True)
+        marker=first/'keep.txt'
+        marker.write_text('unchanged')
+        try:
+            await service.repository.create_thread(ThreadId('first-workspace'),first)
+            await service.repository.create_thread(ThreadId('second-workspace'),second)
+            for path,name in ((first,'  自定义目录  '),(second,'另一个目录')):
+                await service.write_state({'key':'directoryAlias:'+str(path),'value':name})
+            listing=await service.list_threads({})
+            names={row['path']:row['name'] for row in listing['directories']}
+            assert names=={str(first):'自定义目录',str(second):'另一个目录'}
+            assert {r['cwd'] for r in listing['threads']}=={str(first),str(second)}
+            assert marker.read_text()=='unchanged'
+        finally:
+            await service.close()
+        service=Service(tmp_path,send)
+        try:
+            listing=await service.list_threads({})
+            names={row['path']:row['name'] for row in listing['directories']}
+            assert names[str(first)]=='自定义目录'
+            await service.write_state({'key':'directoryAlias:'+str(first),'value':'   '})
+            listing=await service.list_threads({})
+            names={row['path']:row['name'] for row in listing['directories']}
+            assert names[str(first)]=='same-name'
+            assert names[str(second)]=='另一个目录'
+            for bad in (None,{},'x'*201,'line\nbreak'):
+                with pytest.raises(ValueError):
+                    await service.write_state({'key':'directoryAlias:'+str(first),'value':bad})
+            assert marker.read_text()=='unchanged'
+        finally:
+            await service.close()
+    asyncio.run(check())

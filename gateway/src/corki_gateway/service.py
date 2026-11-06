@@ -621,6 +621,7 @@ class Host:
                 data.get("before"),
                 name=data.get("name", ""),
                 status=data.get("status", ""),
+                sort=data.get("sort", "id"),
             )
             result["reply_activity"] = self.reply_activity(identity)
             return result

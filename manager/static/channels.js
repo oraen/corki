@@ -20,6 +20,7 @@ window.CorkiChannels = (() => {
     applicationRevision = 0,
     applicationName = "",
     applicationStatus = "",
+    applicationSort = "id",
     applicationFilterTimer = null,
     applicationPending = new Map(),
     historyState = null,
@@ -454,7 +455,8 @@ window.CorkiChannels = (() => {
   };
   function selectField(name, items, value) {
     const selected = items.find(i => i[0] === value) || items[0];
-    return `<details class="channel-select"><summary aria-haspopup="listbox" aria-expanded="false">${esc(selected?.[1] || "请选择")}<span>⌄</span></summary><div popover="manual" role="listbox">${items.map(([v,label]) => `<button type="button" role="option" aria-selected="${v===selected?.[0]}" data-option="${esc(v)}">${esc(label)}</button>`).join("")}</div><input type="hidden" name="${name}" value="${esc(selected?.[0] || "")}"></details>`;
+    const hint=({application_status:'状态筛选',application_sort:'排序方式'})[name];
+    return `<details class="channel-select" ${hint?'data-attached="true"':''}><summary aria-haspopup="listbox" aria-expanded="false">${esc(selected?.[1] || "请选择")}<span>⌄</span></summary><div popover="manual" role="listbox" ${hint?`aria-label="${hint}"`:''}>${hint?`<span class="channel-select-hint" aria-hidden="true">${hint}</span>`:''}${items.map(([v,label]) => `<button type="button" role="option" aria-selected="${v===selected?.[0]}" data-option="${esc(v)}">${esc(label)}</button>`).join("")}</div><input type="hidden" name="${name}" value="${esc(selected?.[0] || "")}"></details>`;
   }
   function closeSelect() {
     if(!activeSelect)return;
@@ -481,8 +483,10 @@ window.CorkiChannels = (() => {
           menu.style.width=Math.min(box.width,innerWidth-24)+'px';
           menu.style.maxHeight=height+'px';
           menu.style.left=Math.max(12,Math.min(box.left,innerWidth-box.width-12))+'px';
-          menu.style.top=up?'auto':(box.bottom+6)+'px';
-          menu.style.bottom=up?(innerHeight-box.top+6)+'px':'auto';
+          const gap=details.dataset.attached ? 0 : 6;
+          details.dataset.placement=up?'top':'bottom';
+          menu.style.top=up?'auto':(box.bottom+gap)+'px';
+          menu.style.bottom=up?(innerHeight-box.top+gap)+'px':'auto';
         };
         menu.showPopover();position();summary.setAttribute('aria-expanded','true');
         menu.querySelectorAll('[data-option]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.option===details.querySelector('input').value)));
@@ -699,7 +703,7 @@ window.CorkiChannels = (() => {
         <div class="channel-queue-alert" hidden></div><div class="channel-manage-grid"><section class="panel channel-chat-panel" role="tabpanel" id="channel-pane-history" aria-label="会话">
           <div class="channel-chat-layout channel-chat-single"><div class="channel-transcript"><div class="channel-chat-scroll"><button class="text-button channel-more" hidden>加载更早的消息</button><div class="channel-chat-messages"></div><div class="channel-chat-empty">正在读取会话…</div></div>
           ${['dingtalk','wechat'].includes(c.id)?`<form class="channel-message-composer">${c.id==='wechat'?'<div class="channel-composer-images" hidden></div>':''}<textarea aria-label="发送${c.name}消息" placeholder="${c.id==='wechat'?'等待对方发送消息':'选择联系人后发送消息'}" rows="2" maxlength="2000" disabled></textarea><div class="channel-composer-foot">${c.id==='wechat'?'<button type="button" class="channel-image-attach" data-attach-image aria-label="添加附件" title="添加附件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.5"/><path d="m4 17 5-5 4 4 3-3 5 5"/></svg></button><input type="file" data-image-input multiple hidden>':''}<span data-message-recipient></span><button type="submit" class="button primary" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m21 3-7 18-4-7-7-4 18-7ZM10 14 21 3"/></svg><span>发送</span></button></div></form>`:''}<p class="channel-history-error" role="status"></p></div></div></section>
-        <section class="panel channel-account-settings" role="tabpanel" id="channel-pane-settings" aria-labelledby="channel-tab-settings"><form><div class="panel-head"><h2>基本信息</h2><button type="button" class="button" data-page-edit>编辑</button></div><div class="channel-settings-scroll"><fieldset class="channel-basic-fields" disabled>${body}</fieldset></div><p class="channel-form-error" role="alert"></p><div class="channel-settings-foot" hidden><button class="button" type="button" data-page-cancel>取消</button><button class="button primary" type="submit" data-page-save>保存</button></div></form></section><section class="panel channel-applications" role="tabpanel" id="channel-pane-applications" aria-labelledby="channel-tab-applications" hidden><div class="channel-application-filters"><label class="channel-application-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input type="search" aria-label="搜索用户昵称或者ID" placeholder="搜索用户昵称或者ID" maxlength="80" value="${esc(applicationName)}"></label><div class="channel-application-status">${selectField('application_status',[['','全部状态'],['pending','审批中'],['approved','已接入'],['disabled','已禁用']],applicationStatus)}</div></div><div class="channel-applications-content" aria-live="polite"></div><button type="button" class="text-button" data-more-applications hidden>加载更多</button><p class="channel-applications-error" role="alert"></p></section></div></div>`;
+        <section class="panel channel-account-settings" role="tabpanel" id="channel-pane-settings" aria-labelledby="channel-tab-settings"><form><div class="panel-head"><h2>基本信息</h2><button type="button" class="button" data-page-edit>编辑</button></div><div class="channel-settings-scroll"><fieldset class="channel-basic-fields" disabled>${body}</fieldset></div><p class="channel-form-error" role="alert"></p><div class="channel-settings-foot" hidden><button class="button" type="button" data-page-cancel>取消</button><button class="button primary" type="submit" data-page-save>保存</button></div></form></section><section class="panel channel-applications" role="tabpanel" id="channel-pane-applications" aria-labelledby="channel-tab-applications" hidden><div class="channel-application-filters"><label class="channel-application-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input type="search" aria-label="搜索用户昵称或者ID" placeholder="搜索用户昵称或者ID" maxlength="80" value="${esc(applicationName)}"></label><div class="channel-application-status">${selectField('application_status',[['','全部状态'],['pending','审批中'],['approved','已接入'],['disabled','已禁用']],applicationStatus)}</div><div class="channel-application-sort">${selectField('application_sort',[['id','会话ID'],['last_chat','上次对话'],['tokens','token用量']],applicationSort)}</div></div><div class="channel-applications-content" aria-live="polite"></div><button type="button" class="text-button" data-more-applications hidden>加载更多</button><p class="channel-applications-error" role="alert"></p></section></div></div>`;
       el = root.querySelector('.channel-account-settings');
       const wechat = c.id === 'wechat';
       if(wechat) {
@@ -931,10 +935,23 @@ window.CorkiChannels = (() => {
     if(value>=1000 && power<units.length-1){value/=1000;power++;}
     return value.toLocaleString('en-US',{maximumFractionDigits:1})+units[power];
   }
+  function lastChat(value) {
+    if(!Number.isFinite(value) || value<=0)return '—';
+    const seconds=Math.max(0,Math.floor(Date.now()/1000-value));
+    if(seconds<60)return '刚刚';
+    if(seconds<3600)return Math.floor(seconds/60)+'分钟前';
+    if(seconds<86400)return Math.floor(seconds/3600)+'小时前';
+    const days=Math.floor(seconds/86400);
+    if(days>=180)return '半年前';
+    if(days>=30)return Math.floor(days/30)+'个月前';
+    if(days>=7)return Math.floor(days/7)+'周前';
+    return days+'天前';
+  }
   function renderApplications() {
     const pane=root?.querySelector('.channel-applications-content');if(!pane)return;
-    const rows=[...applicationRows.values()].sort((a,b)=>b.cursor-a.cursor);
-    const html=rows.length?`<div class="table-wrap"><table class="channel-application-table"><thead><tr><th>会话 ID</th><th>用户 ID</th><th>用户昵称</th><th>请求消息</th><th>请求时间</th><th>状态</th><th>token用量</th><th>备注</th><th>操作</th></tr></thead><tbody>${rows.map(r=>`<tr><td><button type="button" class="channel-request-session channel-chat-link" data-open-chat="${esc(r.sender_id)}">${esc(r.conversation_id)}</button></td><td><button type="button" class="channel-request-id channel-chat-link" data-open-chat="${esc(r.sender_id)}" data-request-id="${esc(r.user_id || '—')}">${esc(r.user_id || '—')}</button></td><td><button type="button" class="channel-request-name channel-chat-link" data-open-chat="${esc(r.sender_id)}" title="${esc(r.sender_name || r.sender_id)}">${esc(r.sender_name || r.sender_id)}</button></td><td><button class="channel-request-preview" data-request-message="${esc(r.sender_id)}">${esc(r.first_message)}</button></td><td class="channel-request-time">${esc(date(r.created_at))}</td><td>${applicationReplyStatus(r)}</td><td class="channel-token-usage"><span aria-label="${esc(r.token_usage==null?'用量暂不可用':r.token_usage.toLocaleString('zh-CN')+' tokens')}">${tokenUsage(r.token_usage)}</span></td><td>${r.notification_status==='failed'?`<button type="button" class="channel-notice-failed" data-notice-error="${esc(r.sender_id)}">通知未送达</button>`:'<span class="subtle">—</span>'}</td><td data-request-actions="${esc(r.sender_id)}"><div class="channel-user-actions"><span data-access-actions>${applicationActions(r)}</span><button type="button" class="channel-request-action reset" data-reset-chat="${esc(r.sender_id)}">重置</button></div></td></tr>`).join('')}</tbody></table></div>`:`<div class="channel-empty">${applicationName || applicationStatus?'没有符合条件的会话':'暂无会话'}</div>`;
+    const field=({id:'cursor',last_chat:'last_chat_at',tokens:'token_usage'})[applicationSort];
+    const rows=[...applicationRows.values()].sort((a,b)=>(b[field] || 0)-(a[field] || 0) || b.cursor-a.cursor);
+    const html=rows.length?`<div class="table-wrap"><table class="channel-application-table"><thead><tr><th>会话 ID</th><th>用户 ID</th><th>用户昵称</th><th>接入消息</th><th>上次对话</th><th>状态</th><th>token用量</th><th>操作</th></tr></thead><tbody>${rows.map(r=>`<tr><td><button type="button" class="channel-request-session channel-chat-link" data-open-chat="${esc(r.sender_id)}">${esc(r.conversation_id)}</button></td><td><button type="button" class="channel-request-id channel-chat-link" data-open-chat="${esc(r.sender_id)}" data-request-id="${esc(r.user_id || '—')}">${esc(r.user_id || '—')}</button></td><td><button type="button" class="channel-request-name channel-chat-link" data-open-chat="${esc(r.sender_id)}" title="${esc(r.sender_name || r.sender_id)}">${esc(r.sender_name || r.sender_id)}</button></td><td><button class="channel-request-preview" data-request-message="${esc(r.sender_id)}">${esc(r.first_message)}</button></td><td class="channel-request-time" title="${esc(date(r.last_chat_at || r.created_at))}">${esc(lastChat(r.last_chat_at || r.created_at))}</td><td>${applicationReplyStatus(r)}</td><td class="channel-token-usage"><span aria-label="${esc(r.token_usage==null?'用量暂不可用':r.token_usage.toLocaleString('zh-CN')+' tokens')}">${tokenUsage(r.token_usage)}</span></td><td data-request-actions="${esc(r.sender_id)}"><div class="channel-user-actions"><span data-access-actions>${applicationActions(r)}</span><button type="button" class="channel-request-action reset" data-reset-chat="${esc(r.sender_id)}">重置</button></div></td></tr>`).join('')}</tbody></table></div>`:`<div class="channel-empty">${applicationName || applicationStatus?'没有符合条件的会话':'暂无会话'}</div>`;
     if(pane._html!==html){
       const scroll=pane.querySelector('.table-wrap'),top=scroll?.scrollTop || 0,left=scroll?.scrollLeft || 0;
       requestTipClose();pane.innerHTML=html;pane._html=html;
@@ -970,29 +987,6 @@ window.CorkiChannels = (() => {
       el.classList.add('channel-stop-dialog');
       el.querySelector('.channel-dialog-foot [data-close]').focus();
     });
-    pane.querySelectorAll('[data-notice-error]').forEach(button=>button.onclick=()=>{
-      requestTipClose();
-      const row=applicationRows.get(button.dataset.noticeError);if(!row)return;
-      const kinds={pending:'拒绝文案',approved:'授权通知',disabled:'拒绝通知'};
-      const el=dialog('通知未送达',`<dl class="channel-request-detail"><dt>通知类型</dt><dd>${esc(kinds[row.notification_kind] || '权限通知')}</dd><dt>失败时间</dt><dd>${esc(row.notification_time?date(row.notification_time):'—')}</dd></dl><div class="channel-response-title">失败日志</div><div class="channel-response-body"><pre>${esc(row.notification_error || '未记录详细失败原因')}</pre></div>`,null);
-      el.classList.add('channel-diagnostics');
-      const close=el.querySelector('.channel-dialog-foot [data-close]');close.textContent='关闭';
-      const retry=document.createElement('button');retry.type='button';retry.className='button primary';retry.textContent='重发';close.before(retry);
-      const identity=selected,generation=epoch;
-      retry.onclick=async()=>{
-        const version=revision;
-        retry.disabled=true;retry.textContent='重发中…';el.querySelector('[role=alert]').textContent='';
-        try {
-          const result=await host.api('mutate',{kind:'channel-gateway',action:'retry-access-notice',id:identity,sender:row.sender_id,notice_id:row.notification_id});
-          if(generation!==epoch || identity!==selected)return;
-          applyMutationSnapshot(result,version);applicationRevision++;
-          const current=applicationRows.get(row.sender_id);if(current && current.notification_id===row.notification_id){current.notification_status='queued';current.notification_error='';}
-          renderApplications();host.toast('已加入重发队列');
-          if(modal?.el===el)closeDialog();
-        }catch(error){if(el.isConnected)el.querySelector('[role=alert]').textContent=error.message;}
-        finally{retry.disabled=false;retry.textContent='重发';}
-      };
-    });
     pane.querySelectorAll('[data-request-id],[data-request-message]').forEach(element=>{
       const show=()=>showRequestTooltip(element);
       element.onpointerenter=show;element.onfocus=show;
@@ -1004,7 +998,7 @@ window.CorkiChannels = (() => {
       try {
         const message=await requestMessage(button);
         if(generation!==epoch)return;
-        dialog('请求消息',`<div class="channel-request-message">${esc(message.text)}</div>`,null);
+        dialog('接入消息',`<div class="channel-request-message">${esc(message.text)}</div>`,null);
         modal.el.querySelector('[data-close]').setAttribute('aria-label','关闭');
         modal.el.querySelector('.channel-dialog-foot [data-close]').textContent='关闭';
       }catch(error){if(generation===epoch)host.toast(error.message);}
@@ -1033,11 +1027,12 @@ window.CorkiChannels = (() => {
     const filters=root.querySelector('.channel-application-filters');
     applicationName=filters.querySelector('input[type="search"]').value.trim();
     applicationStatus=filters.querySelector('[name="application_status"]').value;
+    applicationSort=filters.querySelector('[name="application_sort"]').value;
     clearTimeout(applicationFilterTimer);requestTipClose();applicationRevision++;
     applicationRows=new Map();applicationBefore=null;applicationLoading=false;
     root.querySelector('[data-more-applications]').hidden=true;
     const pane=root.querySelector('.channel-applications-content');pane._html=null;
-    pane.innerHTML='<div class="channel-empty">正在读取申请…</div>';
+    pane.innerHTML='<div class="channel-empty">正在读取会话…</div>';
     if(debounce)applicationFilterTimer=setTimeout(()=>{applicationFilterTimer=null;void refreshApplications();},250);
     else {applicationFilterTimer=null;void refreshApplications();}
   }
@@ -1045,9 +1040,9 @@ window.CorkiChannels = (() => {
     if(!root || !selected || managementTab!=='applications' || applicationFilterTimer || applicationLoading || busy)return;
     const generation=epoch,identity=selected,version=applicationRevision;
     const flight={};applicationLoading=flight;
-    if(!applicationRows.size){const pane=root.querySelector('.channel-applications-content');pane._html=null;pane.innerHTML='<div class="channel-empty">正在读取申请…</div>';}
+    if(!applicationRows.size){const pane=root.querySelector('.channel-applications-content');pane._html=null;pane.innerHTML='<div class="channel-empty">正在读取会话…</div>';}
     try {
-      const result=await host.api('mutate',{kind:'channel-gateway',action:'applications',id:identity,name:applicationName,status:applicationStatus,...(more&&applicationBefore!=null?{before:applicationBefore}:{})});
+      const result=await host.api('mutate',{kind:'channel-gateway',action:'applications',id:identity,name:applicationName,status:applicationStatus,sort:applicationSort,...(more&&applicationBefore!=null?{before:applicationBefore}:{})});
       if(generation!==epoch || identity!==selected || version!==applicationRevision)return;
       if(!more && applicationRows.size<=100){applicationRows=new Map();applicationBefore=null;}
       applicationActivity=result.reply_activity || {};
@@ -1609,7 +1604,7 @@ window.CorkiChannels = (() => {
     root = element;
     host = context;
     applicationRows=new Map();applicationActivity={};applicationBefore=null;applicationLoading=false;
-    applicationRevision++;applicationPending=new Map();applicationName="";applicationStatus="";
+    applicationRevision++;applicationPending=new Map();applicationName="";applicationStatus="";applicationSort="id";
     selected = context.id || null;
     managementTab = context.conversation ? "history" : restoreTab(selected);
     window.scrollTo(0,0);
