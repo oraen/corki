@@ -45,6 +45,7 @@ class Host:
         self.stopping = False
         self.changing = set()
         self.manual_tasks = {}
+        self.wechat_batches = {}
 
     def component_busy(self, identity):
         return (
@@ -63,6 +64,7 @@ class Host:
         self.store.recover()
         self.store.recover_access_notices()
         self.store.messages.recover()
+        self.store.wechat_messages.recover()
         if self.runner is None:
             from .agent import Agent
 
@@ -235,6 +237,14 @@ class Host:
         # declare this explicitly; no group identity may be silently treated as DM.
         if message.get("kind") != "direct":
             raise ValueError("当前仅支持私聊消息")
+        if row["type_id"] == "wechat":
+            from .images import validate_refs
+
+            validate_refs(message, wechat=True)
+            from .wechat_files import validate_refs as validate_files
+
+            validate_files(message)
+            self.store.wechat_messages.inbound(row, message)
         if row["type_id"] == "dingtalk":
             from .images import validate_refs
 
@@ -263,7 +273,7 @@ class Host:
         if row["config"].get("session_validation") == "true":
             self.access_notifier.schedule(channel)
         if not allowed:
-            if row["type_id"] == "dingtalk" and message.get("image_refs"):
+            if row["type_id"] in ("dingtalk", "wechat") and message.get("image_refs"):
                 self.store.images.update(
                     channel,
                     message,
@@ -281,7 +291,9 @@ class Host:
 
             if not reserve(self.store, channel, message):
                 return {"accepted": True, "duplicate": True}
-            if row["type_id"] == "dingtalk" and message.get("image_refs"):
+            if row["type_id"] == "wechat":
+                self.store.wechat_files.fail_pending(channel, message)
+            if row["type_id"] in ("dingtalk", "wechat") and message.get("image_refs"):
                 self.store.images.update(
                     channel,
                     message,
@@ -307,31 +319,56 @@ class Host:
         if thread is None:
             return {"accepted": True, "duplicate": True}
         key = (channel, message["id"])
-        task = asyncio.create_task(self.execute(channel, message, thread, workdir))
+        batch = None
+        if row["type_id"] == "wechat":
+            from .wechat_inbox import WeChatBatch
+
+            batch_key = (channel, thread)
+            previous = self.wechat_batches.get(batch_key)
+            if previous and previous.append(message):
+                return {"accepted": True, "thread": thread}
+            batch = WeChatBatch(message)
+            self.wechat_batches[batch_key] = batch
+        task = asyncio.create_task(self.execute(channel, message, thread, workdir, batch=batch))
         self.tasks[key] = task
         self.task_senders[key] = message["sender"]
 
         def done(_):
             self.tasks.pop(key, None)
             self.task_senders.pop(key, None)
+            if batch and task.cancelled():
+                batch.sealed = True
+                if self.wechat_batches.get((channel, thread)) is batch:
+                    self.wechat_batches.pop((channel, thread), None)
+                for part in batch.messages:
+                    self.store.finish(channel, part["id"], "cancelled", "执行已停止")
+                    self.store.wechat_files.fail_pending(channel, part)
+                    self.store.images.fail_pending_wechat(channel, part)
 
         task.add_done_callback(done)
         return {"accepted": True, "thread": thread}
 
-    async def execute(self, channel, message, thread, workdir):
+    async def execute(self, channel, message, thread, workdir, *, batch=None):
         lock = self.locks.setdefault(thread, asyncio.Lock())
         self.lock_users[thread] = self.lock_users.get(thread, 0) + 1
         sending = False
         card = None
+        typing_task = None
+        typing_connector = None
         delivery_context = (channel, message)
         try:
             async with lock, self.slots:
+                if batch:
+                    message = await batch.collect()
+                    delivery_context = (channel, message)
+                    if self.wechat_batches.get((channel, thread)) is batch:
+                        self.wechat_batches.pop((channel, thread), None)
                 # Revocation and channel stop take effect before the next Agent turn.
                 current = self.store.connection(channel)
                 if not (current or {}).get("enabled"):
                     raise asyncio.CancelledError()
                 if not self.store.allows_message(current, message, remember=False):
-                    if current["type_id"] == "dingtalk" and message.get("image_refs"):
+                    if current["type_id"] in ("dingtalk", "wechat") and message.get("image_refs"):
                         self.store.images.update(
                             channel,
                             message,
@@ -345,6 +382,11 @@ class Host:
                     return
                 self.deliveries[thread] = delivery_context
                 self.store.finish(channel, message["id"], "running")
+                if current["type_id"] == "wechat" and self.connectors.get(channel):
+                    from .wechat_inbox import typing
+
+                    typing_connector = self.connectors[channel]
+                    typing_task = asyncio.create_task(typing(typing_connector, message))
                 if message.get("media_error"):
                     if message.get("image_refs"):
                         self.store.images.update(
@@ -358,8 +400,12 @@ class Host:
                     raise ValueError("Agent " + message["media_error"])
                 attachments = (
                     await self.store.images.load(channel, message, self.connectors.get(channel))
-                    if current["type_id"] == "dingtalk"
+                    if current["type_id"] in ("dingtalk", "wechat")
                     else ()
+                )
+                file_context = (
+                    await self.store.wechat_files.load(channel, message, self.connectors.get(channel))
+                    if current["type_id"] == "wechat" else ""
                 )
                 options = card_options(current)
                 if options["enabled"] and self.connectors.get(channel):
@@ -375,7 +421,7 @@ class Host:
                     else {}
                 )
                 answer = await asyncio.wait_for(
-                    self.runner(thread, message["text"], workdir, channel, **inputs), timeout=1800
+                    self.runner(thread, message["text"] + file_context, workdir, channel, **inputs), timeout=1800
                 )
                 if not (self.store.connection(channel) or {}).get("enabled"):
                     raise asyncio.CancelledError()
@@ -463,6 +509,28 @@ class Host:
             ):
                 await self.notify(thread, safe)
         finally:
+            if typing_task:
+                typing_task.cancel()
+                await asyncio.gather(typing_task, return_exceptions=True)
+                with contextlib.suppress(Exception):
+                    await typing_connector.call(
+                        "typing", {"message": message, "active": False}, timeout=4
+                    )
+            if batch:
+                batch.sealed = True
+                for part in batch.messages:
+                    self.store.wechat_files.fail_pending(channel, part)
+                    self.store.images.fail_pending_wechat(channel, part)
+                if self.wechat_batches.get((channel, thread)) is batch:
+                    self.wechat_batches.pop((channel, thread), None)
+                with self.store.db() as db:
+                    receipt = db.execute(
+                        "SELECT status,error FROM receipts WHERE channel=? AND id=?",
+                        (channel, batch.messages[0]["id"]),
+                    ).fetchone()
+                if receipt:
+                    for part in batch.messages[1:]:
+                        self.store.finish(channel, part["id"], receipt["status"], receipt["error"])
             if card:
                 await card.close()
                 if self.reply_cards.get(thread) is card:
@@ -537,6 +605,13 @@ class Host:
             return await recall_message(self, data)
         if action == "manual-send":
             return await manual_send(self, data)
+        if action == "image-upload":
+            row = self.store.connection(identity)
+            if not row or row["type_id"] != "wechat":
+                raise ValueError("此接入不支持上传图片")
+            return {"image": await self.store.images.upload(identity, data.get("image"))}
+        if action == "file-upload":
+            return {"file": await self.store.wechat_files.upload(identity, data)}
         if action == "application-message":
             return self.store.application_message(identity, data.get("sender"))
         if action == "applications":
@@ -773,6 +848,9 @@ class Host:
                                 "dingtalk_contacts",
                                 "dingtalk_messages",
                                 "dingtalk_assets",
+                                "wechat_contacts",
+                                "wechat_messages",
+                                "wechat_assets",
                             ):
                                 db.execute(f"DELETE FROM {table} WHERE channel=?", (identity,))
                 elif action == "delete":

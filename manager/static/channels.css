@@ -956,3 +956,30 @@ button.channel-reply-failed{border:0;cursor:pointer}
 .channel-detail-toolbar[hidden], [data-connection-overview][hidden] { display:none; }
 .channel-conversation-view .channel-chat-panel { height:max(360px,calc(100dvh - 116px)); }
 .channel-conversation-view .channel-transcript { height:100%; min-height:0; }
+
+
+.channel-session-toggles[hidden] { display:none; }
+.channel-composer-images { display:flex; gap:10px; padding:6px 6px 12px; overflow-x:auto; }
+.channel-composer-images[hidden] { display:none; }
+.channel-draft-image { position:relative; display:flex; align-items:center; justify-content:center; flex:none; width:76px; height:64px; border:1px solid #e8dfd5; border-radius:8px; background:#f4f1ec; }
+.channel-draft-image img { width:100%; height:100%; object-fit:cover; border-radius:7px; }
+.channel-draft-image button { position:absolute; display:grid; place-items:center; right:-4px; top:-4px; width:20px; height:20px; padding:0; border-radius:50%; background:#fff; border:1px solid #e8dfd5; color:#75685d; font-size:16px; line-height:1; cursor:pointer; }
+.channel-composer-foot .channel-image-attach { width:28px; height:28px; padding:5px; border:0; background:transparent; color:#9a8c7d; border-radius:6px; cursor:pointer; }
+.channel-composer-foot .channel-image-attach:hover { background:#f3ece4; color:#c45b16; }
+.channel-composer-foot [data-message-recipient] { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.channel-message-composer.is-dragging { border-color:#d97436; background:#fff7ef; }
+.channel-chat-files { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.channel-chat-files:empty { display:none; }
+.assistant .channel-chat-files { justify-content:flex-end; }
+.channel-file-card { display:flex; align-items:center; gap:12px; max-width:280px; padding:12px 16px; border:1px solid #ece4da; border-radius:12px; background:#fcfaf6; color:#605345; text-decoration:none; }
+.channel-file-card:hover { border-color:#dca67e; background:#fff8ee; }
+.channel-file-card>span:last-child { min-width:0; }
+.channel-file-card strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; font-weight:500; }
+.channel-file-card small { display:block; margin-top:4px; color:#a19486; font-size:11px; }
+.channel-file-glyph { flex:none; font-size:25px; color:#c77d45; }
+.channel-draft-file { display:block; width:100%; padding:6px; box-sizing:border-box; text-align:center; color:#897660; }
+.channel-draft-file b { display:block; font-size:12px; font-weight:500; }
+.channel-draft-file small { display:block; margin-top:5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }
+.channel-video-player { display:block; width:100%; max-height:65vh; border-radius:10px; background:#171716; }
+.channel-video-preview { width:min(760px,calc(100vw - 32px)); }
+.channel-video-download { display:inline-block; margin-top:12px; color:var(--accent); font-size:12px; }

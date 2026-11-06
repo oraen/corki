@@ -2812,7 +2812,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; "
-            "img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'",
+            "img-src 'self' data:; media-src 'self'; frame-ancestors 'none'; base-uri 'none'",
         )
         self.end_headers()
         if streaming:
@@ -2842,6 +2842,29 @@ class Handler(BaseHTTPRequestHandler):
                     'thumbnail':query.get('thumbnail',[''])[0]=='1'})
                 with Path(info['path']).open('rb') as source:
                     return self.respond(200,source,info['mime'])
+            if parsed.path == "/api/channel-file":
+                query = parse_qs(parsed.query)
+                info = self.server.store.channel_gateway.request({"action":"file-info",
+                    "id":query.get('channel',[''])[0],'asset':query.get('asset',[''])[0]})
+                disposition = 'inline' if info['mime'] == 'video/mp4' else 'attachment'
+                with Path(info['path']).open('rb') as source:
+                    headers = {'Content-Disposition': disposition + "; filename*=UTF-8''" + quote(info['name']),
+                               'Accept-Ranges': 'bytes'}
+                    requested = self.headers.get('Range')
+                    if requested:
+                        match = re.fullmatch(r'bytes=([0-9]*)-([0-9]*)', requested)
+                        size = source.seek(0, os.SEEK_END)
+                        if not match or not any(match.groups()) or not size:
+                            return self.respond(416, b'', headers={'Content-Range':f'bytes */{size}'})
+                        first, last = match.groups()
+                        start = int(first) if first else max(0, size - int(last))
+                        end = min(size - 1, int(last)) if first and last else size - 1
+                        if start > end or start >= size:
+                            return self.respond(416, b'', headers={'Content-Range':f'bytes */{size}'})
+                        source.seek(start)
+                        headers['Content-Range'] = f'bytes {start}-{end}/{size}'
+                        return self.respond(206, source.read(end-start+1), info['mime'], headers)
+                    return self.respond(200, source, info['mime'], headers)
             if parsed.path == "/api/adaptor":
                 return self.respond(200, self.server.store.adaptor.status())
             if parsed.path == "/api/hooks":
@@ -2977,7 +3000,7 @@ class Handler(BaseHTTPRequestHandler):
             if (
                 data.get("action") not in ("import", "validate-import", "parse-document", "upload-skill")
                 and not (data.get("kind") == "resource-packages" and data.get("action") in ("create", "preview-import", "import"))
-                and not (data.get("kind") == "channel-gateway" and data.get("action") == "install")
+                and not (data.get("kind") == "channel-gateway" and data.get("action") in ("install", "image-upload", "file-upload"))
                 and length > 2 * LIMIT
             ):
                 raise ValueError("请求体过大")

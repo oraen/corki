@@ -17,7 +17,7 @@ from corki.media.audio import UNSUPPORTED_INPUT
 from corki.models.backoff import backoff, retry_limit
 from corki.models.base import ModelError, ModelErrorKind
 from corki.models.capabilities import ProviderCapabilities, StructuredOutputProtocol
-from corki.models.error_safety import sanitized_model_error
+from corki.models.error_safety import sanitized_model_error, transport_error_message
 from corki.models.freeform import compatible_arguments, compatible_call
 from corki.models.http_stream import model_http_stream
 from corki.models.item_metadata import annotate_response_input, capture_response_identity
@@ -510,7 +510,7 @@ class OpenAIResponsesModel:
                         break
         except httpx.HTTPError as exc:
             raise ModelError(
-                f"model transport failed: {exc}",
+                transport_error_message(exc),
                 kind=(
                     ModelErrorKind.CONNECTION
                     if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))

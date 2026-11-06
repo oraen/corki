@@ -134,9 +134,15 @@ class Store(Connections, AccessRequests):
         from .messages import Messages
 
         self.messages = Messages(self)
+        from .wechat_messages import WeChatMessages
+
+        self.wechat_messages = WeChatMessages(self)
         from .images import Images
 
         self.images = Images(self)
+        from .wechat_files import Files
+
+        self.wechat_files = Files(self)
 
     @contextmanager
     def db(self):

@@ -128,7 +128,7 @@ class Connector:
                             # Plugin errors can contain secrets; expose a fixed diagnostic.
                             detail = (
                                 delivery_error(value.get("diagnostic"))
-                                if self.type_id == "dingtalk"
+                                if self.type_id in ("dingtalk", "wechat")
                                 else None
                             )
                             future.set_exception(

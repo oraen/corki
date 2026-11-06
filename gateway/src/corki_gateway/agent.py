@@ -47,6 +47,16 @@ class Agent:
         settings = replace(
             settings, model_unbounded_connection_retries=False, model_request_max_retries=3
         )
+        runtime_options = {}
+        if (self.host.store.connection(channel) or {}).get("type_id") == "wechat":
+            from .wechat_file_tools import SendWeChatFile
+            from .wechat_tools import SendWeChatImage
+
+            runtime_options["additional_tools"] = (
+                SendWeChatImage(self.host, channel, thread),
+                SendWeChatFile(self.host, channel, thread),
+                SendWeChatFile(self.host, channel, thread, video=True),
+            )
         runtime = await LangGraphRuntime.acreate(
             request_context=request_context(config.get("reply_guidance", "")),
             settings=settings,
@@ -55,6 +65,7 @@ class Agent:
             home_path=self.host.store.home,
             thread_id=ThreadId(thread),
             session_source=SessionSource.from_startup_arg("gateway"),
+            **runtime_options,
         )
         self.host.runtimes[thread] = runtime
         self.host.live[thread] = {}
@@ -103,7 +114,19 @@ class Agent:
                             thread, "Agent 需要补充信息，请在 Corki 管理页面的转发网关中回答。"
                         )
                     elif isinstance(event, TurnFailed):
-                        raise ValueError("Agent 执行失败，请在会话日志中查看原因")
+                        reason = {
+                            "transport": "模型通信失败，请检查模型服务或网络后重试",
+                            "connection": "无法连接模型服务，请检查模型地址或网络",
+                            "authentication": "模型认证失败，请检查供应商密钥或登录状态",
+                            "server": "模型服务暂时不可用，请稍后重试",
+                            "rate_limit": "模型请求受到限流，请稍后重试",
+                            "quota": "模型额度不足，请检查供应商账户",
+                        }.get(event.error_kind)
+                        raise ValueError(
+                            "Agent " + reason
+                            if reason
+                            else "Agent 执行失败，请在会话日志中查看原因"
+                        )
                     elif isinstance(event, TurnCancelled):
                         raise asyncio.CancelledError()
                     elif isinstance(event, TurnCompleted):

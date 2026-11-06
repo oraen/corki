@@ -33,7 +33,7 @@ window.CorkiChannels = (() => {
     powerPending = null,
     packagePending = new Map(),
     seenJobs = new Map();
-  const chatDrafts = new Map(), chatSends = new Map(), recallPending = new Set();
+  const chatDrafts = new Map(), chatSends = new Map(), chatUploads = new Map(), recallPending = new Set();
   // Operations outlive a mounted view: navigation must not permit a duplicate toggle.
   const connectionPending = new Map();
   const connectionCommitted = new Map();
@@ -44,7 +44,7 @@ window.CorkiChannels = (() => {
     if(!id)return 'applications';
     let tab=rememberedTabs.get(id);
     if(!tab) { try { tab=localStorage.getItem(tabStorageKey(id)); } catch {} }
-    return ['settings','applications'].includes(tab) ? tab : 'applications';
+    return ['settings','applications','history'].includes(tab) ? tab : 'applications';
   }
   function rememberTab(id, tab) {
     if(!id || rememberedTabs.get(id)===tab)return;
@@ -150,6 +150,7 @@ window.CorkiChannels = (() => {
       if(tab)tab.hidden=false;
 
       updateConnectionOverview();
+      if(root.querySelector('.channel-message-composer'))refreshComposer();
       updateQueue();
       return;
     }
@@ -646,9 +647,9 @@ window.CorkiChannels = (() => {
         <div class="channel-field channel-workdir-field channel-full-field"><span>工作目录</span><div class="channel-directory"><input name="workdir" aria-label="工作目录" value="${esc(values.workdir || "")}" placeholder="默认使用 ~/.corki/main/default"><button type="button" class="button" data-pick-workdir><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3Z"/></svg>选择目录</button></div></div>
       </div>
       <section class="channel-validation-section" aria-label="会话选项">
-        <div class="channel-session-toggles">
+        <div class="channel-session-toggles" ${c.id==='wechat'?'hidden':''}>
           ${c.id==='dingtalk' ? `<label class="channel-check channel-validation"><input type="checkbox" name="ai_card_enabled" ${values.ai_card_enabled==='true'?'checked':''} aria-controls="channel-card-options"><span><strong>启用 AI 卡片</strong></span></label>` : ''}
-          <label class="channel-check channel-validation"><input type="checkbox" name="session_validation" aria-controls="channel-validation-replies" aria-expanded="${values.session_validation==='true'}" ${values.session_validation==='true'?'checked':''}><span><strong>会话校验</strong></span></label>
+          ${c.id!=='wechat' ? `<label class="channel-check channel-validation"><input type="checkbox" name="session_validation" aria-controls="channel-validation-replies" aria-expanded="${values.session_validation==='true'}" ${values.session_validation==='true'?'checked':''}><span><strong>会话校验</strong></span></label>` : ''}
         </div>
         ${c.id==='dingtalk' ? `
         ${data.statuses?.[id]?.card?.state==='fallback'?'<p class="channel-card-feedback" role="status">AI 卡片暂不可用，已回退为普通文本。请检查模板、正文变量和应用权限。</p>':''}
@@ -657,7 +658,7 @@ window.CorkiChannels = (() => {
           <label class="channel-field"><span>模板 ID</span><input name="ai_card_template" value="${esc(values.ai_card_template || '')}" placeholder="填写已发布的 AI 卡片模板 ID" maxlength="140"></label>
           <label class="channel-field"><span>正文变量</span><input name="ai_card_content_key" value="${esc(values.ai_card_content_key || 'content')}" placeholder="content" maxlength="64"></label>
         </div>` : ''}
-        <div id="channel-validation-replies" class="channel-validation-replies channel-setting-block" role="group" aria-labelledby="channel-authorization-heading" ${values.session_validation==='true'?'':'hidden'}><h4 id="channel-authorization-heading" class="channel-setting-heading">授权提醒设置</h4>${replies.map(([key,label,fallback])=>`<label class="channel-field"><span>${label}</span><textarea name="${key}" rows="2" maxlength="2000" placeholder="${esc(fallback)}">${esc(values[key] || fallback)}</textarea></label>`).join('')}</div>
+        ${c.id!=='wechat' ? `<div id="channel-validation-replies" class="channel-validation-replies channel-setting-block" role="group" aria-labelledby="channel-authorization-heading" ${values.session_validation==='true'?'':'hidden'}><h4 id="channel-authorization-heading" class="channel-setting-heading">授权提醒设置</h4>${replies.map(([key,label,fallback])=>`<label class="channel-field"><span>${label}</span><textarea name="${key}" rows="2" maxlength="2000" placeholder="${esc(fallback)}">${esc(values[key] || fallback)}</textarea></label>`).join('')}</div>` : ''}
         <div class="channel-validation-replies channel-setting-block channel-fallback-replies" role="group" aria-labelledby="channel-fallback-heading"><h4 id="channel-fallback-heading" class="channel-setting-heading">兜底文案</h4><label class="channel-field"><span>无法回复消息</span><textarea name="unsupported_reply" rows="2" maxlength="2000" placeholder="暂不支持该格式的信息">${esc(values.unsupported_reply || '暂不支持该格式的信息')}</textarea></label></div>
         <div class="channel-validation-replies channel-setting-block channel-guidance" role="group" aria-labelledby="channel-guidance-heading"><h4 id="channel-guidance-heading" class="channel-setting-heading">回答指引</h4><textarea name="reply_guidance" aria-label="回答指引" rows="5" maxlength="8192" placeholder="${c.id === 'dingtalk' ? '钉钉机器人的系统提示词' : '设置机器人的角色、回答风格与注意事项'}">${esc(values.reply_guidance || '')}</textarea></div>
       </section>
@@ -669,7 +670,7 @@ window.CorkiChannels = (() => {
         if(input.value===input.dataset.originalSecret) delete values[input.name];
       });
       if(c.id==='dingtalk') values.ai_card_enabled=el.querySelector('[name="ai_card_enabled"]').checked?'true':'false';
-      values.session_validation=el.querySelector('[name="session_validation"]').checked?'true':'false';
+      values.session_validation=el.querySelector('[name="session_validation"]')?.checked?'true':'false';
       if(c.standard) values.http_disable_parameters = el.querySelector('[data-disable-parameters]')?.checked ? "true" : "false";
       const oldDir = account?.values.workdir || "";
       if (id && values.workdir.trim() !== oldDir && !confirmReset) {
@@ -683,7 +684,7 @@ window.CorkiChannels = (() => {
     };
     let el;
     if (!id) {
-      el = dialog(`接入 ${c.name}`,body,submit,'创建接入');
+      el = dialog(`接入${c.name}`,body,submit,'创建接入');
       el.classList.add('channel-connect-dialog');
       el.querySelector('.channel-dialog-head h2').insertAdjacentHTML('afterbegin',avatar(c.id,c.builtin));
     }
@@ -693,22 +694,30 @@ window.CorkiChannels = (() => {
       root.innerHTML = `<div class="channel-management">
         ${['wechat','feishu'].includes(c.id) ? '<div data-connection-overview></div>' : ''}
         <div class="channel-detail-toolbar"><div class="channel-detail-tabs" role="tablist" aria-label="接入管理">
-<button type="button" role="tab" id="channel-tab-settings" aria-controls="channel-pane-settings" data-channel-tab="settings">会话设置</button><button type="button" role="tab" id="channel-tab-applications" aria-controls="channel-pane-applications" data-channel-tab="applications" >会话管理</button></div>
-          <button class="button channel-reset-all" data-reset-conversation>重置全部会话</button></div>
+<button type="button" role="tab" id="channel-tab-settings" aria-controls="channel-pane-settings" data-channel-tab="settings">会话设置</button><button type="button" role="tab" id="channel-tab-applications" aria-controls="channel-pane-applications" data-channel-tab="${c.id==='wechat'?'history':'applications'}" >${c.id==='wechat'?'会话历史':'会话管理'}</button></div>
+          <button class="button channel-reset-all" data-reset-conversation>${c.id==='wechat'?'重置会话':'重置全部会话'}</button></div>
         <div class="channel-queue-alert" hidden></div><div class="channel-manage-grid"><section class="panel channel-chat-panel" role="tabpanel" id="channel-pane-history" aria-label="会话">
           <div class="channel-chat-layout channel-chat-single"><div class="channel-transcript"><div class="channel-chat-scroll"><button class="text-button channel-more" hidden>加载更早的消息</button><div class="channel-chat-messages"></div><div class="channel-chat-empty">正在读取会话…</div></div>
-          ${c.id==='dingtalk'?`<form class="channel-message-composer"><textarea aria-label="发送钉钉消息" placeholder="选择联系人后发送消息" rows="2" maxlength="2000" disabled></textarea><div class="channel-composer-foot"><span data-message-recipient></span><button type="submit" class="button primary" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m21 3-7 18-4-7-7-4 18-7ZM10 14 21 3"/></svg><span>发送</span></button></div></form>`:''}<p class="channel-history-error" role="status"></p></div></div></section>
+          ${['dingtalk','wechat'].includes(c.id)?`<form class="channel-message-composer">${c.id==='wechat'?'<div class="channel-composer-images" hidden></div>':''}<textarea aria-label="发送${c.name}消息" placeholder="${c.id==='wechat'?'等待对方发送消息':'选择联系人后发送消息'}" rows="2" maxlength="2000" disabled></textarea><div class="channel-composer-foot">${c.id==='wechat'?'<button type="button" class="channel-image-attach" data-attach-image aria-label="添加附件" title="添加附件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.5"/><path d="m4 17 5-5 4 4 3-3 5 5"/></svg></button><input type="file" data-image-input multiple hidden>':''}<span data-message-recipient></span><button type="submit" class="button primary" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m21 3-7 18-4-7-7-4 18-7ZM10 14 21 3"/></svg><span>发送</span></button></div></form>`:''}<p class="channel-history-error" role="status"></p></div></div></section>
         <section class="panel channel-account-settings" role="tabpanel" id="channel-pane-settings" aria-labelledby="channel-tab-settings"><form><div class="panel-head"><h2>基本信息</h2><button type="button" class="button" data-page-edit>编辑</button></div><div class="channel-settings-scroll"><fieldset class="channel-basic-fields" disabled>${body}</fieldset></div><p class="channel-form-error" role="alert"></p><div class="channel-settings-foot" hidden><button class="button" type="button" data-page-cancel>取消</button><button class="button primary" type="submit" data-page-save>保存</button></div></form></section><section class="panel channel-applications" role="tabpanel" id="channel-pane-applications" aria-labelledby="channel-tab-applications" hidden><div class="channel-application-filters"><label class="channel-application-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input type="search" aria-label="搜索用户昵称或者ID" placeholder="搜索用户昵称或者ID" maxlength="80" value="${esc(applicationName)}"></label><div class="channel-application-status">${selectField('application_status',[['','全部状态'],['pending','审批中'],['approved','已接入'],['disabled','已禁用']],applicationStatus)}</div></div><div class="channel-applications-content" aria-live="polite"></div><button type="button" class="text-button" data-more-applications hidden>加载更多</button><p class="channel-applications-error" role="alert"></p></section></div></div>`;
       el = root.querySelector('.channel-account-settings');
+      const wechat = c.id === 'wechat';
+      if(wechat) {
+        const tab=root.querySelector('[data-channel-tab="history"]');
+        tab.setAttribute('aria-controls','channel-pane-history');
+        root.querySelector('.channel-chat-panel').setAttribute('aria-labelledby',tab.id);
+      }
       const showTab=tab=>{
+        if(wechat && tab==='applications')tab='history';
         requestTipClose();
         closeSelect();
         managementTab=tab;
-        root.querySelector('.channel-management').classList.toggle('channel-conversation-view',tab==='history');
+        const conversationView=tab==='history' && (!wechat || !!host.conversation);
+        root.querySelector('.channel-management').classList.toggle('channel-conversation-view',conversationView);
         const overview=root.querySelector('[data-connection-overview]');
-        if(overview)overview.hidden=tab==='history';
-        if(tab!=='history')rememberTab(id,tab);
-        root.querySelector('.channel-detail-tabs').hidden=tab==='history';
+        if(overview)overview.hidden=conversationView;
+        if(tab!=='history' || wechat)rememberTab(id,tab);
+        root.querySelector('.channel-detail-tabs').hidden=conversationView;
         root.querySelectorAll('[data-channel-tab]').forEach(button=>{
           const active=button.dataset.channelTab===tab;
           button.setAttribute('aria-selected',String(active));button.tabIndex=active?0:-1;
@@ -716,8 +725,8 @@ window.CorkiChannels = (() => {
         root.querySelector('.channel-chat-panel').hidden=tab!=='history';
         el.hidden=tab!=='settings';
         root.querySelector('.channel-applications').hidden=tab!=='applications';
-        root.querySelector('.channel-detail-toolbar').hidden=tab==='history';
-        root.querySelector('[data-reset-conversation]').hidden=tab!=='applications';
+        root.querySelector('.channel-detail-toolbar').hidden=conversationView;
+        root.querySelector('[data-reset-conversation]').hidden=tab!=='applications' && !(wechat && tab==='history');
         if(tab==='history')void refreshHistory();
         if(tab==='applications')void refreshApplications();
       };
@@ -757,7 +766,7 @@ window.CorkiChannels = (() => {
       el.querySelector('[data-page-edit]').onclick=()=>setEditing(true);
       el.querySelector('[data-page-cancel]').onclick=()=>{
         el.querySelector('form').reset();
-        el.querySelector('[name="session_validation"]').onchange();
+        el.querySelector('[name="session_validation"]')?.onchange?.();
         el.querySelector('[name="ai_card_enabled"]')?.onchange?.();
         replaceModels(values.agent_provider || '',values.agent_model || '');
         el.querySelectorAll('.channel-select').forEach(d=>{
@@ -775,11 +784,11 @@ window.CorkiChannels = (() => {
         event.preventDefault();
         try { await submit(el); } catch(error) { el.querySelector('[role=alert]').textContent = error.message; }
       };
-      root.querySelector('[data-reset-conversation]').onclick = () => dialog("重置全部会话",
-        "<p>将停止此接入的所有任务、清空待处理消息，并重置全部用户会话。旧会话记录会保留。</p>",async () => {
+      root.querySelector('[data-reset-conversation]').onclick = () => dialog(wechat?"重置会话":"重置全部会话",
+        wechat?"<p>开始新的对话？当前任务将停止，旧会话记录会保留。</p>":"<p>将停止此接入的所有任务、清空待处理消息，并重置全部用户会话。旧会话记录会保留。</p>",async () => {
           await change({action:"reset-conversation",id},"正在重置会话…",true);
           historyState=null;selectedThread=null;sessionItems.clear();sessionsBefore=undefined;
-          threadGeneration++;historyLoading=false;await refreshApplications();
+          threadGeneration++;historyLoading=false;await refreshApplications();if(wechat)await refreshHistory();
         },"重置会话");
       wireMessageComposer();
       root.querySelector('.channel-more').onclick = () => refreshHistory(true);
@@ -794,7 +803,7 @@ window.CorkiChannels = (() => {
     };
     cardToggle?.onchange();
     const validation=el.querySelector('[name="session_validation"]');
-    validation.onchange=()=>{el.querySelector('#channel-validation-replies').hidden=!validation.checked;validation.setAttribute('aria-expanded',String(validation.checked));};
+    if(validation)validation.onchange=()=>{el.querySelector('#channel-validation-replies').hidden=!validation.checked;validation.setAttribute('aria-expanded',String(validation.checked));};
     const initialSelections=new Map([...el.querySelectorAll('.channel-select input')].map(input=>[input.name,input.value]));
     const replaceModels=(provider,model)=>{
       const field=el.querySelector('.channel-agent-model');
@@ -1083,8 +1092,8 @@ window.CorkiChannels = (() => {
         if (!node) { node = document.createElement('article'); node.dataset.id=row.id; node.className='channel-chat-message '+row.role; }
         const display=displayChatText(row);
         if (node._content !== display) {
-          node.innerHTML = `<img class="channel-chat-avatar" src="${row.role === 'user' ? '/chat-crab.jpg' : '/corki-icon-ears.png'}" alt=""><div class="channel-chat-content"><div class="channel-message-toolbar" hidden><button type="button" class="channel-message-recall">撤回</button></div><div class="channel-chat-text">${window.CorkiChannelMarkdown ? window.CorkiChannelMarkdown(display) : esc(display)}</div><div class="channel-chat-images"></div><div class="channel-chat-meta"><time>${esc(new Date(row.created_at).toLocaleString('sv-SE').slice(0,16))}</time><span class="channel-message-kind"></span><span class="channel-message-status"></span><button type="button" class="channel-reply-failed" hidden>发送失败</button></div></div>`;
-          node._content = display;node._images=null;
+          node.innerHTML = `<img class="channel-chat-avatar" src="${row.role === 'user' ? '/chat-crab.jpg' : '/corki-icon-ears.png'}" alt=""><div class="channel-chat-content"><div class="channel-message-toolbar" hidden><button type="button" class="channel-message-recall">撤回</button></div><div class="channel-chat-text">${window.CorkiChannelMarkdown ? window.CorkiChannelMarkdown(display) : esc(display)}</div><div class="channel-chat-images"></div><div class="channel-chat-files"></div><div class="channel-chat-meta"><time>${esc(new Date(row.created_at).toLocaleString('sv-SE').slice(0,16))}</time><span class="channel-message-kind"></span><span class="channel-message-status"></span><button type="button" class="channel-reply-failed" hidden>发送失败</button></div></div>`;
+          node._content = display;node._images=null;node._files=null;
         }
         const imagesKey=JSON.stringify(row.images || []);
         if(node._images!==imagesKey){
@@ -1103,6 +1112,27 @@ window.CorkiChannels = (() => {
             detail.querySelector('.channel-dialog-foot [data-close]').textContent='关闭';
           });
           node._images=imagesKey;
+        }
+        const filesKey=JSON.stringify(row.files || []);
+        if(node._files!==filesKey){
+          const files=node.querySelector('.channel-chat-files');
+          if(files){
+            files.innerHTML=(row.files || []).map((file,index)=>file.status==='ready'
+              ? `<a class="channel-file-card" href="${esc(file.url)}" download="${esc(file.name)}" ${file.kind==='video'?`data-view-video="${index}"`:''}><span class="channel-file-glyph">${file.kind==='video'?'▷':'↧'}</span><span><strong>${esc(file.name)}</strong><small>${fileSize(file.size)}</small></span></a>`
+              : `<button type="button" class="channel-file-card is-pending" data-file-error="${index}" ${file.status==='pending'?'disabled':''}>${file.status==='pending'?'附件处理中…':'附件无法读取'}</button>`).join('');
+            files.querySelectorAll('[data-file-error]').forEach(button=>button.onclick=()=>{
+              const file=row.files[Number(button.dataset.fileError)];
+              const detail=dialog('附件无法读取',`<p class="channel-image-error">${esc(file.error || '附件处理失败，请重新发送')}</p>`,null);
+              detail.querySelector('.channel-dialog-foot [data-close]').textContent='关闭';
+            });
+            files.querySelectorAll('[data-view-video]').forEach(link=>link.onclick=event=>{
+              event.preventDefault();const file=row.files[Number(link.dataset.viewVideo)];
+              const preview=dialog(file.name,`<video class="channel-video-player" src="${esc(file.url)}" controls playsinline preload="metadata"></video><a class="channel-video-download" href="${esc(file.url)}" download="${esc(file.name)}">下载视频</a>`,null);
+              preview.classList.add('channel-video-preview');
+              preview.querySelector('.channel-dialog-foot [data-close]').textContent='关闭';
+            });
+          }
+          node._files=filesKey;
         }
         const failure = node.querySelector('.channel-reply-failed');
         failure.hidden = row.role !== 'assistant' || !row.delivery_failed;
@@ -1174,43 +1204,62 @@ window.CorkiChannels = (() => {
       const start=row.images[i].position,label=`[Image #${i+1}]`;
       if(Number.isInteger(start) && chars.slice(start,start+label.length).join('')===label)chars.splice(start,label.length);
     }
-    return chars.join('').trim();
+    let text=chars.join('').trim();
+    if(row.role==='user')for(let i=(row.files || []).length-1;i>=0;i--)text=text.replace(`[File #${i+1}]`,'');
+    return text.trim();
   }
+  function fileSize(size){return Number(size)>=1024*1024?`${(size/1024/1024).toFixed(1)} MB`:`${Math.max(1,Math.ceil(Number(size || 0)/1024))} KB`;}
   function refreshComposer() {
     const form=root?.querySelector('.channel-message-composer');if(!form)return;
-    const key=selected+'/'+selectedThread,input=form.querySelector('textarea'),button=form.querySelector('button');
+    const key=selected+'/'+selectedThread,input=form.querySelector('textarea'),button=form.querySelector('button[type="submit"]');
     const draft=chatDrafts.get(key),pending=chatSends.has(key);
     if(document.activeElement!==input || input.dataset.contact!==key)input.value=draft?.text || '';
     input.dataset.contact=key;
-    input.disabled=!selectedThread || pending || !historyState?.can_send;
-    input.placeholder=selectedThread && !historyState?.can_send?'当前联系人缺少 userId 或接入未启用':'输入要发送的消息';
-    button.disabled=input.disabled || !input.value.trim();
+    const wechat=data.connections.find(c=>c.id===selected)?.channel==='wechat';
+    const connected=!wechat || data.running && data.connections.find(c=>c.id===selected)?.enabled && data.statuses[selected]?.state==='online';
+    input.disabled=!selectedThread || pending || !historyState?.can_send || !connected;
+    input.placeholder=wechat ? !connected?'微信未连接':!selectedThread || !historyState?.can_send?'等待对方发送消息':'输入要发送的消息' : selectedThread && !historyState?.can_send?'当前联系人缺少 userId 或接入未启用':'输入要发送的消息';
+    button.disabled=input.disabled || !!chatUploads.get(key) || (!input.value.trim() && !(draft?.images || []).some(i=>i.id));
     button.querySelector('span').textContent=pending?'发送中…':'发送';
     const recipient=historyState?.recipient || '';
     form.querySelector('[data-message-recipient]').innerHTML=recipient?`<span class="channel-recipient-prefix">to</span> ${esc(recipient)}`:'';
+    const attach=form.querySelector('[data-attach-image]');
+    if(attach)attach.disabled=input.disabled || !!chatUploads.get(key);
+    const pictures=form.querySelector('.channel-composer-images');
+    if(pictures){
+      const images=draft?.images || [],markup=images.map((image,index)=>`<div class="channel-draft-image">${image.id?(image.thumbnail?`<img src="${esc(image.thumbnail)}" alt="待发送图片 ${index+1}">`:`<span class="channel-draft-file" title="${esc(image.name)}"><b>${image.kind==='video'?'视频':'文件'}</b><small>${esc(image.name)}</small></span>`):'<span class="channel-image-spinner" aria-label="附件上传中"></span>'}<button type="button" data-remove-image="${index}" aria-label="移除${image.thumbnail?'图片':'附件'} ${index+1}" ${pending?'disabled':''}>×</button></div>`).join('');
+      pictures.hidden=!images.length;
+      if(pictures._html!==markup){pictures.innerHTML=markup;pictures._html=markup;}
+      pictures.querySelectorAll('[data-remove-image]').forEach(remove=>remove.onclick=()=>{
+        const current=chatDrafts.get(key);if(!current || chatSends.has(key))return;
+        current.images.splice(Number(remove.dataset.removeImage),1);current.requestId=crypto.randomUUID();refreshComposer();
+      });
+    }
+
   }
   function wireMessageComposer() {
     const form=root.querySelector('.channel-message-composer');if(!form)return;
     const input=form.querySelector('textarea');
     input.oninput=()=>{
-      chatDrafts.set(selected+'/'+selectedThread,{text:input.value,requestId:crypto.randomUUID()});
+      const key=selected+'/'+selectedThread,draft=chatDrafts.get(key) || {images:[]};
+      draft.text=input.value;draft.requestId=crypto.randomUUID();chatDrafts.set(key,draft);
       refreshComposer();
     };
     input.onkeydown=event=>{
       if(event.key==='Enter' && !event.shiftKey && !event.isComposing && event.keyCode!==229){
-        event.preventDefault();if(!form.querySelector('button').disabled)form.requestSubmit();
+        event.preventDefault();if(!form.querySelector('button[type="submit"]').disabled)form.requestSubmit();
       }
     };
     form.onsubmit=async event=>{
       event.preventDefault();
       const identity=selected,contact=selectedThread,key=identity+'/'+contact,generation=epoch;
       const draft=chatDrafts.get(key);
-      if(!draft?.text.trim() || !historyState?.can_send || chatSends.has(key))return;
+      if(!draft || (!draft.text.trim() && !(draft.images || []).some(i=>i.id)) || !historyState?.can_send || chatSends.has(key) || chatUploads.get(key))return;
       chatSends.set(key,true);refreshComposer();
       root.querySelector('.channel-history-error').textContent='';
       try{
         const result=await host.api('mutate',{kind:'channel-gateway',action:'manual-send',id:identity,
-          session:contact,request_id:draft.requestId,text:draft.text});
+          session:contact,request_id:draft.requestId,text:draft.text,...(draft.images?.length?{images:draft.images.filter(i=>!['file','video'].includes(i.kind)).map(i=>i.id),files:draft.images.filter(i=>['file','video'].includes(i.kind)).map(i=>i.id)}:{})});
         if(result.message.status==='failed'){
           // A confirmed failure is an explicit new attempt next time; an unknown
           // request keeps its ID so reconnect/retry cannot send it twice.
@@ -1224,6 +1273,43 @@ window.CorkiChannels = (() => {
         if(generation===epoch && selected===identity && selectedThread===contact){refreshComposer();void refreshHistory();}
       }
     };
+    const picker=form.querySelector('[data-image-input]');
+    if(picker){
+      const attachFiles=async files=>{
+        if(input.disabled)return;
+        const identity=selected,contact=selectedThread,key=identity+'/'+contact,generation=epoch,api=host.api,toast=host.toast;
+        if(chatUploads.get(key)){toast('附件正在上传');return;}
+        const values=Array.from(files);
+        if(!values.length)return;
+        const draft=chatDrafts.get(key) || {text:input.value,images:[],requestId:crypto.randomUUID()};
+        draft.images ||= [];
+        if(draft.images.length+values.length>8){toast('一次最多发送 8 个附件');return;}
+        if(values.some(file=>file.size>8*1024*1024)){toast('上传附件不能超过 8 MB');return;}
+        const pending=values.map(file=>({token:crypto.randomUUID(),file}));
+        draft.images.push(...pending.map(({token})=>({token})));draft.requestId=crypto.randomUUID();
+        chatDrafts.set(key,draft);chatUploads.set(key,pending.length);refreshComposer();
+        for(const {token,file} of pending){
+          try{
+            const encoded=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(new Error('图片读取失败'));reader.readAsDataURL(file);});
+            const isImage=/^image\/(png|jpeg|gif|webp)$/.test(file.type),type=file.type==='video/mp4' || /\.mp4$/i.test(file.name)?'video':'file';
+            const result=await api('mutate',isImage?{kind:'channel-gateway',action:'image-upload',id:identity,image:encoded}:{kind:'channel-gateway',action:'file-upload',id:identity,file:encoded,name:file.name,type});
+            const index=draft.images.findIndex(i=>i.token===token);
+            if(index>=0)draft.images[index]=result.image || result.file;
+          }catch(error){draft.images=draft.images.filter(i=>i.token!==token);toast(error.message);}
+          finally{
+            const remaining=(chatUploads.get(key) || 1)-1;
+            if(remaining)chatUploads.set(key,remaining);else chatUploads.delete(key);
+            if(generation===epoch && selected===identity && selectedThread===contact)refreshComposer();
+          }
+        }
+      };
+      form.querySelector('[data-attach-image]').onclick=()=>picker.click();
+      picker.onchange=()=>{void attachFiles(picker.files);picker.value='';};
+      input.addEventListener('paste',event=>{const files=event.clipboardData?.files;if(files?.length){event.preventDefault();void attachFiles(files);}});
+      form.ondragover=event=>{if(!input.disabled && event.dataTransfer?.types.includes('Files')){event.preventDefault();form.classList.add('is-dragging');}};
+      form.ondragleave=event=>{if(!form.contains(event.relatedTarget))form.classList.remove('is-dragging');};
+      form.ondrop=event=>{event.preventDefault();form.classList.remove('is-dragging');void attachFiles(event.dataTransfer?.files || []);};
+    }
     refreshComposer();
   }
   function updateConnectionOverview() {
@@ -1308,8 +1394,8 @@ window.CorkiChannels = (() => {
       box.querySelector('[data-wechat-history]')?.addEventListener('click', () => {
         const id = modal.login;
         closeDialog();
-        if(selected === id) root._showChannelTab?.('applications');
-        else { rememberTab(id, 'applications'); location.hash = 'channels/' + encodeURIComponent(id); }
+        if(selected === id) root._showChannelTab?.('history');
+        else { rememberTab(id, 'history'); location.hash = 'channels/' + encodeURIComponent(id); }
       });
       const verify = box.querySelector('[data-wechat-verify]'), input = box.querySelector('input');
       if (verify) {

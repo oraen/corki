@@ -6,6 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import pngToIco from "png-to-ico";
+import { PNG } from "pngjs";
 const exec = promisify(execFile);
 // Stage only the allowlisted application payload. Never package a working tree,
 // Python environment, user settings, test profiles, or the development node_modules.
@@ -54,7 +55,16 @@ try {
     // Windows shell extraction needs bitmap icon resources; PNG-only ICOs can
     // fall back to the generic executable icon despite a valid source image.
     // The build-time converter supplies 16/32/48/256px bitmap frames locally.
-    await writeFile(icon, await pngToIco(path.resolve("resources/corki.png")));
+    const artwork = PNG.sync.read(await readFile("resources/corki.png"));
+    const side = Math.max(artwork.width, artwork.height);
+    const square = new PNG({ width: side, height: side });
+    // Center pixels without changing the source artwork.
+    PNG.bitblt(
+      artwork, square, 0, 0, artwork.width, artwork.height,
+      Math.floor((side - artwork.width) / 2),
+      Math.floor((side - artwork.height) / 2),
+    );
+    await writeFile(icon, await pngToIco(PNG.sync.write(square)));
   }
   const electronZipDir = process.env.ELECTRON_ZIP_DIR;
   if (electronZipDir) {

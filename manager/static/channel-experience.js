@@ -123,7 +123,7 @@ window.CorkiChannelExperience = (() => {
       ${phase === "verification" ? heading + visual : visual + heading}
       ${["qr", "loading"].includes(phase) ? `<button type="button" class="channel-login-refresh ${phase === "loading" ? "is-loading" : ""}" data-wechat-refresh ${phase === "loading" ? 'disabled aria-busy="true"' : ""}>${icon("refresh")}<span>刷新二维码</span></button>` : ""}
       ${["expired", "error"].includes(phase) ? '<button type="button" class="button primary" data-wechat-refresh>重新获取二维码</button>' : ""}
-      ${phase === "success" ? '<button type="button" class="button primary" data-wechat-history>进入会话管理</button>' : ""}
+      ${phase === "success" ? '<button type="button" class="button primary" data-wechat-history>查看会话历史</button>' : ""}
       </section>`;
   }
   return { summary, login };

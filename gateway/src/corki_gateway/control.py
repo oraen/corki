@@ -113,6 +113,10 @@ def control(home, data):
         from .images import asset_info
 
         return asset_info(home, data.get("id"), data.get("asset"), data.get("thumbnail", False))
+    if action == "file-info":
+        from .wechat_files import asset_info as file_info
+
+        return file_info(home, data.get("id"), data.get("asset"))
     if action == "applications":
         try:
             return request(home, data, timeout=10)

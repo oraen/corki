@@ -32,6 +32,8 @@ def history(store, identity, params, live):
     row = store.connection(identity)
     if row and row["type_id"] == "dingtalk":
         return store.messages.view(row, params, live, core_history)
+    if row and row["type_id"] == "wechat":
+        return store.wechat_messages.view(row, params, live, core_history)
     return core_history(store, identity, params, live)
 
 

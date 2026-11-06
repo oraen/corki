@@ -321,32 +321,34 @@ async def send_logged(host, channel, params, *, timeout=45, kind="agent"):
     if connector is None:
         raise ValueError("渠道已断开")
     row = host.store.connection(channel)
-    if row["type_id"] != "dingtalk":
+    if row["type_id"] not in ("dingtalk", "wechat"):
         return await connector.call("send", params, timeout=timeout)
+    ledger = host.store.wechat_messages if row["type_id"] == "wechat" else host.store.messages
     message = params["message"]
     key = (
         ("notice:" + params["notice_id"])
         if "notice_id" in params
-        else params.get("record_key", "answer:" + message["id"])
+        else params.get("record_key") or "answer:" + message["id"]
     )
-    entry = host.store.messages.record(
-        channel, message, key, "assistant", kind, params["text"], "sending"
+    entry = ledger.record(
+        channel, message, key, "assistant", kind, params["text"], "sending", images=params.get("images", ()),
+        **({"files": params.get("files", ())} if row["type_id"] == "wechat" else {})
     )
     if entry["status"] not in ("sending", "queued"):
         if entry["status"] == "sent":
             return {"sent": True}
         raise DeliveryError(entry["error"] or "此前发送失败，未自动重发")
     if entry["status"] == "queued":
-        host.store.messages.finish(channel, key, "sending")
+        ledger.finish(channel, key, "sending")
     try:
         result = await connector.call("send", params, timeout=timeout)
         if not isinstance(result, dict) or result.get("sent") is not True:
             raise DeliveryError("通知未获发送成功回执")
-        host.store.messages.finish(channel, key, "sent", delivery_receipt=result.get("receipt"))
+        ledger.finish(channel, key, "sent", delivery_receipt=result.get("receipt"))
         return result
     except BaseException as error:
         reason = str(error) if isinstance(error, DeliveryError) else "发送失败或中断，送达情况未知"
-        host.store.messages.finish(channel, key, "failed", reason)
+        ledger.finish(channel, key, "failed", reason)
         raise
 
 
@@ -354,9 +356,14 @@ async def manual_send(host, data):
     channel, session, key, text = (data.get(k) for k in ("id", "session", "request_id", "text"))
     if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,80}", key):
         raise ValueError("发送请求标识无效")
-    if not isinstance(text, str) or not text.strip() or len(text) > 2000:
-        raise ValueError("请输入 1–2000 字的消息")
     row = host.store.connection(channel)
+    image_only = row and row["type_id"] == "wechat" and bool(data.get("images") or data.get("files"))
+    if not isinstance(text, str) or len(text) > 2000 or (not text.strip() and not image_only):
+        raise ValueError("请输入消息或添加附件" if row and row["type_id"] == "wechat" else "请输入 1–2000 字的消息")
+    if row and row["type_id"] == "wechat":
+        from .wechat_messages import manual_send as wechat_manual_send
+
+        return await wechat_manual_send(host, data)
     if (
         not row
         or row["type_id"] != "dingtalk"

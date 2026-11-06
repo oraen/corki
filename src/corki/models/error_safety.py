@@ -7,6 +7,12 @@ from corki.models.base import ModelError
 _BEARER_CREDENTIAL = re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=-]+")
 
 
+def transport_error_message(error: Exception) -> str:
+    """HTTPX timeouts/read errors often have no message; retain their type."""
+    detail = str(error).strip()
+    return "model transport failed: " + (detail or type(error).__name__)
+
+
 def display_model_error(message: str, api_key: str | None) -> str:
     """Keep diagnostics readable without echoing configured or Bearer credentials."""
     safe = "".join(char if char.isprintable() or char == "\n" else " " for char in message[:4000])

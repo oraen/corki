@@ -144,6 +144,7 @@ from corki.storage.thread_archive import SQLiteThreadArchiveStore
 from corki.storage.thread_writer import ThreadWriterLease
 from corki.storage.volatile import VolatileSessionRepository
 from corki.tools import FatalToolError, ToolExecutor, ToolRegistry
+from corki.tools.base import Tool
 from corki.tools.builtin import (
     ApplyPatchTool,
     ExecCommandTool,
@@ -849,6 +850,7 @@ class LangGraphRuntime:
         include_archived: bool = False,
         ephemeral: bool = False,
         registry: ToolRegistry | None = None,
+        additional_tools: tuple[Tool, ...] = (),
         home_path: Path | None = None,
         compatibility_home: Path | None = None,
         memory_model: ModelPort | None = None,
@@ -989,6 +991,8 @@ class LangGraphRuntime:
         process_manager = ProcessManager(environment_policy=settings.shell_environment_policy)
         construction.append(process_manager.terminate_all)
         actual_registry = registry or _default_registry(settings, process_manager)
+        for tool in additional_tools:
+            actual_registry.register(tool)
         # Create the canonical session schema before the memory adapter extends
         # the shared database with memory-specific tables.
         actual_repository = repository or (

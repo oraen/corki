@@ -6,9 +6,15 @@ class DeliveryError(ValueError):
 
 
 def delivery_error(detail):
-    if not isinstance(detail, dict) or detail.get("provider") != "dingtalk":
+    if not isinstance(detail, dict) or detail.get("provider") not in ("dingtalk", "wechat"):
         return None
-    lines = ["钉钉消息撤回失败" if detail.get("operation") == "recall" else "钉钉消息发送失败"]
+    lines = [
+        "微信消息发送失败"
+        if detail["provider"] == "wechat"
+        else "钉钉消息撤回失败"
+        if detail.get("operation") == "recall"
+        else "钉钉消息发送失败"
+    ]
     for key, label, limit in (
         ("message", "原因", 1000),
         ("code", "错误码", 100),

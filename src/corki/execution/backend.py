@@ -588,7 +588,7 @@ async def _file_operation(
     on_patch_started=None,
 ):
     """Execute file access under the same policy, including OS path/symlink checks."""
-    if operation not in {"image", "patch"}:
+    if operation not in {"image", "read_bytes", "patch"}:
         raise ValueError("unsupported filesystem operation")
     compiled = await _compile_native_file_helper(permissions, cwd, patch=operation == "patch")
     helper_env = _native_helper_env()
@@ -626,7 +626,10 @@ async def _file_operation(
         }
     from corki.execution.patch_result import PatchResult
 
-    payload = json.dumps({"operation": operation, "arguments": arguments}).encode()
+    # The native "image" request is a bounded byte reader under the OS policy.
+    # Image decoding is host-side below; generic attachments reuse that reader.
+    native_operation = "image" if operation == "read_bytes" else operation
+    payload = json.dumps({"operation": native_operation, "arguments": arguments}).encode()
     if operation == "patch" and on_patch_started is not None:
         on_patch_started()
     try:
@@ -707,19 +710,20 @@ async def _file_operation(
         )
         if not isinstance(value, str):
             raise KeyError("invalid filesystem result")
-        if operation == "image":
+        if operation in {"image", "read_bytes"}:
             # Validation handles only returned bytes; no host filesystem access.
             from corki.media.images import validate_image_bytes
 
             data = base64.b64decode(value, validate=True)
             if len(data) > arguments["max_bytes"]:
                 raise ValueError("sandbox image result exceeds its byte limit")
-            try:
-                validate_image_bytes(data)
-            except Exception:
-                raise ValueError(
-                    "unable to process image: invalid or unsupported image data"
-                ) from None
+            if operation == "image":
+                try:
+                    validate_image_bytes(data)
+                except Exception:
+                    raise ValueError(
+                        "unable to process image: invalid or unsupported image data"
+                    ) from None
         return value
     except (KeyError, TypeError, UnicodeError, json.JSONDecodeError, RecursionError):
         raise ValueError("sandbox filesystem helper returned an invalid response") from None

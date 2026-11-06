@@ -72,7 +72,16 @@ class Connections:
                 (type_id,) if type_id else (),
             ).fetchall()
         return [
-            {**dict(r), "config": json.loads(r["config"]), "manifest": json.loads(r["manifest"])}
+            {
+                **dict(r),
+                "config": {
+                    **json.loads(r["config"]),
+                    # WeChat login plus the connection switch controls access.
+                    # Ignore legacy approval settings without resetting history.
+                    **({"session_validation": "false"} if r["type_id"] == "wechat" else {}),
+                },
+                "manifest": json.loads(r["manifest"]),
+            }
             for r in rows
         ]
 
@@ -194,6 +203,8 @@ class Connections:
         name = name.strip()
         row = old or {**channel, "config": {}}
         config = self.validated_config(row, data.get("values", {}))
+        if type_id == "wechat":
+            config["session_validation"] = "false"
         workdir = str(Path(config.get("workdir") or self.home / "main/default").resolve())
         old_workdir = str(
             Path(
@@ -263,6 +274,9 @@ class Connections:
                 "dingtalk_contacts",
                 "dingtalk_messages",
                 "dingtalk_assets",
+                "wechat_contacts",
+                "wechat_messages",
+                "wechat_assets",
                 "user_usage_threads",
             ):
                 db.execute(f"DELETE FROM {table} WHERE channel=?", (identity,))

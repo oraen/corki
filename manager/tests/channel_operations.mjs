@@ -99,6 +99,8 @@ try {
             );
           return structuredClone(window.fixture);
         }
+        if (body.action === "conversation")
+          return {thread:null,sessions:[],messages:[],before:null};
         if (body.action === "applications")
           return { requests: [], before: null };
         if (!["channel", "connection-reconnect"].includes(body.action))
@@ -231,9 +233,9 @@ try {
   await page.locator('.channel-dialog [type="submit"]').click();
   assert.equal(await page.locator("dialog").count(), 0);
   assert(await page.locator("[data-connection-settings]").isEnabled());
-  await page.locator('[data-channel-tab="applications"]').click();
+  await page.locator('[data-channel-tab="history"]').click();
   await page
-    .locator("#channel-pane-applications")
+    .locator("#channel-pane-history")
     .waitFor({ state: "visible" });
   assert(
     await page.locator("[data-reset-conversation]").isDisabled(),

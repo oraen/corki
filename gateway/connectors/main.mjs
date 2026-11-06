@@ -54,6 +54,14 @@ const incoming = protocol({
     if(!adapter || typeof adapter.downloadImages!=='function')throw new Error('images not supported');
     return adapter.downloadImages(params.images);
   },
+  async typing(params) {
+    if (!adapter || typeof adapter.typing !== "function") return {supported:false};
+    return adapter.typing(params);
+  },
+  async download_files(params) {
+    if (!adapter || typeof adapter.downloadFiles !== "function") throw new Error('files not supported');
+    return adapter.downloadFiles(params.files);
+  },
   async verify(params) {
     await adapter?.verify?.(params.code);
   },

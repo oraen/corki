@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
@@ -192,8 +192,18 @@ test("WeChat login, durable credentials, context-token reply and trusted redirec
     if (url.includes("getupdates"))
       return reply({
         msgs: [
-          {message_id: "fixture-video", message_type:1, from_user_id:"peer",
-           context_token:"fixture-context",item_list:[{type:2}]},
+          {message_id: "fixture-voice", message_type:1, from_user_id:"peer",
+           context_token:"fixture-context",item_list:[{type:3}]},
+          {message_id:"fixture-image",message_type:1,from_user_id:"peer",
+           context_token:"fixture-context",item_list:[
+             {type:1,text_item:{text:"看看😀"}},
+             {type:2,image_item:{media:{encrypt_query_param:"private-image",aes_key:"private-key"}}},
+             {type:1,text_item:{text:"后文"}}
+           ]},
+          {message_id:'fixture-files',message_type:1,from_user_id:'peer',item_list:[
+            {type:4,file_item:{file_name:'说明.txt',media:{encrypt_query_param:'file'}}},
+            {type:5,video_item:{media:{encrypt_query_param:'video'}}}
+          ]},
           {
             message_id: "fixture-id",
             message_type: 1,
@@ -220,6 +230,8 @@ test("WeChat login, durable credentials, context-token reply and trusted redirec
       incoming: async (m) => {
         seen.push(m);
         if(m.unsupported)return {accepted:true};
+        if(m.image_refs?.length)return {accepted:true};
+        if(m.file_refs?.length)return {accepted:true};
         await adapter.send({ message: m, text: "reply" });
         await adapter.close();
         return { accepted: true };
@@ -228,9 +240,15 @@ test("WeChat login, durable credentials, context-token reply and trusted redirec
     const started = adapter.start();
     await adapter.login();
     await started;
-    assert.equal(seen.length, 2);
+    assert.equal(seen.length, 4);
     assert.equal(seen[0].unsupported,true);
     assert.equal(seen[1].unsupported,undefined);
+    assert.equal(seen[1].image_refs.length,1);
+    const position=seen[1].image_positions[0];
+    assert.equal(Array.from(seen[1].text).slice(position,position+10).join(''),'[Image #1]');
+    assert(seen[1].text.startsWith('看看😀'));
+    assert.equal(seen[2].file_refs.length,2);
+    assert.deepEqual(seen[2].file_positions,[0,10]);
     assert.equal(sent.msg.context_token, "fixture-context");
     assert.equal(sent.msg.message_state, 2);
     assert.equal(
@@ -243,6 +261,49 @@ test("WeChat login, durable credentials, context-token reply and trusted redirec
     await rm(directory, { recursive: true, force: true });
   }
 });
+test("WeChat ID-only sends omit context and platform rejection is never reported as success", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "corki-wechat-send-"));
+  const original = globalThis.fetch;
+  let adapter, body, mode = "success";
+  try {
+    await writeFile(path.join(directory,"login.json"), JSON.stringify({
+      id:"fixture-bot",token:"private-bot-token",base:"https://ilinkai.weixin.qq.com"
+    }));
+    globalThis.fetch = async (_url,request) => {
+      body=JSON.parse(request.body);
+      if(mode==='http')return new Response('private-bot-token private-context',{status:403});
+      if(mode==='invalid-json')return new Response('not JSON');
+      if(mode==='code-only-success')return reply({errcode:0});
+      if(mode==='malformed')return reply(null);
+      if(mode==='array')return reply([]);
+      if(mode==='invalid-code')return reply({ret:'invalid'});
+      if(mode==='errcode')return reply({ret:0,errcode:-7});
+      return reply(mode==='reject'?{ret:-7,errmsg:'private-bot-token private-context'}:mode==='empty-success'?{}:{ret:0});
+    };
+    adapter=await wechat({state_directory:directory,cursor:'',incoming:async()=>({accepted:true})});
+    await adapter.send({message:{conversation:'fixture-peer'},text:'ID-only'});
+    assert.equal(body.msg.to_user_id,'fixture-peer');
+    assert.equal(Object.hasOwn(body.msg,'context_token'),false);
+    await adapter.send({message:{conversation:'fixture-peer',context_token:'private-context'},text:'Reply'});
+    assert.equal(body.msg.context_token,'private-context');
+    mode='empty-success';
+    await adapter.send({message:{conversation:'fixture-peer'},text:'Tencent omits zero codes'});
+    mode='code-only-success';
+    await adapter.send({message:{conversation:'fixture-peer'},text:'Alternate success field'});
+    for(mode of ['reject','http','malformed','array','invalid-code','invalid-json','errcode']) {
+      await assert.rejects(adapter.send({message:{conversation:'fixture-peer',context_token:'private-context'},text:'Rejected'}),error=>{
+        assert.equal(error.delivery.provider,'wechat');
+        assert(!JSON.stringify(error.delivery).includes('private-'));
+        return true;
+      });
+    }
+  } finally {
+    globalThis.fetch=original;
+    await adapter?.close();
+    await rm(directory,{recursive:true,force:true});
+  }
+});
+
 test("WhatsApp ignores own, group and history messages and does not log out on stop", async () => {
   const ev = new EventEmitter();
   let sent,

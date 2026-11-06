@@ -25,6 +25,7 @@ packages = ["src/corki_gateway"]
 "connectors/protocol.mjs" = "corki_gateway/connectors/protocol.mjs"
 "connectors/telegram.mjs" = "corki_gateway/connectors/telegram.mjs"
 "connectors/wechat.mjs" = "corki_gateway/connectors/wechat.mjs"
+"connectors/wechat-media.mjs" = "corki_gateway/connectors/wechat-media.mjs"
 "connectors/whatsapp.mjs" = "corki_gateway/connectors/whatsapp.mjs"
 
 "connectors/packages" = "corki_gateway/connectors/packages"
