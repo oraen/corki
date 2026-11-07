@@ -75,10 +75,11 @@ def test_incomplete_reply_preserves_paste_end_and_explicit_cancel():
 def test_installation_keeps_one_parser_and_does_not_touch_host_input():
     assert frame_terminal_responses(object()) is None
     with create_pipe_input() as pipe:
-        reader = pipe.stdin_reader
+        # POSIX uses stdin_reader; Win32PipeInput owns its reader internally.
+        reader = getattr(pipe, "stdin_reader", None)
         parser = frame_terminal_responses(pipe)
         assert parser is frame_terminal_responses(pipe)
-        assert pipe.stdin_reader is reader
+        assert getattr(pipe, "stdin_reader", None) is reader
 
 
 @pytest.mark.parametrize("ending", ["\x07", "\x1b\\"])

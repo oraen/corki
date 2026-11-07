@@ -23,11 +23,13 @@ import {
   type Conversation,
   type Draft,
 } from "./state";
-import { Icon, Picker, Modal, Interaction } from "./components";
+import { Icon, Modal, Interaction } from "./components";
 import { SnapshotRefresh } from "./refresh";
 import { EventBuffer } from "./event-buffer";
 import { modelIcon } from "./model-icons";
 import { HistorySection, WorkspaceHistory } from "./sidebar-history";
+import { WindowControls } from "./window-controls";
+import { SessionSettingsDialog, resolveSessionDraft } from "./session-settings";
 import "./style.css";
 import "highlight.js/styles/github.css";
 const api = window.corki;
@@ -59,6 +61,10 @@ function App() {
   const [skipDeleteReminder, setSkipDeleteReminder] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [settingsThread, setSettingsThread] = useState<string | null>(null);
+  const [settingsTitle, setSettingsTitle] = useState("新会话");
+  const threadTitles = useRef(new Map<string, string>());
+  const [settingsLoading, setSettingsLoading] = useState(false);
   const [managerState, setManagerState] = useState<"closed" | "starting" | "failed">("closed");
   const [managerError, setManagerError] = useState("");
   const [openingManager, setOpeningManager] = useState(false);
@@ -284,6 +290,20 @@ function App() {
     catalogRef.current = result;
     return result;
   }
+  async function openSessionSettings(id = selectedRef.current, title?: string) {
+    setSettingsLoading(true);
+    try {
+      if (selectedRef.current !== id) await select(id, true);
+      const result = await configuration(draftRef.current[id]?.directory || "");
+      if (selectedRef.current === id) {
+        const value = resolveSessionDraft(draftRef.current[id] || freshDraft(), result);
+        draftRef.current = {...draftRef.current, [id]: value};setDrafts(draftRef.current);
+        setSettingsTitle(title || threadTitles.current.get(id) || threads.find(thread => thread.id === id)?.title || "新会话");
+        setSettingsThread(id);
+      }
+    } catch (error) {report(error);}
+    finally {setSettingsLoading(false);}
+  }
   const refreshes = useRef(new SnapshotRefresh<any>());
   function loadThread(id: string) {
     return refreshes.current.run(
@@ -346,6 +366,7 @@ function App() {
         ? following[following.length - 1].sequence
         : data.sequence,
     });
+    if (data.title && !threadTitles.current.has(id)) threadTitles.current.set(id, data.title);
     setConversations((all) => ({ ...all, [id]: mergeSnapshot(all[id], view) }));
     return data;
   }
@@ -383,7 +404,7 @@ function App() {
       // Typing can start before the directory/configuration request returns.
       const latestDraft = draftRef.current[id];
       if (latestDraft) stored = { ...stored, ...latestDraft };
-      if ((resetModel && !stored.request) || !stored.provider || !result.providers.some(
+      if ((resetModel && !stored.request && !stored.sessionSettings?.provider && !stored.sessionSettings?.model) || !stored.provider || !result.providers.some(
         provider => provider.id === stored.provider && provider.models.some(model => model.id === stored.model)
       )) {
         const historical = data?.model;
@@ -406,6 +427,7 @@ function App() {
           reasoning: choice?.reasoning_effort ?? choice?.reasoning ?? null,
         };
       }
+      stored = resolveSessionDraft(stored, result);
       draftRef.current = { ...draftRef.current, [id]: stored };
       setDrafts(draftRef.current);
       if (resetModel || stored.modelNotice) void persistDraft(id, stored);
@@ -631,7 +653,7 @@ function App() {
   ) {
     // Install the accepted input/live snapshot before clearing the visible draft.
     // The runtime may not have persisted UserMessageItem at TurnStarted yet.
-    await loadThread(threadId);
+    const snapshot = await loadThread(threadId);
     const latest = draftRef.current[key] || submitted;
     const unchanged =
       latest.content === submitted.content &&
@@ -639,6 +661,10 @@ function App() {
         JSON.stringify(submitted.attachments);
     const cleared = {
       ...latest,
+      ...(latest.sessionSettings && snapshot.model ? {
+        provider: snapshot.model.provider, model: snapshot.model.model,
+        reasoning: snapshot.model.reasoning_effort ?? snapshot.model.reasoning ?? null,
+      } : {}),
       ...(unchanged ? { content: "", attachments: [] } : {}),
       request: undefined,
       uncertain: false,
@@ -705,6 +731,8 @@ function App() {
       provider: d.provider,
       model: d.model,
       reasoning: d.reasoning,
+      ...(key === "new" && d.sessionTitle ? {title: d.sessionTitle} : {}),
+      ...(d.sessionSettings !== undefined ? {sessionSettings: d.sessionSettings} : {}),
       attachments: d.attachments,
     };
     const saved = { ...d, modelNotice: undefined, request };
@@ -874,6 +902,7 @@ function App() {
     icon: modelIcon(m.id) || modelIcon(draft.provider),
   }));
   function renderThread(t: any) {
+    threadTitles.current.set(t.id, t.title);
     return (
       <div
         className={`thread-row ${selected === t.id ? "active" : ""}`}
@@ -905,6 +934,11 @@ function App() {
             <Icon name="more" size={17} />
           </summary>
           <div>
+            <button disabled={!!t.running || settingsLoading || !!offline || !!busy[t.id]}
+              onClick={(e) => {
+                e.currentTarget.closest("details")!.open = false;
+                void openSessionSettings(t.id, t.title);
+              }}>设置</button>
             <button
               onClick={(e) => {
                 e.currentTarget.closest("details")!.open = false;
@@ -940,8 +974,9 @@ function App() {
     );
   }
   if (!ready) return (
-    <main className="startup-screen" aria-busy="true">
+    <main className={`startup-screen${api.platform === "win32" ? " windows" : ""}`} aria-busy="true">
       <div className="startup-drag" aria-hidden="true" />
+      <WindowControls startup onError={report}/>
       <div className="startup-identity" role="status" aria-live="polite" aria-label="Corki 启动中">
         <h1>Corki</h1>
       </div>
@@ -1022,9 +1057,12 @@ function App() {
             </button>
           )}
           <span className="topbar-spacer" aria-hidden="true" />
-          <button className="icon-button app-settings" title="设置" aria-label="设置"
+          <button className="icon-button" title="会话设置" aria-label="会话设置"
+            disabled={!ready || !!offline || settingsLoading || conversation.running || !!busy[selected] || !!draft.uncertain}
+            onClick={() => void openSessionSettings()}><Icon name="gear" size={17}/></button>
+          <button className="icon-button app-settings" title="打开管理页面" aria-label="打开管理页面"
             disabled={openingManager} onClick={() => void openManager()}>
-            <Icon name="gear" size={17} />
+            <Icon name="menu" size={17} />
           </button>
           <button className="icon-button app-restart" title="重启应用" aria-label="重启应用"
             disabled={restarting} onClick={async () => {
@@ -1037,6 +1075,9 @@ function App() {
             }}>
             <Icon name="refresh" size={17} />
           </button>
+          <WindowControls onError={report} beforeClose={async () => {
+            await Promise.all([...saveChains.current.values()]);
+          }}/>
         </header>
         {offline && (
           <div className="banner model-health-banner service-offline-banner" role="status" aria-live="polite">
@@ -1311,52 +1352,7 @@ function App() {
               >
                 <Icon name="plus" />
               </button>
-              <div className="model-controls">
-                <Picker
-                  label="选择供应商"
-                  iconFallback="initial"
-                  value={draft.provider}
-                  items={providerItems}
-                  onChange={(provider) => {
-                    const profile = catalog.providers.find((p) => p.id === provider);
-                    const first = profile?.models.find((m) => m.id === profile.defaultModel)
-                      || profile?.models[0];
-                    editDraft({
-                      provider,
-                      model: first?.id || "",
-                      reasoning: first?.reasoning ?? null,
-                    });
-                  }}
-                />
-                <Picker
-                  label="选择模型"
-                  iconFallback="model"
-                  value={draft.model}
-                  items={modelItems}
-                  onChange={(m) => {
-                    const next = catalog.providers
-                      .find((p) => p.id === draft.provider)
-                      ?.models.find((x) => x.id === m);
-                    editDraft({ model: m, reasoning: next?.reasoning ?? null });
-                  }}
-                />
-                {!!model?.reasoningLevels.length && (
-                  <Picker
-                    label="推理等级"
-                    value={draft.reasoning || ""}
-                    items={[
-                      { id: "", label: "默认" },
-                      ...model.reasoningLevels.map((l) => ({
-                        id: l,
-                        label: l,
-                      })),
-                    ]}
-                    onChange={(reasoning) =>
-                      editDraft({ reasoning: reasoning || null })
-                    }
-                  />
-                )}
-              </div>
+              <span className="model-summary" title={`${draft.provider} / ${draft.model}`}>{draft.model || "未选择模型"}</span>
               {conversation.running && (draft.content.trim() || draft.attachments.length > 0) && (
                 <button className="send-button followup-send" aria-label="追加消息"
                   title="追加消息"
@@ -1428,6 +1424,24 @@ function App() {
           </>}
         </Modal>
       )}
+      {settingsThread === selected && <SessionSettingsDialog key={settingsThread}
+        catalog={catalog} draft={draft} threadId={selected} title={settingsTitle}
+        blocked={conversation.running || !!busy[selected] || !!draft.uncertain}
+        onClose={() => setSettingsThread(null)}
+        onSave={async (sessionSettings, effective, name) => {
+          const key = settingsThread!;
+          if (key !== "new" && name !== settingsTitle) {
+            await api.request("threads.rename", {threadId: key, title: name});
+            threadTitles.current.set(key, name);
+            setThreads(rows => rows.map(row => row.id === key ? {...row, title: name} : row));
+            setSettingsTitle(name);
+          }
+          const value = {...(draftRef.current[key] || freshDraft()), sessionSettings, sessionTitle: name || undefined,
+            provider: effective.provider, model: effective.model, reasoning: effective.reasoning};
+          await persistDraft(key, value);
+          draftRef.current = {...draftRef.current, [key]: value};
+          setDrafts(draftRef.current);
+        }}/>
       {modal === "directory" && (
         <Modal title="工作目录" onClose={() => setModal(null)}>
           <div className="directory-input">

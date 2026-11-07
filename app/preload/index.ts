@@ -14,6 +14,14 @@ async function invoke(channel: string, ...args: unknown[]): Promise<any> {
   }
 }
 const api: DesktopAPI = {
+  platform: process.platform,
+  windowState: () => invoke("corki:window-state"),
+  windowControl: (action) => invoke("corki:window-control", action),
+  onWindowState(callback) {
+    const listener = (_event: unknown, value: {maximized: boolean}) => callback(value);
+    ipcRenderer.on("corki:window-state", listener);
+    return () => ipcRenderer.removeListener("corki:window-state", listener);
+  },
   request(method, params = {}) {
     if (!METHODS.includes(method))
       return Promise.reject(new Error("Unsupported method"));

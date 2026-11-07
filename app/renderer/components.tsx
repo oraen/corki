@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ToolSummary } from "./tool-summary";
 import { useMessageLines } from "./message-lines";
 import { markdown, highlightedText } from "./markdown";
@@ -7,6 +7,12 @@ import { defaults, choices, formContent } from "./interactions";
 import type { Message } from "./state";
 export function Icon({ name, size = 20 }: { name: string; size?: number }) {
   const paths: Record<string, React.ReactNode> = {
+    menu: <path d="M4 6h16M4 12h16M4 18h16" />,
+    minimize: <path d="M5 12h14" />,
+    maximize: <rect x="5" y="5" width="14" height="14" />,
+    restore: <><path d="M8 8V4h12v12h-4" /><rect x="4" y="8" width="12" height="12" /></>,
+    sound: <><path d="m11 5-6 4H2v6h3l6 4V5Z" /><path d="M15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14" /></>,
+    "sound-off": <><path d="m11 5-6 4H2v6h3l6 4V5Z" /><path d="m16 9 6 6m0-6-6 6" /></>,
     robot: <><rect x="5" y="7" width="14" height="13" rx="4" /><path d="M12 3v4M2 11v5m20-5v5M9 16h6" /><circle cx="9" cy="12" r=".8" /><circle cx="15" cy="12" r=".8" /></>,
     model: (
       <>
@@ -95,6 +101,7 @@ export function Picker({
   onChange,
   disabled = false,
   iconFallback,
+  placement = "up",
 }: {
   label: string;
   value: string;
@@ -102,11 +109,35 @@ export function Picker({
   onChange: (id: string) => void;
   disabled?: boolean;
   iconFallback?: "initial" | "model";
+  placement?: "up" | "auto";
 }) {
   const [open, setOpen] = useState(false),
     [active, setActive] = useState(0),
     ref = useRef<HTMLDivElement>(null);
   const listId = React.useId();
+  const [menuLayout, setMenuLayout] = useState<React.CSSProperties>({});
+  useLayoutEffect(() => {
+    if (!open || placement !== "auto") return;
+    const root = ref.current;
+    const menu = root?.querySelector<HTMLElement>(".picker-menu");
+    if (!root || !menu) return;
+    const dialog = root.closest("dialog");
+    const update = () => {
+      const anchor = root.getBoundingClientRect();
+      const bounds = dialog?.getBoundingClientRect();
+      const below = Math.max(0, Math.min(innerHeight - 12, bounds ? bounds.bottom - 12 : Infinity) - anchor.bottom - 6);
+      const above = Math.max(0, anchor.top - Math.max(12, bounds ? bounds.top + 12 : 0) - 6);
+      const height = Math.min(220, menu.scrollHeight);
+      const upward = below < Math.min(height, 120) && above > below;
+      setMenuLayout({top: upward ? "auto" : "calc(100% + 6px)",
+        bottom: upward ? "calc(100% + 6px)" : "auto",
+        maxHeight: Math.max(36, Math.min(220, upward ? above : below))});
+    };
+    update();
+    window.addEventListener("resize", update);
+    dialog?.addEventListener("scroll", update);
+    return () => {window.removeEventListener("resize", update);dialog?.removeEventListener("scroll", update);};
+  }, [open, placement, items.length]);
   const selected = items.find((i) => i.id === value);
   const itemIcon = (item?: { icon?: string; label: string }) =>
     item?.icon ? (
@@ -174,7 +205,9 @@ export function Picker({
       }}
     >
       <button
+        type="button"
         className="picker-trigger"
+        data-value={value}
         aria-label={label}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -198,11 +231,14 @@ export function Picker({
         <div
           id={listId}
           className="picker-menu"
+          style={placement === "auto" ? menuLayout : undefined}
           role="listbox"
           aria-label={label}
         >
           {items.map((i, index) => (
             <button
+              type="button"
+              data-value={i.id}
               role="option"
               tabIndex={index === active ? 0 : -1}
               onFocus={() => setActive(index)}
@@ -285,7 +321,7 @@ export function Modal({
       }}
     >
       <header>
-        <h2>{title}</h2>
+        <h2 title={typeof title === "string" ? title : undefined}>{title}</h2>
         <button className="icon-button" aria-label="关闭" onClick={onClose}>
           <Icon name="close" />
         </button>

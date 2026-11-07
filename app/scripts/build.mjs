@@ -29,6 +29,12 @@ await Promise.all([
     minify: true,
     legalComments: "eof",
   }),
+  build({
+    entryPoints: ["renderer/notification-audio.ts"],
+    outfile: "dist/notification-audio.js",
+    bundle: true, platform: "browser", format: "iife", minify: true,
+  }),
 ]);
 await cp("renderer/index.html", "dist/index.html");
+await cp("renderer/notification-audio.html", "dist/notification-audio.html");
 await cp("resources", "dist/resources", { recursive: true });

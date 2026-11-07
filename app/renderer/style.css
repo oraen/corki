@@ -289,6 +289,14 @@ main {
 .desktop.windows .brand {
   padding: 12px 20px 16px;
 }
+.desktop.windows .topbar { padding-right:6px; gap:6px; }
+.windows .window-controls { display:flex; align-self:center; align-items:center; gap:6px; flex:none; -webkit-app-region:no-drag; }
+.windows .window-controls button { width:32px; height:32px; padding:0; border-radius:8px; color:#77736e; }
+.windows .window-controls button:hover { background:#edeae5; color:#35332f; }
+.windows .window-controls button:focus-visible { outline-offset:-4px; }
+.windows .window-controls svg { width:17px; height:17px; }
+.windows .window-controls .window-close:hover { background:#c9433d; color:white; }
+.windows .window-controls-startup { position:absolute; top:0; right:6px; height:44px; z-index:1; }
 .conversation-scroll {
   overflow: auto;
   min-height: 0;
@@ -1366,6 +1374,10 @@ main {
 .message.user .user-message-meta{position:absolute;right:0;bottom:100%;margin-bottom:5px;white-space:nowrap}
 .topbar .app-settings,.topbar .app-restart{width:26px}
 .topbar .app-settings + .app-restart{margin-left:-12px}
+.desktop .topbar{gap:6px}
+.desktop .topbar > .icon-button{width:32px;height:32px;margin:0;padding:0;border-radius:8px;color:#77736e;flex:none}
+.desktop .topbar > .icon-button:hover{background:#edeae5;color:#35332f}
+.desktop .topbar > .icon-button:focus-visible{outline-offset:-4px}
 .topbar{padding-right:20px}
 /* A quiet entrance and occasional warm highlight, without layout shifts. */
 .greeting-letter{display:inline-block;white-space:pre;animation:greeting-reveal .55s cubic-bezier(.2,.7,.3,1) var(--letter-delay) both,greeting-glow 8s ease-in-out calc(2s + var(--glow-delay)) infinite}
@@ -1446,3 +1458,36 @@ main {
 .workspace-context-menu button:hover,.workspace-context-menu button:focus-visible{background:#fff3e9;outline:none}
 .history-heading-editing{display:flex;align-items:center;background:#fff4eb}
 .history-heading-editing input{flex:1;min-width:0;width:0;padding:3px 5px;border:1px solid #e9ac80;border-radius:5px;background:#fff;color:#30332d;font:inherit;outline:none}
+
+/* Conversation settings reuse the desktop palette and remain within the dialog. */
+.session-settings{width:600px;max-width:calc(100vw - 40px);max-height:calc(100vh - 48px);overflow:auto;padding:24px}
+.session-settings fieldset{border:0;padding:0;margin:0 0 22px;min-width:0}
+.session-settings legend{font-size:12px;font-weight:600;color:#969185;margin:0 0 14px;padding:0}
+.session-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 20px}
+.session-setting-field{display:flex;flex-direction:column;gap:8px;min-width:0;font-size:13px;color:#57584f}
+.session-setting-field select,.session-setting-field input{width:100%;height:40px;min-width:0;border:1px solid #e5e3db;border-radius:9px;background:#fff;color:#3a4034;font:inherit;padding:0 12px}
+.session-setting-field select{text-overflow:ellipsis;padding-right:8px}
+.session-setting-field select:disabled,.session-setting-field input:disabled{opacity:.5;cursor:not-allowed}
+.session-context-input{position:relative}.session-context-input input{padding-right:36px}.session-context-input>span{position:absolute;right:13px;top:11px;color:#97968c;pointer-events:none}
+.session-sound-policy{display:flex;align-items:center;justify-content:space-between;border-top:1px solid #ece9e1;padding-top:18px;font-size:13px;color:#6f7066}.session-sound-policy span:last-child{color:#9c9a90;font-size:12px}
+.session-settings .session-settings-error{font-size:12px;color:#b54b3f;line-height:1.6;margin:14px 0 0}
+.session-settings footer{align-items:center;margin-top:24px}.modal.session-settings footer .session-settings-reset{margin-right:auto;padding:8px 0;background:transparent;font-size:12px;color:#868575}
+.model-summary{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#8b8d80;margin-right:auto;padding:0 4px}
+@media(max-width:520px){.session-settings-grid{grid-template-columns:minmax(0,1fr)}}
+
+.session-settings .picker{width:100%;min-width:0}
+.session-settings .picker-trigger{width:100%;height:40px;min-width:0;padding:0 12px;border:1px solid #e5e3db;border-radius:9px;background:#fff;color:#3a4034;justify-content:space-between;font-size:13px;overflow:hidden;white-space:nowrap}
+.session-settings .picker-trigger:hover:not(:disabled){border-color:#ff9448;background:#fffaf6}
+.session-settings .picker-trigger:focus-visible,.session-settings .picker-trigger[aria-expanded=true]{outline:none;border-color:#ff9448;box-shadow:0 0 0 3px #ff6a0014}
+.session-settings .picker-trigger>svg:last-child{margin-left:auto;color:#b58262;transition:transform .15s}
+.session-settings .picker-trigger[aria-expanded=true]>svg:last-child{transform:rotate(180deg)}
+.session-settings .picker-menu{min-width:100%;max-width:100%;max-height:220px;padding:6px;border:1px solid #e9e4df;border-radius:12px;box-shadow:0 12px 32px #2932431c,0 2px 6px #29324308;z-index:20}
+.session-settings fieldset:first-child .picker-menu{top:calc(100% + 6px);bottom:auto}
+.session-settings .picker-menu button{width:100%;padding:10px 11px;border-radius:7px;font-size:13px;color:#57584f}
+.session-settings .picker-menu button:hover,.session-settings .picker-menu button:focus-visible{background:#fff8f2;outline:none}
+.session-settings .picker-menu button[aria-selected=true]{background:#fff3e9;color:#b84900}
+.session-settings .picker-menu button[aria-selected=true]>svg{color:#dc6b20}
+
+.session-settings header h2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:16px}.session-settings header>.icon-button{flex:none}
+.session-settings-heading{display:flex;align-items:center;gap:10px;min-width:0}.session-settings-heading>svg{flex:none;color:#a77855}.session-settings-heading>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.session-name-field{margin-bottom:22px}

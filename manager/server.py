@@ -451,6 +451,14 @@ class SessionMaintenance:
 
 
 def global_configuration(config):
+    tui = config.get("tui", {})
+    if not isinstance(tui, dict):
+        raise ValueError("tui 必须是 JSON 对象")
+    notifications = tui.get("notifications", True)
+    if not isinstance(notifications, (bool, list)) or (
+        isinstance(notifications, list) and any(not isinstance(kind, str) for kind in notifications)
+    ):
+        raise ValueError("tui.notifications 必须是布尔值或事件名称数组")
     features = config.get("features", {})
     memories = config.get("memories", {})
     sessions = config.get("sessions", {})
@@ -468,6 +476,7 @@ def global_configuration(config):
         "self_evolution": features.get("self_evolution", False),
         "memories": memories.get("enabled", False),
         "auto_cleanup": sessions.get("auto_cleanup", False),
+        "sound_notifications": bool(notifications),
     }
 
 
@@ -2161,7 +2170,7 @@ end run'''
         if data.get("action") != "set":
             raise ValueError("不支持的全局配置操作")
         key, enabled = data.get("key"), data.get("enabled")
-        if key not in ("approval_free", "self_evolution", "memories", "auto_cleanup") or type(enabled) is not bool:
+        if key not in ("approval_free", "self_evolution", "memories", "auto_cleanup", "sound_notifications") or type(enabled) is not bool:
             raise ValueError("无效的全局配置")
         with LOCK:
             text = self.config_text()
@@ -2180,7 +2189,8 @@ end run'''
             else:
                 path = {"self_evolution": ("features", "self_evolution"),
                         "memories": ("memories", "enabled"),
-                        "auto_cleanup": ("sessions", "auto_cleanup")}[key]
+                        "auto_cleanup": ("sessions", "auto_cleanup"),
+                        "sound_notifications": ("tui", "notifications")}[key]
                 text = document.set_value(text, path, enabled)
             self.validate_config(text)
             self.write_config(text, data["revision"], "修改全局配置")

@@ -1046,8 +1046,8 @@ class CorkiSettings:
             ):
                 raise ValueError("tui.notifications must be a boolean or event-name array")
             object.__setattr__(self, "notifications", tuple(self.notifications))
-        if self.notification_method not in ("auto", "osc9", "bel"):
-            raise ValueError("tui.notification_method must be auto, osc9 or bel")
+        if self.notification_method not in ("auto", "osc9", "osc777", "bel"):
+            raise ValueError("tui.notification_method must be auto, osc9, osc777 or bel")
         if self.notification_condition not in ("always", "unfocused"):
             raise ValueError("tui.notification_condition must be always or unfocused")
         if not isinstance(self.model_unbounded_connection_retries, bool):

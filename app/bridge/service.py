@@ -36,6 +36,8 @@ from state import DesktopState
 from corki.cli.elicitation import validate_field
 from corki.cli.history_projection import HistoryProjection
 from corki.config.settings import CorkiSettings
+from corki.config import document
+from session_settings import session_settings, session_signature
 from corki.core.runtime import LangGraphRuntime
 from corki.models.request_watch import request_observer
 from corki.platforms.paths import directory_error_message
@@ -84,6 +86,8 @@ class Service:
         self.send = send
         self.factory = factory or LangGraphRuntime.acreate
         self.runtimes = {}
+        self.runtime_signatures = {}
+        self.permission_modes_cache = {}
         self.loaded_settings = {}
         self.active_models = {}
         self.tasks = {}
@@ -192,11 +196,65 @@ class Service:
             "state.write": self.write_state,
             "events.replay": self.replay,
             "status": self.status,
+            "notifications.read": self.notification_settings,
+            "session.validate": self.validate_session,
         }
         handler = methods.get(method)
         if handler is None:
             raise ValueError("Unknown method")
         return await handler(p)
+
+    async def notification_settings(self, p):
+        path = self.home / "settings.json"
+        config = document.loads(await asyncio.to_thread(path.read_text, encoding="utf-8-sig")) if path.exists() else {}
+        tui = config.get("tui", {})
+        if not isinstance(tui, dict):
+            raise ValueError("Invalid tui settings")
+        value = tui.get("notifications", True)
+        if not isinstance(value, (bool, list)) or (
+            isinstance(value, list) and any(not isinstance(kind, str) for kind in value)
+        ):
+            raise ValueError("Invalid notification settings")
+        return {"enabled": bool(value)}
+
+    async def validate_session(self, p):
+        thread = p.get("threadId")
+        if thread and (thread in self.tasks or self.state.is_deleted(thread)):
+            raise ValueError("请先停止当前任务再修改会话设置")
+        directory = ((await self.archive.read(ThreadId(thread))).cwd
+                     if thread and await self.repository.thread_exists(ThreadId(thread))
+                     else self.directory(text(p, "directory", default="")))
+        settings = session_settings(self.settings(directory, refresh=True), p.get("sessionSettings", {}))
+        if "permissions" in p.get("sessionSettings", {}):
+            from corki.execution.backend import resolve_execution_permissions
+            try:
+                await resolve_execution_permissions(settings.execution_permissions)
+            except (ValueError, OSError) as error:
+                raise ValueError("当前环境不支持该权限模式，请选择其他权限") from error
+        runtime = self.runtimes.get(thread)
+        if runtime and self.runtime_signatures.get(thread) != session_signature(settings):
+            if await runtime.list_background_terminals():
+                raise ValueError("请先结束当前会话的后台终端，再修改设置")
+        return {"provider": settings.provider_id, "model": settings.model,
+                "reasoning": settings.reasoning_effort,
+                "contextWindow": settings.main_context_limits.raw_tokens}
+
+    async def permission_modes(self, settings):
+        key = repr(settings.execution_permissions)
+        if key not in self.permission_modes_cache:
+            from corki.execution.backend import resolve_execution_permissions
+            async def available(mode):
+                try:
+                    selected = session_settings(settings, {"permissions": mode})
+                    await resolve_execution_permissions(selected.execution_permissions)
+                    return mode
+                except (ValueError, OSError):
+                    return None
+            modes = await asyncio.gather(*(available(mode) for mode in ("read-only", "workspace", "full")))
+            if len(self.permission_modes_cache) >= 16:
+                self.permission_modes_cache.clear()
+            self.permission_modes_cache[key] = [mode for mode in modes if mode]
+        return self.permission_modes_cache[key]
 
     async def collect_assets(self):
         now = time.monotonic()
@@ -254,6 +312,8 @@ class Service:
                             "reasoningLevels": levels,
                             "reasoning": selected.reasoning_effort,
                             "images": selected.supports_image_input,
+                            "contextWindow": selected.main_context_limits.raw_tokens,
+                            "maxContextWindow": info.max_context_window,
                         }
                     )
                 if models:
@@ -278,6 +338,10 @@ class Service:
                 "providers": providers,
                 "default": default,
                 "permissions": "沿用 Corki 配置",
+                "sessionDefaults": {"mode": settings.collaboration_mode,
+                    "memories": settings.memories_enabled and settings.memories_use,
+                    "skills": settings.skills_enabled},
+                "permissionModes": await self.permission_modes(settings),
             }
         except (ValueError, TypeError, OSError) as error:
             return {"valid": False, "providers": [], "error": self.safe_error(error)}
@@ -526,8 +590,14 @@ class Service:
                 if timing:
                     row["createdAt"] = timing["replyFinishedAt"]
         model = await self.repository.load_thread_model_settings(ThreadId(thread))
+        title = self.state.titles().get(thread)
+        if not title:
+            with closing(sqlite3.connect(self.database)) as db:
+                first = db.execute("SELECT user_input FROM turns WHERE thread_id=? AND user_input!='' ORDER BY rowid LIMIT 1", (thread,)).fetchone()
+                title = str(first[0]).split("\n")[0][:80] if first else "新会话"
         return {
             "threadId": thread,
+            "title": title,
             "directory": str(record.cwd),
             "messages": rows,
             "next": page.next_cursor.before_sequence if page.next_cursor else None,
@@ -605,6 +675,7 @@ class Service:
             if runtime:
                 await runtime.aclose()
                 self.runtimes.pop(thread, None)
+                self.runtime_signatures.pop(thread, None)
             with closing(self.state.connect()) as db, db:
                 db.execute("DELETE FROM followups WHERE thread=?", (thread,))
                 db.execute("DELETE FROM followup_settings WHERE thread=?", (thread,))
@@ -693,13 +764,12 @@ class Service:
                 if exists
                 else self.directory(text(p, "directory", default=""))
             )
-            provider = text(p, "provider")
-            model = text(p, "model")
-            effort = p.get("reasoning")
-            # Use the admitted snapshot; config.read is the explicit reload path.
-            settings = self.settings(
-                directory, provider=provider, model=model, reasoning_effort=effort
-            )
+            if "sessionSettings" in p:
+                settings = session_settings(self.settings(directory, refresh=True), p["sessionSettings"])
+                provider, model, effort = settings.provider_id, settings.model, settings.reasoning_effort
+            else:
+                provider, model, effort = text(p, "provider"), text(p, "model"), p.get("reasoning")
+                settings = self.settings(directory, provider=provider, model=model, reasoning_effort=effort)
             images = []
             parts = []
             for entry in attachments:
@@ -756,6 +826,16 @@ class Service:
                     p, digest, content + "".join(parts), tuple(images), force=force_steer
                 )
             runtime = self.runtimes.get(thread)
+            signature = session_signature(settings)
+            if runtime is not None and thread not in self.tasks and (
+                thread in self.runtime_signatures and self.runtime_signatures[thread] != signature
+            ):
+                if await runtime.list_background_terminals():
+                    raise ValueError("请先结束当前会话的后台终端，再应用新的设置")
+                await runtime.aclose()
+                self.runtimes.pop(thread, None)
+                self.runtime_signatures.pop(thread, None)
+                runtime = None
             if runtime is None:
                 runtime = await self.factory(
                     settings=settings,
@@ -766,6 +846,7 @@ class Service:
                     thread_id=ThreadId(thread),
                 )
                 self.runtimes[thread] = runtime
+                self.runtime_signatures[thread] = signature
 
                 async def approval(request):
                     value = {"threadId": thread, **asdict(request)}
@@ -789,15 +870,14 @@ class Service:
                 # Refresh insertion order for idle-host retirement.
                 self.runtimes.pop(thread)
                 self.runtimes[thread] = runtime
-                await runtime.update_thread_settings(
-                    provider=provider, model=model, reasoning_effort=effort
-                )
+                if thread not in self.runtime_signatures:
+                    await runtime.update_thread_settings(provider=provider, model=model, reasoning_effort=effort)
             # Prepare a bounded display page through the public runtime lifecycle.
             # This acquires the canonical writer lease and materializes thread metadata
             # before the UI can open the newly accepted conversation.
             await runtime.load_display_items_page(limit=1)
             if not exists:
-                self.state.rename(thread, content.split("\n")[0][:60] or "附件会话")
+                self.state.rename(thread, text(p, "title", default="", limit=120).strip() or content.split("\n")[0][:60] or "附件会话")
             recent = self.state.get("recentDirectories", [])
             self.state.put(
                 "recentDirectories",
@@ -852,6 +932,7 @@ class Service:
                         continue
                     await runtime.aclose()
                     self.runtimes.pop(thread, None)
+                    self.runtime_signatures.pop(thread, None)
                     self.live.pop(thread, None)
 
     async def run(self, thread, identity, runtime, content, images):

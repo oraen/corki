@@ -5,7 +5,7 @@ import pytest
 from prompt_toolkit.input.vt100_parser import Vt100Parser
 
 from corki.cli.notifications import TerminalNotifications
-from corki.cli.terminal_responses import TerminalResponseParser
+from corki.cli.terminal_responses import TerminalResponseParser, frame_terminal_responses
 from corki.config import CorkiSettings
 
 
@@ -181,3 +181,50 @@ def test_notification_deduplication_storage_is_bounded(tmp_path):
     assert len(notices.seen) == 256
     assert notices.seen[-1] == ("agent-turn-complete", "999")
     assert notices.handle is None  # Focused notifications schedule no callbacks.
+
+
+@pytest.mark.parametrize("tmux", [False, True])
+def test_osc777_frames_failure_without_private_details(tmp_path, tmux):
+    output = []
+    notices = TerminalNotifications(
+        SimpleNamespace(write_raw=output.append, flush=lambda: None),
+        CorkiSettings(tmp_path, notification_method="osc777", notification_condition="always"),
+        interactive=True, environ={"TMUX": "yes"} if tmux else {},
+    )
+    notices.notify("agent-turn-failed", "private error")
+    expected = "\x1b]777;notify;Corki;Corki task failed\x1b\\"
+    if tmux:
+        expected = "\x1bPtmux;" + expected.replace("\x1b", "\x1b\x1b") + "\x1b\\"
+    assert output == [expected]
+
+
+@pytest.mark.parametrize("vt", [False, True])
+def test_windows_console_focus_uses_existing_reader_and_cleans_listeners(tmp_path, vt):
+    output, keys = [], []
+    def original(read, records):
+        yield "original-keys"
+    reader = SimpleNamespace(_get_keys=original)
+    if vt:
+        reader._vt100_parser = Vt100Parser(keys.append)
+    terminal = SimpleNamespace(console_input_reader=reader)
+    parser = frame_terminal_responses(terminal)
+    assert parser is frame_terminal_responses(terminal)
+    notices = TerminalNotifications(
+        SimpleNamespace(write_raw=output.append, flush=lambda: None),
+        CorkiSettings(tmp_path), interactive=True, environ={},
+    )
+    record = lambda focused: SimpleNamespace(EventType=16, Event=SimpleNamespace(FocusEvent=SimpleNamespace(SetFocus=focused)))
+    with notices.reporting((parser,)):
+        assert list(reader._get_keys(SimpleNamespace(value=1), [record(False)])) == ["original-keys"]
+        assert not notices.focused
+        notices.notify("agent-turn-complete", "one")
+        assert output[-1] == "\a"
+        list(reader._get_keys(SimpleNamespace(value=1), [record(True)]))
+        notices.notify("agent-turn-complete", "two")
+        assert notices.focused
+        if vt:
+            reader._vt100_parser.feed("\x1b[O")
+            assert not notices.focused and not keys
+    assert not parser.focus_listeners
+    assert not reader._corki_focus_parser.focus_listeners
+    assert output == (["\x1b[?1004h", "\a", "\x1b[?1004l"] if vt else ["\a"])

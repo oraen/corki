@@ -632,9 +632,9 @@ body.chat-route main{display:flex;flex-direction:column;flex:1;min-height:0;widt
 
 /* Homepage preferences share the dashboard's card and switch language. */
 .global-config-panel{margin-bottom:28px}
-.global-config-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:4px 24px 24px;gap:0 32px}
+.global-config-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:4px 24px 24px;gap:0 32px}
 .global-config-option{display:flex;align-items:center;gap:14px;min-width:0;padding:22px 0;border-bottom:1px solid var(--line)}
-.global-config-option:nth-last-child(-n+2){border-bottom:0;padding-bottom:4px}
+.global-config-option:nth-child(n+4){border-bottom:0;padding-bottom:4px}
 .global-config-icon{display:grid;place-items:center;flex-shrink:0;width:38px;height:38px;border-radius:11px;background:#fff5ed;color:#d66a23}
 .global-config-icon svg{width:19px;height:19px;stroke-width:1.7}
 .global-config-label{min-width:0;flex:1}
@@ -720,7 +720,7 @@ body.chat-route main{display:flex;flex-direction:column;flex:1;min-height:0;widt
 .usage-legend-item>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-size:11px}
 .usage-legend-item strong{font-weight:500;font-size:11px;color:var(--ink);font-variant-numeric:tabular-nums;flex-shrink:0}
 .usage-empty{font-size:12px;color:var(--muted)}
-.global-defaults{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:32px;padding:16px 24px 6px}
+.global-defaults{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:32px;padding:16px 24px 6px}
 .global-defaults .field{margin:0;min-width:0}
 .global-defaults .field>span{font-size:13px;font-weight:500}
 .global-defaults .select-trigger{width:100%;height:42px}
@@ -789,3 +789,6 @@ body.chat-route main{display:flex;flex-direction:column;flex:1;min-height:0;widt
 
 .package-title .package-count{display:inline-flex;align-items:center;justify-content:center;min-width:22px;padding:2px 6px;margin-left:8px;border-radius:5px;background:#f4f5f7;color:#8a94a3;font-size:10px;font-weight:500;vertical-align:middle}
 .package-heading + .package-grid{margin-top:24px}
+
+@media(max-width:1200px){.global-config-grid,.global-defaults{grid-template-columns:repeat(2,minmax(0,1fr))}.global-config-option:nth-child(n){border-bottom:1px solid var(--line);padding-bottom:22px}.global-config-option:last-child{border-bottom:0;padding-bottom:4px}}
+@media(max-width:700px){.global-config-grid,.global-defaults{grid-template-columns:minmax(0,1fr)}}

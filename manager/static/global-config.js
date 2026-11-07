@@ -7,8 +7,9 @@ function globalConfigurationPanel(config = {}) {
   ['self_evolution', '自进化', 'Corki将在工作中不断学习自己改造自己', 'skills'],
   ['memories', '记忆', '在任务之间保留并使用长期记忆', 'memories'],
   ['auto_cleanup', '自动清理会话', '自动清理超过 3 个月未更新的会话', 'clock'],
+  ['sound_notifications', '开启提醒声音', '', 'sound'],
  ];
- return `<section class="panel global-config-panel" aria-labelledby="global-config-title"><div class="panel-head"><h2 id="global-config-title">全局配置</h2></div>${globalDefaultFields()}<div class="global-config-grid">${options.map(([key, title, description, name]) => `<div class="global-config-option"><span class="global-config-icon">${icon(name)}</span><div class="global-config-label"><span id="global-${key}-label">${title}</span><p id="global-${key}-description">${description}</p></div><button type="button" class="toggle ${config[key] ? 'on' : ''}" role="switch" aria-checked="${!!config[key]}" aria-labelledby="global-${key}-label" aria-describedby="global-${key}-description" data-action="global-toggle" data-key="${key}" ${globalConfigurationSaving ? 'disabled' : ''}></button></div>`).join('')}</div></section>`;
+ return `<section class="panel global-config-panel" aria-labelledby="global-config-title"><div class="panel-head"><h2 id="global-config-title">全局配置</h2></div>${globalDefaultFields()}<div class="global-config-grid">${options.map(([key, title, description, name]) => `<div class="global-config-option"><span class="global-config-icon">${icon(name)}</span><div class="global-config-label"><span id="global-${key}-label">${title}</span>${description ? `<p id="global-${key}-description">${description}</p>` : ''}</div><button type="button" class="toggle ${config[key] ? 'on' : ''}" role="switch" aria-checked="${!!config[key]}" aria-labelledby="global-${key}-label" ${description ? `aria-describedby="global-${key}-description"` : ''} data-action="global-toggle" data-key="${key}" ${globalConfigurationSaving ? 'disabled' : ''}></button></div>`).join('')}</div></section>`;
 }
 async function toggleGlobalConfiguration(target) {
  if (globalConfigurationSaving) return;

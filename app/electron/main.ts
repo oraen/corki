@@ -13,11 +13,13 @@ import {
 import path from "node:path";
 import os from "node:os";
 import { readFile, writeFile, mkdir, stat, rename } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, watchFile, unwatchFile } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { Bridge } from "./bridge";
 import { ManagerLauncher } from "./manager";
 import { saveAsset, readAsset, readBoundedFile } from "./assets";
+import { SoundNotifications } from "./sound-notifications";
+import { NotificationAudio } from "./notification-audio";
 import { METHODS, type Attachment } from "../shared/protocol";
 
 const origin = "corki://desktop";
@@ -38,6 +40,27 @@ let window: BrowserWindow | null = null,
   quitting = false,
   quitPending = false;
 let preferences: any = {};
+let soundEnabled = true;
+let soundSettingsRevision = 0;
+const soundConfigPath = path.join(home, "settings.json");
+async function refreshSoundSettings() {
+  const revision = ++soundSettingsRevision;
+  try {
+    const value = await bridge?.request("notifications.read");
+    if (!value || revision !== soundSettingsRevision) return;
+    soundEnabled = value.enabled;
+    sounds.setEnabled(soundEnabled);
+    if (!soundEnabled) notificationAudio.stop();
+  } catch { /* Keep the last valid preference while the backend is unavailable. */ }
+}
+const notificationAudio = new NotificationAudio();
+const sounds = new SoundNotifications(kind => {
+  // Match Codex's default Unfocused policy, checked at delivery time.
+  const foreground = window && !window.isDestroyed() && window.isVisible() &&
+    !window.isMinimized() && window.isFocused();
+  if (!foreground && !quitting && !quitPending && soundEnabled)
+    notificationAudio.play(kind);
+});
 const prefPath = path.join(ownData, "window.json");
 async function persist() {
   await mkdir(ownData, { recursive: true });
@@ -82,10 +105,12 @@ function makeBridge() {
     : path.join(root, "bridge", "main.py");
   const host = new Bridge(python, script, home, home);
   host.on("event", (event) => {
+    sounds.accept(event);
     if (window && !window.isDestroyed())
       window.webContents.send("corki:event", event);
   });
   host.on("offline", (message) => {
+    sounds.disconnected();
     if (window && !window.isDestroyed())
       window.webContents.send("corki:event", {
         type: "host.offline",
@@ -178,6 +203,23 @@ async function importFiles(paths: unknown): Promise<Attachment[]> {
   return result;
 }
 function registerIPC() {
+  ipcMain.handle("corki:window-state", (e) => {
+    trusted(e);
+    return {maximized: window!.isMaximized() || window!.isFullScreen()};
+  });
+  ipcMain.handle("corki:window-control", (e, action: unknown) => {
+    trusted(e);
+    if (process.platform !== "win32" || typeof action !== "string" || !["minimize", "maximize", "close"].includes(action))
+      throw new Error("Unsupported window action");
+    const target = window!;
+    if (action === "minimize") target.minimize();
+    else if (action === "maximize") {
+      if (target.isFullScreen()) target.setFullScreen(false);
+      else if (target.isMaximized()) target.unmaximize();
+      else target.maximize();
+    } else target.close();
+    return {maximized: !target.isDestroyed() && (target.isMaximized() || target.isFullScreen())};
+  });
   ipcMain.handle("corki:launch-directory", async (e) => {
     trusted(e);
     const directory = pendingDirectory;
@@ -196,7 +238,12 @@ function registerIPC() {
       Array.isArray(params)
     )
       throw new Error("Invalid request");
-    return bridge!.request(method, params);
+    try {
+      return await bridge!.request(method, params);
+    } catch (error) {
+      if (method === "turn.submit") sounds.submissionFailed(String(params.requestId || ""));
+      throw error;
+    }
   });
   ipcMain.handle("corki:directory", async (e) => {
     trusted(e);
@@ -324,6 +371,7 @@ function createWindow() {
     title: "Corki",
     backgroundColor: "#fcfbf9",
     icon: path.join(__dirname, "resources/corki.png"),
+    ...(process.platform === "win32" ? {frame: false} : {}),
     ...(process.platform === "darwin"
       ? {
           titleBarStyle: "hiddenInset" as const,
@@ -346,6 +394,18 @@ function createWindow() {
     event.preventDefault(),
   );
   window.once("ready-to-show", () => window?.show());
+  const publishWindowState = () => {
+    if (window && !window.isDestroyed())
+      window.webContents.send("corki:window-state", {
+        maximized: window.isMaximized() || window.isFullScreen(),
+      });
+  };
+  if (process.platform === "win32") {
+    window.on("maximize", publishWindowState);
+    window.on("unmaximize", publishWindowState);
+    window.on("enter-full-screen", publishWindowState);
+    window.on("leave-full-screen", publishWindowState);
+  }
   window.on("close", () => {
     if (window && !window.isMaximized() && !window.isFullScreen()) {
       preferences.bounds = window.getBounds();
@@ -354,6 +414,7 @@ function createWindow() {
   });
   window.on("closed", () => {
     window = null;
+    if (process.platform !== "darwin") notificationAudio.suspend();
   });
   window.webContents.on("render-process-gone", () => {
     if (window && !quitting) void window.loadURL(origin + "/index.html");
@@ -484,6 +545,10 @@ else {
       ]),
     );
     bridge = makeBridge();
+    watchFile(soundConfigPath, { persistent: false, interval: 500 }, () => {
+      if (!quitting && !quitPending) void refreshSoundSettings();
+    });
+    void refreshSoundSettings();
     registerIPC();
     createWindow();
   });
@@ -495,6 +560,11 @@ else {
   });
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
+  });
+  app.on("will-quit", () => {
+    unwatchFile(soundConfigPath);
+    sounds.dispose();
+    notificationAudio.dispose();
   });
   app.on("before-quit", (event) => {
     if (quitting) return;

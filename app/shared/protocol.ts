@@ -1,6 +1,8 @@
 export const METHODS = [
   "initialize",
   "config.read",
+  "notifications.read",
+  "session.validate",
   "threads.list",
   "threads.read",
   "messages.text",
@@ -35,6 +37,8 @@ export interface Attachment {
   assetId?: string;
 }
 export interface Model {
+  contextWindow?: number;
+  maxContextWindow?: number | null;
   id: string;
   description: string;
   reasoningLevels: string[];
@@ -42,13 +46,29 @@ export interface Model {
   images: boolean;
 }
 export interface Catalog {
+  permissionModes?: string[];
+  sessionDefaults?: {mode: string; memories: boolean; skills: boolean};
   valid: boolean;
   error?: string;
   providers: { id: string; defaultModel?: string; models: Model[] }[];
   default?: { provider: string; model: string; reasoning: string | null };
   permissions?: string;
 }
+export interface SessionSettings {
+  provider?: string;
+  model?: string;
+  reasoning?: string;
+  contextWindow?: number;
+  permissions?: "read-only" | "workspace" | "full";
+  mode?: "default" | "plan";
+  memories?: boolean;
+  skills?: boolean;
+}
 export interface DesktopAPI {
+  readonly platform?: string;
+  windowState?(): Promise<{maximized: boolean}>;
+  windowControl?(action: "minimize" | "maximize" | "close"): Promise<{maximized: boolean}>;
+  onWindowState?(callback: (value: {maximized: boolean}) => void): () => void;
   request<T = any>(
     method: Method,
     params?: Record<string, unknown>,

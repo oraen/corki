@@ -216,7 +216,10 @@ class CorkiApplication:
         )
 
     async def _handle_user_input(self, request: UserInputRequested) -> None:
-        self._notify("plan-mode-prompt", (request.turn_id, request.call_id))
+        self._notify(
+            "plan-mode-prompt" if getattr(request, "is_blocking", True) else "async-question",
+            (request.turn_id, request.call_id),
+        )
         try:
             response = await self._input.ask_user(request)
             if response is None:
@@ -1477,6 +1480,7 @@ class CorkiApplication:
                         summary()
                     state.needs_work_separator = False
             elif isinstance(event, TurnFailed):
+                self._notify("agent-turn-failed", event.turn_id)
                 if state.reasoning:
                     self._ui.end_reasoning()
                     state.reasoning = False

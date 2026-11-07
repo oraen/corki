@@ -1,4 +1,4 @@
-import type { Attachment, HostEvent } from "../shared/protocol";
+import type { Attachment, HostEvent, SessionSettings } from "../shared/protocol";
 export interface Message {
   id: string;
   turnId?: string;
@@ -430,6 +430,8 @@ export function reduceEvent(
   return s;
 }
 export interface Draft {
+  sessionTitle?: string;
+  sessionSettings?: SessionSettings;
   modelNotice?: string;
   content: string;
   attachments: Attachment[];
@@ -441,6 +443,7 @@ export interface Draft {
   uncertain?: boolean;
 }
 export const freshDraft = (): Draft => ({
+  sessionSettings: {},
   content: "",
   attachments: [],
   directory: "",

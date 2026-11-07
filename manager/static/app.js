@@ -24,6 +24,7 @@ function providerCardIcon(provider,model=false,modelName=""){
  return model?`<span class="model-card-icon">${icon('models')}</span>`:`<span class="provider-logo ${provider.id.includes('codex')?'dark':''}">${esc(provider.id.slice(0,1).toUpperCase())}</span>`;
 }
 const paths = {
+ sound:'m11 5-6 4H2v6h3l6 4V5z M15 8a6 6 0 0 1 0 8 M18 5a10 10 0 0 1 0 14',
  overview:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',
  providers:'M4 4h16v6H4z M4 14h16v6H4z M8 7h.01 M8 17h.01',
  models:'M12 3 3 8l9 5 9-5-9-5z M3 12l9 5 9-5 M3 16l9 5 9-5',

@@ -143,9 +143,55 @@ class TerminalResponseParser:
         self.parser.reset(request=request)
 
 
+class NativeConsoleFocus:
+    """Observe the existing Windows console reader, without reading any input.
+
+    prompt-toolkit otherwise discards FOCUS_EVENT_RECORD. Keep the original
+    key/paste processing and sole reader; listeners are scoped by reporting().
+    """
+
+    native_only = True
+
+    def __init__(self, reader):
+        self.focus_listeners = set()
+        self.color_listeners = set()
+        original = reader._get_keys
+
+        def keys(read, records):
+            for index in range(read.value):
+                record = records[index]
+                if record.EventType == 16:  # FOCUS_EVENT, never keyboard/paste bytes
+                    for listener in tuple(self.focus_listeners):
+                        listener(bool(record.Event.FocusEvent.SetFocus))
+            yield from original(read, records)
+
+        reader._get_keys = keys
+
+
 def frame_terminal_responses(input):
-    """Install once on VT input only; other platform/host inputs stay untouched."""
+    """Frame VT replies or observe native Windows focus on the existing reader."""
     parser = getattr(input, "vt100_parser", None)
     if isinstance(parser, Vt100Parser):
         parser = input.vt100_parser = TerminalResponseParser(parser)
-    return parser if isinstance(parser, TerminalResponseParser) else None
+    if isinstance(parser, TerminalResponseParser):
+        return parser
+    reader = getattr(input, "console_input_reader", None)
+    if reader is None:
+        return None
+    parser = getattr(reader, "_vt100_parser", None)
+    if isinstance(parser, Vt100Parser):
+        parser = reader._vt100_parser = TerminalResponseParser(parser)
+    if isinstance(parser, TerminalResponseParser):
+        # VT-mode console readers can also receive native focus records.
+        native = _native_console_focus(reader)
+        if native is not None:
+            native.focus_listeners = parser.focus_listeners
+        return parser
+    return _native_console_focus(reader)
+
+
+def _native_console_focus(reader):
+    parser = getattr(reader, "_corki_focus_parser", None)
+    if parser is None and callable(getattr(reader, "_get_keys", None)):
+        parser = reader._corki_focus_parser = NativeConsoleFocus(reader)
+    return parser

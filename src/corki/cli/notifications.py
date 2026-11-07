@@ -65,12 +65,14 @@ class TerminalNotifications:
         ):
             return
         kind = pending[1]
-        message = (
-            "Corki task complete" if kind == "agent-turn-complete" else "Corki needs your input"
-        )
+        message = {
+            "agent-turn-complete": "Corki task complete",
+            "agent-turn-failed": "Corki task failed",
+        }.get(kind, "Corki needs your input")
         sequence = "\a"
-        if self.method == "osc9":
-            sequence = f"\x1b]9;{message}\a"
+        if self.method in {"osc9", "osc777"}:
+            sequence = (f"\x1b]9;{message}\a" if self.method == "osc9"
+                        else f"\x1b]777;notify;Corki;{message}\x1b\\")
             if self.tmux:
                 sequence = "\x1bPtmux;" + sequence.replace("\x1b", "\x1b\x1b") + "\x1b\\"
         try:
@@ -82,14 +84,16 @@ class TerminalNotifications:
     def reporting(self, parsers):
         parsers = tuple(dict.fromkeys(p for p in parsers if p is not None))
         active = self.interactive and bool(self.settings.notifications) and bool(parsers)
+        protocol = active and any(not getattr(p, "native_only", False) for p in parsers)
         try:
             if active:
                 for parser in parsers:
                     parser.focus_listeners.add(self.set_focus)
-                try:
-                    self._write("\x1b[?1004h")
-                except Exception:  # noqa: BLE001 - optional terminal capability
-                    self.failed = True
+                if protocol:
+                    try:
+                        self._write("\x1b[?1004h")
+                    except Exception:  # noqa: BLE001 - optional terminal capability
+                        self.failed = True
             yield
         finally:
             if self.handle is not None:
@@ -98,7 +102,7 @@ class TerminalNotifications:
             self.pending = None
             for parser in parsers:
                 parser.focus_listeners.discard(self.set_focus)
-            if active:
+            if protocol:
                 with suppress(Exception):
                     self._write("\x1b[?1004l")
             self.seen.clear()
