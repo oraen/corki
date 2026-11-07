@@ -9,6 +9,7 @@ import { create as feishu } from "../connectors/feishu.mjs";
 import { create as wechat, trustedBase } from "../connectors/wechat.mjs";
 import { create as whatsapp } from "../connectors/whatsapp.mjs";
 import { chunks } from "../connectors/protocol.mjs";
+import {memoryAuth} from './direct-fixtures.mjs';
 
 const reply = (value) => ({ ok: true, status: 200, json: async () => value });
 test("Telegram marks unsupported private media, filters groups and preserves text replies", async () => {
@@ -38,7 +39,7 @@ test("Telegram marks unsupported private media, filters groups and preserves tex
           {
             update_id: 10,
             message: {chat: {type: "private", id: 2}, from: {id: 1},
-                      video: {file_id: "fixture-video"}, caption: "A video"},
+                      voice: {file_id: "fixture-voice"}, caption: "A voice"},
           },
           {
             update_id: 11,
@@ -67,7 +68,7 @@ test("Telegram marks unsupported private media, filters groups and preserves tex
     await adapter.start();
     assert.equal(received.length, 2);
     assert.equal(received[0].unsupported,true);
-    assert.equal(received[0].text,"A video\n[视频消息]");
+    assert.equal(received[0].text,"A voice\n[语音消息]");
     assert.equal(received[1].id, "11");
     assert.equal(received[1].unsupported,undefined);
     assert.equal(calls.find((c) => c.method === "getUpdates").body.offset, 8);
@@ -304,16 +305,17 @@ test("WeChat ID-only sends omit context and platform rejection is never reported
   }
 });
 
-test("WhatsApp ignores own, group and history messages and does not log out on stop", async () => {
+test("WhatsApp ignores own, group and history messages and does not log out on stop", async (t) => {
   const ev = new EventEmitter();
   let sent,
     ended = false;
   const received = [];
   const socket = {
     ev,
-    user: { id: "fixture-account" },
+    user: { id: "12345:1@s.whatsapp.net" },
     sendMessage: async (...args) => {
       sent = args;
+      return {key:{id:'sent'}};
     },
     end: () => (ended = true),
   };
@@ -324,15 +326,19 @@ test("WhatsApp ignores own, group and history messages and does not log out on s
     DisconnectReason: { loggedOut: 401 },
   };
   const adapter = await whatsapp({
+    authFactory:memoryAuth,
     state_directory: "/unused-fixture",
     require: (name) =>
       name === "pino" ? () => ({}) : { toDataURL: async () => "" },
     load: async () => api,
-    incoming: async (m) => received.push(m),
+    incoming: async (m) => {received.push(m);return {accepted:true};},
   });
+  t.after(()=>adapter.close());
   await adapter.start();
+  ev.emit('connection.update',{connection:'open'});
+  await new Promise(resolve=>setImmediate(resolve));
   const item = {
-    key: { id: "one", remoteJid: "peer@s.whatsapp.net" },
+    key: { id: "one", remoteJid: "22222@s.whatsapp.net" },
     message: { conversation: "hello" },
   };
   ev.emit("messages.upsert", { type: "append", messages: [item] });
@@ -342,14 +348,14 @@ test("WhatsApp ignores own, group and history messages and does not log out on s
       { ...item, key: { ...item.key, fromMe: true } },
       { ...item, key: { ...item.key, remoteJid: "group@g.us" } },
       item,
-      {...item,key:{...item.key,id:'video'},message:{videoMessage:{caption:'A video'}}},
+      {...item,key:{...item.key,id:'audio'},message:{audioMessage:{}}},
     ],
   });
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(received.length, 2);
   assert.equal(received[1].unsupported,true);
   await adapter.send({ message: received[0], text: "answer" });
-  assert.deepEqual(sent, ["peer@s.whatsapp.net", { text: "answer" }]);
+  assert.deepEqual(sent, ["22222@s.whatsapp.net", { text: "answer" },{mediaUploadTimeoutMs:45000}]);
   await adapter.close();
   assert(ended);
   assert.equal(chunks("🦀".repeat(10), 3).join(""), "🦀".repeat(10));

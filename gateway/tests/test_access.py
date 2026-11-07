@@ -76,7 +76,8 @@ def test_default_open_then_approval_rejection_dedup_and_toggle(tmp_path):
         try:
             await host.inbound(identity, message("open", text="open"))
             await drain(host)
-            assert calls == ["open"] and store.applications(identity)["requests"] == []
+            assert calls == ["open"]
+            assert store.applications(identity)["requests"][0]["sender_id"] == "alice"
             await host.change(
                 {
                     "action": "save-connection",

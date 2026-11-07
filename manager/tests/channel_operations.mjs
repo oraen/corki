@@ -203,9 +203,8 @@ try {
   await toggle("wx").click();
   assert.match(await row("wx").textContent(), /关闭中/);
   await page.evaluate(() => window.mount("wx"));
-  await page.getByRole("button", { name: "关闭中…", exact: true }).waitFor();
-  assert(await page.locator("[data-connection-settings]").isEnabled());
-  await page.locator("[data-connection-settings]").click();
+  assert.equal(await page.locator('[data-connection-overview]').count(),0);
+  await page.locator('[data-channel-tab="settings"]').click();
   await page.locator("#channel-pane-settings").waitFor({ state: "visible" });
   await page.evaluate(() => window.mount());
   await toggle("wx").waitFor();
@@ -226,13 +225,11 @@ try {
     /客服微信.*测试连接失败/,
   );
 
-  // Confirmation closes immediately; settings and tabs work during disconnect.
+  // Settings and tabs remain usable while disconnecting from the list switch.
+  await toggle("wx").click();
   await page.evaluate(() => window.mount("wx"));
-  await page.locator("[data-connection-disconnect]").waitFor();
-  await page.locator("[data-connection-disconnect]").click();
-  await page.locator('.channel-dialog [type="submit"]').click();
   assert.equal(await page.locator("dialog").count(), 0);
-  assert(await page.locator("[data-connection-settings]").isEnabled());
+  assert(await page.locator('[data-channel-tab="settings"]').isEnabled());
   await page.locator('[data-channel-tab="history"]').click();
   await page
     .locator("#channel-pane-history")

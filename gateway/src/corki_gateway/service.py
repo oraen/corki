@@ -65,6 +65,7 @@ class Host:
         self.store.recover_access_notices()
         self.store.messages.recover()
         self.store.wechat_messages.recover()
+        self.store.direct_messages.recover()
         if self.runner is None:
             from .agent import Agent
 
@@ -96,8 +97,14 @@ class Host:
             if self.stopping or not (self.store.connection(identity) or {}).get("enabled"):
                 break
             failures = 0 if time.monotonic() - started > 60 else failures + 1
-            self.connector_status(identity, {"state": "error", "code": "reconnect"})
-            await asyncio.sleep(min(60, 2 ** min(failures, 6)))
+            terminal = self.statuses.get(identity, {}).get("code") in (
+                "telegram_credentials", "telegram_webhook", "telegram_conflict",
+                "whatsapp_auth", "whatsapp_replaced",
+                "whatsapp_forbidden", "whatsapp_version",
+            )
+            if not terminal:
+                self.connector_status(identity, {"state": "error", "code": "reconnect"})
+            await asyncio.sleep(60 if terminal else min(60, 2 ** min(failures, 6)))
 
     def connector_status(self, identity, value):
         if not isinstance(value, dict) or value.get("state") not in (
@@ -114,14 +121,16 @@ class Host:
         item = {"state": value["state"]}
         if value["state"] in ("login", "scanned"):
             row = self.store.connection(identity)
-            if not row or row["type_id"] != "wechat":
+            if not row or row["type_id"] not in ("wechat", "whatsapp"):
                 return
+            platform = "WhatsApp" if row["type_id"] == "whatsapp" else "微信"
             item["message"] = {
                 "expired": "二维码已过期，请点击重新获取",
                 "credentials": "微信登录已失效，请重新扫码登录",
                 "login_failed": "获取二维码失败，请点击重试",
                 "already_bound": "微信提示此账号已绑定。请在手机微信中检查原有连接，再重新扫码。",
             }.get(value.get("code"), "点击扫码登录后获取二维码")
+            item["message"] = item["message"].replace("微信", platform)
             if value["state"] == "scanned":
                 item["message"] = "已扫码，请在手机微信上确认连接。"
         qr = value.get("qr", "")
@@ -142,11 +151,20 @@ class Host:
             "http_pull": "拉取接口连接失败或返回格式无效，正在重试",
             "http": "渠道接口请求失败",
             "reconnect": "连接中断，正在重连",
+            "telegram_webhook": "此 Bot 已绑定 Webhook，请先解除原有 Webhook",
+            "telegram_conflict": "此 Bot 正被其他程序轮询，请关闭重复连接",
+            "telegram_credentials": "Bot Token 无效，请检查接入配置",
+            "whatsapp_auth": "登录信息无法保存，请检查本机磁盘与文件权限",
+            "whatsapp_replaced": "连接已被其他设备替代，请检查已关联设备",
+            "whatsapp_forbidden": "WhatsApp 拒绝连接，请在手机上检查账号状态",
+            "whatsapp_version": "WhatsApp 多设备版本不兼容，请更新手机应用与渠道组件",
             "feishu_connection": "飞书长连接异常，正在重试。请检查网络、应用凭据及飞书 / Lark 区域。",
             "feishu_setup": "飞书连接超时。请确认已启用机器人、使用长连接接收事件，并检查应用凭据与网络。",
         }
         if code in messages and value["state"] != "login":
             item["message"] = messages[code]
+        if code in messages:
+            item["code"] = code
         detail = self.statuses.get(identity, {}).get("detail")
         incoming = value.get("detail")
         if value["state"] == "error" and isinstance(incoming, dict):
@@ -245,6 +263,13 @@ class Host:
 
             validate_files(message)
             self.store.wechat_messages.inbound(row, message)
+        if row["type_id"] in ("telegram", "whatsapp"):
+            from .images import validate_refs
+            from .wechat_files import validate_refs as validate_files
+
+            validate_refs(message, direct=True)
+            validate_files(message, direct=True)
+            self.store.direct_messages.inbound(row, message)
         if row["type_id"] == "dingtalk":
             from .images import validate_refs
 
@@ -273,7 +298,7 @@ class Host:
         if row["config"].get("session_validation") == "true":
             self.access_notifier.schedule(channel)
         if not allowed:
-            if row["type_id"] in ("dingtalk", "wechat") and message.get("image_refs"):
+            if row["type_id"] in ("dingtalk", "wechat", "telegram", "whatsapp") and message.get("image_refs"):
                 self.store.images.update(
                     channel,
                     message,
@@ -291,9 +316,9 @@ class Host:
 
             if not reserve(self.store, channel, message):
                 return {"accepted": True, "duplicate": True}
-            if row["type_id"] == "wechat":
+            if row["type_id"] in ("wechat", "telegram", "whatsapp"):
                 self.store.wechat_files.fail_pending(channel, message)
-            if row["type_id"] in ("dingtalk", "wechat") and message.get("image_refs"):
+            if row["type_id"] in ("dingtalk", "wechat", "telegram", "whatsapp") and message.get("image_refs"):
                 self.store.images.update(
                     channel,
                     message,
@@ -320,7 +345,7 @@ class Host:
             return {"accepted": True, "duplicate": True}
         key = (channel, message["id"])
         batch = None
-        if row["type_id"] == "wechat":
+        if row["type_id"] in ("wechat", "telegram", "whatsapp"):
             from .wechat_inbox import WeChatBatch
 
             batch_key = (channel, thread)
@@ -368,7 +393,7 @@ class Host:
                 if not (current or {}).get("enabled"):
                     raise asyncio.CancelledError()
                 if not self.store.allows_message(current, message, remember=False):
-                    if current["type_id"] in ("dingtalk", "wechat") and message.get("image_refs"):
+                    if current["type_id"] in ("dingtalk", "wechat", "telegram", "whatsapp") and message.get("image_refs"):
                         self.store.images.update(
                             channel,
                             message,
@@ -382,7 +407,7 @@ class Host:
                     return
                 self.deliveries[thread] = delivery_context
                 self.store.finish(channel, message["id"], "running")
-                if current["type_id"] == "wechat" and self.connectors.get(channel):
+                if current["type_id"] in ("wechat", "telegram", "whatsapp") and self.connectors.get(channel):
                     from .wechat_inbox import typing
 
                     typing_connector = self.connectors[channel]
@@ -400,12 +425,12 @@ class Host:
                     raise ValueError("Agent " + message["media_error"])
                 attachments = (
                     await self.store.images.load(channel, message, self.connectors.get(channel))
-                    if current["type_id"] in ("dingtalk", "wechat")
+                    if current["type_id"] in ("dingtalk", "wechat", "telegram", "whatsapp")
                     else ()
                 )
                 file_context = (
                     await self.store.wechat_files.load(channel, message, self.connectors.get(channel))
-                    if current["type_id"] == "wechat" else ""
+                    if current["type_id"] in ("wechat", "telegram", "whatsapp") else ""
                 )
                 options = card_options(current)
                 if options["enabled"] and self.connectors.get(channel):
@@ -607,7 +632,7 @@ class Host:
             return await manual_send(self, data)
         if action == "image-upload":
             row = self.store.connection(identity)
-            if not row or row["type_id"] != "wechat":
+            if not row or row["type_id"] not in ("wechat", "telegram", "whatsapp"):
                 raise ValueError("此接入不支持上传图片")
             return {"image": await self.store.images.upload(identity, data.get("image"))}
         if action == "file-upload":
@@ -788,18 +813,18 @@ class Host:
                     await self.stop_channel(identity)
                     self.connector_status(identity, {"state": "connecting"})
                     self.monitors[identity] = asyncio.create_task(self.supervise(identity))
-                elif action == "wechat-login":
+                elif action in ("wechat-login", "channel-login"):
                     row = self.store.connection(identity)
-                    if not row or row["type_id"] != "wechat":
-                        raise ValueError("此操作仅支持微信接入")
+                    if not row or row["type_id"] not in ("wechat", "whatsapp"):
+                        raise ValueError("此接入不支持扫码登录")
                     if not self.online or not row["enabled"] or self.stopping:
-                        raise ValueError("请先开启网关并启用此微信接入")
+                        raise ValueError("请先开启网关并启用此接入")
                     connector = self.connectors.get(identity)
                     if (
                         not connector
                         or self.statuses.get(identity, {}).get("state") == "connecting"
                     ):
-                        raise ValueError("微信连接器正在启动，请稍后重试")
+                        raise ValueError("连接器正在启动，请稍后重试")
                     await connector.call("login", {"refresh": data.get("refresh") is True}, timeout=15)
                 elif action == "verification":
                     code = data.get("code", "")
@@ -851,6 +876,9 @@ class Host:
                                 "dingtalk_assets",
                                 "wechat_contacts",
                                 "wechat_messages",
+                                "direct_contacts",
+                                "direct_messages",
+                                "direct_open_contacts",
                                 "wechat_assets",
                             ):
                                 db.execute(f"DELETE FROM {table} WHERE channel=?", (identity,))

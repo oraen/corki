@@ -34,7 +34,7 @@ def asset_info(home, channel, identity, thumbnail=False):
             row = db.execute(
                 "SELECT a.mime,c.state_key FROM dingtalk_assets a "
                 "JOIN connections c ON c.id=a.channel WHERE a.channel=? AND a.id=? "
-                "AND c.type_id IN ('dingtalk','wechat')",
+                "AND c.type_id IN ('dingtalk','wechat','telegram','whatsapp')",
                 (channel, identity),
             ).fetchone()
     except sqlite3.Error:
@@ -59,11 +59,24 @@ def asset_info(home, channel, identity, thumbnail=False):
     }
 
 
-def validate_refs(message, *, wechat=False):
+def validate_refs(message, *, wechat=False, direct=False):
     refs = message.get("image_refs", [])
     if not isinstance(refs, list) or len(refs) > 8:
         raise ValueError("图片数量无效")
     for ref in refs:
+        if direct:
+            if (
+                not isinstance(ref, dict)
+                or set(ref) - {"id", "error"}
+                or not (
+                    isinstance(ref.get("id"), str)
+                    and ID.fullmatch(ref["id"])
+                    or isinstance(ref.get("error"), str)
+                    and len(ref["error"]) <= 300
+                )
+            ):
+                raise ValueError("图片缓存信息无效")
+            continue
         if wechat:
             if (
                 not isinstance(ref, dict)
@@ -94,7 +107,7 @@ class Images:
 
     def directory(self, channel):
         row = self.store.connection(channel)
-        if not row or row["type_id"] not in ("dingtalk", "wechat"):
+        if not row or row["type_id"] not in ("dingtalk", "wechat", "telegram", "whatsapp"):
             raise ValueError("图片不属于此接入")
         root = self.store.root / "accounts"
         directory = root / row["state_key"] / "images"
@@ -175,7 +188,13 @@ class Images:
         ]
         with self.store.db() as db:
             row = self.store.connection(channel)
-            table = "wechat_messages" if row and row["type_id"] == "wechat" else "dingtalk_messages"
+            table = (
+                "direct_messages"
+                if row and row["type_id"] in ("telegram", "whatsapp")
+                else "wechat_messages"
+                if row and row["type_id"] == "wechat"
+                else "dingtalk_messages"
+            )
             db.execute(
                 f"UPDATE {table} SET images=? WHERE channel=? AND event_key=?",
                 (json.dumps(images, ensure_ascii=False), channel, "inbound:" + message["id"]),
@@ -185,8 +204,14 @@ class Images:
         if not message.get("image_refs"):
             return
         with self.store.db() as db:
+            connection = self.store.connection(channel)
+            table = (
+                "direct_messages"
+                if connection["type_id"] in ("telegram", "whatsapp")
+                else "wechat_messages"
+            )
             row = db.execute(
-                "SELECT images FROM wechat_messages WHERE channel=? AND event_key=?",
+                f"SELECT images FROM {table} WHERE channel=? AND event_key=?",
                 (channel, "inbound:" + message["id"]),
             ).fetchone()
         if row:

@@ -22,18 +22,35 @@ class WeChatBatch:
         self.messages = [message]
         self.first = self.last = time.monotonic()
         self.sealed = False
+        self.album = message.get("media_group_id")
         self.changed = asyncio.Event()
 
     @property
     def paired(self):
-        return any(has_text(m) for m in self.messages) and any(
-            m.get("image_refs") or m.get("file_refs") for m in self.messages
+        return (
+            not self.album
+            and any(has_text(m) for m in self.messages)
+            and any(m.get("image_refs") or m.get("file_refs") for m in self.messages)
         )
 
     def append(self, message):
         now = time.monotonic()
+        album = message.get("media_group_id")
+        same_album = bool(self.album and album == self.album)
+        album_boundary = bool(
+            (self.album and album and album != self.album)
+            or (
+                self.album and not album and (message.get("image_refs") or message.get("file_refs"))
+            )
+            or (
+                album
+                and not self.album
+                and any(m.get("image_refs") or m.get("file_refs") for m in self.messages)
+            )
+        )
         if (
             self.sealed
+            or album_boundary
             or self.paired
             or now - self.last >= PAIR_WAIT
             or now - self.first >= MAX_WAIT
@@ -47,13 +64,15 @@ class WeChatBatch:
             > 8
             or sum(len(m["text"]) + 1 for m in self.messages) + len(message["text"]) > 99000
             # Two separate text questions are separate turns, even when rapid.
-            or has_text(message)
+            or not same_album
+            and has_text(message)
             and any(has_text(m) for m in self.messages)
         ):
             self.sealed = True
             self.changed.set()
             return False
         self.messages.append(message)
+        self.album = self.album or album
         self.last = now
         self.changed.set()
         return True

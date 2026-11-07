@@ -27,8 +27,8 @@ const incoming = protocol({
     });
     // Readiness means transport connected, not merely a child process started.
     setImmediate(() =>
-      adapter.start().catch(() => {
-        status("error", { code: "network" });
+      adapter.start().catch((error) => {
+        if(!error.reported)status("error", { code: "network" });
         process.exitCode = 1;
         setTimeout(() => process.exit(1), 100);
       }),
@@ -66,7 +66,7 @@ const incoming = protocol({
     await adapter?.verify?.(params.code);
   },
     async login(params) {
-    if (channel !== "wechat" || !adapter || typeof adapter.login !== "function")
+    if (!["wechat","whatsapp"].includes(channel) || !adapter || typeof adapter.login !== "function")
       throw new Error("interactive login not supported");
       return adapter.login({ refresh: params?.refresh === true });
   },

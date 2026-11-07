@@ -15,13 +15,15 @@ from .messages import send_logged
 class SendWeChatImage:
     def __init__(self, host, channel, thread):
         self.host, self.channel, self.thread = host, channel, thread
+        self.platform = (host.store.connection(channel) or {}).get("type_id", "wechat")
 
     @property
     def spec(self):
         return ToolSpec(
-            name="send_wechat_image",
+            name=f"send_{self.platform}_image",
             description=(
-                "Send a local image file to the current WeChat user. Use when the user asks "
+                f"Send a local image file to the current {self.platform} user. "
+                "Use when the user asks "
                 "to receive a screenshot, photo, chart or generated image. Create the image first "
                 "with available tools, then call this tool with its local path. This tool reads "
                 "the file under the current session's permissions. Only claim the image was "
@@ -56,7 +58,7 @@ class SendWeChatImage:
             or self.channel not in self.host.connectors
             or self.host.stopping
         ):
-            raise ValueError("微信连接已断开，图片未发送")
+            raise ValueError("连接已断开，图片未发送")
         path = Path(source)
         path = path if path.is_absolute() else context.cwd / path
         if context.execution_permissions is None:
@@ -83,7 +85,7 @@ class SendWeChatImage:
             or self.host.stopping
             or self.host.deliveries.get(self.thread) is not delivery
         ):
-            raise ValueError("微信连接已断开，图片未发送")
+            raise ValueError("连接已断开，图片未发送")
         message = delivery[1]
         result = await send_logged(
             self.host,
@@ -98,5 +100,5 @@ class SendWeChatImage:
             kind="agent",
         )
         if not result.get("sent"):
-            raise ValueError("微信未确认图片发送")
+            raise ValueError("渠道未确认图片发送")
         return ToolResult(call.id, call.name, json.dumps({"sent": True, "image": image["id"]}))

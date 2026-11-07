@@ -55,10 +55,12 @@ try {
       running: true,
       active: 0,
       interactions: [],
-      installed: { wechat: true, feishu: true, dingtalk: true },
+      installed: { wechat: true, feishu: true, dingtalk: true, telegram:true, whatsapp:true },
       package_jobs: {},
       channels: [
         { id: "wechat", name: "微信", builtin: true, fields: [] },
+        {id:'telegram',name:'Telegram',builtin:true,fields:[{key:'token',label:'Bot Token',secret:true,required:true}]},
+        {id:'whatsapp',name:'WhatsApp',builtin:true,fields:[]},
         {
           id: "feishu",
           name: "飞书",
@@ -90,6 +92,8 @@ try {
         },
       ],
       connections: [
+        {id:'tg',name:'Telegram 客服',channel:'telegram',enabled:true,values:{session_validation:'true'}},
+        {id:'wa',name:'WhatsApp 客服',channel:'whatsapp',enabled:true,values:{session_validation:'true'}},
         {
           id: "wx",
           name: "客户服务微信",
@@ -115,7 +119,7 @@ try {
           values: {},
         },
       ],
-      statuses: { wx: { state: "login" }, dt: { state: "online" } },
+      statuses: { wx: { state: "login" }, dt: { state: "online" },tg:{state:'online'},wa:{state:'login'} },
     };
     window.host = {
       providers: [],
@@ -153,10 +157,10 @@ try {
             window.historyFixture.messages.push(row);
             return {message:row};
           }
-          if (body.action === "wechat-login") {
+          if (body.action === "wechat-login" || body.action==='channel-login') {
             if (window.holdQR)
               await new Promise((resolve) => (window.releaseQR = resolve));
-            window.fixture.statuses.wx = {
+            window.fixture.statuses[body.id] = {
               state: "qr",
               qr:
                 "data:image/svg+xml," +
@@ -174,17 +178,17 @@ try {
         return structuredClone(window.fixture);
       },
     };
-    window.mount = (id) =>
+    window.mount = (id,conversation) =>
       window.CorkiChannels.mount(document.querySelector("#root"), {
         ...window.host,
         id,
+        conversation,
       });
-    window.mount("wx");
+    window.mount();
   });
-  await page.locator('[data-connection-primary="login"]').waitFor();
-  assert.equal(await page.locator(".channel-message-composer").count(), 1);
+  await page.locator('[data-login="wx"]').waitFor();
   await page.evaluate(() => (window.holdQR = true));
-  await page.locator('[data-connection-primary="login"]').click();
+  await page.locator('[data-login="wx"]').click();
   await page.locator(".channel-qr-loading").waitFor();
   await page.screenshot({ path: path.join(artifacts, "wechat-loading.png") });
   await page.evaluate(() => {
@@ -297,6 +301,7 @@ try {
   );
   await page.screenshot({ path: path.join(artifacts, "wechat-success.png") });
   await page.locator("[data-wechat-history]").click();
+  await page.evaluate(()=>window.mount('wx'));
   await page.locator(".channel-chat-panel").waitFor({ state: "visible" });
   await page.getByText("暂无会话消息", {exact:true}).waitFor();
   assert.equal(await page.locator(".channel-applications").isVisible(),false);
@@ -398,28 +403,20 @@ try {
   await page.screenshot({path:path.join(artifacts,'wechat-history-mobile.png'),fullPage:true});
   await page.setViewportSize({width:1280,height:1000});
   await page.evaluate(()=>{window.requests=[];window.historyFixture=null;});
-  await page.locator('[data-connection-primary="reconnect"]').click();
-  assert.match(
-    await page.locator(".channel-dialog").textContent(),
-    /会话历史会保留/,
-  );
-  await page.locator('.channel-dialog button[type="submit"]').click();
-  await page.locator('[data-connection-primary="waiting"]').waitFor();
+  assert.equal(await page.locator('[data-connection-overview]').count(),0);
+  assert.equal(await page.locator('.channel-connection-buttons').count(),0);
   await page.evaluate(() => window.mount("fs"));
-  await page.locator('[data-connection-primary="enable"]').waitFor();
+  await page.locator('.channel-management').waitFor();
+  assert.equal(await page.locator('[data-connection-overview]').count(),0);
+  assert.equal(await page.locator('.channel-connection-buttons').count(),0);
   assert.equal(await page.getByRole('tab',{name:'会话管理',exact:true}).count(),1);
-  await page.locator("[data-connection-settings]").click();
+  await page.locator('[data-channel-tab="settings"]').click();
   assert.equal(await page.locator(".channel-setup-guide").count(), 0);
   assert.equal(await page.locator("[data-wechat-refresh]").count(), 0);
   await page.screenshot({
     path: path.join(artifacts, "feishu-settings.png"),
     fullPage: true,
   });
-  await page.locator('[data-connection-primary="enable"]').click();
-  assert.equal(
-    await page.evaluate(() => window.mutations.at(-1).action),
-    "channel",
-  );
   await page.evaluate(() => window.mount("dt"));
   await page.locator(".channel-management").waitFor();
   assert.equal(await page.getByRole('tab',{name:'会话管理',exact:true}).count(),1);
@@ -428,9 +425,10 @@ try {
   await page.evaluate(() => window.mount("wx"));
   await page.locator(".channel-management").waitFor();
   await page.evaluate(() => (window.fixture.statuses.wx = { state: "login" }));
-  await page.locator('[data-connection-primary="login"]').waitFor();
+  await page.evaluate(() => window.mount());
+  await page.locator('[data-login="wx"]').waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.locator('[data-connection-primary="login"]').click();
+  await page.locator('[data-login="wx"]').click();
   await page.locator(".channel-qr-frame>img").waitFor();
   await page.screenshot({ path: path.join(artifacts, "wechat-mobile.png") });
   assert(
@@ -458,15 +456,15 @@ try {
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.evaluate(() => window.mount());
   await page.locator('[data-act="add-connection"]').waitFor();
-  for (const type of ["wechat", "feishu", "dingtalk"]) {
+  for (const type of ["wechat", "feishu", "dingtalk", "telegram", "whatsapp"]) {
     await page.locator('[data-act="add-connection"]').click();
     await page.locator(".channel-dialog .channel-select summary").click();
     await page.locator(`.channel-dialog [data-option="${type}"]`).click();
     await page.getByRole("button", { name: "下一步", exact: true }).click();
     await page.locator(".channel-connect-dialog").waitFor();
-    assert.equal((await page.locator('.channel-dialog-head h2').textContent()).trim(),'接入'+({wechat:'微信',feishu:'飞书',dingtalk:'钉钉'}[type]));
+    assert.equal((await page.locator('.channel-dialog-head h2').textContent()).trim(),'接入'+({wechat:'微信',feishu:'飞书',dingtalk:'钉钉',telegram:'Telegram',whatsapp:'WhatsApp'}[type]));
     await page.screenshot({ path: path.join(artifacts, `${type}-create.png`) });
-    if (["wechat", "feishu"].includes(type))
+    if (["wechat", "feishu", "telegram", "whatsapp"].includes(type))
       assert.equal(
         await page
           .locator(
@@ -477,9 +475,57 @@ try {
       );
     await page.locator('.channel-dialog [aria-label="关闭"]').click();
   }
+  await page.locator('[data-login="wa"]').click();
+  await page.locator('.channel-qr-frame img').waitFor();
+  assert.equal((await page.locator('.channel-dialog h2').textContent()).trim(),'WhatsApp扫码接入');
+  const whatsappLayout=await scanLayout();
+  await page.evaluate(()=>window.holdQR=true);
+  await page.locator('[data-wechat-refresh]').click();
+  await page.locator('.channel-qr-loading').waitFor();
+  sameLayout(whatsappLayout,await scanLayout());
+  await page.evaluate(()=>{window.holdQR=false;window.releaseQR();});
+  await page.locator('.channel-qr-frame img').waitFor();
+  await page.evaluate(()=>window.fixture.statuses.wa={state:'login',message:'二维码已过期，请点击重新获取'});
+  await page.getByRole('heading',{name:'二维码已过期',exact:true}).waitFor();
+  await page.getByRole('button',{name:'重新获取二维码',exact:true}).click();
+  await page.locator('.channel-qr-frame img').waitFor();
+  await page.screenshot({path:path.join(artifacts,'whatsapp-qr.png')});
+  await page.evaluate(()=>window.fixture.statuses.wa={state:'online'});
+  await page.getByRole('heading',{name:'WhatsApp已连接',exact:true}).waitFor();
+  await page.locator('.channel-dialog [aria-label="关闭"]').click();
+  for(const id of ['tg','wa']){
+    await page.evaluate(id=>{
+      window.requests=[{sender_id:'1001',user_id:'1001',sender_name:'Alice',status:'approved',conversation_id:'1',first_message:'你好',created_at:1793890000},
+        {sender_id:'1002',user_id:'1002',sender_name:'Bob',status:'approved',conversation_id:'2',first_message:'另一个问题',created_at:1793890000}];
+      window.mount(id);
+    },id);
+    await page.getByRole('tab',{name:'会话管理',exact:true}).click();
+    await page.locator('.channel-application-table').waitFor();
+    assert.equal(await page.locator('[data-connection-overview]').count(),0);
+    assert.equal(await page.locator('[data-open-chat="1001"]').count(),3);
+    await page.locator('[data-open-chat="1001"]').last().click();
+    assert.match(await page.evaluate(()=>location.hash),new RegExp('channels/'+id+'/1'));
+    await page.evaluate(id=>{
+      window.historyFixture={thread:id+'-alice',can_send:true,recipient:'Alice',sessions:[],messages:[{id:'hello',role:'user',content:'你好',created_at:'2026-11-06T10:00:00Z'}]};
+      window.mount(id,'1');
+    },id);
+    const composer=page.locator('.channel-message-composer textarea');
+    await page.waitForFunction(()=>!document.querySelector('.channel-message-composer textarea').disabled);
+    await composer.fill('人工回复 '+id);await composer.press('Enter');
+    await page.waitForFunction(()=>document.querySelector('.channel-message-composer textarea').value==='');
+    await page.locator('[data-image-input]').setInputFiles({name:'说明.txt',mimeType:'text/plain',buffer:Buffer.from('你好')});
+    await page.waitForFunction(()=>document.querySelector('.channel-draft-file') && !document.querySelector('.channel-message-composer button[type="submit"]').disabled);
+    await page.locator('.channel-message-composer button[type="submit"]').click();
+    await page.locator('.channel-file-card').waitFor();
+    await page.screenshot({path:path.join(artifacts,id+'-chat.png')});
+    await page.setViewportSize({width:390,height:844});
+    assert(await composer.evaluate(e=>e.getBoundingClientRect().right<=innerWidth));
+    await page.screenshot({path:path.join(artifacts,id+'-chat-mobile.png'),fullPage:true});
+    await page.setViewportSize({width:1280,height:1000});
+  }
   assert.deepEqual(errors, []);
   console.log(
-    "WeChat states, stable QR refresh layout, verification, reconnect, Feishu setup, mobile layout and DingTalk isolation passed. Screenshots: " +
+    "WeChat/Feishu/DingTalk isolation, Telegram/WhatsApp multi-user chat, media, scan states and mobile layout passed. Screenshots: " +
       artifacts,
   );
 } finally {

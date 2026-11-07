@@ -92,13 +92,13 @@ window.CorkiChannelExperience = (() => {
       <div class="channel-connection-buttons"><button type="button" class="button" data-connection-settings>接入设置</button>${row.enabled && running ? '<button type="button" class="button" data-connection-disconnect>断开连接</button>' : ""}<button type="button" class="button primary" data-connection-primary="${primary}" ${connecting || pending ? 'disabled aria-busy="true"' : ""}>${primaryText}</button></div>
       ${error ? `<p class="channel-connection-error" role="status">${esc(error)}</p>` : ""}</div>`;
   }
-  function login({ phase, qr, message }) {
+  function login({ phase, qr, message, platform="微信" }) {
     const title = {
       scanned: "已扫码，请在手机上确认",
       verification: "手机验证",
       expired: "二维码已过期",
       error: "连接失败",
-      success: "微信已连接",
+      success: platform+"已连接",
     }[phase];
     const subtitle =
       phase === "error"
@@ -112,7 +112,7 @@ window.CorkiChannelExperience = (() => {
           ? message
           : "";
     const visual = ["qr", "scanned"].includes(phase)
-      ? `<div class="channel-qr-frame"><img width="232" height="232" alt="微信登录二维码" src="${esc(qr)}">${phase === "scanned" ? `<div class="channel-qr-confirmed">${icon("phone")}</div>` : ""}</div>`
+      ? `<div class="channel-qr-frame"><img width="232" height="232" alt="${esc(platform)}登录二维码" src="${esc(qr)}">${phase === "scanned" ? `<div class="channel-qr-confirmed">${icon("phone")}</div>` : ""}</div>`
       : phase === "loading"
         ? `<div class="channel-qr-frame channel-qr-loading" aria-label="正在获取二维码"><span class="channel-qr-corner a"></span><span class="channel-qr-corner b"></span><span class="channel-qr-corner c"></span><span class="channel-qr-corner d"></span><div class="channel-qr-grid"></div><span class="channel-login-loader" aria-hidden="true"></span></div>`
         : phase === "verification"
@@ -123,7 +123,7 @@ window.CorkiChannelExperience = (() => {
       ${phase === "verification" ? heading + visual : visual + heading}
       ${["qr", "loading"].includes(phase) ? `<button type="button" class="channel-login-refresh ${phase === "loading" ? "is-loading" : ""}" data-wechat-refresh ${phase === "loading" ? 'disabled aria-busy="true"' : ""}>${icon("refresh")}<span>刷新二维码</span></button>` : ""}
       ${["expired", "error"].includes(phase) ? '<button type="button" class="button primary" data-wechat-refresh>重新获取二维码</button>' : ""}
-      ${phase === "success" ? '<button type="button" class="button primary" data-wechat-history>查看会话历史</button>' : ""}
+      ${phase === "success" ? `<button type="button" class="button primary" data-wechat-history>${platform==='WhatsApp'?'查看会话':'查看会话历史'}</button>` : ""}
       </section>`;
   }
   return { summary, login };

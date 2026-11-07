@@ -136,6 +136,7 @@ window.CorkiChannels = (() => {
   function draw() {
     if (!root || !data) return;
     if (selected) {
+      host.onConnectionName?.(selected,data.connections.find(c=>c.id===selected)?.name || '');
       if (!data.connections.some(c => c.id === selected)) {
         root.innerHTML = '<section class="panel channel-empty">接入不存在<a href="#channels">返回转发网关</a></section>';
       } else if (!root.querySelector('.channel-management')) configure(selected);
@@ -636,7 +637,7 @@ window.CorkiChannels = (() => {
     };
     const help = instructions[c.id] ?? (c.standard ? "通过标准 HTTP 协议接收问题并发送回复。" : "请仅使用可信来源的连接器。");
     const replies=[['validation_first_reply','拒绝文案','您暂无机器人使用权限，请联系管理员'],['validation_approved_reply','授权通知','管理员已为您开通权限，现在可以开始对话了'],['validation_disabled_reply','拒绝通知','管理员已经关闭了您的权限']];
-    const body = `<div class="channel-connection-form">${!["wechat","feishu"].includes(c.id) && help ? `<p class="channel-help">${esc(help)}</p>` : ""}
+    const body = `<div class="channel-connection-form">${!["wechat","feishu","telegram","whatsapp"].includes(c.id) && help ? `<p class="channel-help">${esc(help)}</p>` : ""}
       <div class="channel-form-grid channel-identity-fields">
         <label class="channel-field channel-name-field channel-full-field"><span>接入名称</span><input name="_name" maxlength="60" required value="${esc(account?.name || "")}" placeholder="为此账号取个名字"></label>
       </div>
@@ -696,14 +697,13 @@ window.CorkiChannels = (() => {
       applicationRows=new Map();applicationActivity={};applicationBefore=null;applicationRevision++;
       selectedThread=null;sessionItems=new Map();sessionsBefore=undefined;threadGeneration++;historyLoading=false;
       root.innerHTML = `<div class="channel-management">
-        ${['wechat','feishu'].includes(c.id) ? '<div data-connection-overview></div>' : ''}
         <div class="channel-detail-toolbar"><div class="channel-detail-tabs" role="tablist" aria-label="接入管理">
 <button type="button" role="tab" id="channel-tab-settings" aria-controls="channel-pane-settings" data-channel-tab="settings">会话设置</button><button type="button" role="tab" id="channel-tab-applications" aria-controls="channel-pane-applications" data-channel-tab="${c.id==='wechat'?'history':'applications'}" >${c.id==='wechat'?'会话历史':'会话管理'}</button></div>
           <button class="button channel-reset-all" data-reset-conversation>${c.id==='wechat'?'重置会话':'重置全部会话'}</button></div>
         <div class="channel-queue-alert" hidden></div><div class="channel-manage-grid"><section class="panel channel-chat-panel" role="tabpanel" id="channel-pane-history" aria-label="会话">
           <div class="channel-chat-layout channel-chat-single"><div class="channel-transcript"><div class="channel-chat-scroll"><button class="text-button channel-more" hidden>加载更早的消息</button><div class="channel-chat-messages"></div><div class="channel-chat-empty">正在读取会话…</div></div>
-          ${['dingtalk','wechat'].includes(c.id)?`<form class="channel-message-composer">${c.id==='wechat'?'<div class="channel-composer-images" hidden></div>':''}<textarea aria-label="发送${c.name}消息" placeholder="${c.id==='wechat'?'等待对方发送消息':'选择联系人后发送消息'}" rows="2" maxlength="2000" disabled></textarea><div class="channel-composer-foot">${c.id==='wechat'?'<button type="button" class="channel-image-attach" data-attach-image aria-label="添加附件" title="添加附件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.5"/><path d="m4 17 5-5 4 4 3-3 5 5"/></svg></button><input type="file" data-image-input multiple hidden>':''}<span data-message-recipient></span><button type="submit" class="button primary" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m21 3-7 18-4-7-7-4 18-7ZM10 14 21 3"/></svg><span>发送</span></button></div></form>`:''}<p class="channel-history-error" role="status"></p></div></div></section>
-        <section class="panel channel-account-settings" role="tabpanel" id="channel-pane-settings" aria-labelledby="channel-tab-settings"><form><div class="panel-head"><h2>基本信息</h2><button type="button" class="button" data-page-edit>编辑</button></div><div class="channel-settings-scroll"><fieldset class="channel-basic-fields" disabled>${body}</fieldset></div><p class="channel-form-error" role="alert"></p><div class="channel-settings-foot" hidden><button class="button" type="button" data-page-cancel>取消</button><button class="button primary" type="submit" data-page-save>保存</button></div></form></section><section class="panel channel-applications" role="tabpanel" id="channel-pane-applications" aria-labelledby="channel-tab-applications" hidden><div class="channel-application-filters"><label class="channel-application-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input type="search" aria-label="搜索用户昵称或者ID" placeholder="搜索用户昵称或者ID" maxlength="80" value="${esc(applicationName)}"></label><div class="channel-application-status">${selectField('application_status',[['','全部状态'],['pending','审批中'],['approved','已接入'],['disabled','已禁用']],applicationStatus)}</div><div class="channel-application-sort">${selectField('application_sort',[['id','会话ID'],['last_chat','上次对话'],['tokens','token用量']],applicationSort)}</div></div><div class="channel-applications-content" aria-live="polite"></div><button type="button" class="text-button" data-more-applications hidden>加载更多</button><p class="channel-applications-error" role="alert"></p></section></div></div>`;
+          ${['dingtalk','wechat','telegram','whatsapp'].includes(c.id)?`<form class="channel-message-composer">${['wechat','telegram','whatsapp'].includes(c.id)?'<div class="channel-composer-images" hidden></div>':''}<textarea aria-label="发送${c.name}消息" placeholder="${c.id==='wechat'?'等待对方发送消息':'选择联系人后发送消息'}" rows="2" maxlength="2000" disabled></textarea><div class="channel-composer-foot">${['wechat','telegram','whatsapp'].includes(c.id)?'<button type="button" class="channel-image-attach" data-attach-image aria-label="添加附件" title="添加附件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.5"/><path d="m4 17 5-5 4 4 3-3 5 5"/></svg></button><input type="file" data-image-input multiple hidden>':''}<span data-message-recipient></span><button type="submit" class="button primary" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m21 3-7 18-4-7-7-4 18-7ZM10 14 21 3"/></svg><span>发送</span></button></div></form>`:''}<p class="channel-history-error" role="status"></p></div></div></section>
+        <section class="panel channel-account-settings" role="tabpanel" id="channel-pane-settings" aria-labelledby="channel-tab-settings"><form><div class="panel-head"><div class="channel-settings-heading"><span class="channel-settings-type" role="img" aria-label="${esc(c.name)}" title="${esc(c.name)}">${avatar(c.id,c.builtin)}</span><h2>基本信息</h2></div><button type="button" class="button" data-page-edit>编辑</button></div><div class="channel-settings-scroll"><fieldset class="channel-basic-fields" disabled>${body}</fieldset></div><p class="channel-form-error" role="alert"></p><div class="channel-settings-foot" hidden><button class="button" type="button" data-page-cancel>取消</button><button class="button primary" type="submit" data-page-save>保存</button></div></form></section><section class="panel channel-applications" role="tabpanel" id="channel-pane-applications" aria-labelledby="channel-tab-applications" hidden><div class="channel-application-filters"><label class="channel-application-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input type="search" aria-label="搜索用户昵称或者ID" placeholder="搜索用户昵称或者ID" maxlength="80" value="${esc(applicationName)}"></label><div class="channel-application-status">${selectField('application_status',[['','全部状态'],['pending','审批中'],['approved','已接入'],['disabled','已禁用']],applicationStatus)}</div><div class="channel-application-sort">${selectField('application_sort',[['id','会话ID'],['last_chat','上次对话'],['tokens','token用量']],applicationSort)}</div></div><div class="channel-applications-content" aria-live="polite"></div><button type="button" class="text-button" data-more-applications hidden>加载更多</button><p class="channel-applications-error" role="alert"></p></section></div></div>`;
       el = root.querySelector('.channel-account-settings');
       const wechat = c.id === 'wechat';
       if(wechat) {
@@ -1208,12 +1208,13 @@ window.CorkiChannels = (() => {
     const form=root?.querySelector('.channel-message-composer');if(!form)return;
     const key=selected+'/'+selectedThread,input=form.querySelector('textarea'),button=form.querySelector('button[type="submit"]');
     const draft=chatDrafts.get(key),pending=chatSends.has(key);
-    if(document.activeElement!==input || input.dataset.contact!==key)input.value=draft?.text || '';
+    if(!draft || document.activeElement!==input || input.dataset.contact!==key)input.value=draft?.text || '';
     input.dataset.contact=key;
-    const wechat=data.connections.find(c=>c.id===selected)?.channel==='wechat';
+    const platform=data.connections.find(c=>c.id===selected)?.channel;
+    const wechat=['wechat','telegram','whatsapp'].includes(platform);
     const connected=!wechat || data.running && data.connections.find(c=>c.id===selected)?.enabled && data.statuses[selected]?.state==='online';
     input.disabled=!selectedThread || pending || !historyState?.can_send || !connected;
-    input.placeholder=wechat ? !connected?'微信未连接':!selectedThread || !historyState?.can_send?'等待对方发送消息':'输入要发送的消息' : selectedThread && !historyState?.can_send?'当前联系人缺少 userId 或接入未启用':'输入要发送的消息';
+    input.placeholder=wechat ? !connected?'渠道未连接':!selectedThread || !historyState?.can_send?'等待对方发送消息':'输入要发送的消息' : selectedThread && !historyState?.can_send?'当前联系人缺少 userId 或接入未启用':'输入要发送的消息';
     button.disabled=input.disabled || !!chatUploads.get(key) || (!input.value.trim() && !(draft?.images || []).some(i=>i.id));
     button.querySelector('span').textContent=pending?'发送中…':'发送';
     const recipient=historyState?.recipient || '';
@@ -1335,14 +1336,14 @@ window.CorkiChannels = (() => {
   function login(id) {
     const account = data.connections.find(c => c.id === id);
     const el = dialog(
-      account?.channel === 'wechat' ? '微信扫码接入' : `${channelName(id)} · 登录`,
+      ['wechat','whatsapp'].includes(account?.channel) ? `${account.channel==='wechat'?'微信':'WhatsApp'}扫码接入` : `${channelName(id)} · 登录`,
       '<div class="channel-login"></div>',
       null,
     );
     modal.login = id;
-    if (account?.channel === 'wechat') el.classList.add('channel-wechat-login');
+    if (['wechat','whatsapp'].includes(account?.channel)) el.classList.add('channel-wechat-login');
     updateLogin();
-    if (account?.channel === "wechat" &&
+    if (["wechat","whatsapp"].includes(account?.channel) &&
         !["qr", "scanned", "verification", "online"].includes(data.statuses[id]?.state))
       void requestWechatLogin(id);
   }
@@ -1354,7 +1355,7 @@ window.CorkiChannels = (() => {
     updateLogin();
     try {
       const result = await host.api("mutate", {
-        kind: "channel-gateway", action: "wechat-login", id, refresh,
+        kind: "channel-gateway", action: data.connections.find(c=>c.id===id)?.channel==='whatsapp'?'channel-login':'wechat-login', id, refresh,
       });
       if (generation !== epoch || modal !== current) return;
       revision++;
@@ -1374,7 +1375,8 @@ window.CorkiChannels = (() => {
     const box = modal.el.querySelector(".channel-login"),
       value = data.statuses[modal.login];
     if (!box) return;
-    const wechat = data.connections.find(c => c.id === modal.login)?.channel === "wechat";
+    const platform=data.connections.find(c => c.id === modal.login)?.channel;
+    const wechat = ["wechat","whatsapp"].includes(platform);
     if (wechat && window.CorkiChannelExperience) {
       const phase = modal.requesting ? 'loading' : modal.loginError ? 'error' :
         value?.state === 'online' ? 'success' :
@@ -1384,13 +1386,14 @@ window.CorkiChannels = (() => {
       const key = JSON.stringify([phase, value?.qr, modal.loginError || value?.message]);
       if (box.dataset.renderKey === key) return;
       box.dataset.renderKey = key;
-      box.innerHTML = window.CorkiChannelExperience.login({phase, qr:value?.qr, message:modal.loginError || value?.message});
+      box.innerHTML = window.CorkiChannelExperience.login({phase, qr:value?.qr, message:modal.loginError || value?.message, platform:platform==='whatsapp'?'WhatsApp':'微信'});
       box.querySelector('[data-wechat-refresh]')?.addEventListener('click', () => void requestWechatLogin(modal.login, true));
       box.querySelector('[data-wechat-history]')?.addEventListener('click', () => {
         const id = modal.login;
         closeDialog();
-        if(selected === id) root._showChannelTab?.('history');
-        else { rememberTab(id, 'history'); location.hash = 'channels/' + encodeURIComponent(id); }
+        const tab=platform==='whatsapp'?'applications':'history';
+        if(selected === id) root._showChannelTab?.(tab);
+        else { rememberTab(id, tab); location.hash = 'channels/' + encodeURIComponent(id); }
       });
       const verify = box.querySelector('[data-wechat-verify]'), input = box.querySelector('input');
       if (verify) {

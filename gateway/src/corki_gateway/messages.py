@@ -39,9 +39,17 @@ class Messages:
                 db.execute(
                     "ALTER TABLE dingtalk_messages ADD COLUMN images TEXT NOT NULL DEFAULT '[]'"
                 )
-            for name, default in (('recall_receipt', '{}'), ('recall_state', ''), ('recall_error', ''), ('recalled_at', '')):
+            for name, default in (
+                ("recall_receipt", "{}"),
+                ("recall_state", ""),
+                ("recall_error", ""),
+                ("recalled_at", ""),
+            ):
                 if name not in columns:
-                    db.execute(f"ALTER TABLE dingtalk_messages ADD COLUMN {name} TEXT NOT NULL DEFAULT '{default}'")
+                    db.execute(
+                        f"ALTER TABLE dingtalk_messages ADD COLUMN {name} "
+                        f"TEXT NOT NULL DEFAULT '{default}'"
+                    )
         if not seeded:
             self.seed()
             with store.db() as db:
@@ -168,8 +176,11 @@ class Messages:
                 ("发送中断，送达情况未知，未自动重发",),
             )
 
-            db.execute("UPDATE dingtalk_messages SET recall_state='failed',recall_error=? WHERE recall_state='recalling'",
-                       ('撤回中断，结果未确认，请稍后重试',))
+            db.execute(
+                "UPDATE dingtalk_messages SET recall_state='failed',recall_error=? "
+                "WHERE recall_state='recalling'",
+                ("撤回中断，结果未确认，请稍后重试",),
+            )
 
     def peer(self, channel, session):
         if not isinstance(session, str) or not re.fullmatch(r"dt:[1-9][0-9]{0,18}", session):
@@ -323,9 +334,15 @@ async def send_logged(host, channel, params, *, timeout=45, kind="agent"):
     if connector is None:
         raise ValueError("渠道已断开")
     row = host.store.connection(channel)
-    if row["type_id"] not in ("dingtalk", "wechat"):
+    if row["type_id"] not in ("dingtalk", "wechat", "telegram", "whatsapp"):
         return await connector.call("send", params, timeout=timeout)
-    ledger = host.store.wechat_messages if row["type_id"] == "wechat" else host.store.messages
+    ledger = (
+        host.store.direct_messages
+        if row["type_id"] in ("telegram", "whatsapp")
+        else host.store.wechat_messages
+        if row["type_id"] == "wechat"
+        else host.store.messages
+    )
     message = params["message"]
     key = (
         ("notice:" + params["notice_id"])
@@ -333,8 +350,19 @@ async def send_logged(host, channel, params, *, timeout=45, kind="agent"):
         else params.get("record_key") or "answer:" + message["id"]
     )
     entry = ledger.record(
-        channel, message, key, "assistant", kind, params["text"], "sending", images=params.get("images", ()),
-        **({"files": params.get("files", ())} if row["type_id"] == "wechat" else {})
+        channel,
+        message,
+        key,
+        "assistant",
+        kind,
+        params["text"],
+        "sending",
+        images=params.get("images", ()),
+        **(
+            {"files": params.get("files", ())}
+            if row["type_id"] in ("wechat", "telegram", "whatsapp")
+            else {}
+        ),
     )
     if entry["status"] not in ("sending", "queued"):
         if entry["status"] == "sent":
@@ -359,13 +387,25 @@ async def manual_send(host, data):
     if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,80}", key):
         raise ValueError("发送请求标识无效")
     row = host.store.connection(channel)
-    image_only = row and row["type_id"] == "wechat" and bool(data.get("images") or data.get("files"))
+    image_only = (
+        row
+        and row["type_id"] in ("wechat", "telegram", "whatsapp")
+        and bool(data.get("images") or data.get("files"))
+    )
     if not isinstance(text, str) or len(text) > 2000 or (not text.strip() and not image_only):
-        raise ValueError("请输入消息或添加附件" if row and row["type_id"] == "wechat" else "请输入 1–2000 字的消息")
+        raise ValueError(
+            "请输入消息或添加附件"
+            if row and row["type_id"] == "wechat"
+            else "请输入 1–2000 字的消息"
+        )
     if row and row["type_id"] == "wechat":
         from .wechat_messages import manual_send as wechat_manual_send
 
         return await wechat_manual_send(host, data)
+    if row and row["type_id"] in ("telegram", "whatsapp"):
+        from .direct_messages import manual_send as direct_manual_send
+
+        return await direct_manual_send(host, data)
     if (
         not row
         or row["type_id"] != "dingtalk"

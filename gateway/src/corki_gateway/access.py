@@ -23,6 +23,35 @@ class AccessRequests:
             return True
         channel, sender = row["id"], message["sender"]
         with self.db() as db:
+            if row["type_id"] in ("telegram", "whatsapp"):
+                opened = db.execute(
+                    "SELECT 1 FROM direct_open_contacts WHERE channel=? AND sender=?",
+                    (channel, sender),
+                ).fetchone()
+                receipt = db.execute(
+                    "SELECT status FROM receipts WHERE channel=? AND id=?", (channel, message["id"])
+                ).fetchone()
+                if opened and (not receipt or receipt[0] in ("queued", "running")):
+                    db.execute(
+                        "UPDATE access_requests SET first_message=?,first_message_id=?,"
+                        "created_at=? WHERE channel=? AND sender_id=?",
+                        (message["text"], message["id"], time.time(), channel, sender),
+                    )
+                    db.execute(
+                        "DELETE FROM direct_open_contacts WHERE channel=? AND sender=?",
+                        (channel, sender),
+                    )
+                    db.execute(
+                        "INSERT INTO access_delivery(channel,sender_id,message) VALUES(?,?,?) "
+                        "ON CONFLICT(channel,sender_id) DO UPDATE SET message=excluded.message",
+                        (channel, sender, json.dumps(message)),
+                    )
+                    decision = db.execute(
+                        "SELECT status FROM access_requests WHERE channel=? AND sender_id=?",
+                        (channel, sender),
+                    ).fetchone()
+                    if not remember and decision and decision[0] != "approved":
+                        self.queue_access_notice(db, row, sender, "pending")
             found = db.execute(
                 "SELECT status FROM access_requests WHERE channel=? AND sender_id=?",
                 (channel, sender),
@@ -45,13 +74,23 @@ class AccessRequests:
                 if found[0] != "approved":
                     self.record_denied(db, channel, message)
                 return found[0] == "approved"
-            db.execute("BEGIN IMMEDIATE")
+            if not db.in_transaction:
+                db.execute("BEGIN IMMEDIATE")
             name = message.get("name")
+            direct = row["type_id"] in ("telegram", "whatsapp")
+            if direct:
+                from .direct_messages import next_request_id
+
+                request_id = next_request_id(db)
             inserted = db.execute(
                 "INSERT OR IGNORE INTO access_requests "
-                "(channel,sender_id,sender_name,first_message,first_message_id,"
-                "external_conversation_id,created_at,status) VALUES(?,?,?,?,?,?,?,'pending')",
-                (
+                + ("(rowid," if direct else "(")
+                + "channel,sender_id,sender_name,first_message,first_message_id,"
+                "external_conversation_id,created_at,status) VALUES("
+                + ("?," if direct else "")
+                + "?,?,?,?,?,?,?,'pending')",
+                ((request_id,) if direct else ())
+                + (
                     channel,
                     sender,
                     name[:80] if isinstance(name, str) else sender[:80],
@@ -130,10 +169,13 @@ class AccessRequests:
                 valid = type(before) is int and 0 < before < 2**63
             else:
                 valid = (
-                    isinstance(before, dict) and before.get("sort") == sort
-                    and type(before.get("id")) is int and 0 < before["id"] < 2**63
+                    isinstance(before, dict)
+                    and before.get("sort") == sort
+                    and type(before.get("id")) is int
+                    and 0 < before["id"] < 2**63
                     and type(before.get("value")) in (int, float)
-                    and math.isfinite(before["value"]) and before["value"] >= 0
+                    and math.isfinite(before["value"])
+                    and before["value"] >= 0
                 )
             if not valid:
                 raise ValueError("申请列表游标无效")
@@ -170,6 +212,8 @@ class AccessRequests:
             "coalesce((SELECT max(r.last_seen) FROM routes r "
             "WHERE r.channel=a.channel AND r.sender_id=a.sender_id),0))"
         )
+        if connection["type_id"] in ("telegram", "whatsapp"):
+            last_chat = last_chat.replace("dingtalk_messages", "direct_messages")
         field = {"id": "cursor", "last_chat": "last_chat_at", "tokens": "token_sort"}[sort]
         with self.db() as db:
             prefix, usage_join, token_value = "", "", "0"
@@ -199,29 +243,47 @@ class AccessRequests:
                 "substr(a.first_message,1,240) AS first_message,a.created_at,a.status,"
                 "d.status AS notification_status,d.error AS notification_error, "
                 "d.kind AS notification_kind,d.updated AS notification_time, "
-                "d.notice_id AS notification_id, " + user_id + " AS user_id, "
-                + last_chat + " AS last_chat_at," + token_value + " AS token_sort "
+                "d.notice_id AS notification_id, "
+                + user_id
+                + " AS user_id, "
+                + last_chat
+                + " AS last_chat_at,"
+                + token_value
+                + " AS token_sort "
                 "FROM access_requests a LEFT JOIN access_delivery d "
-                "ON d.channel=a.channel AND d.sender_id=a.sender_id " + usage_join + " WHERE "
-                + " AND ".join(conditions) + ") SELECT * FROM candidates " + boundary
-                + f"ORDER BY {field} DESC,cursor DESC LIMIT 101", query_args,
+                "ON d.channel=a.channel AND d.sender_id=a.sender_id "
+                + usage_join
+                + " WHERE "
+                + " AND ".join(conditions)
+                + ") SELECT * FROM candidates "
+                + boundary
+                + f"ORDER BY {field} DESC,cursor DESC LIMIT 101",
+                query_args,
             ).fetchall()
         requests = [dict(r) for r in rows[:100]]
-        usage = (self.user_usage.totals(channel, [r['sender_id'] for r in requests])
-                 if sort != "tokens" else {})
+        usage = (
+            self.user_usage.totals(channel, [r["sender_id"] for r in requests])
+            if sort != "tokens"
+            else {}
+        )
         for row in requests:
-            row['conversation_id'] = str(row['cursor'])
-            row['token_usage'] = (
-                row.pop('token_sort') if sort == "tokens" else usage[row['sender_id']]
+            row["conversation_id"] = str(row["cursor"])
+            row["token_usage"] = (
+                row.pop("token_sort") if sort == "tokens" else usage[row["sender_id"]]
             )
-            row.pop('token_sort', None)
+            row.pop("token_sort", None)
         cursor = None
         if len(rows) > 100:
             last = requests[-1]
-            cursor = (last['cursor'] if sort == "id" else {
-                "sort": sort, "id": last['cursor'],
-                "value": last['last_chat_at'] if sort == "last_chat" else last['token_usage'],
-            })
+            cursor = (
+                last["cursor"]
+                if sort == "id"
+                else {
+                    "sort": sort,
+                    "id": last["cursor"],
+                    "value": last["last_chat_at"] if sort == "last_chat" else last["token_usage"],
+                }
+            )
         return {"requests": requests, "before": cursor}
 
     def set_application_status(self, channel, sender, status):

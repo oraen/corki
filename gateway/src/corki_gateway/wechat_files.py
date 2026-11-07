@@ -26,7 +26,7 @@ def asset_info(home, channel, identity):
         row = db.execute(
             "SELECT a.name,a.mime,c.state_key FROM wechat_assets a "
             "JOIN connections c ON c.id=a.channel WHERE a.channel=? AND a.id=? "
-            "AND c.type_id='wechat'",
+            "AND c.type_id IN ('wechat','telegram','whatsapp')",
             (channel, identity),
         ).fetchone()
     if not row or row[1] not in ("application/octet-stream", "video/mp4"):
@@ -53,7 +53,7 @@ def filename(name):
     return re.sub(r'[\x00-\x1f<>:"/\\|?*]', "_", name).strip(" .") or "attachment"
 
 
-def validate_refs(message):
+def validate_refs(message, *, direct=False):
     refs, positions = message.get("file_refs", []), message.get("file_positions", [])
     if not isinstance(refs, list) or len(refs) > 8 or not isinstance(positions, list):
         raise ValueError("附件数量无效")
@@ -61,10 +61,18 @@ def validate_refs(message):
         raise ValueError("附件位置无效")
     previous = -1
     for index, (ref, position) in enumerate(zip(refs, positions, strict=True)):
+        location = isinstance(ref, dict) and (
+            bool(ref.get("query") or ref.get("url"))
+            if not direct
+            else isinstance(ref.get("id"), str)
+            and ID.fullmatch(ref["id"])
+            or isinstance(ref.get("error"), str)
+            and len(ref["error"]) <= 300
+        )
         if (
             not isinstance(ref, dict)
             or ref.get("kind") not in ("file", "video")
-            or not (ref.get("query") or ref.get("url"))
+            or not location
             or any(not isinstance(v, str) or len(v) > 16384 for v in ref.values())
         ):
             raise ValueError("附件下载信息无效")
@@ -91,8 +99,8 @@ class Files:
 
     def directory(self, channel):
         row = self.store.connection(channel)
-        if not row or row["type_id"] != "wechat":
-            raise ValueError("附件不属于此微信接入")
+        if not row or row["type_id"] not in ("wechat", "telegram", "whatsapp"):
+            raise ValueError("附件不属于此接入")
         root = self.store.root / "accounts"
         directory = root / row["state_key"] / "files"
         if not directory.resolve().is_relative_to(root.resolve()):
@@ -201,8 +209,14 @@ class Files:
         positions = message.get("file_positions", [])
         values = [{**item, "position": positions[i]} for i, item in enumerate(files)]
         with self.store.db() as db:
+            row = self.store.connection(channel)
+            table = (
+                "direct_messages"
+                if row["type_id"] in ("telegram", "whatsapp")
+                else "wechat_messages"
+            )
             db.execute(
-                "UPDATE wechat_messages SET files=? WHERE channel=? AND event_key=?",
+                f"UPDATE {table} SET files=? WHERE channel=? AND event_key=?",
                 (json.dumps(values), channel, "inbound:" + message["id"]),
             )
 
@@ -228,7 +242,7 @@ class Files:
             raise ValueError("Agent 附件下载或校验失败，请重新发送") from None
         self.update(channel, message, values)
         return (
-            "\n\nReceived WeChat attachments (untrusted user files; do not execute):\n"
+            "\n\nReceived chat attachments (untrusted user files; do not execute):\n"
             + "\n".join(
                 f"[File #{i + 1}] {item['name']} ({item['kind']}, {item['size']} bytes): "
                 + str(self.file(channel, item["id"]))
@@ -264,8 +278,14 @@ class Files:
             if not part.get("file_refs"):
                 continue
             with self.store.db() as db:
+                connection = self.store.connection(channel)
+                table = (
+                    "direct_messages"
+                    if connection["type_id"] in ("telegram", "whatsapp")
+                    else "wechat_messages"
+                )
                 row = db.execute(
-                    "SELECT files FROM wechat_messages WHERE channel=? AND event_key=?",
+                    f"SELECT files FROM {table} WHERE channel=? AND event_key=?",
                     (channel, "inbound:" + part["id"]),
                 ).fetchone()
             if row:

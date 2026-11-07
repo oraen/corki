@@ -48,7 +48,11 @@ class Agent:
             settings, model_unbounded_connection_retries=False, model_request_max_retries=3
         )
         runtime_options = {}
-        if (self.host.store.connection(channel) or {}).get("type_id") == "wechat":
+        if (self.host.store.connection(channel) or {}).get("type_id") in (
+            "wechat",
+            "telegram",
+            "whatsapp",
+        ):
             from .wechat_file_tools import SendWeChatFile
             from .wechat_tools import SendWeChatImage
 

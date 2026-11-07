@@ -13,10 +13,10 @@ from .access import REPLY_DEFAULTS, AccessRequests
 from .connections import Connections, DuplicateAccount
 
 BUILTINS = {
-    "whatsapp": {"name": "WhatsApp", "description": "扫码连接 · 私聊文本", "fields": []},
+    "whatsapp": {"name": "WhatsApp", "description": "扫码连接 · 多用户私聊", "fields": []},
     "telegram": {
         "name": "Telegram",
-        "description": "Bot Token 接入 · 私聊文本",
+        "description": "Bot Token 接入 · 多用户私聊",
         "fields": [{"key": "token", "label": "Bot Token", "secret": True, "required": True}],
     },
     "feishu": {
@@ -146,6 +146,9 @@ class Store(Connections, AccessRequests):
         from .wechat_files import Files
 
         self.wechat_files = Files(self)
+        from .direct_messages import DirectMessages
+
+        self.direct_messages = DirectMessages(self)
 
     @contextmanager
     def db(self):
@@ -457,6 +460,9 @@ class Store(Connections, AccessRequests):
                 db.execute("DELETE FROM routes WHERE channel=?", (channel,))
                 db.execute("DELETE FROM receipts WHERE channel=?", (channel,))
                 db.execute("DELETE FROM cursors WHERE channel=?", (channel,))
+                if row["type_id"] in ("telegram", "whatsapp"):
+                    for table in ("direct_contacts", "direct_open_contacts", "access_requests", "access_delivery", "access_notice_queue"):
+                        db.execute(f"DELETE FROM {table} WHERE channel=?", (channel,))
             db.execute("UPDATE connections SET account=? WHERE id=?", (identity, channel))
         if row[0] and row[0] != identity:
             self.reset_conversation(channel)

@@ -16,15 +16,17 @@ from .wechat_files import MAX_BYTES
 class SendWeChatFile:
     def __init__(self, host, channel, thread, *, video=False):
         self.host, self.channel, self.thread, self.video = host, channel, thread, video
+        self.platform = (host.store.connection(channel) or {}).get("type_id", "wechat")
 
     @property
     def spec(self):
         kind = "MP4 video" if self.video else "file"
         return ToolSpec(
-            name="send_wechat_video" if self.video else "send_wechat_file",
-            description=f"Send a local {kind} to the current WeChat user when requested. "
+            name=f"send_{self.platform}_video" if self.video else f"send_{self.platform}_file",
+            description=f"Send a local {kind} to the current {self.platform} user when requested. "
             "Create the file first; reads follow session permissions. Only claim delivery "
-            "after success. Never execute received attachments. Use send_wechat_image for images.",
+            "after success. Never execute received attachments. "
+            f"Use send_{self.platform}_image for images.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -45,7 +47,7 @@ class SendWeChatFile:
         delivery = self.host.deliveries.get(self.thread)
         row = self.host.store.connection(self.channel)
         if not delivery or delivery[0] != self.channel or not row or not row["enabled"]:
-            raise ValueError("微信会话已断开，附件未发送")
+            raise ValueError("会话已断开，附件未发送")
         path = Path(source)
         path = path if path.is_absolute() else context.cwd / path
         if context.execution_permissions is None:
@@ -80,7 +82,7 @@ class SendWeChatFile:
             or self.host.stopping
             or not (self.host.store.connection(self.channel) or {}).get("enabled")
         ):
-            raise ValueError("微信会话已更换或关闭，附件未发送")
+            raise ValueError("会话已更换或关闭，附件未发送")
         result = await send_logged(
             self.host,
             self.channel,
@@ -94,5 +96,5 @@ class SendWeChatFile:
             kind="agent",
         )
         if not result.get("sent"):
-            raise ValueError("微信未确认附件发送")
+            raise ValueError("渠道未确认附件发送")
         return ToolResult(call.id, call.name, json.dumps({"sent": True, "file": info["id"]}))

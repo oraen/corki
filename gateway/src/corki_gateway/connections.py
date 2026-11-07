@@ -232,6 +232,13 @@ class Connections:
                 raise ValueError("此渠道已有同名接入")
             if validate_only:
                 return identity
+            if (old and type_id in ("telegram", "whatsapp")
+                and old["config"].get("session_validation") != "true"
+                and config.get("session_validation") == "true"):
+                # Listing an open contact must never silently grant gate authorization.
+                db.execute("UPDATE access_requests SET status='pending' WHERE channel=? AND sender_id IN "
+                           "(SELECT sender FROM direct_open_contacts WHERE channel=?)",
+                           (identity, identity))
             if new_group:
                 db.execute(
                     "INSERT INTO conversations VALUES(?,?,?,?)",
@@ -257,6 +264,9 @@ class Connections:
             )
             if changed:
                 db.execute("UPDATE connections SET account='' WHERE id=?", (identity,))
+                if type_id in ("telegram", "whatsapp"):
+                    db.execute("DELETE FROM direct_contacts WHERE channel=?", (identity,))
+                    db.execute("DELETE FROM direct_open_contacts WHERE channel=?", (identity,))
         if old and (new_group or changed) and hasattr(self, "http_queue"):
             self.http_queue.skip_pending(identity)
         return identity
@@ -277,6 +287,9 @@ class Connections:
                 "wechat_contacts",
                 "wechat_messages",
                 "wechat_assets",
+                "direct_contacts",
+                "direct_messages",
+                "direct_open_contacts",
                 "user_usage_threads",
             ):
                 db.execute(f"DELETE FROM {table} WHERE channel=?", (identity,))

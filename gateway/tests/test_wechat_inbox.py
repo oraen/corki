@@ -148,3 +148,29 @@ def test_stop_during_pairing_cancels_all_receipts_and_attachment_placeholders(tm
             await host.close()
 
     asyncio.run(scenario())
+
+
+def test_telegram_album_keeps_caption_and_several_photos_together(monkeypatch):
+    from corki_gateway.wechat_inbox import WeChatBatch
+
+    monkeypatch.setattr("corki_gateway.wechat_inbox.PAIR_WAIT", 0.01)
+
+    async def scenario():
+        first = {
+            "id": "photo-one",
+            "media_group_id": "album",
+            "text": "Compare\n[Image #1]",
+            "image_refs": [{"id": "a" * 64}],
+            "image_positions": [8],
+        }
+        batch = WeChatBatch(first)
+        assert not batch.paired
+        assert batch.append(
+            {**first, "id": "photo-two", "text": "[Image #1]", "image_positions": [0]}
+        )
+        assert not batch.append({**first, "id": "other-album", "media_group_id": "other"})
+        combined = await batch.collect()
+        assert combined["text"] == "Compare\n[Image #1]\n[Image #2]"
+        assert len(combined["image_refs"]) == 2
+
+    asyncio.run(scenario())

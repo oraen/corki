@@ -709,6 +709,10 @@
 .channel-account-settings .panel-head { display:flex; align-items:center; justify-content:space-between; }
 .channel-account-settings .panel-head { padding:0; width:100%; text-align:left; }
 .channel-account-settings .panel-head h2 { margin:0 auto 0 0; text-align:left; }
+.channel-settings-heading { display:flex; align-items:center; gap:10px; min-width:0; margin-right:auto; }
+.channel-settings-type { display:inline-flex; align-items:center; justify-content:center; flex:none; width:24px; height:24px; }
+.channel-settings-type > img,.channel-settings-type > svg { display:block; width:22px; height:22px; object-fit:contain; }
+.channel-settings-type .channel-initials { font-size:10px; }
 .channel-account-settings { overflow:hidden; }
 .channel-account-settings > form { display:flex; flex-direction:column; min-height:0; max-height:max(240px,calc(100dvh - 244px)); }
 .channel-account-settings .panel-head,
