@@ -5,7 +5,6 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
-from corki.cli.history_projection import HistoryProjection
 from corki.protocol.ids import ThreadId
 from corki.protocol.items import AssistantMessageItem, UserMessageItem
 from corki.sessions.display import DisplayItemsCursor
@@ -97,7 +96,7 @@ def core_history(store, identity, params, live):
                 if before is not None
                 else None
             )
-        visible = HistoryProjection(page.leading_replacements).feed(page.items)
+        visible = page.items
         turn_ids = {str(item.turn_id) for item in visible if isinstance(item, AssistantMessageItem)}
         turns = {}
         if turn_ids:
@@ -105,12 +104,12 @@ def core_history(store, identity, params, live):
                 turns = {
                     r["id"]: r
                     for r in connection.execute(
-                        "SELECT t.id,t.status,(SELECT i.id FROM conversation_items i "
+                        "SELECT t.id,t.status,(SELECT i.id FROM chat_history i "
                         "WHERE i.thread_id=t.thread_id AND i.turn_id=t.id "
                         "AND i.kind='assistant_message' AND t.status='completed' "
                         "AND json_extract(i.payload_json,'$.content')=t.final_answer "
                         "ORDER BY i.sequence DESC LIMIT 1) AS answer_id "
-                        "FROM turns t WHERE t.thread_id=? AND t.id IN ("
+                        "FROM chat_turns t WHERE t.thread_id=? AND t.id IN ("
                         + ",".join("?" for _ in turn_ids)
                         + ")",
                         (thread, *turn_ids),
@@ -173,7 +172,7 @@ def bind_legacy_failures(store, channel, rows):
     try:
         for row in rows:
             found = connection.execute(
-                "SELECT id,payload_json FROM conversation_items WHERE thread_id=? "
+                "SELECT id,payload_json FROM chat_history WHERE thread_id=? "
                 "AND kind='assistant_message' AND created_at<=? ORDER BY sequence DESC LIMIT 1",
                 (row["thread"], datetime.fromtimestamp(row["updated"], UTC).isoformat()),
             ).fetchone()

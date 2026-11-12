@@ -9,6 +9,8 @@ adaptor/
   src/
     common.py           公共限制、TLS 和错误类型
     gateway.py          HTTP 服务与供应商路由
+    transport.py        aiohttp 上游流式传输
+    streaming.py        同步与异步共用的增量协议解析
     control.py          网关生命周期管理
     windows_service.py  Windows 服务适配
     openai/             Codex 凭据、Responses 转发与协议转换
@@ -43,6 +45,12 @@ HTTP 地址继续使用 `/openai`、`/qoder` 前缀；现有客户端配置不�
 凭据仍在运行时读取，不复制到源码、安装包或配置示例。
 
 具体接入示例见 [使用指南](QUICKSTART.md)。
+
+## 并发处理
+
+服务端使用 `aiohttp.web`，上游使用共享的 `aiohttp.ClientSession`，连接池上限为 100。
+流式响应逐块异步转发，写入等待客户端接收；客户端断开时释放上游连接。
+凭据文件和钥匙串等阻塞访问在线程池执行，HTTP 请求不再各占一个服务线程。
 
 ## 管理页默认模型
 

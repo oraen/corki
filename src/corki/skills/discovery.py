@@ -28,6 +28,8 @@ class SkillRoot:
     plugin_id: str | None = None
     plugin_root: Path | None = None
     discovery_mode: SkillDiscoveryMode = SkillDiscoveryMode.RECURSIVE
+    excluded_children: tuple[str, ...] = ()
+    work_only: bool = False
 
 
 def discover_skills(
@@ -75,6 +77,9 @@ def discover_skills(
                 skill = replace(
                     skill,
                     discovery_path=path.absolute(),
+                    work_only=root.work_only,
+                    allow_implicit_invocation=skill.allow_implicit_invocation
+                    and not root.work_only,
                     plugin_id=root.plugin_id,
                     plugin_root=root.plugin_root.resolve() if root.plugin_root else None,
                 )
@@ -116,4 +121,5 @@ def scan_skill_root(root: SkillRoot) -> SkillWalk:
         root.path,
         mode=root.discovery_mode,
         follow_directory_links=root.scope is not SkillScope.SYSTEM,
+        excluded_children=root.excluded_children,
     )

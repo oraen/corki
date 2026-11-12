@@ -1,10 +1,14 @@
 """Turn-owned elapsed time and transient status, independent of model output."""
 
 import asyncio
+from io import StringIO
 from time import monotonic
 
 from rich.cells import cell_len, set_cell_size
+from rich.console import Console
+from rich.text import Text
 
+from corki.cli.display_text import sanitize_user_text
 from corki.cli.theme import PROMPT_ACCENT
 
 
@@ -44,6 +48,7 @@ class WorkingStatus:
         self.accumulated = 0.0
         self.started = None
         self.timer = None
+        self._details_cache = None
 
     @property
     def elapsed(self):
@@ -94,8 +99,22 @@ class WorkingStatus:
             return [("bold", set_cell_size(duration.strip(), max(0, width)).rstrip())]
         if hint:
             result.append(("fg:ansibrightblack", hint))
-        if detail:
-            detail = " ".join("".join(c for c in detail if c.isprintable() or c.isspace()).split())
-            detail = set_cell_size("  └ " + detail, max(0, min(cell_len("  └ " + detail), width)))
-            result.append(("fg:ansibrightblack", "\n" + detail))
+        if detail and width > 4:
+            # Codex StatusIndicatorWidget wraps details below the persistent clock.
+            # Reuse the measured rows across animation ticks; bound untrusted labels.
+            key = (width, detail[:4096], len(detail) > 4096)
+            if self._details_cache is None or self._details_cache[0] != key:
+                safe = " ".join(sanitize_user_text(key[1]).split())
+                console = Console(file=StringIO(), color_system=None)
+                rows = Text(safe).wrap(console, width - 4, overflow="fold")
+                clipped = len(rows) > 3 or key[2]
+                rows = rows[:3]
+                if clipped and rows:
+                    rows[-1].truncate(max(0, width - 5), overflow="crop")
+                    rows[-1].append("…")
+                self._details_cache = (key, tuple(row.plain for row in rows))
+            for index, row in enumerate(self._details_cache[1]):
+                result.append(
+                    ("fg:ansibrightblack", "\n" + ("  └ " if index == 0 else "    ") + row)
+                )
         return result

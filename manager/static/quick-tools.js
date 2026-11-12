@@ -5,11 +5,15 @@ function quickToolsCards(){
   ['guide','使用指引','从首次配置到完成一个任务','knowledge'],
   ['setup','快速配置','快速使用厂商和模型初始化配置','config'],
   ['launch','快速启动','打开 CLI 或桌面应用','developer']
- ].map(([id,title,note,i])=>`<button type="button" class="quick-tool-card" data-action="quick-${id}"><span class="quick-tool-icon">${icon(i)}</span><span><strong>${title}</strong><small>${note}</small></span>${icon('arrow')}</button>`).join('')}</div></section>`;
+ ].map(([id,title,note,i])=>`<button type="button" class="quick-tool-card" data-action="quick-${id}"><span class="quick-tool-icon">${icon(i)}</span><span><strong>${title}</strong><small>${note}</small></span></button>`).join('')}</div></section>`;
+}
+
+function serviceDevelopmentCards(){
+ return `<section class="panel quick-tools-panel" aria-labelledby="service-development-title"><div class="panel-head"><h2 id="service-development-title">服务开发</h2></div><div class="quick-tools-grid"><div class="quick-tool-card toolbox-card service-development-card"><span class="quick-tool-icon">${icon('providers')}</span><strong>应用管理</strong></div></div></section>`;
 }
 
 function toolboxCards(){
- return `<section class="panel quick-tools-panel" aria-labelledby="toolbox-title"><div class="panel-head"><h2 id="toolbox-title">工具箱</h2></div><div class="quick-tools-grid"><button type="button" class="quick-tool-card toolbox-card" data-action="open-adaptor"><span class="quick-tool-icon">${icon('providers')}</span><strong>套餐转发</strong>${icon("arrow")}</button><button type="button" class="quick-tool-card toolbox-card" data-action="open-resource-packages"><span class="quick-tool-icon">${window.CorkiResourcePackages.icon()}</span><strong>插件管理</strong>${icon("arrow")}</button><button type="button" class="quick-tool-card toolbox-card" data-action="open-channels"><span class="quick-tool-icon">${icon('tools')}</span><strong>转发网关</strong>${icon("arrow")}</button></div></section>`;
+ return `<section class="panel quick-tools-panel" aria-labelledby="toolbox-title"><div class="panel-head"><h2 id="toolbox-title">工具箱</h2></div><div class="quick-tools-grid"><button type="button" class="quick-tool-card toolbox-card" data-action="open-adaptor"><span class="quick-tool-icon">${icon('providers')}</span><strong>套餐转发</strong></button><button type="button" class="quick-tool-card toolbox-card" data-action="open-resource-packages"><span class="quick-tool-icon">${window.CorkiResourcePackages.icon()}</span><strong>插件管理</strong></button><button type="button" class="quick-tool-card toolbox-card" data-action="open-channels"><span class="quick-tool-icon">${icon('tools')}</span><strong>转发网关</strong></button></div></section>`;
 }
 
 function guidePage(){

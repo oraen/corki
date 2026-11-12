@@ -1,11 +1,13 @@
 """Standalone gateway tests with synthetic credentials and upstream."""
 
+import asyncio
 import json
 import threading
 from contextlib import contextmanager
 
 import httpx
 import pytest
+from mock_transport import mock_client
 
 from corki_adaptor.gateway import UPSTREAM, Gateway, main
 
@@ -76,7 +78,7 @@ def write_auth(path, token="oauth-secret", account="account-a"):
 def running(tmp_path, handler, *, credential_provider=None):
     auth = tmp_path / "auth.json"
     write_auth(auth)
-    client = httpx.Client(transport=httpx.MockTransport(handler))
+    client = mock_client(handler)
     server = Gateway(auth, "local-secret", client=client, credential_provider=credential_provider)
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
@@ -91,7 +93,7 @@ def running(tmp_path, handler, *, credential_provider=None):
         server.shutdown()
         server.server_close()
         thread.join()
-        client.close()
+        asyncio.run(client.aclose())
 
 
 def body():
@@ -384,21 +386,12 @@ def test_gateway_default_client_uses_verified_system_trust(tmp_path, monkeypatch
 
     auth = tmp_path / "auth.json"
     write_auth(auth)
-    seen = []
-    real_client = httpx.Client
-
-    def capture(**kwargs):
-        seen.append(kwargs)
-        return real_client(transport=httpx.MockTransport(lambda request: sse()), **kwargs)
-
-    monkeypatch.setattr("corki_adaptor.gateway.httpx.Client", capture)
     server = Gateway(auth, "local-secret")
     try:
-        context = seen[0]["verify"]
+        context = server.ssl_context
         assert isinstance(context, truststore.SSLContext)
         assert context.verify_mode == ssl.CERT_REQUIRED
         assert context.check_hostname is True
-        assert seen[0]["follow_redirects"] is False
     finally:
         server.server_close()
 
@@ -562,6 +555,7 @@ def test_health_contains_no_login_material(tmp_path):
 def test_connection_failure_has_explicit_retry_classification(tmp_path, failure):
     def upstream(request):
         raise failure("private diagnostic")
+
     with running(tmp_path, upstream) as (_, client, _):
         response = client.post("/openai/v1/responses", json=body())
         assert response.status_code == 502

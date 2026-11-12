@@ -17,7 +17,7 @@ from corki.protocol.tools import ToolCall
 
 
 def test_display_projection_is_independent_of_batch_boundaries():
-    from corki.cli.history_projection import HistoryProjection
+    from corki.sessions.history_projection import HistoryProjection
 
     first, second = new_turn_id(), new_turn_id()
     user = UserMessageItem("original", first)
@@ -53,7 +53,7 @@ def test_display_projection_is_independent_of_batch_boundaries():
 
 
 def test_projection_can_resume_inside_a_replacement_span():
-    from corki.cli.history_projection import HistoryProjection
+    from corki.sessions.history_projection import HistoryProjection
 
     turn = new_turn_id()
     projection = HistoryProjection()
@@ -67,14 +67,14 @@ def test_projection_can_resume_inside_a_replacement_span():
 
 @pytest.mark.parametrize("remaining", [-1, True, 1.5, "2"])
 def test_projection_rejects_invalid_boundary_state(remaining):
-    from corki.cli.history_projection import HistoryProjection
+    from corki.sessions.history_projection import HistoryProjection
 
     with pytest.raises(ValueError):
         HistoryProjection(remaining)
 
 
 def test_fresh_question_inside_pre_turn_compaction_span_is_visible():
-    from corki.cli.history_projection import HistoryProjection
+    from corki.sessions.history_projection import HistoryProjection
 
     turn = new_turn_id()
     prior = UserMessageItem("previous question", new_turn_id())

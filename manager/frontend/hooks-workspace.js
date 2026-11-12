@@ -142,7 +142,7 @@ class HooksWorkspace {
     const availableSkills = this.data.skills || [];
     const skillOptions = availableSkills.map((s) => [
       s.path,
-      `${s.name} · ${{ builtin: "内置", corki: "扩展", public: "公共" }[s.group] || "项目"}`,
+      `${s.name} · ${{ builtin: "内置", corki: "扩展", public: "公共", work: "工作" }[s.group] || "项目"}`,
     ]);
     showDialog(
       row ? "编辑 Hook" : "添加 Hook",

@@ -13,6 +13,8 @@ from tempfile import mkdtemp
 from corki.storage.file_lock import lock, open_lock, unlock_and_close
 
 _MARKER = ".corki-system-skills.marker"
+_WORK_BUNDLED = frozenset({"corki-text-C&E"})
+_WORK_MARKER = ".corki-work-skills.marker"
 
 
 def bundled_skills_source() -> Traversable:
@@ -47,6 +49,7 @@ def install_bundled_skills(home: Path, source: Traversable | None = None) -> Pat
 def _install_locked(skills_root: Path, source: Traversable) -> Path:
     # Recheck the marker under the same OS lock as backup/replacement. Otherwise
     # concurrent CLI, manager and desktop starts can remove one another's backup.
+    _seed_work_skills(skills_root, source)
     destination = skills_root / ".system"
     fingerprint = _fingerprint(source)
     marker = destination / _MARKER
@@ -58,7 +61,7 @@ def _install_locked(skills_root: Path, source: Traversable) -> Path:
 
     staging = Path(mkdtemp(prefix=".system-", dir=skills_root))
     try:
-        _copy_tree(source, staging)
+        _copy_tree(source, staging, exclude=_WORK_BUNDLED)
         (staging / _MARKER).write_text(f"{fingerprint}\n", encoding="utf-8")
         backup = skills_root / ".system.previous"
         if backup.exists():
@@ -79,8 +82,10 @@ def _install_locked(skills_root: Path, source: Traversable) -> Path:
     return destination
 
 
-def _copy_tree(source: Traversable, destination: Path) -> None:
+def _copy_tree(source: Traversable, destination: Path, *, exclude=()) -> None:
     for child in source.iterdir():
+        if child.name in exclude:
+            continue
         target = destination / child.name
         if child.is_dir():
             target.mkdir(parents=True, exist_ok=True)
@@ -90,10 +95,12 @@ def _copy_tree(source: Traversable, destination: Path) -> None:
 
 
 def _fingerprint(source: Traversable) -> str:
-    digest = hashlib.sha256(b"corki-system-skills-v1\0")
+    digest = hashlib.sha256(b"corki-system-skills-v2\0")
 
     def visit(node: Traversable, prefix: str = "") -> None:
         for child in sorted(node.iterdir(), key=lambda item: item.name):
+            if not prefix and child.name in _WORK_BUNDLED:
+                continue
             relative = f"{prefix}{child.name}"
             digest.update(relative.encode())
             digest.update(b"\0")
@@ -104,3 +111,37 @@ def _fingerprint(source: Traversable) -> str:
 
     visit(source)
     return digest.hexdigest()
+
+
+def _seed_work_skills(skills_root: Path, source: Traversable) -> None:
+    """Migrate legacy copies once; preserve user edits and intentional deletion."""
+    candidates = [name for name in sorted(_WORK_BUNDLED) if source.joinpath(name).is_dir()]
+    if not candidates:
+        return
+    marker = skills_root / _WORK_MARKER
+    try:
+        installed = set(marker.read_text(encoding="utf-8").splitlines())
+    except FileNotFoundError:
+        installed = set()
+    if all(name in installed for name in candidates):
+        return
+    for name in candidates:
+        if name in installed:
+            continue
+        work = skills_root / "work"
+        work.mkdir(mode=0o700, exist_ok=True)
+        target = work / name
+        if not target.exists() and not target.is_symlink():
+            legacy = skills_root / ".system" / name
+            origin = legacy if legacy.is_dir() else source.joinpath(name)
+            staging = Path(mkdtemp(prefix=".seed-", dir=work))
+            try:
+                _copy_tree(origin, staging)
+                os.replace(staging, target)
+            finally:
+                if staging.exists():
+                    shutil.rmtree(staging)
+        installed.add(name)
+    staging = skills_root / (_WORK_MARKER + ".tmp")
+    staging.write_text("\n".join(sorted(installed)) + "\n", encoding="utf-8")
+    os.replace(staging, marker)

@@ -638,3 +638,93 @@ def test_package_edit_preserves_referenced_resources(store):
             }
         )
     assert packages.detail(identity)["digest"] == detail["digest"]
+
+
+def test_rename_and_description_update_zip_record_and_export_preserve_identity(store):
+    identity = make(store, description="Original description")
+    packages = store.resource_packages
+    old = packages.detail(identity)
+    config = store.config_text()
+    updated = store.mutate({"kind": "resource-packages", "action": "update", "id": identity,
+                            "revision": old["digest"], "name": "Renamed bundle",
+                            "description": "Updated\nmultiline description"})
+    assert updated["id"] == identity
+    assert updated["name"] == "Renamed bundle"
+    assert updated["description"] == "Updated\nmultiline description"
+    assert updated["created"] == old["created"]
+    assert updated["digest"] != old["digest"]
+    assert updated["skills"] == old["skills"]
+    assert store.config_text() == config
+    raw, filename = packages.export([identity])
+    assert filename == "Renamed bundle.zip"
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        manifest = json.loads(archive.read("plugin.json"))
+        assert manifest["name"] == updated["name"]
+        assert manifest["description"] == updated["description"]
+    cleared = packages.update({"id": identity, "revision": updated["digest"], "description": "  "})
+    assert cleared["description"] == ""
+
+
+def test_edit_duplicate_identical_bundle_is_rejected_without_losing_original(store):
+    one = make(store, "One")
+    two = make(store, "Two")
+    packages = store.resource_packages
+    before = packages.detail(one)
+    for changes in ({"name": "Two"}, {"name": "two"}, {"name": "  "},
+                    {"description": None}, {"description": "x" * 1001}):
+        with pytest.raises(ValueError):
+            packages.update({"id": one, "revision": before["digest"], **changes})
+        assert packages.detail(one) == before
+    assert packages.detail(two)["name"] == "Two"
+
+
+def test_batch_delete_validates_entire_selection_and_keeps_live_resources(store):
+    one = make(store, "One")
+    two = make(store, "Two")
+    three = make(store, "Three")
+    packages = store.resource_packages
+    config = store.config_text()
+    for ids in ([], [one, one], [one, "0" * 32], [one, "../escape"], [one, {}]):
+        with pytest.raises(ValueError):
+            packages.change({"action": "delete", "ids": ids})
+        assert packages.directory(one).is_dir()
+        assert packages.directory(two).is_dir()
+    result = packages.change({"action": "delete", "ids": [one, two]})
+    assert result["deleted_ids"] == [one, two]
+    assert [r["id"] for r in result["packages"]] == [three]
+    assert not (packages.root / one).exists()
+    assert not (packages.root / two).exists()
+    assert store.config_text() == config
+    assert (store.home / "skills/fixture-skill/SKILL.md").is_file()
+
+
+def test_work_skill_import_listing_and_plugin_roundtrip_keep_category(store):
+    files = [{"path": "collect-intelligence/SKILL.md", "data": base64.b64encode(
+        b"---\nname: collect-intelligence\ndescription: Collect content\n---\nUse only when named."
+    ).decode()}]
+    store.import_skill({"group": "work", "files": files})
+    path = store.home / "skills/work/collect-intelligence/SKILL.md"
+    item = next(row for row in store.files() if row["path"] == str(path))
+    assert item["group"] == "work" and item["writable"]
+    assert len([row for row in store.files() if row["name"] == "collect-intelligence"]) == 1
+    identity = store.resource_packages.create({"name": "Work package", "selection": {"skills": [item["id"]]}})["id"]
+    raw, _ = store.resource_packages.export([identity])
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        manifest = json.loads(archive.read("plugin.json"))
+        assert manifest["skills"][0]["group"] == "work"
+    shutil.rmtree(path.parent)
+    store.resource_packages.change({"action": "import", "archive": base64.b64encode(raw).decode()})
+    assert path.is_file()
+    assert not any("collect-intelligence" in str(row.get("path", ""))
+                   for row in document.loads(store.config_text()).get("skills", {}).get("config", []))
+    with pytest.raises(ValueError, match="无需启停"):
+        store.mutate({"kind": "skills", "action": "toggle", "id": item["id"],
+                      "revision": module.revision(store.config_text()),
+                      "values": {"enabled": False}})
+
+
+def test_work_ce_legacy_name_can_be_reimported(store):
+    source = b"---\nname: corki-text-C&E\ndescription: Chunk and extract\n---\nC&E instructions"
+    store.import_skill({"group": "work", "files": [{"path": "corki-text-C&E/SKILL.md",
+                                                     "data": base64.b64encode(source).decode()}]})
+    assert (store.home / "skills/work/corki-text-C&E/SKILL.md").read_bytes() == source

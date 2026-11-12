@@ -49,7 +49,7 @@ async def main():
     app = Application(settings, CorkiPaths.from_home(cwd / "home"), runtime, ui)
     assert await app.run() == 0
     expected = sys.argv[1]
-    assert changes == [{"model": "new", "reasoning_effort": expected}]
+    assert changes == [{"model": "new", "provider": "default", "reasoning_effort": expected}]
     assert model.requests == [("new", expected)]
     assert ui._transcript.modal_depth == 0
     print("EFFORT_VERIFIED", flush=True)
@@ -96,7 +96,7 @@ def test_model_effort_confirmation_is_atomic(tmp_path, width, effort):
             child.send("3")
             child.expect_exact("Advanced Reasoning")
             child.send("\r")
-        child.expect_exact("Model: new.")
+        child.expect(r"Model: new\([^)]+\)\.")
         child.expect("Ask Corki to do anything")
         child.send("/status")
         time.sleep(0.15)

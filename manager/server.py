@@ -44,7 +44,7 @@ from corki.config.features import MCPServerSettings
 from corki.config.settings import CorkiSettings
 from corki.config.providers import effective_default, provider_default_model
 from corki.config.model_context import match_model_context
-from corki.config.skills import disabled_skill_paths, parse_skill_rules
+from corki.config.skills import canonical_skill_rule_path, disabled_skill_paths, parse_skill_rules
 from corki.core.runtime import _create_model, _model_capabilities
 from corki.cron.diagnostics import safe_log
 from corki.cron.service import CronService
@@ -471,7 +471,15 @@ def global_configuration(config):
     execution = config.get("execution", {})
     if isinstance(execution, dict) and isinstance(execution.get("profile"), dict):
         unrestricted = execution["profile"].get("type") == "disabled"
+    permission = {
+        ":read-only": "read-only", "read-only": "read-only",
+        ":workspace": "workspace", "workspace": "workspace",
+        ":danger-full-access": "full", "danger-full-access": "full",
+    }.get(config.get("default_permissions", ":read-only"), "custom")
+    if isinstance(execution, dict) and "profile" in execution:
+        permission = "full" if unrestricted else "custom"
     return {
+        "permissions": permission,
         "approval_free": unrestricted and config.get("approval_policy", "on-request") == "never",
         "self_evolution": features.get("self_evolution", False),
         "memories": memories.get("enabled", False),
@@ -743,6 +751,18 @@ class Store:
         self.compatibility_home = (compatibility_home or Path.home()).resolve()
         self.config = self.home / "settings.json"
         self.database = self.home / "sessions/corki.db"
+        # Upgrade existing installations even if Manager is started before CLI.
+        # Probe only at service startup, never on snapshots or analytical reads.
+        if self.database.is_file():
+            with closing(sqlite3.connect(self.database.as_uri() + "?mode=ro", uri=True)) as db:
+                tables = {r[0] for r in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )}
+                needs_usage_upgrade = "model_steps" in tables and "usage_events" not in tables
+            if needs_usage_upgrade:
+                from corki.storage.sqlite import SQLiteSessionRepository
+
+                SQLiteSessionRepository(self.database)
         self.knowledge = KnowledgeStore(self.home)
         from corki.knowledge.builtin import install_builtin_knowledge
 
@@ -1243,6 +1263,7 @@ end run'''
             redaction_secrets = self.redaction_secrets()
         roots = [
             (self.home / "skills", "skills", True),
+            (self.home / "skills/work", "skills", True),
             (self.home / "skills/.system", "skills", False),
             (self.compatibility_home / ".agents/skills", "skills", True),
             (self.workspace / ".corki/skills", "skills", False),
@@ -1254,7 +1275,7 @@ end run'''
         for root, kind, writable in roots:
             if not root.exists():
                 continue
-            paths = walk_skill_files(root).files if kind == "skills" else root.rglob("*.md")
+            paths = walk_skill_files(root, excluded_children=("work",) if root == self.home / "skills" else ()).files if kind == "skills" else root.rglob("*.md")
             for path in sorted(paths):
                 if ".manager-backups" in path.parts or is_link_path(path) or not path.is_file():
                     continue
@@ -1269,6 +1290,7 @@ end run'''
                     kind == "knowledge"
                     and resolved.is_relative_to((self.knowledge_root / ".system").resolve())
                 )
+                work_skill = kind == "skills" and resolved.is_relative_to((self.home / "skills/work").resolve())
                 if path.stat().st_size > LIMIT:
                     continue
                 text = path.read_text(encoding="utf-8", errors="replace")
@@ -1320,6 +1342,8 @@ end run'''
                             if builtin
                             else "user"
                             if kind == "knowledge"
+                            else "work"
+                            if work_skill
                             else "public"
                             if root == self.compatibility_home / ".agents/skills"
                             else "corki"
@@ -1329,6 +1353,8 @@ end run'''
                             if builtin
                             else "用户"
                             if kind == "knowledge"
+                            else "工作"
+                            if work_skill
                             else "Corki 专属"
                             if root == self.home / "skills"
                             else "项目"
@@ -1358,7 +1384,7 @@ end run'''
             "SELECT date(created_at,'localtime') AS day, "
             "coalesce(sum(input_tokens),0) AS input, "
             "coalesce(sum(output_tokens),0) AS output, count(*) AS steps "
-            "FROM model_steps WHERE julianday(created_at)>=julianday(?,'utc') "
+            "FROM usage_events WHERE julianday(created_at)>=julianday(?,'utc') "
             "AND julianday(created_at)<julianday(?,'utc') "
             "GROUP BY day",
             (first.isoformat(), (today + timedelta(days=1)).isoformat()),
@@ -1414,7 +1440,7 @@ end run'''
         disabled = disabled_skill_paths(parse_skill_rules(config.get("skills", {}).get("config", []), self.home),
                                         ((f["name"], Path(f["path"]).resolve()) for f in skill_files))
         skills = [{"name": f["name"], "path": f["path"], "group": f.get("group", ""),
-                   "enabled": Path(f["path"]).resolve() not in disabled} for f in skill_files]
+                   "enabled": f.get("group") == "work" or Path(f["path"]).resolve() not in disabled} for f in skill_files]
         return dict(entries=entries, skills=skills, enabled=config.get("features", {}).get("hooks", True),
                     revision=revision(text), file_revision=revision(raw), events=list(HOOK_EVENTS))
 
@@ -1569,7 +1595,7 @@ end run'''
         )
         for item in files:
             if item["kind"] == "skills":
-                item["enabled"] = Path(item["path"]).resolve() not in disabled
+                item["enabled"] = item.get("group") == "work" or Path(item["path"]).resolve() not in disabled
         tools = []
         for name, tool in config.get("mcp", {}).get("servers", {}).items():
             tools.append(
@@ -1598,7 +1624,7 @@ end run'''
                     self.query(
                         "SELECT count(*) AS steps, coalesce(sum(input_tokens),0) AS input, "
                         "coalesce(sum(output_tokens),0) AS output, "
-                        "coalesce(sum(cached_tokens),0) AS cached FROM model_steps"
+                        "coalesce(sum(cached_tokens),0) AS cached FROM usage_events"
                     )
                 ),
                 {},
@@ -2170,7 +2196,11 @@ end run'''
         if data.get("action") != "set":
             raise ValueError("不支持的全局配置操作")
         key, enabled = data.get("key"), data.get("enabled")
-        if key not in ("approval_free", "self_evolution", "memories", "auto_cleanup", "sound_notifications") or type(enabled) is not bool:
+        permission = data.get("value")
+        if key == "permissions":
+            if permission not in ("read-only", "workspace", "full"):
+                raise ValueError("无效的操作权限")
+        elif key not in ("approval_free", "self_evolution", "memories", "auto_cleanup", "sound_notifications") or type(enabled) is not bool:
             raise ValueError("无效的全局配置")
         with LOCK:
             text = self.config_text()
@@ -2178,14 +2208,16 @@ end run'''
                 raise ValueError("配置已更新，请刷新后重试")
             config = document.loads(text)
             global_configuration(config)
-            if key == "approval_free":
+            if key in ("approval_free", "permissions"):
+                if key == "approval_free":
+                    permission = "full" if enabled else "workspace"
                 execution = config.get("execution")
                 if isinstance(execution, dict) and "profile" in execution:
                     # Named and concrete profiles are mutually exclusive in Corki.
                     execution.pop("profile")
                     text = document.set_value(text, ("execution",), execution)
-                text = document.set_value(text, ("default_permissions",), ":danger-full-access" if enabled else ":workspace")
-                text = document.set_value(text, ("approval_policy",), "never" if enabled else "on-request")
+                text = document.set_value(text, ("default_permissions",), {"read-only": ":read-only", "workspace": ":workspace", "full": ":danger-full-access"}[permission])
+                text = document.set_value(text, ("approval_policy",), "never" if permission == "full" else "on-request")
             else:
                 path = {"self_evolution": ("features", "self_evolution"),
                         "memories": ("memories", "enabled"),
@@ -2479,6 +2511,8 @@ end run'''
                 )
                 if not item:
                     raise ValueError("技能不存在")
+                if item.get("group") == "work":
+                    raise ValueError("工作 Skills 无需启停，仅在明确指定时使用")
                 enabled = values.get("enabled")
                 if not isinstance(enabled, bool):
                     raise ValueError("技能开关必须是布尔值")
@@ -2494,7 +2528,7 @@ end run'''
                     matches = (
                         isinstance(path, str)
                         and "name" not in rule
-                        and (self.home / Path(path).expanduser()).resolve() == target
+                        and canonical_skill_rule_path(path, self.home) == target
                     )
                     if matches:
                         metadata.update(
@@ -2666,16 +2700,17 @@ end run'''
             raise ValueError(f"技能目录名「{PurePosixPath(prefix.rstrip('/')).name}」必须与 SKILL.md 的 name「{name}」一致")
         folder = (data.get("name") or name) if private else name
         if (not isinstance(folder, str)
-                or not re.fullmatch(r"[\w-][\w.\-]{0,79}", folder)
+                or (folder != "corki-text-C&E" and not re.fullmatch(r"[\w-][\w.\-]{0,79}", folder))
                 or folder.endswith(".")):
             raise ValueError("技能目录名需为 1–80 个文字、数字、横线、下划线或点号，不能以点号开头或结尾")
         if re.match(r"^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)", folder, re.I):
             raise ValueError("技能目录名不能使用 Windows 系统保留名称")
         group = data.get("group", "public")
-        if group not in ("corki", "public"):
-            raise ValueError("请选择扩展 Skills 或公共 Skills")
+        if group not in ("corki", "public", "work"):
+            raise ValueError("请选择扩展 Skills、公共 Skills 或工作 Skills")
         archive_parts(folder)
-        root = self.home / "skills" if group == "corki" else self.compatibility_home / ".agents/skills"
+        root = {"corki": self.home / "skills", "work": self.home / "skills/work",
+                "public": self.compatibility_home / ".agents/skills"}[group]
         if private:
             root = self.home / "hooks" / "skills"
         target = root / folder
@@ -2709,7 +2744,7 @@ end run'''
         finally:
             if stage.exists():
                 shutil.rmtree(stage)
-        label = "扩展 Skills" if group == "corki" else "公共 Skills"
+        label = {"corki": "扩展 Skills", "public": "公共 Skills", "work": "工作 Skills"}[group]
         return {**summary, "message": f"已导入{label}；Corki 下次发现技能时可读取"}
 
     def delete_skill(self, data):

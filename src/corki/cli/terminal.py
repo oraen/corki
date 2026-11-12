@@ -906,7 +906,10 @@ class TerminalUI(PlanStreamUI):
     def _show_submitted_input(self, message: str) -> None:
         if not self._transcript.replaying:
             self._backtrack_has_target = True
-        self._console.print(Text.assemble(("› ", f"{ACCENT} bold"), visible_terminal_text(message)))
+        from corki.cli.message_layout import user_message_rows
+
+        for row in user_message_rows(self._console, message):
+            self._console.print(row)
 
     def replay_history(self, items) -> None:
         replay_history(self, items)
@@ -1392,7 +1395,7 @@ class TerminalUI(PlanStreamUI):
     def _write_assistant_stream(self, text: str) -> None:
         if not self._assistant_started:
             self._console.print()
-            self._console.print("• ", style="green", end="")
+            self._console.print("• ", style="dim", end="")
             self._assistant_started = True
         self._console.print(
             visible_terminal_text(text), end="", markup=False, highlight=False, soft_wrap=True
@@ -1713,6 +1716,18 @@ class TerminalUI(PlanStreamUI):
             self._console.print(Text("\n").join(rows))
             return
 
+        if not expanded:
+            from corki.cli.tool_preview import command_title
+
+            title = command_title(
+                name,
+                arguments_preview,
+                self._console.width,
+                light=getattr(getattr(self, "_terminal_palette", None), "light", False),
+            )
+            if title is not None:
+                self._console.print(title)
+                return
         name = visible_terminal_text(name)
         preview = visible_terminal_text(arguments_preview.replace("\n", " "))
         expanded = getattr(getattr(self, "_transcript", None), "expand_tools", False)
@@ -1722,7 +1737,8 @@ class TerminalUI(PlanStreamUI):
         rows = header.wrap(self._console, max(1, self._console.width), overflow="fold")
         if len(rows) > 2 and not expanded:
             rows = rows[:2]
-            rows[-1].truncate(max(1, self._console.width - 1), overflow="ellipsis")
+            rows[-1].truncate(max(0, self._console.width - 1), overflow="crop")
+            rows[-1].append("…")
         self._console.print(Text("\n").join(rows))
 
     @remember_display
@@ -1730,21 +1746,10 @@ class TerminalUI(PlanStreamUI):
         """Display bounded evidence returned by a tool."""
 
         if output:
+            from corki.cli.tool_preview import print_output
+
             expanded = getattr(getattr(self, "_transcript", None), "expand_tools", False)
-            rows = Text(visible_terminal_text(output).removesuffix("\n")).wrap(
-                self._console, max(1, self._console.width), overflow="fold", no_wrap=False
-            )
-            if not expanded and len(rows) > 5:
-                marker = Text(f"… +{len(rows) - 4} lines (ctrl+t to expand)")
-                marker.truncate(max(1, self._console.width), overflow="ellipsis")
-                rows = [*rows[:2], marker, *rows[-2:]]
-            self._console.print(
-                Text("\n").join(rows),
-                style="dim",
-                markup=False,
-                highlight=False,
-                end="\n",
-            )
+            print_output(self._console, output, expanded=expanded)
 
     @remember_display
     def show_tool_output_chunk(self, call_id: str, output: str, *, finished=False) -> None:
@@ -1760,28 +1765,22 @@ class TerminalUI(PlanStreamUI):
         states = getattr(self, "_tool_previews", None)
         if states is None:
             states = self._tool_previews = {}
+        from corki.cli.tool_preview import output_rows, print_row
+
         count, tail = states.get(call_id, (0, []))
-        for row in (
-            Text(visible_terminal_text(output).removesuffix("\n")).wrap(
-                self._console, max(1, self._console.width), overflow="fold", no_wrap=False
-            )
-            if output
-            else ()
-        ):
+        for row in output_rows(self._console, output) if output else ():
             if count < 2:
-                self._console.print(row, style="dim")
+                print_row(self._console, row, first=count == 0)
             else:
                 tail.append(row)
                 tail = tail[-3:]
             count += 1
         if finished:
             if count > 5:
-                marker = Text(f"… +{count - 4} lines (ctrl+t to expand)", style="dim")
-                marker.truncate(max(1, self._console.width), overflow="ellipsis")
-                self._console.print(marker)
+                print_row(self._console, Text(f"… +{count - 4} lines (ctrl+t to expand)"))
                 tail = tail[-2:]
             for row in tail:
-                self._console.print(row, style="dim")
+                print_row(self._console, row)
             states.pop(call_id, None)
         else:
             states[call_id] = (count, tail)

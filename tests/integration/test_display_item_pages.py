@@ -5,7 +5,6 @@ from dataclasses import replace
 
 import pytest
 
-from corki.cli.history_projection import HistoryProjection
 from corki.config import CorkiSettings
 from corki.core import LangGraphRuntime
 from corki.protocol.ids import new_item_id, new_thread_id, new_turn_id
@@ -73,7 +72,7 @@ def test_runtime_pages_bound_decoding_and_preserve_compaction_across_concurrent_
                 page = await runtime.load_display_items_page(cursor=cursor, limit=limit)
                 assert len(decoded) == len(page.items) <= limit
                 raw = page.items + raw
-                visible = HistoryProjection(page.leading_replacements).feed(page.items)
+                visible = page.items
                 projected = visible + projected
                 if pages == 0:
                     await repository.append_items(
@@ -99,7 +98,7 @@ def test_runtime_pages_bound_decoding_and_preserve_compaction_across_concurrent_
                 if cursor is not None:
                     assert page.next_cursor.before_sequence < cursor.before_sequence
                 cursor = page.next_cursor
-            assert raw == items
+            assert raw == (user, answer, fresh)
             assert projected == (user, answer, fresh)
             assert (await repository.load_items(runtime.thread_id))[: len(items)] == items
             newest = await runtime.load_display_items_page(limit=1)

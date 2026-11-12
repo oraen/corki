@@ -881,9 +881,14 @@ def test_tool_chunks_preserve_lines_and_keep_parallel_calls_separate(tmp_path, f
 
         await app._consume_events(events())
         text = output.getvalue()
-        assert "hello\n\n" in text and "hel\n" not in text
-        assert text.count("世界\n") == 1 and "世界\n\n" not in text
-        assert text.count("尾部\n") == 1
+        # Tool evidence now has a display gutter; ignore only that gutter when
+        # checking the original line boundaries, not source whitespace/content.
+        plain = "\n".join(
+            row[4:] if row.startswith(("  └ ", "    ")) else row for row in text.split("\n")
+        )
+        assert "hello\n\n" in plain and "hel\n" not in plain
+        assert plain.count("世界\n") == 1 and "世界\n\n" not in plain
+        assert plain.count("尾部\n") == 1
         status = "second failed" if finish == "failed" else "second interrupted"
         assert text.index("尾部") < text.index(status)
         assert ui._transcript.render(100) == text

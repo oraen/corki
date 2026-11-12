@@ -9,7 +9,7 @@ from corki.knowledge.store import digest
 from corki.models.types import ModelCompleted, ModelRequest, ModelTextDelta
 from corki.protocol.ids import new_turn_id
 from corki.protocol.items import AssistantMessageItem, UserMessageItem
-from corki.skills.installer import bundled_skills_source
+from corki.skills.installer import install_bundled_skills
 
 
 def batches(content, max_chars=None):
@@ -169,10 +169,19 @@ def validate(value, blocks, content):
     return rows
 
 
+def extraction_skill(home):
+    path = home / "skills/work/corki-text-C&E/SKILL.md"
+    if not path.is_file():
+        install_bundled_skills(home)
+    if not path.is_file():
+        raise ValueError("工作 Skill corki-text-C&E 不存在，请重新导入后重试")
+    return path.read_text(encoding="utf-8")
+
+
 async def extract(model, settings, store, doc, job, content):
-    skill = bundled_skills_source().joinpath("corki-text-C&E/SKILL.md").read_text("utf-8")
     results = []
     try:
+        skill = await asyncio.to_thread(extraction_skill, store.home)
         info = settings.model_context_info(settings.model)
         async with asyncio.timeout(1200):
             for index, blocks in enumerate(request_batches(content, doc["title"], skill, info)):

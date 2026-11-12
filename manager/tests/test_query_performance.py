@@ -77,7 +77,7 @@ def test_monthly_query_uses_range_index_and_keeps_local_date_semantics(tmp_path,
         assert len(rows) == 30
         plan = query("EXPLAIN QUERY PLAN " + sql, args)
         assert any(
-            "SEARCH model_steps USING INDEX model_steps_created_jd" in row["detail"] for row in plan
+            "SEARCH usage_events USING INDEX usage_events_time" in row["detail"] for row in plan
         ), plan
     finally:
         if previous is None:

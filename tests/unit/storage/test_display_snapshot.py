@@ -27,7 +27,7 @@ def test_display_snapshot_does_not_mix_concurrent_terminal_and_item_commit(tmp_p
     def between_reads(statement):
         if (
             statement.startswith("SELECT id,status,error,")
-            and " FROM turns " in statement
+            and " FROM chat_turns " in statement
             and not injected
         ):
             injected.append(True)

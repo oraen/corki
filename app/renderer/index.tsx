@@ -259,6 +259,8 @@ function App() {
     new Map<string, { instance: string; sequence: number }>(),
   );
   const snapshotLoads = useRef(new Map<string, symbol>());
+  const importingAttachments = useRef(new Map<string, number>());
+  const [importingAttachmentCounts, setImportingAttachmentCounts] = useState<Record<string, number>>({});
   const saveChains = useRef(new Map<string, Promise<unknown>>());
   function persistDraft(key: string, value: Draft | null) {
     const promise = (saveChains.current.get(key) || Promise.resolve())
@@ -268,9 +270,8 @@ function App() {
     void promise.catch(report);
     return promise;
   }
-  function editDraft(change: Partial<Draft>) {
-    const key = selectedRef.current,
-      value = { ...(draftRef.current[key] || freshDraft()), ...change };
+  function editDraft(change: Partial<Draft>, key = selectedRef.current) {
+    const value = { ...(draftRef.current[key] || freshDraft()), ...change };
     if (change.content !== undefined && value.request)
       hiddenSubmissionText.current.delete(value.request.requestId);
     draftRef.current = { ...draftRef.current, [key]: value };
@@ -653,7 +654,7 @@ function App() {
   ) {
     // Install the accepted input/live snapshot before clearing the visible draft.
     // The runtime may not have persisted UserMessageItem at TurnStarted yet.
-    const snapshot = await loadThread(threadId);
+    await loadThread(threadId);
     const latest = draftRef.current[key] || submitted;
     const unchanged =
       latest.content === submitted.content &&
@@ -661,10 +662,8 @@ function App() {
         JSON.stringify(submitted.attachments);
     const cleared = {
       ...latest,
-      ...(latest.sessionSettings && snapshot.model ? {
-        provider: snapshot.model.provider, model: snapshot.model.model,
-        reasoning: snapshot.model.reasoning_effort ?? snapshot.model.reasoning ?? null,
-      } : {}),
+      // The snapshot describes the admitted turn. It must not overwrite the
+      // session's separately saved choice for the next turn (including steers).
       ...(unchanged ? { content: "", attachments: [] } : {}),
       request: undefined,
       uncertain: false,
@@ -704,6 +703,7 @@ function App() {
       d = draftRef.current[key] || freshDraft();
     if (
       admitting.current.has(key) ||
+      !!importingAttachments.current.get(key) ||
       d.uncertain ||
       (!d.content.trim() && !d.attachments.length)
     )
@@ -881,13 +881,27 @@ function App() {
       setLoadingOlder(null);
     }
   }
-  async function addAttachments(items: Attachment[]) {
-    const current = draftRef.current[selectedRef.current] || freshDraft();
+  async function addAttachments(items: Attachment[], key = selectedRef.current) {
+    const current = draftRef.current[key] || freshDraft();
     if (current.attachments.length + items.length > 8) {
       setError("最多添加 8 个附件");
       return;
     }
-    editDraft({ attachments: [...current.attachments, ...items] });
+    editDraft({ attachments: [...current.attachments, ...items] }, key);
+  }
+  async function importAttachments(load: () => Promise<Attachment[]>, key = selectedRef.current) {
+    importingAttachments.current.set(key, (importingAttachments.current.get(key) || 0) + 1);
+    setImportingAttachmentCounts(Object.fromEntries(importingAttachments.current));
+    try {
+      const items = await load();
+      if (items.length) await addAttachments(items, key);
+    } catch (error) {
+      report(error);
+    } finally {
+      const count = (importingAttachments.current.get(key) || 1) - 1;
+      if (count) importingAttachments.current.set(key, count); else importingAttachments.current.delete(key);
+      setImportingAttachmentCounts(Object.fromEntries(importingAttachments.current));
+    }
   }
   const providerItems = catalog.providers.map((p) => ({
     id: p.id,
@@ -934,7 +948,7 @@ function App() {
             <Icon name="more" size={17} />
           </summary>
           <div>
-            <button disabled={!!t.running || settingsLoading || !!offline || !!busy[t.id]}
+            <button disabled={settingsLoading || !!offline || !!busy[t.id]}
               onClick={(e) => {
                 e.currentTarget.closest("details")!.open = false;
                 void openSessionSettings(t.id, t.title);
@@ -1058,7 +1072,7 @@ function App() {
           )}
           <span className="topbar-spacer" aria-hidden="true" />
           <button className="icon-button" title="会话设置" aria-label="会话设置"
-            disabled={!ready || !!offline || settingsLoading || conversation.running || !!busy[selected] || !!draft.uncertain}
+            disabled={!ready || !!offline || settingsLoading || !!busy[selected] || !!draft.uncertain}
             onClick={() => void openSessionSettings()}><Icon name="gear" size={17}/></button>
           <button className="icon-button app-settings" title="打开管理页面" aria-label="打开管理页面"
             disabled={openingManager} onClick={() => void openManager()}>
@@ -1139,6 +1153,14 @@ function App() {
               !conversation.followUps.messages.length &&
               !conversation.pending.length &&
               !thinking ? (
+              selected !== "new" && !conversation.loaded ? (
+                !error && !offline ? (
+                  <div className="history-loading" role="status" aria-label="加载会话">
+                    <Icon name="gear" size={14} />
+                    <span>加载会话中</span>
+                  </div>
+                ) : null
+              ) : (
               <div className="welcome">
                 <img src="resources/corki.png" alt="Corki" />
                 <h1 className="welcome-greeting" aria-label="Learning never ends">
@@ -1150,6 +1172,7 @@ function App() {
                   ))}</span>
                 </h1>
               </div>
+              )
             ) : (
               <>
                 {conversation.loaded && conversation.messages.length > 0 &&
@@ -1194,7 +1217,7 @@ function App() {
                   >
                     <div className="thinking-content">
                       <span className="thinking-spinner" aria-hidden="true" />
-                      <span className="thinking-label">思考中</span>
+                      <span className="thinking-label">{conversation.status === "正在压缩上下文" ? "压缩中" : "思考中"}</span>
                     </div>
                   </div>
                 )}
@@ -1270,16 +1293,15 @@ function App() {
           </button>
           <div
             className="composer"
+            aria-busy={!!importingAttachmentCounts[selected]}
             onDragOver={(e) => {
               e.preventDefault();
               e.dataTransfer.dropEffect = "copy";
             }}
             onDrop={(e) => {
               e.preventDefault();
-              void api
-                .importFiles(Array.from(e.dataTransfer.files))
-                .then(addAttachments)
-                .catch(report);
+              const files = Array.from(e.dataTransfer.files);
+              if (files.length) void importAttachments(() => api.importFiles(files));
             }}
           >
             {draft.attachments.length > 0 && (
@@ -1322,6 +1344,27 @@ function App() {
               placeholder="Do anything"
               value={composerContent}
               onChange={(e) => editDraft({ content: e.target.value })}
+              onPaste={(event) => {
+                const files = Array.from(event.clipboardData.items)
+                  .filter(item => item.kind === "file" && item.type.startsWith("image/"))
+                  .map(item => item.getAsFile()).filter((file): file is File => file !== null);
+                if (!files.length) return; // Preserve the browser's ordinary text/IME paste behavior.
+                event.preventDefault();
+                const key = selectedRef.current;
+                const current = draftRef.current[key] || freshDraft();
+                if (current.attachments.length + files.length > 8) {setError("最多添加 8 个附件");return;}
+                const text = event.clipboardData.getData("text/plain");
+                if (text) {
+                  const node = event.currentTarget, start = node.selectionStart, end = node.selectionEnd;
+                  editDraft({content: (current.content.slice(0, start) + text + current.content.slice(end)).slice(0, 100000)}, key);
+                }
+                void importAttachments(async () => {
+                  const images = await Promise.all(files.map(async file => ({
+                    name: file.name || "粘贴图片.png", mime: file.type, bytes: await file.arrayBuffer(),
+                  })));
+                  return api.importImages(images);
+                }, key);
+              }}
               onCompositionStart={() => {
                 composing.current = true;
               }}
@@ -1347,7 +1390,7 @@ function App() {
                 aria-label="添加附件"
                 title="添加文本或图片"
                 onClick={() =>
-                  void api.chooseFiles().then(addAttachments).catch(report)
+                  void importAttachments(() => api.chooseFiles())
                 }
               >
                 <Icon name="plus" />
@@ -1356,7 +1399,7 @@ function App() {
               {conversation.running && (draft.content.trim() || draft.attachments.length > 0) && (
                 <button className="send-button followup-send" aria-label="追加消息"
                   title="追加消息"
-                  disabled={!ready || !!offline || !catalog.valid || !model || !!busy[selected] || !!draft.uncertain}
+                  disabled={!ready || !!offline || !catalog.valid || !model || !!busy[selected] || !!draft.uncertain || !!importingAttachmentCounts[selected]}
                   onClick={() => void send()}><Icon name="send" size={18} /></button>
               )}
               {conversation.running ? (
@@ -1373,6 +1416,7 @@ function App() {
                   aria-label="发送消息"
                   disabled={
                     !ready ||
+                    !!importingAttachmentCounts[selected] ||
                     !!offline ||
                     !catalog.valid ||
                     !model ||
@@ -1382,7 +1426,7 @@ function App() {
                   }
                   onClick={() => void send()}
                 >
-                  {busy[selected] ? (
+                  {busy[selected] || importingAttachmentCounts[selected] ? (
                     <span className="loading-ring" />
                   ) : (
                     <Icon name="send" />
@@ -1426,7 +1470,14 @@ function App() {
       )}
       {settingsThread === selected && <SessionSettingsDialog key={settingsThread}
         catalog={catalog} draft={draft} threadId={selected} title={settingsTitle}
-        blocked={conversation.running || !!busy[selected] || !!draft.uncertain}
+        running={conversation.running}
+        blocked={!!busy[selected] || !!draft.uncertain}
+        onCompact={async (requestId) => {
+          const key = settingsThread!;
+          await api.request("turn.compact", {threadId: key, requestId});
+          await loadThread(key);
+          await list();
+        }}
         onClose={() => setSettingsThread(null)}
         onSave={async (sessionSettings, effective, name) => {
           const key = settingsThread!;
@@ -1441,7 +1492,7 @@ function App() {
           await persistDraft(key, value);
           draftRef.current = {...draftRef.current, [key]: value};
           setDrafts(draftRef.current);
-        }}/>
+        }}/>}
       {modal === "directory" && (
         <Modal title="工作目录" onClose={() => setModal(null)}>
           <div className="directory-input">

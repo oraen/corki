@@ -9,7 +9,6 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.widgets import TextArea
 
 from corki.cli.display_text import visible_terminal_text
-from corki.cli.history_projection import HistoryProjection
 from corki.protocol.items import (
     AssistantMessageItem,
     ReasoningItem,
@@ -24,7 +23,7 @@ from corki.protocol.wire_numbers import dumps_wire
 def page_text(page):
     blocks = []
     size = 0
-    for item in HistoryProjection(page.leading_replacements).feed(page.items):
+    for item in page.items:
         if isinstance(item, UserMessageItem):
             text = "› " + item.content
             if item.attachments:

@@ -68,7 +68,9 @@ async def main():
     app = Application(settings, CorkiPaths.from_home(cwd / "home"), runtime, ui)
     assert await app.run() == 0
     assert model.closed
-    assert changes == [{"model": "Local/Other"}]
+    assert changes == [
+        {"model": "Local/Other", "provider": "default", "reasoning_effort": None}
+    ], changes
     assert model.models == [settings.model, settings.model, "Local/Other", "Local/Other"]
     assert [text for text, _ in model.requests] == [
         "initial", "steer now", "queued one", "queued two"]
@@ -131,8 +133,7 @@ def test_tab_queue_and_enter_steering_use_distinct_turns(tmp_path, width, edit):
         child.send("Invalid Model\r")
         child.expect_exact("Model names cannot contain")
         child.send("\x15Local/Other\r")
-        child.expect_exact("Model: Local/Other.")
-        child.expect_exact("turns.")
+        child.expect(r"Model: Local/Other\([^)]+\)\.")
         child.expect("Ask Corki to do anything")
         for command, feedback in (
             ("/mcp", "mcp__numbers::read"),

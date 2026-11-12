@@ -53,7 +53,7 @@ class SessionCatalog:
         where = ["archived_at IS NOT NULL" if archived else "archived_at IS NULL"]
         params = []
         # Empty metadata-only threads cannot be usefully previewed or archived.
-        where.append("EXISTS (SELECT 1 FROM conversation_items WHERE thread_id=threads.id)")
+        where.append("EXISTS (SELECT 1 FROM chat_history WHERE thread_id=threads.id)")
         if cwd is not None:
             where.append("cwd=?")
             params.append(str(Path(cwd).resolve()))
@@ -112,7 +112,7 @@ class SessionCatalog:
                 raise LookupError("Session no longer exists")
             rows = connection.execute(
                 "SELECT kind, substr(json_extract(payload_json, '$.content'),1,4000) AS content "
-                "FROM conversation_items WHERE thread_id=? "
+                "FROM chat_history WHERE thread_id=? "
                 "AND kind IN ('user_message','assistant_message') "
                 "ORDER BY sequence DESC LIMIT ?",
                 (str(thread_id), limit),

@@ -60,6 +60,15 @@ def linked_paths(text: str, *, sigil: str = "$") -> frozenset[str]:
 def select(text: str, snapshot: SkillSnapshot, *, mentions=()):
     """Select host packages, not extension catalog entries with first-name matching."""
     names, paths = extract(text)
+    # Work skill names can include punctuation (the bundled C&E skill uses '&').
+    # Only a literal sigil mention opts into eager body injection; ordinary prose
+    # is handled through skill_read, so inventory questions never inject a body.
+    names = names | frozenset(
+        skill.qualified_name
+        for skill in snapshot.skills
+        if skill.work_only
+        and re.search(r"\$" + re.escape(skill.qualified_name) + r"(?![A-Za-z0-9_.:&-])", text)
+    )
     enabled = tuple(skill for skill in snapshot.skills if snapshot.is_enabled(skill))
     selected, seen_paths, blocked_names = [], set(), set()
     seen_names = set()

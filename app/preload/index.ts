@@ -40,6 +40,7 @@ const api: DesktopAPI = {
       "corki:import-files",
       files.map((file) => webUtils.getPathForFile(file)),
     ),
+  importImages: (images) => invoke("corki:paste-images", images),
   copy: (text) => invoke("corki:copy", text),
   async openManager(onStarting) {
     const listener = () => onStarting();

@@ -105,6 +105,10 @@ class SessionRepository(Protocol):
 
     async def load_items(self, thread_id: ThreadId) -> tuple[ConversationItem, ...]: ...
 
+    async def load_display_items(self, thread_id: ThreadId) -> tuple[ConversationItem, ...]:
+        """Read original transcript payloads, never model context or replacement copies."""
+        ...
+
     async def load_display_snapshot(self, thread_id: ThreadId) -> DisplayHistory:
         """Read conversation items and turn terminal metadata from one database snapshot."""
         ...
@@ -112,7 +116,7 @@ class SessionRepository(Protocol):
     async def load_display_items_page(
         self, thread_id: ThreadId, *, cursor: DisplayItemsCursor | None = None, limit: int = 100
     ) -> DisplayItemsPage:
-        """Read an older raw item batch; terminal metadata is a separate contract."""
+        """Read original transcript items; model history is a separate contract."""
         ...
 
     async def load_display_turns_page(

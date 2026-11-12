@@ -8,8 +8,10 @@ const MIME = new Set([
   "image/gif",
   "text/plain",
 ]);
+export const IMAGE_ASSET_LIMIT = 512 * 1024 * 1024;
+export const assetLimit = (mime: string) => mime.startsWith("image/") ? IMAGE_ASSET_LIMIT : 1_000_000;
 export async function saveAsset(home: string, buffer: Buffer, mime: string) {
-  if (!MIME.has(mime) || buffer.length > 1_000_000)
+  if (!MIME.has(mime) || buffer.length > assetLimit(mime))
     throw new Error("附件类型或大小无效");
   const id = createHash("sha256")
     .update(mime + "\0")
@@ -38,9 +40,9 @@ export async function readAsset(home: string, id: string) {
   const meta = JSON.parse(
     await readFile(path.join(root, id + ".json"), "utf8"),
   );
-  if (meta.version !== 1 || !MIME.has(meta.mime) || meta.size > 1_000_000)
+  if (meta.version !== 1 || !MIME.has(meta.mime) || !Number.isSafeInteger(meta.size) || meta.size < 0 || meta.size > assetLimit(meta.mime))
     throw new Error("附件记录无效");
-  const buffer = await readBoundedFile(path.join(root, id + ".bin"), 1_000_000);
+  const buffer = await readBoundedFile(path.join(root, id + ".bin"), assetLimit(meta.mime));
   if (
     buffer.length !== meta.size ||
     createHash("sha256")

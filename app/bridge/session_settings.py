@@ -3,7 +3,7 @@
 import json
 from dataclasses import replace
 
-KEYS = {"provider", "model", "reasoning", "contextWindow", "permissions", "mode", "memories", "skills"}
+KEYS = {"provider", "model", "reasoning", "contextWindow", "permissions", "mode", "memories", "skills", "fast"}
 
 
 def session_settings(base, value):
@@ -23,7 +23,18 @@ def session_settings(base, value):
         raise ValueError("模型不可用，请重新选择")
     result = base.for_model(provider, model)
     info = result.model_context_info(result.model)
-    changes = {}
+    # Skills are always available in desktop sessions. Accept legacy overrides
+    # for saved conversations, but no longer let them disable discovery.
+    changes = {"skills_enabled": True}
+    if "fast" in value:
+        if type(value["fast"]) is not bool:
+            raise ValueError("fast 必须是布尔值")
+        if value["fast"]:
+            if result.supports_service_tier is False or info.service_tier_for_request("priority") is None:
+                raise ValueError("当前模型不支持 fast")
+            changes["supports_service_tier"] = True
+        changes["fast_mode"] = value["fast"]
+        changes["service_tier"] = "priority" if value["fast"] else "default"
     if "reasoning" in value:
         if value["reasoning"] not in info.supported_reasoning_levels:
             raise ValueError("当前模型不支持该推理等级")
@@ -39,7 +50,8 @@ def session_settings(base, value):
         if key in value:
             if type(value[key]) is not bool:
                 raise ValueError("记忆和 Skills 开关必须是布尔值")
-            changes[field] = value[key]
+            if key != "skills":
+                changes[field] = value[key]
     if "memories" in value:
         changes["memories_use"] = value["memories"]
     if "mode" in value:
@@ -69,4 +81,5 @@ def session_signature(settings):
     return (settings.provider_id, settings.model, settings.reasoning_effort,
             settings.main_context_limits.raw_tokens, settings.collaboration_mode,
             settings.execution_permissions, settings.memories_enabled, settings.memories_use,
-            settings.skills_enabled, settings._provider_connection)
+            settings.skills_enabled, settings._provider_connection,
+            settings.fast_mode, settings.session_service_tier, settings.supports_service_tier)

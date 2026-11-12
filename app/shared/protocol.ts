@@ -12,6 +12,7 @@ export const METHODS = [
   "threads.delete",
   "threads.archive",
   "turn.submit",
+  "turn.compact",
   "queue.action",
   "turn.stop",
   "request.read",
@@ -37,6 +38,8 @@ export interface Attachment {
   assetId?: string;
 }
 export interface Model {
+  fast?: boolean;
+  supportsFast?: boolean;
   contextWindow?: number;
   maxContextWindow?: number | null;
   id: string;
@@ -47,7 +50,7 @@ export interface Model {
 }
 export interface Catalog {
   permissionModes?: string[];
-  sessionDefaults?: {mode: string; memories: boolean; skills: boolean};
+  sessionDefaults?: {mode: string; memories: boolean; skills: boolean; permissions?: string};
   valid: boolean;
   error?: string;
   providers: { id: string; defaultModel?: string; models: Model[] }[];
@@ -55,6 +58,7 @@ export interface Catalog {
   permissions?: string;
 }
 export interface SessionSettings {
+  fast?: boolean;
   provider?: string;
   model?: string;
   reasoning?: string;
@@ -78,6 +82,7 @@ export interface DesktopAPI {
   chooseDirectory(): Promise<string | null>;
   chooseFiles(): Promise<Attachment[]>;
   importFiles(files: File[]): Promise<Attachment[]>;
+  importImages(images: {name: string; mime: string; bytes: ArrayBuffer}[]): Promise<Attachment[]>;
   copy(text: string): Promise<void>;
   openManager(onStarting: () => void): Promise<void>;
   openLink(url: string): Promise<void>;

@@ -374,8 +374,15 @@ class SQLiteSessionRepository:
             )
             self._migrate_legacy_messages(connection)
             migrate_thread_previews(connection)
+            from corki.storage.chat_history import install_chat_history
+
+            install_chat_history(connection)
             # Install only at bootstrap, after legacy columns are migrated.
             install_query_indexes(connection)
+            from corki.storage.usage_ledger import install_usage_ledger
+
+            if hasattr(self, "_path"):
+                install_usage_ledger(connection, self._path.parent.parent)
 
     def _migrate_legacy_messages(self, connection: sqlite3.Connection) -> None:
         migration = "legacy_messages_to_conversation_items_v1"
@@ -918,6 +925,17 @@ class SQLiteSessionRepository:
     async def load_items(self, thread_id: ThreadId) -> tuple[ConversationItem, ...]:
         return await asyncio.to_thread(self._load_items, thread_id)
 
+    async def load_display_items(self, thread_id: ThreadId) -> tuple[ConversationItem, ...]:
+        return await asyncio.to_thread(self._load_display_items, thread_id)
+
+    def _load_display_items(self, thread_id: ThreadId) -> tuple[ConversationItem, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT kind,payload_json FROM chat_history WHERE thread_id=? ORDER BY sequence",
+                (str(thread_id),),
+            ).fetchall()
+        return tuple(item_from_payload(row["kind"], json.loads(row["payload_json"])) for row in rows)
+
     async def load_display_snapshot(self, thread_id: ThreadId) -> DisplayHistory:
         return await asyncio.to_thread(self._load_display_snapshot, thread_id)
 
@@ -944,12 +962,12 @@ class SQLiteSessionRepository:
         with self._connect() as connection:
             connection.execute("BEGIN")
             rows = connection.execute(
-                "SELECT kind, payload_json FROM conversation_items "
+                "SELECT kind, payload_json FROM chat_history "
                 "WHERE thread_id=? ORDER BY sequence",
                 (str(thread_id),),
             ).fetchall()
             turns = connection.execute(
-                "SELECT id,status,error,model_settings_json FROM turns "
+                "SELECT id,status,error,model_settings_json FROM chat_turns "
                 "WHERE thread_id=? ORDER BY rowid",
                 (str(thread_id),),
             ).fetchall()

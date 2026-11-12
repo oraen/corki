@@ -1,7 +1,6 @@
 """Usage projections: local dates, attribution, reset-safe ownership and run totals."""
 
 import importlib.util
-import json
 import sqlite3
 from contextlib import closing
 from datetime import date
@@ -22,10 +21,12 @@ def usage(tmp_path):
     for folder in ["sessions", "cron", "gateway"]:
         (home / folder).mkdir(parents=True)
     with closing(sqlite3.connect(home / "sessions/corki.db")) as db, db:
-        db.executescript("""CREATE TABLE threads(id TEXT PRIMARY KEY, source TEXT);
-        CREATE TABLE model_steps(thread_id TEXT,input_tokens INTEGER,output_tokens INTEGER,metadata_json TEXT,created_at TEXT);
-        CREATE INDEX model_steps_created_jd ON model_steps(julianday(created_at));
-        CREATE INDEX model_steps_thread_usage ON model_steps(thread_id,input_tokens,output_tokens);""")
+        db.executescript("""CREATE TABLE usage_threads(thread_id TEXT PRIMARY KEY, kind TEXT,
+            job_id TEXT,run_id TEXT);
+        CREATE TABLE usage_events(thread_id TEXT,input_tokens INTEGER,output_tokens INTEGER,
+            provider TEXT,created_at TEXT);
+        CREATE INDEX usage_events_time ON usage_events(julianday(created_at));
+        CREATE INDEX usage_events_thread ON usage_events(thread_id,input_tokens,output_tokens);""")
         for thread, source in [
             ("chat", "cli"),
             ("old-chat", "cli"),
@@ -34,7 +35,17 @@ def usage(tmp_path):
             ("run-a", '{"custom":"cron"}'),
             ("run-b", "vscode"),
         ]:
-            db.execute("INSERT INTO threads VALUES (?,?)", (thread, source))
+            db.execute(
+                "INSERT INTO usage_threads(thread_id,kind) VALUES (?,?)",
+                (
+                    thread,
+                    "cron"
+                    if "cron" in source
+                    else "dingtalk"
+                    if "gateway" in source
+                    else "session",
+                ),
+            )
         for thread, provider, tokens, day in [
             ("chat", "alpha", 100, "2026-10-03"),
             ("chat", "beta", 200, "2026-11-01"),
@@ -47,19 +58,25 @@ def usage(tmp_path):
             ("chat", "alpha", 9999, "2026-10-02"),
             ("chat", "alpha", 9999, "2026-11-02"),
         ]:
-            metadata = {"_corki_usage": {"provider": provider}} if provider else {"model": "shared"}
             db.execute(
-                "INSERT INTO model_steps VALUES (?,?,?, ?,datetime(?,'utc'))",
-                (thread, tokens, 10, json.dumps(metadata), day + " 12:00:00"),
+                "INSERT INTO usage_events VALUES (?,?,?, ?,datetime(?,'utc'))",
+                (thread, tokens, 10, provider, day + " 12:00:00"),
             )
     with closing(sqlite3.connect(home / "gateway/gateway.db")) as db, db:
         db.executescript("""CREATE TABLE connections(id TEXT PRIMARY KEY,type_id TEXT);
         CREATE TABLE user_usage_threads(thread TEXT PRIMARY KEY,channel TEXT,sender TEXT);
         INSERT INTO connections VALUES ('account','dingtalk');
-        INSERT INTO user_usage_threads VALUES ('bot-old','account','sender'),('bot-new','account','sender');""")
+        INSERT INTO user_usage_threads VALUES ('bot-old','account','sender'),
+            ('bot-new','account','sender');""")
     with closing(sqlite3.connect(home / "cron/cron.sqlite")) as db, db:
         db.executescript("""CREATE TABLE runs(id TEXT PRIMARY KEY,job_id TEXT,session_id TEXT);
-        INSERT INTO runs VALUES ('run-a','job','run-a'),('run-b','job',NULL),('duplicate-reference','job','run-a'),('empty','other','empty');""")
+        INSERT INTO runs VALUES ('run-a','job','run-a'),('run-b','job',NULL),
+            ('duplicate-reference','job','run-a'),('empty','other','empty');""")
+    with closing(sqlite3.connect(home / "sessions/corki.db")) as db, db:
+        db.execute(
+            "UPDATE usage_threads SET job_id='job',run_id=thread_id,kind='cron' "
+            "WHERE thread_id IN ('run-a','run-b')"
+        )
     return module.UsageAnalytics(home)
 
 
@@ -102,7 +119,7 @@ def test_missing_home_and_missing_gateway_schema(tmp_path, usage):
 
 def test_corrupt_usage_is_unknown_not_zero(usage):
     with closing(sqlite3.connect(usage.database)) as db, db:
-        db.execute("DROP TABLE model_steps")
+        db.execute("DROP TABLE usage_events")
     assert usage.cron({"jobs": [{"id": "job"}]}, jobs=True)["jobs"][0]["token_usage"] is None
 
 
@@ -123,10 +140,14 @@ def test_queries_use_range_and_thread_indexes(usage, monkeypatch):
             db, usage.home / "gateway/gateway.db", "gateway_usage", ["connections"]
         )
         module.UsageAnalytics.attach(db, usage.home / "cron/cron.sqlite", "cron_usage", ["runs"])
-        queries = [s for s in sql if "FROM model_steps s LEFT JOIN" in s or "WITH owners AS" in s]
+        queries = [
+            s
+            for s in sql
+            if "FROM usage_events s LEFT JOIN" in s or "FROM usage_threads o CROSS JOIN" in s
+        ]
         plans = [
             "\n".join(row["detail"] for row in db.execute("EXPLAIN QUERY PLAN " + query))
             for query in queries
         ]
-    assert "model_steps_created_jd" in plans[0]
-    assert "COVERING INDEX model_steps_thread_usage" in plans[1]
+    assert "usage_events_time" in plans[0]
+    assert "COVERING INDEX usage_events_thread" in plans[1]

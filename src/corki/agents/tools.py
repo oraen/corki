@@ -73,7 +73,9 @@ def agent_tools(controller):
         (
             "send_agent_message",
             "Supplement a running child task, or start a follow-up on an "
-            "idle child using its existing history.",
+            "idle child using its existing history. Startup/finalization messages are held "
+            "until safe admission; use wait_agents for actual completion. IDs belong to this "
+            "parent runtime: use list_agents after a restart, never reuse an unknown old ID.",
             {**identity, **message},
             ["id", "message"],
         ),

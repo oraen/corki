@@ -43,10 +43,11 @@ def read_asset(home, identity):
     if meta.get("version") != 1 or meta.get("mime") not in MIMES:
         raise ValueError("附件记录无效")
     file = root / (identity + ".bin")
-    if file.stat().st_size > 1_000_000:
+    limit = 512 * 1024 * 1024 if meta["mime"].startswith("image/") else 1_000_000
+    if file.stat().st_size > limit:
         raise ValueError("附件过大")
     with file.open("rb") as source:
-        raw = source.read(1_000_001)
+        raw = source.read(limit + 1)
     digest = hashlib.sha256(meta["mime"].encode() + b"\0" + raw).hexdigest()
     if len(raw) != meta.get("size") or digest != identity:
         raise ValueError("附件内容已改变，请重新添加")
@@ -68,7 +69,7 @@ def message_text(item):
 def read_message(database, thread, identity):
     with closing(sqlite3.connect(database)) as db:
         row = db.execute(
-            "SELECT kind,payload_json FROM conversation_items WHERE thread_id=? AND id=?",
+            "SELECT kind,payload_json FROM chat_history WHERE thread_id=? AND id=?",
             (thread, identity),
         ).fetchone()
     if not row:
@@ -96,7 +97,7 @@ def image_preview(item, index):
     header, _, encoded = data.partition(",")
     if header not in {f"data:{mime};base64" for mime in MIMES if mime.startswith("image/")}:
         raise ValueError("仅预览保存在本机的图片")
-    if len(encoded) > 32_000_000:
+    if len(encoded) > 64 * 1024 * 1024:
         raise ValueError("原图过大，无法生成预览")
     raw = base64.b64decode(encoded, validate=True)
     with Image.open(io.BytesIO(raw)) as image:

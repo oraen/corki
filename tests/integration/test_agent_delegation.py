@@ -93,6 +93,7 @@ def test_parent_delegates_and_collects_real_child(tmp_path, monkeypatch, execute
             skills_enabled=False,
             memories_enabled=False,
             hooks_enabled=False,
+            realtime_enabled=False,  # Host UI setting must not disable inter-agent delivery.
         )
         parent = await LangGraphRuntime.acreate(
             settings=settings,
@@ -114,6 +115,7 @@ def test_parent_delegates_and_collects_real_child(tmp_path, monkeypatch, execute
             child = next(iter(parent._agents.children.values()))
             assert child.runtime.thread_id != parent.thread_id
             assert child.runtime._session_source.is_non_root_agent
+            assert child.runtime._settings.realtime_enabled
         finally:
             await parent.aclose()
         assert not parent._agents.children

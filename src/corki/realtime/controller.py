@@ -15,6 +15,10 @@ class RealtimeTurnClosedError(RuntimeError):
     """A steer-only submission cannot enter a turn that has stopped accepting input."""
 
 
+class RealtimeInputLimitError(RuntimeError):
+    """The active turn has reached its input admission limit."""
+
+
 @dataclass(frozen=True, slots=True)
 class RealtimeInput:
     text: str
@@ -108,7 +112,7 @@ class RealtimeController:
         if not text and not mentions and not attachments:
             raise ValueError("realtime input must not be empty")
         if self._accepted >= self._max_inputs:
-            raise RuntimeError("realtime input limit reached for this turn")
+            raise RealtimeInputLimitError("realtime input limit reached for this turn")
         assert self._turn_id is not None
         item = UserMessageItem(
             text,

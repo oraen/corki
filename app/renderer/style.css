@@ -1471,6 +1471,8 @@ main {
 .session-context-input{position:relative}.session-context-input input{padding-right:36px}.session-context-input>span{position:absolute;right:13px;top:11px;color:#97968c;pointer-events:none}
 .session-sound-policy{display:flex;align-items:center;justify-content:space-between;border-top:1px solid #ece9e1;padding-top:18px;font-size:13px;color:#6f7066}.session-sound-policy span:last-child{color:#9c9a90;font-size:12px}
 .session-settings .session-settings-error{font-size:12px;color:#b54b3f;line-height:1.6;margin:14px 0 0}
+.session-settings .session-settings-notice{font-size:12px;color:#727469;line-height:1.6;margin:14px 0 0}
+.session-compact-row{display:flex;align-items:center;gap:12px;border-top:1px solid var(--line);margin-top:20px;padding-top:16px}.session-compact-row button{font-size:12px;border:1px solid #e5e3db;border-radius:8px;padding:8px 11px;gap:6px}.session-compact-row span{font-size:12px;color:#727469}
 .session-settings footer{align-items:center;margin-top:24px}.modal.session-settings footer .session-settings-reset{margin-right:auto;padding:8px 0;background:transparent;font-size:12px;color:#868575}
 .model-summary{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#8b8d80;margin-right:auto;padding:0 4px}
 @media(max-width:520px){.session-settings-grid{grid-template-columns:minmax(0,1fr)}}
@@ -1491,3 +1493,11 @@ main {
 .session-settings header h2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:16px}.session-settings header>.icon-button{flex:none}
 .session-settings-heading{display:flex;align-items:center;gap:10px;min-width:0}.session-settings-heading>svg{flex:none;color:#a77855}.session-settings-heading>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .session-name-field{margin-bottom:22px}
+
+.session-run-options { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 28px; }
+.session-settings .picker-badged-label { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; }
+.session-settings .picker-badged-label > span:first-child { flex-shrink: 0; }
+.session-settings .picker-value-badge { display: inline-block; min-width: 0; padding: 1px 5px; border-radius: 4px; background: #f0f0f0; color: #707070; font-size: 10px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-settings .picker-trigger > .picker-badged-label { margin-right: 8px; }
+.session-run-options .reminder-option { color: var(--text); }
+.session-run-options .reminder-option:has(input:disabled) { opacity: .45; cursor: not-allowed; }

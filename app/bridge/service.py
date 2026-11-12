@@ -34,7 +34,6 @@ from protocol import dumps
 from state import DesktopState
 
 from corki.cli.elicitation import validate_field
-from corki.cli.history_projection import HistoryProjection
 from corki.config.settings import CorkiSettings
 from corki.config import document
 from session_settings import session_settings, session_signature
@@ -90,6 +89,9 @@ class Service:
         self.permission_modes_cache = {}
         self.loaded_settings = {}
         self.active_models = {}
+        # Like Codex's captured TurnContext, steers keep the admitted settings
+        # even when the desktop saves different defaults for the next turn.
+        self.active_settings = {}
         self.tasks = {}
         self.admissions = {}
         self.locks = WeakValueDictionary()
@@ -188,6 +190,7 @@ class Service:
             "threads.delete": self.delete,
             "threads.archive": self.archive_thread,
             "turn.submit": self.submit,
+            "turn.compact": self.compact,
             "queue.action": self.followups.action,
             "turn.stop": self.stop,
             "request.read": self.request_read,
@@ -218,9 +221,9 @@ class Service:
         return {"enabled": bool(value)}
 
     async def validate_session(self, p):
-        thread = p.get("threadId")
-        if thread and (thread in self.tasks or self.state.is_deleted(thread)):
-            raise ValueError("请先停止当前任务再修改会话设置")
+        thread = text(p, "threadId", default="")
+        if thread and self.state.is_deleted(thread):
+            raise ValueError("此会话已删除")
         directory = ((await self.archive.read(ThreadId(thread))).cwd
                      if thread and await self.repository.thread_exists(ThreadId(thread))
                      else self.directory(text(p, "directory", default="")))
@@ -232,7 +235,7 @@ class Service:
             except (ValueError, OSError) as error:
                 raise ValueError("当前环境不支持该权限模式，请选择其他权限") from error
         runtime = self.runtimes.get(thread)
-        if runtime and self.runtime_signatures.get(thread) != session_signature(settings):
+        if runtime and thread not in self.tasks and self.runtime_signatures.get(thread) != session_signature(settings):
             if await runtime.list_background_terminals():
                 raise ValueError("请先结束当前会话的后台终端，再修改设置")
         return {"provider": settings.provider_id, "model": settings.model,
@@ -310,6 +313,8 @@ class Service:
                             "id": model,
                             "description": profile["models"][model].get("description", ""),
                             "reasoningLevels": levels,
+                            "fast": selected.session_service_tier == "priority",
+                            "supportsFast": selected.supports_service_tier is not False and info.service_tier_for_request("priority") is not None,
                             "reasoning": selected.reasoning_effort,
                             "images": selected.supports_image_input,
                             "contextWindow": selected.main_context_limits.raw_tokens,
@@ -333,12 +338,22 @@ class Service:
             )
             if not valid:
                 raise ValueError("默认供应商或模型未配置")
+            from corki.execution.backend import resolve_execution_permissions
+            resolved_permissions, _ = await resolve_execution_permissions(settings.execution_permissions)
+            profile = resolved_permissions.active_profile
+            permission_label = {
+                ":read-only": "只读", ":workspace": "工作区",
+                ":danger-full-access": "完全访问",
+            }.get(profile.id if profile else "")
+            if permission_label is None:
+                permission_label = "完全访问" if json.loads(resolved_permissions.profile_json).get("type") == "disabled" else "自定义权限"
             return {
                 "valid": True,
                 "providers": providers,
                 "default": default,
                 "permissions": "沿用 Corki 配置",
                 "sessionDefaults": {"mode": settings.collaboration_mode,
+                    "permissions": permission_label,
                     "memories": settings.memories_enabled and settings.memories_use,
                     "skills": settings.skills_enabled},
                 "permissionModes": await self.permission_modes(settings),
@@ -371,7 +386,16 @@ class Service:
                 "AND json_type(source,'$.internal') IS NULL ELSE 1 END "
             )
             # Classify using host-owned provenance before pagination and grouping.
-            visible += "AND source " + ("= ? " if group == "robot" else "!= ? ")
+            robot_source = "(source = ?"
+            gateway_database = self.home / "gateway/gateway.db"
+            if gateway_database.is_file():
+                db.execute("ATTACH DATABASE ? AS channel_history", (gateway_database.as_uri() + "?mode=ro",))
+                if db.execute("SELECT 1 FROM channel_history.sqlite_master WHERE type='table' AND name='user_usage_threads'").fetchone():
+                    # Old hosts could create a thread before setting its source.
+                    # This durable ownership map survives resets; thread is its PK.
+                    robot_source += " OR EXISTS (SELECT 1 FROM channel_history.user_usage_threads u WHERE u.thread=threads.id)"
+            robot_source += ")"
+            visible += "AND " + (robot_source if group == "robot" else "NOT " + robot_source) + " "
             parameters += (SessionSource.from_startup_arg("gateway").storage_value,)
             cron_database = self.home / "cron/cron.sqlite"
             if cron_database.is_file():
@@ -402,7 +426,7 @@ class Service:
                     )
                 else:
                     first = db.execute(
-                        "SELECT user_input FROM turns WHERE thread_id=? AND user_input!=? "
+                        "SELECT user_input FROM chat_turns WHERE thread_id=? AND user_input!=? "
                         "ORDER BY rowid LIMIT 1",
                         (row["id"], ""),
                     ).fetchone()
@@ -458,7 +482,7 @@ class Service:
                 ThreadId(thread), cursor=cursor, limit=limit
             )
             rows = []
-            for item in HistoryProjection(page.leading_replacements).feed(page.items):
+            for item in page.items:
                 if not isinstance(
                     item, (UserMessageItem, AssistantMessageItem, ToolCallItem, ToolResultItem)
                 ):
@@ -523,10 +547,10 @@ class Service:
         if rows and rows[0]["role"] != "user" and page.next_cursor is not None:
             with closing(sqlite3.connect(self.database)) as db:
                 question = db.execute(
-                    "SELECT payload_json FROM conversation_items WHERE thread_id=? "
+                    "SELECT payload_json FROM chat_history WHERE thread_id=? "
                     "AND turn_id=? AND kind='user_message' "
                     "AND json_extract(payload_json,'$.retained_from_id') IS NULL AND sequence < "
-                    "(SELECT sequence FROM conversation_items WHERE thread_id=? AND id=?) "
+                    "(SELECT sequence FROM chat_history WHERE thread_id=? AND id=?) "
                     "ORDER BY sequence DESC LIMIT 1",
                     (thread, rows[0]["turnId"], thread, rows[0]["sourceId"]),
                 ).fetchone()
@@ -550,7 +574,7 @@ class Service:
             placeholders = ",".join("?" for _ in visible_turns)
             with closing(sqlite3.connect(self.database)) as db:
                 terminal_turns = db.execute(
-                    "SELECT id,status,error,updated_at FROM turns WHERE thread_id=? "
+                    "SELECT id,status,error,updated_at FROM chat_turns WHERE thread_id=? "
                     f"AND id IN ({placeholders}) AND status IN ('cancelled','failed')",
                     (thread, *visible_turns),
                 ).fetchall()
@@ -593,7 +617,7 @@ class Service:
         title = self.state.titles().get(thread)
         if not title:
             with closing(sqlite3.connect(self.database)) as db:
-                first = db.execute("SELECT user_input FROM turns WHERE thread_id=? AND user_input!='' ORDER BY rowid LIMIT 1", (thread,)).fetchone()
+                first = db.execute("SELECT user_input FROM chat_turns WHERE thread_id=? AND user_input!='' ORDER BY rowid LIMIT 1", (thread,)).fetchone()
                 title = str(first[0]).split("\n")[0][:80] if first else "新会话"
         return {
             "threadId": thread,
@@ -764,13 +788,20 @@ class Service:
                 if exists
                 else self.directory(text(p, "directory", default=""))
             )
-            if "sessionSettings" in p:
-                settings = session_settings(self.settings(directory, refresh=True), p["sessionSettings"])
+            active_settings = self.active_settings.get(thread)
+            if thread in self.tasks and active_settings is not None:
+                # This is input to the current turn, not admission of the next
+                # turn. In particular, check images against the active model.
+                settings = active_settings
+                provider, model, effort = settings.provider_id, settings.model, settings.reasoning_effort
+            elif "sessionSettings" in p:
+                settings = session_settings(self.settings(directory), p["sessionSettings"])
                 provider, model, effort = settings.provider_id, settings.model, settings.reasoning_effort
             else:
                 provider, model, effort = text(p, "provider"), text(p, "model"), p.get("reasoning")
                 settings = self.settings(directory, provider=provider, model=model, reasoning_effort=effort)
             images = []
+            image_count = sum(1 for entry in attachments if isinstance(entry, dict) and entry.get("type") == "image")
             parts = []
             for entry in attachments:
                 if not isinstance(entry, dict):
@@ -784,31 +815,24 @@ class Service:
                         **entry,
                         "data": raw.decode("utf-8")
                         if mime == "text/plain"
-                        else f"data:{mime};base64," + base64.b64encode(raw).decode(),
+                        else "",
                     }
                 if entry.get("type") == "image":
-                    data = text(entry, "data", limit=1500000)
+                    data = text(entry, "data", limit=720_000_000) if not entry.get("assetId") else ""
                     if not settings.supports_image_input:
                         raise ValueError("所选模型未声明支持图片输入")
-                    if not data.startswith(
-                        (
-                            "data:image/png;base64,",
-                            "data:image/jpeg;base64,",
-                            "data:image/webp;base64,",
-                            "data:image/gif;base64,",
-                        )
-                    ):
-                        raise ValueError("不支持的图片类型")
-                    from PIL import Image
-
-                    try:
-                        raw = base64.b64decode(data.split(",", 1)[1], validate=True)
-                        with Image.open(io.BytesIO(raw)) as image:
-                            if image.width * image.height > 32_000_000:
-                                raise ValueError("图片尺寸过大")
-                            image.verify()
-                    except Exception as error:
-                        raise ValueError("图片内容无效或尺寸过大") from error
+                    if not entry.get("assetId"):
+                        header, _, encoded = data.partition(",")
+                        mime = header.removeprefix("data:").removesuffix(";base64")
+                        if header != f"data:{mime};base64" or mime not in {"image/png", "image/jpeg", "image/webp", "image/gif"}:
+                            raise ValueError("不支持的图片类型")
+                        try:
+                            raw = base64.b64decode(encoded, validate=True)
+                        except ValueError as error:
+                            raise ValueError("图片内容无效") from error
+                    from images import prepare_image
+                    raw, mime = await asyncio.to_thread(prepare_image, raw, mime, settings, image_count)
+                    data = f"data:{mime};base64," + base64.b64encode(raw).decode()
                     images.append(ImageAttachment(data))
                 elif entry.get("type") == "text":
                     parts.append(f"\n\n附件 {name}:\n" + text(entry, "data", limit=200000))
@@ -825,53 +849,7 @@ class Service:
                 return await self.followups.accept(
                     p, digest, content + "".join(parts), tuple(images), force=force_steer
                 )
-            runtime = self.runtimes.get(thread)
-            signature = session_signature(settings)
-            if runtime is not None and thread not in self.tasks and (
-                thread in self.runtime_signatures and self.runtime_signatures[thread] != signature
-            ):
-                if await runtime.list_background_terminals():
-                    raise ValueError("请先结束当前会话的后台终端，再应用新的设置")
-                await runtime.aclose()
-                self.runtimes.pop(thread, None)
-                self.runtime_signatures.pop(thread, None)
-                runtime = None
-            if runtime is None:
-                runtime = await self.factory(
-                    settings=settings,
-                    database_path=self.database,
-                    repository=self.repository,
-                    home_path=self.home,
-                    compatibility_home=Path.home(),
-                    thread_id=ThreadId(thread),
-                )
-                self.runtimes[thread] = runtime
-                self.runtime_signatures[thread] = signature
-
-                async def approval(request):
-                    value = {"threadId": thread, **asdict(request)}
-                    self.pending[request.request_id] = value
-                    try:
-                        await self.emit("approval", thread, value)
-                        # The core router owns this callback task. Keep it alive
-                        # until a response or server cancellation closes the request.
-                        await asyncio.Future()
-                    finally:
-                        if self.pending.pop(request.request_id, None) is not None:
-                            await self.emit(
-                                "interaction.resolved",
-                                thread,
-                                {"requestId": request.request_id},
-                            )
-
-                runtime.set_execution_approval_handler(approval)
-                runtime.set_mcp_elicitation_handler(approval)
-            else:
-                # Refresh insertion order for idle-host retirement.
-                self.runtimes.pop(thread)
-                self.runtimes[thread] = runtime
-                if thread not in self.runtime_signatures:
-                    await runtime.update_thread_settings(provider=provider, model=model, reasoning_effort=effort)
+            runtime = await self.runtime_for_settings(thread, settings)
             # Prepare a bounded display page through the public runtime lifecycle.
             # This acquires the canonical writer lease and materializes thread metadata
             # before the UI can open the newly accepted conversation.
@@ -900,6 +878,7 @@ class Service:
             if queued_id is None:
                 self.followups.setting(thread, paused=False)
             self.active_models[thread] = (provider, model, effort)
+            self.active_settings[thread] = settings
             self.tasks[thread] = asyncio.create_task(
                 self.run(thread, identity, runtime, content + "".join(parts), tuple(images))
             )
@@ -909,6 +888,95 @@ class Service:
                 await self.emit("UserMessageSubmitted", thread, self.live[thread][0]["data"])
             self.lifecycle_revision += 1
             return self.state.request(identity)
+
+    async def compact(self, p):
+        thread = text(p, "threadId")
+        identity = text(p, "requestId", limit=100)
+        uuid.UUID(identity)
+        digest = hashlib.sha256(dumps(p).encode()).hexdigest()
+        lock = self.locks.setdefault(thread, asyncio.Lock())
+        async with lock:
+            prior = self.state.request(identity)
+            if prior:
+                if prior["digest"] != digest:
+                    raise ValueError("请求 ID 已用于其他内容")
+                return prior
+            if self.state.is_deleted(thread):
+                raise ValueError("此会话已删除")
+            if thread in self.tasks or any(r["state"] in ("queued", "dispatching", "delivered", "unknown") for r in self.followups.rows(thread)):
+                raise ValueError("请先结束当前任务并确认未发送的消息，再压缩上下文")
+            try:
+                record = await self.archive.read(ThreadId(thread))
+            except LookupError:
+                raise ValueError("会话不存在，无法压缩上下文") from None
+            saved = self.state.get("draft:" + thread) or {}
+            base = self.settings(record.cwd)
+            if "sessionSettings" in saved:
+                settings = session_settings(base, saved["sessionSettings"])
+            else:
+                model = await self.repository.load_thread_model_settings(ThreadId(thread))
+                settings = self.settings(record.cwd, provider=model.provider, model=model.model,
+                                         reasoning_effort=model.reasoning_effort) if model else base
+            runtime = await self.runtime_for_settings(thread, settings)
+            await runtime.load_display_items_page(limit=1)
+            self.state.admit(identity, thread, digest)
+            self.live[thread] = []
+            self.active_settings[thread] = settings
+            self.active_models[thread] = (settings.provider_id, settings.model, settings.reasoning_effort)
+            self.tasks[thread] = asyncio.create_task(self.run(thread, identity, runtime, None, ()))
+            self.lifecycle_revision += 1
+            return self.state.request(identity)
+
+    async def runtime_for_settings(self, thread, settings):
+        runtime = self.runtimes.get(thread)
+        signature = session_signature(settings)
+        if runtime is not None and thread not in self.tasks and (
+            thread in self.runtime_signatures and self.runtime_signatures[thread] != signature
+        ):
+            if await runtime.list_background_terminals():
+                raise ValueError("请先结束当前会话的后台终端，再应用新的设置")
+            await runtime.aclose()
+            self.runtimes.pop(thread, None)
+            self.runtime_signatures.pop(thread, None)
+            runtime = None
+        if runtime is None:
+            runtime = await self.factory(
+                settings=settings,
+                database_path=self.database,
+                repository=self.repository,
+                home_path=self.home,
+                compatibility_home=Path.home(),
+                thread_id=ThreadId(thread),
+            )
+            self.runtimes[thread] = runtime
+            self.runtime_signatures[thread] = signature
+
+            async def approval(request):
+                value = {"threadId": thread, **asdict(request)}
+                self.pending[request.request_id] = value
+                try:
+                    await self.emit("approval", thread, value)
+                    # The core router owns this callback task. Keep it alive
+                    # until a response or server cancellation closes the request.
+                    await asyncio.Future()
+                finally:
+                    if self.pending.pop(request.request_id, None) is not None:
+                        await self.emit(
+                            "interaction.resolved",
+                            thread,
+                            {"requestId": request.request_id},
+                        )
+
+            runtime.set_execution_approval_handler(approval)
+            runtime.set_mcp_elicitation_handler(approval)
+        else:
+            # Refresh insertion order for idle-host retirement.
+            self.runtimes.pop(thread)
+            self.runtimes[thread] = runtime
+            if thread not in self.runtime_signatures:
+                await runtime.update_thread_settings(provider=settings.provider_id, model=settings.model, reasoning_effort=settings.reasoning_effort)
+        return runtime
+
 
     async def retire_idle_runtimes(self):
         """Bound idle hosts without terminating a turn, approval or background terminal."""
@@ -948,7 +1016,7 @@ class Service:
         observer_token = request_observer.set(watch)
         try:
             async with aclosing(
-                runtime.stream(content, attachments=images, realtime=True)
+                runtime.compact() if content is None else runtime.stream(content, attachments=images, realtime=True)
             ) as events:
                 async for event in events:
                     kind = type(event).__name__
@@ -1055,6 +1123,7 @@ class Service:
                     take_inputs()
                 self.tasks.pop(thread, None)
                 self.active_models.pop(thread, None)
+                self.active_settings.pop(thread, None)
                 self.live.pop(thread, None)
                 self.lifecycle_revision += 1
                 await self.emit("run.settled", thread, {"requestId": identity})

@@ -79,6 +79,9 @@ async def execute(store, identity, *, factory=None, settings_factory=None, idle_
             ),
             timeout=idle_timeout,
         )
+        from corki.storage.usage_ledger import register_usage_owner
+        await asyncio.to_thread(register_usage_owner, store.home / "sessions/corki.db", identity,
+                                kind="cron", job_id=row["job_id"], run_id=identity)
         prompt = (
             "This is an unattended scheduled task in a new session. Execute the task below "
             "using the configured permissions. Do not wait for user input or request permission "

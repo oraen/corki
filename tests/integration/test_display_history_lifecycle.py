@@ -60,7 +60,7 @@ def test_display_read_is_joined_before_resources_close(
             disposed.append("repository")
             await original_close(self)
 
-        method = "load_display_snapshot" if snapshot else "load_items"
+        method = "load_display_snapshot" if snapshot else "load_display_items"
         if snapshot == "page":
             method = "load_display_items_page"
         elif snapshot == "turn_page":

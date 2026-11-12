@@ -98,6 +98,21 @@ class SkillService:
             if not force_reload and self._cache_key == key:
                 return self._snapshot
             snapshot = discover_skills(roots, inventories=inventories)
+            work_root = _root_path(self.home / "skills/work")
+            snapshot = replace(
+                snapshot,
+                skills=tuple(
+                    replace(
+                        skill,
+                        work_only=True,
+                        allow_implicit_invocation=False,
+                        scope=SkillScope.USER,
+                    )
+                    if skill.path.is_relative_to(work_root)
+                    else skill
+                    for skill in snapshot.skills
+                ),
+            )
             snapshot = replace(
                 snapshot,
                 disabled_paths=disabled_skill_paths(
@@ -141,7 +156,11 @@ class SkillService:
     def catalog(self, cwd: Path):
         snapshot = self.snapshot(cwd)
         return render_catalog(
-            tuple(skill for skill in snapshot.skills if snapshot.is_visible(skill)),
+            tuple(
+                skill
+                for skill in snapshot.skills
+                if snapshot.is_visible(skill) or (skill.work_only and snapshot.is_enabled(skill))
+            ),
             self._catalog_budget,
         )
 
@@ -165,7 +184,8 @@ class SkillService:
                 for path in project_dirs
                 for directory in (".corki", ".agents")
             ),
-            SkillRoot(self.home / "skills", SkillScope.USER),
+            SkillRoot(self.home / "skills", SkillScope.USER, excluded_children=("work",)),
+            SkillRoot(self.home / "skills/work", SkillScope.USER, work_only=True),
         ]
         if self._compatibility_home is not None:
             roots.extend(
@@ -189,7 +209,13 @@ class SkillService:
             )
             for value in self._plugin_roots
         )
-        return tuple(roots)
+        extension_root = _root_path(self.home / "skills")
+        return tuple(
+            replace(root, excluded_children=("work",))
+            if _root_path(root.path) == extension_root
+            else root
+            for root in roots
+        )
 
     def configured_project_roots(self, cwd: Path) -> tuple[Path, ...]:
         """Retain configuration-folder roots, not cwd-discovered .agents roots."""
@@ -238,3 +264,11 @@ def _root_signature(
                     (repr((str(file), str(canonical))), stat.st_mtime_ns, stat.st_size)
                 )
     return tuple(signature)
+
+
+def _root_path(path: Path) -> Path:
+    # Walking owns diagnostics for broken roots; normalization must not bypass it.
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return path.absolute()

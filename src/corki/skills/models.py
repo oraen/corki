@@ -48,6 +48,7 @@ class SkillMetadata:
     dependencies: tuple[SkillToolDependency, ...] = ()
     plugin_id: str | None = None
     plugin_root: Path | None = None
+    work_only: bool = False
 
     @property
     def qualified_name(self) -> str:
@@ -69,7 +70,7 @@ class SkillSnapshot:
     disabled_paths: frozenset[Path] = frozenset()
 
     def is_enabled(self, skill: SkillMetadata) -> bool:
-        return skill.path not in self.disabled_paths
+        return skill.work_only or skill.path not in self.disabled_paths
 
     def is_visible(self, skill: SkillMetadata) -> bool:
         return self.is_enabled(skill) and skill.allow_implicit_invocation

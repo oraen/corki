@@ -2,32 +2,38 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import os
 import time
 import uuid
-from itertools import chain
 from urllib.parse import urlsplit
 
+import aiohttp
 import httpx
 
 from corki_adaptor.common import MAX_BODY, CredentialsUnavailable, certificate_failure
 from corki_adaptor.qoder.models import model_id
+from corki_adaptor.streaming import NEED_INPUT, atransform, transform
 
 UPSTREAM = "https://api2-v2.qoder.sh/model/v1/chat/completions"
 MAX_STREAM_BYTES = 64 * 1024 * 1024
-MAX_REQUEST_BYTES = 256 * 1024
+# Local preflight budget, not a discovered guarantee of upstream model capacity.
+MAX_REQUEST_BYTES = 8 * 1024 * 1024
 
 
 class ModelUnavailable(ValueError):
     """The model-server explicitly rejected this model identifier."""
 
 
-def events(chunks):
+def _event_parser():
     """SSE byte framing preserves Unicode line separators inside valid JSON strings."""
     buffer, data, total, finished = b"", [], 0, False
-    for chunk in chunks:
+    while True:
+        chunk = yield NEED_INPUT
+        if chunk is None:
+            break
         total += len(chunk)
         if total > MAX_STREAM_BYTES:
             raise ValueError("Qoder stream exceeds buffering limit")
@@ -95,7 +101,7 @@ def public_chunk(value, model):
     }
 
 
-def collect(chunks, model):
+def _collect_parser(model):
     result = {
         "id": "",
         "object": "chat.completion",
@@ -104,7 +110,10 @@ def collect(chunks, model):
         "choices": [],
     }
     choices = {}
-    for raw in chunks:
+    while True:
+        raw = yield NEED_INPUT
+        if raw is None:
+            break
         value = public_chunk(raw, model)
         result.update({k: value[k] for k in ("id", "created", "model")})
         if value.get("usage"):
@@ -142,10 +151,24 @@ def collect(chunks, model):
     if not choices or any(not c["finish_reason"] for c in choices.values()):
         raise ValueError("Qoder response did not finish")
     result["choices"] = [choices[i] for i in sorted(choices)]
-    return result
+    yield result
 
 
-def forward(handler, endpoint):
+def events(chunks):
+    yield from transform(_event_parser(), chunks)
+
+
+def collect(chunks, model):
+    return next(transform(_collect_parser(model), chunks))
+
+
+async def collect_async(chunks, model):
+    async for result in atransform(_collect_parser(model), chunks):
+        return result
+    raise ValueError("Missing Qoder completion")
+
+
+async def forward(handler, endpoint):
     handler.close_connection = True
     if not hmac.compare_digest(
         handler.headers.get("Authorization", "").encode(), ("Bearer " + handler.server.key).encode()
@@ -154,14 +177,14 @@ def forward(handler, endpoint):
     budget_only = endpoint in {"/request-budget", "/v1/request-budget"}
     if not budget_only and endpoint not in {"/chat/completions", "/v1/chat/completions"}:
         return handler.error(404, "Qoder 适配请使用 Chat Completions 协议。")
-    sizes = handler.headers.get_all("Content-Length", [])
+    sizes = handler.headers.getall("Content-Length", [])
     if handler.headers.get("Transfer-Encoding") or len(sizes) != 1:
         return handler.error(400, "A single Content-Length is required.")
     try:
         length = int(sizes[0])
         if not 0 < length <= MAX_BODY:
             return handler.error(413, "Request body exceeds gateway limits.")
-        raw = handler.rfile.read(length)
+        raw = await handler.read_body()
         if len(raw) != length:
             raise ValueError("Incomplete request")
         payload = json.loads(raw)
@@ -184,7 +207,8 @@ def forward(handler, endpoint):
     # the model test has no instructions. Qoder's Kimi route rejects that row
     # with provider_error; omitting it preserves the request's instructions.
     payload["messages"] = [
-        message for message in payload["messages"]
+        message
+        for message in payload["messages"]
         if not (
             isinstance(message, dict)
             and message.get("role") == "system"
@@ -206,30 +230,40 @@ def forward(handler, endpoint):
         },
     )
     if budget_only:
-        # Match HTTPX's actual JSON encoding after all gateway transformations.
+        # Match the upstream transport's actual JSON encoding after all gateway transformations.
         # Never contact Qoder or read its credentials for a budget-only request.
         def size(value):
-            encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"),
-                                 allow_nan=False).encode("utf-8")
+            encoded = json.dumps(
+                value, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+            ).encode("utf-8")
             return len(encoded)
-        fixed = {**payload, "messages": [
-            m for m in payload["messages"]
-            if isinstance(m, dict) and m.get("role") in ("system", "developer")
-        ]}
+
+        fixed = {
+            **payload,
+            "messages": [
+                m
+                for m in payload["messages"]
+                if isinstance(m, dict) and m.get("role") in ("system", "developer")
+            ],
+        }
         try:
-            budget = {"protocol_version": 1, "request_bytes": size(payload),
-                      "fixed_bytes": size(fixed), "limit_bytes": MAX_REQUEST_BYTES}
+            budget = {
+                "protocol_version": 1,
+                "request_bytes": size(payload),
+                "fixed_bytes": size(fixed),
+                "limit_bytes": MAX_REQUEST_BYTES,
+            }
         except (ValueError, TypeError, UnicodeError):
             return handler.error(400, "Invalid JSON request.")
         return handler.json_response(200, budget)
     started = False
     try:
-        token = handler.server.qoder_credentials().token
+        token = (await asyncio.to_thread(handler.server.qoder_credentials)).token
         upstream = os.environ.get("QODER_UPSTREAM", UPSTREAM)
         parsed = urlsplit(upstream)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("Qoder upstream must use HTTPS")
-        with handler.server.client.stream(
+        async with handler.server.client.stream(
             "POST",
             upstream,
             json=payload,
@@ -247,43 +281,71 @@ def forward(handler, endpoint):
                 )
             if not response.headers.get("content-type", "").startswith("text/event-stream"):
                 raise ValueError("Expected event stream")
-            chunks = events(response.iter_bytes())
+            chunks = atransform(_event_parser(), response.aiter_bytes())
             # Validate the first frame before committing streaming HTTP headers.
-            chunks = chain([next(chunks)], chunks)
+            first = await anext(chunks)
+
+            async def with_first():
+                yield first
+                async for value in chunks:
+                    yield value
+
+            values = with_first()
             if not streaming:
-                return handler.json_response(200, collect(chunks, requested_model))
-            handler.send_response(200)
-            handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
-            handler.send_header("Cache-Control", "no-cache")
-            handler.send_header("Connection", "close")
-            handler.end_headers()
+                return handler.json_response(200, await collect_async(values, requested_model))
+            await handler.start_stream("text/event-stream; charset=utf-8")
             started = True
             terminal = False
-            for value in chunks:
+            async for value in values:
                 value = public_chunk(value, requested_model)
                 terminal |= any(c.get("finish_reason") for c in value["choices"])
-                handler.wfile.write(
+                await handler.write(
                     b"data: " + json.dumps(value, ensure_ascii=False).encode() + b"\n\n"
                 )
-                handler.wfile.flush()
             if not terminal:
                 raise ValueError("No terminal choice")
-            handler.wfile.write(b"data: [DONE]\n\n")
-            handler.wfile.flush()
+            await handler.write(b"data: [DONE]\n\n")
     except ModelUnavailable:
+        if started:
+            handler.abort()
         if not started:
             handler.error(400, "Qoder 当前模型接口不支持此模型，请选择已提供的模型。")
     except CredentialsUnavailable:
+        if started:
+            handler.abort()
         if not started:
             handler.error(401, "Qoder 登录信息不可用，请检查登录状态和系统钥匙串授权。")
-    except (httpx.ConnectError, httpx.ConnectTimeout) as error:
+    except (
+        httpx.ConnectError,
+        httpx.ConnectTimeout,
+        aiohttp.ClientConnectorError,
+        aiohttp.ConnectionTimeoutError,
+    ) as error:
+        if started:
+            handler.abort()
         if not started:
             if certificate_failure(error):
-                return handler.error(424, "Qoder upstream certificate verification failed; "
-                                     "check the system trust store.")
-            handler.error(502, "Cannot reach Qoder upstream; check network connectivity.",
-                          code="upstream_connection_failed")
-    except (httpx.HTTPError, ValueError, TypeError, KeyError, AttributeError, StopIteration):
+                return handler.error(
+                    424,
+                    "Qoder upstream certificate verification failed; check the system trust store.",
+                )
+            handler.error(
+                502,
+                "Cannot reach Qoder upstream; check network connectivity.",
+                code="upstream_connection_failed",
+            )
+    except (
+        httpx.HTTPError,
+        aiohttp.ClientError,
+        TimeoutError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        StopAsyncIteration,
+    ):
         if not started:
             handler.error(502, "Qoder 模型请求失败，或上游响应不完整。")
+        else:
+            handler.abort()
         # After headers, close; never invent a successful terminal chunk.

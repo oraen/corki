@@ -19,11 +19,10 @@ class DisplayItemsCursor:
 
 @dataclass(frozen=True, slots=True)
 class DisplayItemsPage:
-    """A chronological raw batch, not a complete Turn or a terminal-state snapshot."""
+    """A chronological page of original display history, independent of model state."""
 
     items: tuple[ConversationItem, ...]
     next_cursor: DisplayItemsCursor | None
-    leading_replacements: int = 0
     newest_sequence: int | None = None
 
 

@@ -33,6 +33,7 @@ def walk_skill_files(
     *,
     mode: SkillDiscoveryMode = SkillDiscoveryMode.RECURSIVE,
     follow_directory_links: bool = True,
+    excluded_children: tuple[str, ...] = (),
 ) -> SkillWalk:
     """Return a bounded BFS inventory; traversal failures are not parse failures."""
     check_skill_io()
@@ -115,6 +116,8 @@ def walk_skill_files(
                 return SkillWalk(tuple(files), tuple(errors), True)
             entries_seen += 1
             path = directory / name
+            if directory == root and name in excluded_children:
+                continue
             try:
                 metadata = path.lstat()
                 linked = is_link_metadata(metadata)

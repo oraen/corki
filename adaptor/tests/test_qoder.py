@@ -1,15 +1,17 @@
 """Synthetic credentials and HTTP; never access the user's OS credential store."""
 
+import asyncio
 import json
 import threading
 from contextlib import contextmanager
 
 import httpx
 import pytest
+from mock_transport import mock_client
 
 from corki_adaptor.gateway import CredentialsUnavailable, Gateway
-from corki_adaptor.qoder.forward import UPSTREAM, collect, events
 from corki_adaptor.qoder.credentials import QoderCredentialReader, QoderCredentials
+from corki_adaptor.qoder.forward import UPSTREAM, collect, events
 from corki_adaptor.qoder.models import MODELS
 
 
@@ -112,7 +114,7 @@ def test_explicit_credentials_are_reread_without_writing_or_keychain(tmp_path, m
 def gateway(tmp_path, upstream):
     auth = tmp_path / "openai.json"
     auth.write_text(json.dumps({"tokens": {"access_token": "fixture", "account_id": "fixture"}}))
-    client = httpx.Client(transport=httpx.MockTransport(upstream))
+    client = mock_client(upstream)
     server = Gateway(
         auth,
         "fixture-key",
@@ -132,12 +134,14 @@ def gateway(tmp_path, upstream):
         server.shutdown()
         server.server_close()
         thread.join()
-        client.close()
+        asyncio.run(client.aclose())
 
 
 @pytest.mark.parametrize("streaming", [False, True])
 @pytest.mark.parametrize("instructions", ["", "Keep the answer concise."])
-def test_qoder_normalizes_empty_system_without_discarding_instructions(tmp_path, streaming, instructions):
+def test_qoder_normalizes_empty_system_without_discarding_instructions(
+    tmp_path, streaming, instructions
+):
     expected = ([{"role": "system", "content": instructions}] if instructions else []) + [
         {"role": "user", "content": "hello"}
     ]
@@ -149,18 +153,29 @@ def test_qoder_normalizes_empty_system_without_discarding_instructions(tmp_path,
         return httpx.Response(
             200,
             headers={"Content-Type": "text/event-stream"},
-            content=stream_bytes({
-                "choices": [{"index": 0, "delta": {"content": "OK"}, "finish_reason": "stop"}]
-            }),
+            content=stream_bytes(
+                {"choices": [{"index": 0, "delta": {"content": "OK"}, "finish_reason": "stop"}]}
+            ),
         )
 
     with gateway(tmp_path, upstream) as client:
-        response = client.post("/qoder/v1/chat/completions", json={
-            "model": "Kimi-K2.8-Preview", "stream": streaming,
-            "messages": [{"role": "system", "content": instructions}, {"role": "user", "content": "hello"}],
-        })
+        response = client.post(
+            "/qoder/v1/chat/completions",
+            json={
+                "model": "Kimi-K2.8-Preview",
+                "stream": streaming,
+                "messages": [
+                    {"role": "system", "content": instructions},
+                    {"role": "user", "content": "hello"},
+                ],
+            },
+        )
         assert response.status_code == 200
-        result = collect(events([response.content]), "Kimi-K2.8-Preview") if streaming else response.json()
+        result = (
+            collect(events([response.content]), "Kimi-K2.8-Preview")
+            if streaming
+            else response.json()
+        )
         assert result["choices"][0]["message"]["content"] == "OK"
 
 
@@ -225,18 +240,30 @@ def test_budget_preflight_matches_final_upstream_bytes_and_never_calls_model(tmp
 
     def upstream(request):
         sizes.append(len(request.content))
-        return httpx.Response(200, headers={"Content-Type": "text/event-stream"}, content=stream_bytes({
-            "choices": [{"index": 0, "delta": {"content": "OK"}, "finish_reason": "stop"}]
-        }))
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            content=stream_bytes(
+                {"choices": [{"index": 0, "delta": {"content": "OK"}, "finish_reason": "stop"}]}
+            ),
+        )
 
-    payload = {"model": "Kimi-K2.8-Preview", "stream": False, "messages": [
-        {"role": "system", "content": ""}, {"role": "system", "content": "中文系统提示词"},
-        {"role": "user", "content": "中文、空格、引号：\"hello\""},
-    ], "tools": [{"type": "function", "function": {"name": "echo", "parameters": {"type": "object"}}}]}
+    payload = {
+        "model": "Kimi-K2.8-Preview",
+        "stream": False,
+        "messages": [
+            {"role": "system", "content": ""},
+            {"role": "system", "content": "中文系统提示词"},
+            {"role": "user", "content": '中文、空格、引号："hello"'},
+        ],
+        "tools": [
+            {"type": "function", "function": {"name": "echo", "parameters": {"type": "object"}}}
+        ],
+    }
     with gateway(tmp_path, upstream) as client:
         budget = client.post("/qoder/v1/request-budget", json=payload).json()
         assert sizes == []
-        assert budget["protocol_version"] == 1 and budget["limit_bytes"] == 262144
+        assert budget["protocol_version"] == 1 and budget["limit_bytes"] == 8 * 1024 * 1024
         assert 0 < budget["fixed_bytes"] < budget["request_bytes"]
         assert client.post("/qoder/v1/chat/completions", json=payload).status_code == 200
         assert sizes == [budget["request_bytes"]]
@@ -357,9 +384,12 @@ def test_explicit_unsupported_model_is_reported_before_stream_headers(tmp_path, 
 def test_qoder_connection_failure_has_explicit_retry_classification(tmp_path, failure):
     def upstream(request):
         raise failure("private diagnostic")
+
     with gateway(tmp_path, upstream) as client:
-        response = client.post("/qoder/v1/chat/completions", json={
-            "model": "auto", "messages": [{"role": "user", "content": "hello"}]})
+        response = client.post(
+            "/qoder/v1/chat/completions",
+            json={"model": "auto", "messages": [{"role": "user", "content": "hello"}]},
+        )
         assert response.status_code == 502
         assert response.json()["error"]["code"] == "upstream_connection_failed"
         assert "private diagnostic" not in response.text
@@ -367,14 +397,18 @@ def test_qoder_connection_failure_has_explicit_retry_classification(tmp_path, fa
 
 def test_qoder_certificate_failure_is_not_classified_as_offline(tmp_path):
     import ssl
+
     def upstream(request):
         try:
             raise ssl.SSLCertVerificationError("fixture certificate")
         except ssl.SSLCertVerificationError as cause:
             raise httpx.ConnectError("private diagnostic") from cause
+
     with gateway(tmp_path, upstream) as client:
-        response = client.post("/qoder/v1/chat/completions", json={
-            "model": "auto", "messages": [{"role": "user", "content": "hello"}]})
+        response = client.post(
+            "/qoder/v1/chat/completions",
+            json={"model": "auto", "messages": [{"role": "user", "content": "hello"}]},
+        )
         assert response.status_code == 424
         assert "code" not in response.json()["error"]
 
@@ -382,14 +416,16 @@ def test_qoder_certificate_failure_is_not_classified_as_offline(tmp_path):
 def test_fold_before_property_colon_is_not_lost_as_sse_comment():
     raw = b'data: {"choices":[],"id"\n:"fixture","model"\n:"dmodel"}\n\ndata: [DONE]\n\n'
     for size in (1, 7, len(raw)):
-        assert list(events(raw[i:i+size] for i in range(0,len(raw),size))) == [
-            {"choices": [], "id": "fixture", "model": "dmodel"}]
+        assert list(events(raw[i : i + size] for i in range(0, len(raw), size))) == [
+            {"choices": [], "id": "fixture", "model": "dmodel"}
+        ]
     with pytest.raises(ValueError):
-        list(events([raw.replace(b'data: [DONE]\n\n', b'')]))
+        list(events([raw.replace(b"data: [DONE]\n\n", b"")]))
 
 
 def test_auto_is_not_advertised_by_gateway_catalog():
     from corki_adaptor.qoder.models import model_catalog
+
     catalog = model_catalog()
     assert "auto" not in catalog
     assert "ultimate" in catalog
@@ -397,8 +433,38 @@ def test_auto_is_not_advertised_by_gateway_catalog():
 
 def test_verified_generic_qwen_route_is_distinct_from_ide_only_versions():
     from corki_adaptor.qoder.models import model_catalog, model_id
+
     assert "Qwen" in model_catalog()
     assert model_id("Qwen") == "qmodel"
     assert "Qwen3.8-Max" not in model_catalog()
     assert "Qwen3.8-Flash" not in model_catalog()
     assert model_id("Qwen3.8-Max") == "qmodel_38max"
+
+
+def test_eight_mib_preflight_boundary_and_large_request_forwarding(tmp_path):
+    sizes = []
+
+    def upstream(request):
+        sizes.append(len(request.content))
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            content=stream_bytes(
+                {"choices": [{"index": 0, "delta": {"content": "OK"}, "finish_reason": "stop"}]}
+            ),
+        )
+
+    with gateway(tmp_path, upstream) as client:
+        payload = {"model": "auto", "messages": [{"role": "user", "content": ""}]}
+        base = client.post("/qoder/request-budget", json=payload).json()
+        limit = 8 * 1024 * 1024
+        for expected in (limit - 1, limit + 1):
+            payload["messages"][0]["content"] = "x" * (expected - base["request_bytes"])
+            budget = client.post("/qoder/request-budget", json=payload).json()
+            assert budget["limit_bytes"] == limit
+            assert budget["request_bytes"] == expected
+            assert (budget["request_bytes"] > limit) == (expected > limit)
+            if expected < limit:
+                response = client.post("/qoder/v1/chat/completions", json=payload)
+                assert response.status_code == 200
+                assert sizes == [expected]

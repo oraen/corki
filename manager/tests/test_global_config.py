@@ -55,6 +55,22 @@ def test_approval_switch_uses_real_permission_selection(store):
     config=module.document.loads(store.config_text())
     assert config['default_permissions']==':workspace' and config['approval_policy']=='on-request'
 
+@pytest.mark.parametrize('mode,profile,policy', [
+    ('read-only', ':read-only', 'on-request'),
+    ('workspace', ':workspace', 'on-request'),
+    ('full', ':danger-full-access', 'never'),
+])
+def test_permission_dropdown_saves_real_configuration(store, mode, profile, policy):
+    result = store.mutate({'kind':'global-config', 'action':'set', 'key':'permissions',
+        'value':mode, 'revision':module.revision(store.config_text())})
+    config = module.document.loads(store.config_text())
+    assert config['default_permissions'] == profile
+    assert config['approval_policy'] == policy
+    assert result['global_config']['permissions'] == mode
+    settings = CorkiSettings.for_directory(store.workspace, config_file=store.config)
+    assert json.loads(settings.execution_permissions.profile_json)['default_permissions'] == profile
+    assert config['unrelated'] == {'value':42}
+
 def test_permission_switch_converts_concrete_profile_without_conflict(store):
     store.config.write_text('{"execution":{"profile":{"type":"disabled"}}}')
     change(store,'approval_free',True)

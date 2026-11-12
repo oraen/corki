@@ -19,6 +19,15 @@ from corki.protocol.items import (
 from corki.tools import ToolRegistry
 
 
+async def model_snapshot(runtime, thread=None):
+    # These assertions test forked MODEL state, including summaries and copies.
+    # User-visible history deliberately excludes those internal items.
+    from dataclasses import replace
+    display = (await runtime.load_display_snapshot() if thread is None
+               else await runtime._repository.load_display_snapshot(thread))
+    return replace(display, items=await runtime._repository.load_items(thread or runtime.thread_id))
+
+
 @pytest.mark.parametrize("rounds", [1, 2])
 def test_real_compaction_survives_fork_and_cold_resume(tmp_path, rounds):
     async def scenario():
@@ -59,7 +68,7 @@ def test_real_compaction_survives_fork_and_cold_resume(tmp_path, rounds):
             for n in range(rounds):
                 assert isinstance([e async for e in source.stream(f"INPUT_{n}")][-1], TurnCompleted)
                 assert isinstance([e async for e in source.compact()][-1], TurnCompleted)
-            original = await source.load_display_snapshot()
+            original = await model_snapshot(source)
             source_id = source.thread_id
             assert len(summaries) == rounds
             assert sum(isinstance(i, CompactionItem) for i in original.items) == rounds
@@ -70,7 +79,7 @@ def test_real_compaction_survives_fork_and_cold_resume(tmp_path, rounds):
         fork = await create(fork_from_thread_id=source_id)
         try:
             assert [e async for e in fork.resume_pending()] == []
-            copied = await fork.load_display_snapshot()
+            copied = await model_snapshot(fork)
             assert len(copied.items) == len(original.items)
             mapping = {
                 old.id: new.id for old, new in zip(original.items, copied.items, strict=True)
@@ -117,7 +126,7 @@ def test_real_compaction_survives_fork_and_cold_resume(tmp_path, rounds):
                 *[f"INPUT_{n}" for n in range(rounds)],
                 "BRANCH",
             ]
-            assert await fork._repository.load_display_snapshot(source_id) == original
+            assert await model_snapshot(fork,source_id) == original
             assert isinstance([e async for e in fork.compact()][-1], TurnCompleted)
             assert len(summaries) == rounds + 1
             fork_id = fork.thread_id
@@ -135,7 +144,7 @@ def test_real_compaction_survives_fork_and_cold_resume(tmp_path, rounds):
                 "BRANCH",
                 "COLD",
             ]
-            assert await cold._repository.load_display_snapshot(source_id) == original
+            assert await model_snapshot(cold,source_id) == original
         finally:
             await cold.aclose()
 

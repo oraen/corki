@@ -78,12 +78,17 @@ def _body(lines: tuple[str, ...], roots: tuple[tuple[str, str], ...] = ()) -> st
 
 def _line(skill: SkillMetadata, description: str, locator: str) -> str:
     body = f"{description} " if description else ""
-    return f"- {skill.qualified_name}: {body}(file: {locator})"
+    marker = "[explicit-only work skill] " if skill.work_only else ""
+    return f"- {skill.qualified_name}: {marker}{body}(file: {locator})"
 
 
 def _allocate(skills, locators, budget):
     descriptions = [
-        s.description if len(s.description) <= 1024 else s.description[:1021] + "..."
+        ""
+        if s.work_only
+        else s.description
+        if len(s.description) <= 1024
+        else s.description[:1021] + "..."
         for s in skills
     ]
     minimums = [

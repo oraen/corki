@@ -20,7 +20,7 @@ try{
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  const workerReady=app.waitForEvent('window');
  await app.evaluate(async(_,modulePath)=>{
-  const {createRequire}=await import('node:module');
+  const {createRequire}=process.getBuiltinModule('node:module');
   const {NotificationAudio}=createRequire(modulePath)(modulePath);
   globalThis.testAudio=new NotificationAudio();globalThis.testAudio.play('complete');
  },audioModule);

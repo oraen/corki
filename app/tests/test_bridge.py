@@ -1237,6 +1237,8 @@ def test_desktop_runtime_discovers_shared_skills_from_user_home(tmp_path, monkey
 
 
 def test_display_pages_hide_compaction_copies_and_use_original_question(tmp_path):
+    import sqlite3
+    from contextlib import closing
     from corki.protocol.items import CompactionItem
     async def check():
         setup(tmp_path)
@@ -1258,10 +1260,14 @@ def test_display_pages_hide_compaction_copies_and_use_original_question(tmp_path
                 CompactionItem("summary", progress.id, turn, replacement_item_count=len(replacements)),
                 *replacements, retained, answer))
             page = await service.read_thread({"threadId": str(thread)})
-            assert [m["id"] for m in page["messages"]] == [str(question.id), str(answer.id)]
-            assert page["messages"][0]["contextOnly"]
-            earlier = await service.read_thread({"threadId": str(thread), "before": page["next"]})
-            assert [m["id"] for m in earlier["messages"]] == [str(question.id), str(progress.id)]
+            assert [m["id"] for m in page["messages"]] == [str(question.id), str(progress.id), str(answer.id)]
+            assert page["next"] is None
+            # Pruning model records must not remove the independent displayed answer.
+            with closing(sqlite3.connect(service.database)) as db, db:
+                db.execute('DELETE FROM conversation_items WHERE thread_id=? AND id=?', (str(thread), str(answer.id)))
+            page = await service.read_thread({"threadId": str(thread)})
+            assert [m["id"] for m in page["messages"]] == [str(question.id), str(progress.id), str(answer.id)]
+            assert page["next"] is None
         finally:
             await service.close()
     asyncio.run(check())

@@ -56,6 +56,11 @@ window.CorkiResourcePackages = (() => {
     }
   }
   function updateSelection() {
+    const removeButton = root?.querySelector("#package-delete-selected");
+    if (removeButton) {
+      removeButton.disabled = !selected.size;
+      removeButton.innerHTML = icon("trash") + `批量删除${selected.size ? "（" + selected.size + "）" : ""}`;
+    }
     const button = root?.querySelector("#package-export-selected");
     if (button) {
       button.disabled = !selected.size;
@@ -64,13 +69,86 @@ window.CorkiResourcePackages = (() => {
         `批量导出${selected.size ? "（" + selected.size + "）" : ""}`;
     }
   }
+  function metadataFields(data = {}) {
+    return `<div class="package-metadata-fields">${field("package_name", "插件名称", data.name || "", "text", "", false, "输入插件名称")}<label class="field"><span>插件描述</span><textarea name="package_description" maxlength="1000" rows="4" placeholder="可选">${esc(data.description || "")}</textarea></label></div>`;
+  }
+  function bindInlineMetadata(data, node, ticket) {
+    let active = null, pending = null;
+    const live = () => ticket === epoch && node === root && node.isConnected;
+    const pencil = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5 4 4 M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15l-1 6Z"/></svg>';
+    const label = key => key === "name" ? "插件名称" : "插件描述";
+    function display(key) {
+      const host = node.querySelector(`[data-package-metadata="${key}"]`);
+      host.classList.remove("is-editing");
+      host.replaceChildren();
+      const row = document.createElement("div"); row.className = "package-inline-row";
+      const text = document.createElement(key === "name" ? "h2" : "p");
+      text.className = key === "name" ? "" : "package-detail-description";
+      text.textContent = data[key] || "暂无描述";
+      if (key === "description" && !data[key]) text.classList.add("is-empty");
+      const button = document.createElement("button");
+      button.type = "button"; button.className = "package-inline-edit";
+      button.setAttribute("aria-label", "编辑" + label(key)); button.innerHTML = pencil;
+      button.onclick = async () => {
+        if (pending && !await pending) return;
+        if (!live()) return;
+        if (active && active.key !== key && !await commit()) return;
+        if (!live()) return;
+        if (active) {active.input.focus(); return;}
+        const input = document.createElement(key === "name" ? "input" : "textarea");
+        input.className = "package-inline-input";
+        input.setAttribute("aria-label", label(key)); input.maxLength = key === "name" ? 300 : 1000;
+        if (key === "description") {input.rows = 2; input.placeholder = "可选";}
+        input.value = data[key] || "";
+        const error = document.createElement("p"); error.className = "package-inline-error";
+        error.setAttribute("role", "alert");
+        const editor = document.createElement("div"); editor.className = "package-inline-editor";
+        editor.append(input, error);
+        active = {key, input, error, host};
+        host.classList.add("is-editing"); host.append(editor);
+        input.onblur = () => {void commit();};
+        input.onkeydown = event => {
+          if (event.isComposing || event.keyCode === 229) return;
+          if (pending) {if (["Enter", "Escape"].includes(event.key)) event.preventDefault(); return;}
+          if (event.key === "Enter" && !event.shiftKey) {event.preventDefault(); void commit();}
+          if (event.key === "Escape") {event.preventDefault(); active = null; display(key);}
+        };
+        input.focus(); if (key === "name") input.select();
+      };
+      row.append(text, button); host.append(row);
+    }
+    function commit() {
+      if (pending) return pending;
+      if (!active) return Promise.resolve(true);
+      const edit = active, value = edit.input.value.trim();
+      if (value === (data[edit.key] || "")) {active = null; display(edit.key); return Promise.resolve(true);}
+      edit.error.textContent = ""; edit.input.readOnly = true;
+      pending = (async () => {
+        try {
+          const result = await request("update", {id: data.id, revision: data.digest, [edit.key]: value});
+          Object.assign(data, result);
+          rows = rows.map(row => row.id === data.id ? {...row, ...data} : row);
+          if (live()) {
+            active = null; display(edit.key);
+            const crumb = document.querySelector("#crumb"); if (crumb) crumb.textContent = data.name;
+          }
+          return true;
+        } catch (error) {
+          if (live()) {edit.error.textContent = error.message; edit.input.readOnly = false;}
+          return false;
+        } finally {pending = null;}
+      })();
+      return pending;
+    }
+    display("name"); display("description");
+  }
   function draw() {
-    root.innerHTML = `<section class="panel package-panel"><div class="package-heading"><div class="package-title"><span class="package-mark">${symbol()}</span><h2>插件管理<span class="package-count">${rows.length}</span></h2></div><div class="package-actions"><button type="button" class="button" id="package-export-selected" disabled>${transferIcon("download")}批量导出</button><button type="button" class="button" id="package-create">${icon("plus")}创建插件</button><button type="button" class="button primary" id="package-import">${transferIcon("upload")}导入插件</button></div></div>${
+    root.innerHTML = `<section class="panel package-panel"><div class="package-heading"><div class="package-title"><span class="package-mark">${symbol()}</span><h2>插件管理<span class="package-count">${rows.length}</span></h2></div><div class="package-actions"><button type="button" class="button package-bulk-delete" id="package-delete-selected" disabled>${icon("trash")}批量删除</button><button type="button" class="button" id="package-export-selected" disabled>${transferIcon("download")}批量导出</button><button type="button" class="button" id="package-create">${icon("plus")}创建插件</button><button type="button" class="button primary" id="package-import">${transferIcon("upload")}导入插件</button></div></div>${
       rows.length
         ? `<div class="package-grid">${rows
             .map(
               (row) =>
-                `<article class="package-card" data-package-open="${row.id}" tabindex="0" role="link" aria-label="打开插件 ${esc(row.name)}"><div class="package-card-top"><span class="package-mark">${symbol()}</span><div class="package-card-name"><h3 title="${esc(row.name)}">${esc(row.name)}</h3><time>${esc(when(row.created))}</time></div><label class="package-check package-card-check"><input type="checkbox" data-package-select="${row.id}" aria-label="选择 ${esc(row.name)}" ${selected.has(row.id) ? "checked" : ""}></label></div>${row.description ? `<p class="package-description">${esc(row.description)}</p>` : ""}<div class="package-tags">${Object.entries(
+                `<article class="package-card" data-package-open="${row.id}" tabindex="0" role="link" aria-label="打开插件 ${esc(row.name)}"><div class="package-card-top"><span class="package-mark">${symbol()}</span><div class="package-card-name"><h3 title="${esc(row.name)}">${esc(row.name)}</h3><p class="package-card-summary" title="${esc(row.description || "")}">${esc(row.description || "")}</p></div><label class="package-check package-card-check"><input type="checkbox" data-package-select="${row.id}" aria-label="选择 ${esc(row.name)}" ${selected.has(row.id) ? "checked" : ""}></label></div><div class="package-tags">${Object.entries(
                   labels,
                 )
                   .filter(([kind]) =>
@@ -92,6 +170,8 @@ window.CorkiResourcePackages = (() => {
     root.querySelector("#package-import").onclick = () => importDialog();
     root.querySelector("#package-export-selected").onclick = () =>
       download([...selected]);
+    root.querySelector("#package-delete-selected").onclick = () =>
+      remove(rows.filter(row => selected.has(row.id)));
     root.querySelectorAll("[data-package-select]").forEach(
       (input) =>
         (input.onchange = () => {
@@ -132,7 +212,7 @@ window.CorkiResourcePackages = (() => {
     if (ticket !== epoch || node !== root || !node?.isConnected) return;
     const crumb = document.querySelector("#crumb");
     if (crumb) crumb.textContent = data.name;
-    root.innerHTML = `<section class="panel package-panel package-detail"><div class="package-heading"><div class="package-title"><span class="package-mark">${symbol()}</span><div><h2>${esc(data.name)}</h2>${data.description ? `<p class="package-detail-description">${esc(data.description)}</p>` : ""}</div></div><div class="package-actions"><button class="button" id="package-detail-export">${transferIcon("download")}导出</button><button class="button primary" id="package-add">${icon("plus")}添加组件</button></div></div><div class="package-detail-sections">${[
+    root.innerHTML = `<section class="panel package-panel package-detail"><div class="package-heading"><div class="package-title"><span class="package-mark">${symbol()}</span><div class="package-inline-metadata"><div data-package-metadata="name"></div><div data-package-metadata="description"></div></div></div><div class="package-actions"><button class="button" id="package-detail-export">${transferIcon("download")}导出</button><button class="button primary" id="package-add">${icon("plus")}添加组件</button></div></div><div class="package-detail-sections">${[
       ...Object.keys(labels),
     ]
       .map((kind) => {
@@ -140,6 +220,7 @@ window.CorkiResourcePackages = (() => {
         return `<section class="package-detail-group"><div class="package-detail-group-heading"><h3>${labels[kind]}<span>${items.length}</span></h3></div>${items.length ? `<div class="package-component-list">${items.map((item) => `<div class="package-component"><span class="package-component-icon">${kind === "resources" ? transferIcon("download") : symbol()}</span><div><strong title="${esc(item.name)}">${esc(item.name)}</strong>${kind === "resources" ? `<small>${formatBytes(item.bytes)}</small>` : ""}</div><button class="text-button danger" data-remove-component data-kind="${kind}" data-name="${esc(item.name)}" aria-label="移除 ${esc(item.name)}">移除</button></div>`).join("")}</div>` : '<div class="package-group-empty">暂无' + labels[kind] + "</div>"}</section>`;
       })
       .join("")}</div></section>`;
+    bindInlineMetadata(data, node, ticket);
     root.querySelector("#package-detail-export").onclick = () =>
       download([data.id]);
     root.querySelector("#package-add").onclick = () =>
@@ -285,6 +366,7 @@ window.CorkiResourcePackages = (() => {
         title: "公共 Skills",
         items: data.skills.filter((item) => item.group === "public"),
       },
+      {kind: "skills", title: "工作 Skills", items: data.skills.filter(item => item.group === "work")},
       { kind: "mcp", title: "MCP", items: data.mcp },
       { kind: "hooks", title: "Hooks", items: data.hooks },
     ];
@@ -309,7 +391,7 @@ window.CorkiResourcePackages = (() => {
     let files = [];
     showDialog(
       target ? "添加组件" : "创建插件",
-      `<div class="package-create-form">${target ? "" : `<div class="field-grid">${field("package_name", "插件名称", "", "text", "", false, "输入插件名称")}${field("package_description", "描述", "", "text", "", false, "可选")}</div>`}<div class="package-resource-heading"><strong>选择资源</strong><label class="search">${icon("search")}<input type="search" placeholder="搜索资源" aria-label="搜索资源" id="package-resource-search"></label></div><div class="package-resource-groups">${resourceChoices(data)}</div><div class="package-local-heading"><strong>本地文件</strong><span class="subtle">可选</span></div>${uploadHTML()}</div>`,
+      `<div class="package-create-form">${target ? "" : metadataFields()}<div class="package-resource-heading"><strong>选择资源</strong><label class="search">${icon("search")}<input type="search" placeholder="搜索资源" aria-label="搜索资源" id="package-resource-search"></label></div><div class="package-resource-groups">${resourceChoices(data)}</div><div class="package-local-heading"><strong>本地文件</strong><span class="subtle">可选</span></div>${uploadHTML()}</div>`,
       async (form) => {
         const selection = Object.fromEntries(
           ["skills", "mcp", "hooks"].map((kind) => [
@@ -319,8 +401,7 @@ window.CorkiResourcePackages = (() => {
         );
         const result = await request(target ? "update" : "create", {
           ...(target ? { id: target.id, revision: target.digest } : {}),
-          name: form.get("package_name"),
-          description: form.get("package_description"),
+          ...(!target ? {name: form.get("package_name"), description: form.get("package_description")} : {}),
           ...(Object.values(selection).some((items) => items.length)
             ? { selection }
             : {}),
@@ -407,26 +488,28 @@ window.CorkiResourcePackages = (() => {
         else return refresh({ files });
       });
   }
-  function remove(row) {
+  function remove(value) {
+    const items = Array.isArray(value) ? value : [value];
+    if (!items.length) return;
+    const batch = items.length > 1;
     showDialog(
-      "删除插件",
-      `<div class="package-delete"><span class="package-delete-mark">${icon("trash")}</span><h3>删除「${esc(row.name)}」？</h3><p>删除后无法恢复。已导入的资源不受影响。</p></div>`,
+      batch ? "批量删除插件" : "删除插件",
+      `<div class="package-delete"><span class="package-delete-mark">${icon("trash")}</span><h3>${batch ? `删除选中的 ${items.length} 个插件？` : `删除「${esc(items[0].name)}」？`}</h3><p>删除后无法恢复。已导入的资源不受影响。</p>${batch ? `<ul class="package-delete-list">${items.slice(0, 5).map(row => `<li>${esc(row.name)}</li>`).join("")}${items.length > 5 ? `<li>另有 ${items.length - 5} 个插件</li>` : ""}</ul>` : ""}</div>`,
       async () => {
-        await request("delete", { id: row.id });
-        selected.delete(row.id);
-        toast("插件已永久删除");
-        await load();
-      },
-      "",
+        try {
+          const result = await request("delete", {ids: items.map(row => row.id)});
+          result.deleted_ids.forEach(id => selected.delete(id));
+          toast(result.message);
+        } finally {
+          await load();
+        }
+      }, "",
     );
     $("#save").textContent = "删除";
     $("#save").classList.add("package-danger-button");
-    $("#editor").addEventListener(
-      "close",
-      () => $("#save").classList.remove("package-danger-button"),
-      { once: true },
-    );
+    $("#editor").addEventListener("close", () => $("#save").classList.remove("package-danger-button"), {once: true});
   }
+
   return {
     mount(node, options = {}) {
       root = node;

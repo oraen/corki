@@ -39,35 +39,19 @@ class UsageAnalytics:
         if not self.database.is_file():
             return dict(days=list(days.values()), providers=[], types=[])
         with closing(self.connect()) as db:
-            cron = "0"
-            if self.attach(db, self.home / "cron/cron.sqlite", "cron_usage", ["runs"]):
-                # Older runs predate source tags; the run ledger is authoritative.
-                cron = (
-                    "s.thread_id IN (SELECT coalesce(nullif(session_id,''),id) "
-                    "FROM cron_usage.runs)"
-                )
-            dingtalk = "0"
-            if self.attach(
-                db,
-                self.home / "gateway/gateway.db",
-                "gateway_usage",
-                ["user_usage_threads", "connections"],
-            ):
-                dingtalk = (
-                    "EXISTS (SELECT 1 FROM gateway_usage.user_usage_threads u "
-                    "JOIN gateway_usage.connections c ON c.id=u.channel "
-                    "WHERE u.thread=s.thread_id AND c.type_id='dingtalk')"
-                )
             # Aggregate once, without loading prompts, responses or tool payloads.
             rows = db.execute(
-                f"""
+                """
                 SELECT date(s.created_at,'localtime') day,
-                  CASE WHEN json_valid(s.metadata_json)
-                    THEN json_extract(s.metadata_json,'$._corki_usage.provider') END provider,
-                  CASE WHEN t.source IN ('cron', '{{"custom":"cron"}}') OR {cron} THEN '定时任务'
-                    WHEN {dingtalk} THEN '钉钉' ELSE '会话' END kind,
+                  s.provider provider,
+                  CASE WHEN t.kind='cron' THEN '定时任务'
+                    WHEN t.kind='dingtalk' THEN '钉钉'
+                    WHEN t.kind='wechat' THEN '微信'
+                    WHEN t.kind='feishu' THEN '飞书'
+                    WHEN t.kind IN ('telegram','whatsapp') THEN t.kind
+                    WHEN t.kind='gateway' THEN '机器人' ELSE '会话' END kind,
                   sum(s.input_tokens) input, sum(s.output_tokens) output, count(*) steps
-                FROM model_steps s LEFT JOIN threads t ON t.id=s.thread_id
+                FROM usage_events s LEFT JOIN usage_threads t ON t.thread_id=s.thread_id
                 WHERE julianday(s.created_at)>=julianday(?,'utc')
                   AND julianday(s.created_at)<julianday(?,'utc')
                 GROUP BY day,provider,kind
@@ -83,7 +67,7 @@ class UsageAnalytics:
                 if not isinstance(provider, str) or not provider.strip():
                     provider = "未记录供应商"
                 providers[provider] = providers.get(provider, 0) + tokens
-                types[row["kind"]] += tokens
+                types[row["kind"]] = types.get(row["kind"], 0) + tokens
 
         def slices(values):
             return [
@@ -103,24 +87,20 @@ class UsageAnalytics:
         try:
             if self.database.is_file():
                 with closing(self.connect()) as db:
-                    if self.attach(db, self.home / "cron/cron.sqlite", "cron_usage", ["runs"]):
-                        key = "job_id" if jobs else "id"
-                        for start in range(0, len(rows), 400):
-                            ids = [row["id"] for row in rows[start : start + 400]]
-                            marks = ",".join("?" for _ in ids)
-                            # DISTINCT protects against legacy duplicated session references.
-                            result = db.execute(
-                                f"""
-                                WITH owners AS (SELECT DISTINCT {key} owner,
-                                  coalesce(nullif(session_id,''),id) thread
-                                  FROM cron_usage.runs WHERE {key} IN ({marks}))
-                                SELECT o.owner, sum(s.input_tokens+s.output_tokens) tokens
-                                FROM owners o CROSS JOIN model_steps s ON s.thread_id=o.thread
-                                GROUP BY o.owner
-                            """,
-                                ids,
-                            )
-                            totals.update({row["owner"]: row["tokens"] for row in result})
+                    key = "job_id" if jobs else "run_id"
+                    for start in range(0, len(rows), 400):
+                        ids = [row["id"] for row in rows[start : start + 400]]
+                        marks = ",".join("?" for _ in ids)
+                        result = db.execute(
+                            f"""
+                            SELECT o.{key} owner,sum(s.input_tokens+s.output_tokens) tokens
+                            FROM usage_threads o CROSS JOIN usage_events s
+                                ON s.thread_id=o.thread_id
+                            WHERE o.{key} IN ({marks}) GROUP BY o.{key}
+                        """,
+                            ids,
+                        )
+                        totals.update({row["owner"]: row["tokens"] for row in result})
             for row in rows:
                 row["token_usage"] = totals.get(row["id"], 0)
         except sqlite3.Error:

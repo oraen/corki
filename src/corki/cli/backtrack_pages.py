@@ -1,7 +1,7 @@
 """Bounded display windows over immutable history, without truncating source items."""
 
 from corki.cli.display_text import visible_terminal_text
-from corki.cli.history_projection import HistoryProjection
+from corki.sessions.history_projection import HistoryProjection
 from corki.protocol.items import (
     AssistantMessageItem,
     ReasoningItem,

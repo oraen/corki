@@ -68,7 +68,8 @@ def test_bundled_catalog_contains_supported_skills(tmp_path: Path) -> None:
         "skill-installer",
         "xlsx",
     }
-    assert all(skill.scope is SkillScope.SYSTEM for skill in snapshot.skills)
+    assert all(skill.scope is (SkillScope.USER if skill.work_only else SkillScope.SYSTEM) for skill in snapshot.skills)
+    assert snapshot.resolve("corki-text-C&E").work_only
     assert snapshot.errors == ()
     arxiv = snapshot.resolve("arxiv")
     assert arxiv is not None

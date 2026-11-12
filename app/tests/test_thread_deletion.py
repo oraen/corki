@@ -81,7 +81,8 @@ def test_archive_then_physical_delete(tmp_path):
             with closing(sqlite3.connect(service.database)) as db:
                 for (table,) in db.execute("SELECT name FROM sqlite_master WHERE type='table'"):
                     columns = [r[1] for r in db.execute(f'PRAGMA table_info("{table}")')]
-                    if "thread_id" in columns:
+                    # Independent accounting survives physical conversation deletion.
+                    if "thread_id" in columns and table not in {"usage_events", "usage_threads"}:
                         assert (
                             db.execute(
                                 f'SELECT count(*) FROM "{table}" WHERE thread_id=?', (thread,)
@@ -428,6 +429,31 @@ def test_workspace_display_aliases_persist_without_changing_paths(tmp_path):
                 with pytest.raises(ValueError):
                     await service.write_state({'key':'directoryAlias:'+str(first),'value':bad})
             assert marker.read_text()=='unchanged'
+        finally:
+            await service.close()
+    asyncio.run(check())
+
+
+def test_legacy_robot_ownership_filters_before_pagination_and_workspaces(tmp_path):
+    async def check():
+        async def send(_):
+            pass
+        service = Service(tmp_path, send)
+        try:
+            for thread in ('legacy-bot', 'manual'):
+                await service.repository.create_thread(ThreadId(thread), tmp_path / thread)
+            gateway = tmp_path / 'gateway'
+            gateway.mkdir()
+            with closing(sqlite3.connect(gateway / 'gateway.db')) as db, db:
+                db.execute('CREATE TABLE user_usage_threads(thread TEXT PRIMARY KEY, channel TEXT, sender TEXT)')
+                db.execute("INSERT INTO user_usage_threads VALUES('legacy-bot','fixture','fixture')")
+            recent = await service.list_threads({'limit': 1})
+            assert [row['id'] for row in recent['threads']] == ['manual']
+            assert recent['next'] is None
+            assert [row['path'] for row in recent['directories']] == [str(tmp_path / 'manual')]
+            assert not (await service.list_threads({'directory': str(tmp_path / 'legacy-bot')}))['threads']
+            robots = await service.list_threads({'group': 'robot'})
+            assert [row['id'] for row in robots['threads']] == ['legacy-bot']
         finally:
             await service.close()
     asyncio.run(check())

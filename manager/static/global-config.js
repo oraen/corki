@@ -3,7 +3,6 @@ let globalConfigurationSaving = false;
 let sessionMaintenanceRequested = false;
 function globalConfigurationPanel(config = {}) {
  const options = [
-  ['approval_free', '免审批', '允许 Agent 直接执行操作', 'tools'],
   ['self_evolution', '自进化', 'Corki将在工作中不断学习自己改造自己', 'skills'],
   ['memories', '记忆', '在任务之间保留并使用长期记忆', 'memories'],
   ['auto_cleanup', '自动清理会话', '自动清理超过 3 个月未更新的会话', 'clock'],
@@ -41,8 +40,10 @@ let globalDefaultsController;
 function unbindGlobalDefaults(){globalDefaultsController?.abort();globalDefaultsController=null;}
 function globalDefaultFields(){
  const providers=state.providers.filter(p=>p.enabled!==false&&Object.keys(p.models).length),selected=providers.find(p=>p.id===state.default.provider);
- const field=(key,label,options,value)=>`<div class="field protocol-field global-default-field" data-default-field="${key}"><span id="global-default-${key}-label">${label}</span><input type="hidden" value="${esc(value||'')}"><button type="button" class="select-trigger" aria-labelledby="global-default-${key}-label global-default-${key}-value" aria-haspopup="listbox" aria-expanded="false" aria-controls="global-default-${key}-options" ${globalConfigurationSaving||!options.length?'disabled':''}><span class="select-current" id="global-default-${key}-value">${esc(value||'暂无可用配置')}</span>${icon('chevron')}</button><div class="select-menu" id="global-default-${key}-options" role="listbox" aria-labelledby="global-default-${key}-label" hidden>${options.map(id=>`<button type="button" role="option" tabindex="-1" data-value="${esc(id)}" aria-selected="${id===value}"><strong>${esc(id)}</strong>${icon('check')}</button>`).join('')}</div></div>`;
- return `<div class="global-defaults">${field('provider','默认供应商',providers.map(p=>p.id),selected?.id)}${field('model','默认模型',Object.keys(selected?.models||{}),state.default.model)}</div>`;
+ const permissionLabels={'read-only':'只读',workspace:'工作区',full:'完全访问',custom:'自定义权限'};
+ const display=(key,value)=>key==='permissions'?permissionLabels[value]||value:value;
+ const field=(key,label,options,value)=>`<div class="field protocol-field global-default-field" data-default-field="${key}"><span id="global-default-${key}-label">${label}</span><input type="hidden" value="${esc(value||'')}"><button type="button" class="select-trigger" aria-labelledby="global-default-${key}-label global-default-${key}-value" aria-haspopup="listbox" aria-expanded="false" aria-controls="global-default-${key}-options" ${globalConfigurationSaving||!options.length?'disabled':''}><span class="select-current" id="global-default-${key}-value">${esc(display(key,value)||'暂无可用配置')}</span>${icon('chevron')}</button><div class="select-menu" id="global-default-${key}-options" role="listbox" aria-labelledby="global-default-${key}-label" hidden>${options.map(id=>`<button type="button" role="option" tabindex="-1" data-value="${esc(id)}" aria-selected="${id===value}"><strong>${esc(display(key,id))}</strong>${icon('check')}</button>`).join('')}</div></div>`;
+ return `<div class="global-defaults">${field('provider','默认供应商',providers.map(p=>p.id),selected?.id)}${field('model','默认模型',Object.keys(selected?.models||{}),state.default.model)}${field('permissions','操作权限',[...(state.global_config?.permissions==='custom'?['custom']:[]),'read-only','workspace','full'],state.global_config?.permissions||'read-only')}</div>`;
 }
 function bindGlobalDefaults(){
  unbindGlobalDefaults();globalDefaultsController=new AbortController();
@@ -51,11 +52,11 @@ function bindGlobalDefaults(){
   root.querySelector('input').onchange=async event=>{
    if(globalConfigurationSaving)return;
    const key=root.dataset.defaultField,value=event.target.value;
-   if(value===state.default[key])return;
+   if(value===(key==='permissions'?state.global_config?.permissions:state.default[key])||value==='custom')return;
    globalConfigurationSaving=true;
    document.querySelectorAll('.global-config-panel button').forEach(button=>button.disabled=true);
    try{
-    await api('mutate',{kind:key==='provider'?'providers':'models',action:'default',id:value,provider:state.default.provider,revision:state.revision});
+    await api('mutate',key==='permissions'?{kind:'global-config',action:'set',key:'permissions',value,revision:state.revision}:{kind:key==='provider'?'providers':'models',action:'default',id:value,provider:state.default.provider,revision:state.revision});
     await load(true);toast('默认配置已更新');
    }catch(error){toast(error.message);}
    finally{

@@ -1293,6 +1293,8 @@ class LangGraphRuntime:
                     # Inherit admitted policy, not a newly loaded global configuration.
                     child_settings = replace(
                         runtime._settings,
+                        # Inter-agent input must remain available independently of host UI mode.
+                        realtime_enabled=True,
                         execution_permissions=tool_context.execution_permissions,
                         self_evolution_enabled=False,
                         memories_generate=False,
@@ -1752,7 +1754,7 @@ class LangGraphRuntime:
 
     async def load_display_history(self) -> tuple[ConversationItem, ...]:
         """Read canonical local history without resuming a Turn or executing a tool."""
-        return await self._load_display(self._repository.load_items)
+        return await self._load_display(self._repository.load_display_items)
 
     async def load_display_snapshot(self) -> DisplayHistory:
         """Include terminal metadata without projecting it into model conversation items."""
@@ -1761,7 +1763,7 @@ class LangGraphRuntime:
     async def load_display_items_page(
         self, *, cursor: DisplayItemsCursor | None = None, limit: int = 100
     ) -> DisplayItemsPage:
-        """Read a bounded raw history page without sampling or resuming a Turn."""
+        """Read bounded original chat history without sampling or resuming a Turn."""
         return await self._load_display(
             lambda thread_id: self._repository.load_display_items_page(
                 thread_id, cursor=cursor, limit=limit

@@ -2,6 +2,8 @@
 
 import json
 
+from corki_adaptor.streaming import NEED_INPUT, atransform, transform
+
 
 def to_responses(body: dict) -> dict:
     messages = body.get("messages")
@@ -123,7 +125,7 @@ def to_responses(body: dict) -> dict:
     return payload
 
 
-def chat_events(lines, model: str = "unknown"):
+def _chat_parser(model: str = "unknown"):
     """Translate SSE, emitting a successful finish only after response.completed."""
     emitted_text = False
     response_id = "chatcmpl-codex-gateway"
@@ -139,7 +141,10 @@ def chat_events(lines, model: str = "unknown"):
             result["usage"] = usage
         return ("data: " + json.dumps(result, ensure_ascii=False) + "\n\n").encode()
 
-    for line in lines:
+    while True:
+        line = yield NEED_INPUT
+        if line is None:
+            break
         if not line.startswith("data:"):
             continue
         raw = line[5:].strip()
@@ -193,10 +198,13 @@ def chat_events(lines, model: str = "unknown"):
     raise ValueError("Codex stream ended before response.completed")
 
 
-def completed_response(lines, *, max_bytes: int = 32 * 1024 * 1024) -> dict:
+def _completed_parser(max_bytes):
     """Wait for the authoritative completed response without retaining deltas."""
     size = 0
-    for line in lines:
+    while True:
+        line = yield NEED_INPUT
+        if line is None:
+            break
         size += len(line.encode("utf-8"))
         if size > max_bytes:
             raise ValueError("Codex response exceeds the buffering limit")
@@ -215,8 +223,27 @@ def completed_response(lines, *, max_bytes: int = 32 * 1024 * 1024) -> dict:
             response = event.get("response")
             if not isinstance(response, dict) or response.get("status", "completed") != "completed":
                 raise ValueError("Codex response did not complete")
-            return response
+            yield response
+            return
     raise ValueError("Codex stream ended before response.completed")
+
+
+def chat_events(lines, model="unknown"):
+    yield from transform(_chat_parser(model), lines)
+
+
+def async_chat_events(lines, model="unknown"):
+    return atransform(_chat_parser(model), lines)
+
+
+def completed_response(lines, *, max_bytes=32 * 1024 * 1024):
+    return next(transform(_completed_parser(max_bytes), lines))
+
+
+async def async_completed_response(lines, *, max_bytes=32 * 1024 * 1024):
+    async for response in atransform(_completed_parser(max_bytes), lines):
+        return response
+    raise ValueError("Missing completed response")
 
 
 def chat_completion(response: dict, model: str) -> dict:

@@ -254,6 +254,12 @@ export function reduceEvent(
       s.running = true;
       s.status = "正在思考";
       break;
+    case "ContextCompactionStarted":
+      s.status = "正在压缩上下文";
+      break;
+    case "ContextCompacted":
+      s.status = "上下文已压缩";
+      break;
     case "AssistantTextDelta": {
       const id = d.item_id || `answer:${d.turn_id}`;
       update(
@@ -327,9 +333,6 @@ export function reduceEvent(
             }
           : m,
       );
-      break;
-    case "ContextCompactionStarted":
-      s.status = "正在整理上下文";
       break;
     case "ModelRetryScheduled":
       s.status = `连接重试 ${d.attempt}`;

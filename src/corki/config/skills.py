@@ -27,6 +27,14 @@ class SkillRule:
             object.__setattr__(self, "path", self.path.expanduser().resolve())
 
 
+def canonical_skill_rule_path(value, base: Path) -> Path:
+    """Keep the retired bundled C&E selector valid after its work-skill migration."""
+    path = (base / Path(value).expanduser()).resolve()
+    if path == (base / "skills/.system/corki-text-C&E/SKILL.md").resolve():
+        return (base / "skills/work/corki-text-C&E/SKILL.md").resolve()
+    return path
+
+
 def parse_skill_rules(value, base: Path, *, source="host") -> tuple[SkillRule, ...]:
     if not isinstance(value, list) or any(
         not isinstance(entry, dict)
@@ -48,7 +56,7 @@ def parse_skill_rules(value, base: Path, *, source="host") -> tuple[SkillRule, .
         rule = SkillRule(
             entry["enabled"],
             name.strip() if name is not None else None,
-            (base / Path(path).expanduser()) if path is not None else None,
+            canonical_skill_rule_path(path, base) if path is not None else None,
             source=source,
         )
         rules = [old for old in rules if (old.name, old.path) != (rule.name, rule.path)]

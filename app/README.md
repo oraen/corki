@@ -222,8 +222,12 @@ Agent execution and independent packaged execution all passed. See
   select it on first launch. It does not include a Python distribution.
 - Model connectivity depends on the user's configured provider. Tests used local
   deterministic models, not private prompts or paid production endpoints.
-- Image/text attachments are supported with a 1 MB per-file and 1.2 MB import
-  batch limit, up to eight attachments; text files must be UTF-8. PDFs, OCR,
+- Images support file selection, drag/drop and clipboard paste, with preview and removal.
+  Original image assets are retained; oversized model inputs are compressed at send time
+  using known endpoint limits and the desktop transport budget. Unknown compatible
+  endpoints do not inherit limits merely from their model names. Text attachments keep
+  their existing 1 MB per-file limit. Image import has a 512 MiB resource ceiling.
+  Up to eight attachments are supported; text files must be UTF-8. PDFs, OCR,
   upload services and remote image loading are not part of this version.
 - Permissions inherit Corki settings. Configuration management remains in the
   existing manager. Choosing a model here changes the session, not global defaults.
@@ -259,7 +263,13 @@ working directory of an existing Agent session, and never submits a prompt.
 
 桌面端复用 Runtime 的 realtime/steer 接口，不启动第二个 Agent 循环。运行期间可以继续输入并按 Enter 提交，统一补充当前任务，不展示追加方式选择，也不读取旧版保存的排队偏好。Shift+Enter 换行，中文输入法确认不会发送。
 
-参考本机 Codex 桌面包的 turn coordinator、`hasFinalAnswer` 和 queued-message-list：模型已经输出非空 `final_answer` 时，普通追加自动排队；队列的“立即补充”可以显式绕过此条件。模型未提供 phase 时，不猜测文字是否属于最终回答，按补充当前任务处理。不同模型/推理设置的消息始终等待下一轮，不修改当前执行。
+参考本机 Codex 桌面包的 turn coordinator、`hasFinalAnswer` 和 queued-message-list：模型已经输出非空 `final_answer` 时，普通追加自动排队；队列的“立即补充”可以显式绕过此条件。模型未提供 phase 时，不猜测文字是否属于最终回答，按补充当前任务处理。运行中改变会话模型或推理设置后，追加消息仍补充当前任务，使用本轮原有设置。
+
+### 运行中修改会话设置
+
+会话设置在运行时也可以打开和保存。参考 Codex 的普通 `thread/settings/update`，当前整轮任务和补充输入保留启动时的设置；保存的模型、推理等级、权限等在下一轮独立提问时应用，不中断请求或重跑工具。选择按会话保存在桌面草稿中，不修改全局配置；历史快照不会覆盖下一轮选择。运行中追加图片按当前实际模型的能力校验。若下一轮需要重建运行环境但旧环境仍拥有后台终端，继续保留原有保护并提示先结束后台终端，不擅自关闭进程。
+
+使用隔离假模型验证：`node tests/electron-session-switching.mjs`。覆盖 A → A（追问）→ B（下一轮）的真实请求、运行中保存、页面重载、停止、恢复默认和会话隔离。
 
 队列支持编辑、移除、排序和手动发送。停止、失败会暂停队列；取消前已接受但未写入核心历史的补充输入也退回暂停队列。重启后保留消息但不自动执行；发送结果未知的消息必须先核对，不能直接重试。队列存于 `app/desktop.db`，核心消息仍只有 Corki 原有会话库这一份事实来源。归档或删除会话会清除其未发送队列；排队附件不会被草稿附件清理器误删。
 

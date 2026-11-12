@@ -71,6 +71,25 @@ class Agent:
             session_source=SessionSource.from_startup_arg("gateway"),
             **runtime_options,
         )
+        from corki.storage.usage_ledger import register_usage_owner
+
+        try:
+            connection = self.host.store.connection(channel) or {}
+            with self.host.store.db() as db:
+                owner = db.execute(
+                    "SELECT sender FROM user_usage_threads WHERE thread=?", (thread,)
+                ).fetchone()
+            await asyncio.to_thread(
+                register_usage_owner,
+                self.database,
+                thread,
+                kind=connection.get("type_id", "gateway"),
+                channel=channel,
+                sender=owner["sender"] if owner else None,
+            )
+        except BaseException:
+            await runtime.aclose()
+            raise
         self.host.runtimes[thread] = runtime
         self.host.live[thread] = {}
 

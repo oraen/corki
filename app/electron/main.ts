@@ -1,3 +1,4 @@
+import {importPastedImages} from "./pasted-images";
 import {
   app,
   BrowserWindow,
@@ -17,7 +18,7 @@ import { existsSync, watchFile, unwatchFile } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { Bridge } from "./bridge";
 import { ManagerLauncher } from "./manager";
-import { saveAsset, readAsset, readBoundedFile } from "./assets";
+import { saveAsset, readAsset, readBoundedFile, IMAGE_ASSET_LIMIT } from "./assets";
 import { SoundNotifications } from "./sound-notifications";
 import { NotificationAudio } from "./notification-audio";
 import { METHODS, type Attachment } from "../shared/protocol";
@@ -153,11 +154,11 @@ async function importFiles(paths: unknown): Promise<Attachment[]> {
       throw new Error("文件路径无效");
     const info = await stat(p);
     total += info.size;
-    if (!info.isFile() || info.size > 1000000 || total > 1200000)
-      throw new Error("附件总大小需小于 1.2 MB");
+    if (!info.isFile() || info.size > IMAGE_ASSET_LIMIT || total > IMAGE_ASSET_LIMIT)
+      throw new Error("文件过大，无法在本机处理");
     const ext = path.extname(p).toLowerCase(),
       name = path.basename(p),
-      buffer = await readBoundedFile(p, 1_000_000);
+      buffer = await readBoundedFile(p, /\.(png|jpe?g|webp|gif)$/i.test(ext) ? IMAGE_ASSET_LIMIT : 1_000_000);
     const mime: Record<string, string> = {
       ".png": "image/png",
       ".jpg": "image/jpeg",
@@ -262,6 +263,10 @@ function registerIPC() {
   ipcMain.handle("corki:import-files", async (e, paths) => {
     trusted(e);
     return importFiles(paths);
+  });
+  ipcMain.handle("corki:paste-images", async (e, images) => {
+    trusted(e);
+    return importPastedImages(home, origin, images);
   });
   ipcMain.handle("corki:copy", (e, value) => {
     trusted(e);

@@ -13,6 +13,9 @@ from corki.storage.transcripts import transcript_name
 # Child rows precede their referenced items/parent. Unknown future foreign keys
 # fail closed instead of silently orphaning data.
 _TABLES = (
+    "chat_history",
+    "chat_turns",
+    "chat_history_ingest",
     "partial_model_items",
     "model_failures",
     "tool_executions",

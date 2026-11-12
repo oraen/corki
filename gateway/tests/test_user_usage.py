@@ -15,6 +15,11 @@ def record(home, thread, key, input_tokens, output_tokens):
         db.execute('INSERT INTO model_steps(step_id,thread_id,turn_id,input_tokens,output_tokens,'
                    "cached_tokens,reasoning_tokens,metadata_json) VALUES (?,?,?, ?,?,500,100,'{}')",
                    (key,thread,key,input_tokens,output_tokens))
+    from corki.storage.usage_ledger import register_usage_owner
+    with sqlite3.connect(home/'gateway/gateway.db') as db:
+        owner=db.execute('SELECT u.channel,u.sender,c.type_id FROM user_usage_threads u JOIN connections c ON c.id=u.channel WHERE u.thread=?',(thread,)).fetchone()
+    if owner:
+        register_usage_owner(path,thread,kind=owner[2],channel=owner[0],sender=owner[1])
 
 
 def test_totals_keep_old_sessions_after_both_resets_and_receipt_cleanup(tmp_path):
@@ -49,7 +54,7 @@ def test_backfill_old_threads_and_skip_ambiguous_history(tmp_path):
         db.execute('DELETE FROM user_usage_threads')
         db.execute("DELETE FROM gateway_meta WHERE key='user-usage-v1'")
     s=Store(tmp_path)
-    assert s.user_usage.totals(a,['alice','bob'])=={'alice':1320,'bob':0}
+    assert s.user_usage.totals(a,['alice','bob'])=={'alice':1320,'bob':9000}
     assert Store(tmp_path).user_usage.totals(a,['alice'])=={'alice':1320}
 
 
@@ -69,6 +74,6 @@ def test_page_query_uses_covering_index_and_no_unavailable_zero(tmp_path):
     with original() as db:
         db.execute('ATTACH DATABASE ? AS usage_core',((tmp_path/'sessions/corki.db').as_uri()+'?mode=ro',))
         plan=[r['detail'] for r in db.execute('EXPLAIN QUERY PLAN '+query)]
-    assert any('SEARCH s USING COVERING INDEX model_steps_thread_usage' in p for p in plan),plan
-    with sqlite3.connect(tmp_path/'sessions/corki.db') as db: db.execute('DROP TABLE model_steps')
+    assert any('SEARCH s USING COVERING INDEX usage_events_thread' in p for p in plan),plan
+    with sqlite3.connect(tmp_path/'sessions/corki.db') as db: db.execute('DROP TABLE usage_events')
     assert s.user_usage.totals(a,['alice'])=={'alice':None}

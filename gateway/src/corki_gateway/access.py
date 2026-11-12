@@ -223,8 +223,8 @@ class AccessRequests:
                 db.execute("ATTACH DATABASE ? AS usage_core", (database.as_uri() + "?mode=ro",))
                 prefix = (
                     "user_totals AS (SELECT u.sender,sum(s.input_tokens+s.output_tokens) AS tokens "
-                    "FROM user_usage_threads u CROSS JOIN usage_core.model_steps s "
-                    "ON s.thread_id=u.thread WHERE u.channel=? GROUP BY u.sender),"
+                    "FROM usage_core.usage_threads u CROSS JOIN usage_core.usage_events s "
+                    "ON s.thread_id=u.thread_id WHERE u.channel=? GROUP BY u.sender),"
                 )
                 query_args.insert(0, channel)
                 usage_join = " LEFT JOIN user_totals u ON u.sender=a.sender_id "

@@ -235,7 +235,8 @@ class ResourcePackages:
                 raise ValueError("内置 Skills 不能添加到插件")
             prefix = "skills/" + item["name"]
             self.add_tree(files, prefix, read_tree(Path(item["path"]).parent))
-            manifest["skills"].append({"name": item["name"], "path": prefix})
+            manifest["skills"].append({"name": item["name"], "path": prefix,
+                                       **({"group": "work"} if item["group"] == "work" else {})})
         for identity in chosen.get("mcp", []):
             if identity not in servers:
                 raise ValueError("所选 MCP 已删除")
@@ -367,6 +368,13 @@ class ResourcePackages:
         if data.get("revision") != detail["digest"]:
             raise ValueError("插件已发生变化，请刷新后重试")
         manifest, files = self.source({"id": identity})
+        if "name" in data:
+            manifest["name"] = component_name(data["name"])
+        if "description" in data:
+            description = data["description"]
+            if not isinstance(description, str) or len(description) > 1000 or "\x00" in description:
+                raise ValueError("插件描述最多 1000 个字符")
+            manifest["description"] = description.strip()
         removed = data.get("remove", {})
         if not isinstance(removed, dict) or any(
             key not in (*KINDS, "resources")
@@ -471,8 +479,11 @@ class ResourcePackages:
                         for p, value in files.items()
                         if p.startswith(prefix + "/")
                     }
+                    group = row.get("group", "corki")
+                    if group not in ("corki", "work", "public"):
+                        raise ValueError("Skill 导入位置无效")
                     upload = {
-                        "group": "corki",
+                        "group": group,
                         "archive": base64.b64encode(
                             pack({row["name"] + "/" + p: value for p, value in tree.items()})
                         ).decode(),
@@ -572,7 +583,7 @@ class ResourcePackages:
             if row["id"] == identity:
                 previous = row
                 continue
-            if row["digest"] == digest:
+            if row["digest"] == digest and identity is None:
                 return row["id"]
             if row["name"].casefold() == manifest["name"].casefold():
                 raise ValueError("已存在同名插件，请更换插件名称")
@@ -658,9 +669,17 @@ class ResourcePackages:
         if action == "update":
             return self.update(data)
         if action == "delete":
-            path = self.directory(data.get("id"))
-            shutil.rmtree(path)
-            return {"message": "插件已永久删除", **self.listing()}
+            identities = data.get("ids", [data.get("id")])
+            if (not isinstance(identities, list) or not identities
+                    or any(not isinstance(item, str) for item in identities)
+                    or len(identities) != len(set(identities))):
+                raise ValueError("请选择需要删除的插件")
+            # Validate the entire selection before the first irreversible removal.
+            paths = [self.directory(identity) for identity in identities]
+            for path in paths:
+                shutil.rmtree(path)
+            return {"message": f"已永久删除 {len(paths)} 个插件", "deleted_ids": identities,
+                    **self.listing()}
         if action not in ("preview-import", "import"):
             raise ValueError("不支持的插件操作")
         manifest, files = self.source(data)
@@ -713,7 +732,7 @@ class ResourcePackages:
                     continue
                 result = self.store.import_skill(row["_upload"])
                 created.append(Path(result["path"]))
-                if not enabled:
+                if not enabled and row["_upload"].get("group") != "work":
                     config.setdefault("skills", {}).setdefault("config", []).append(
                         {"path": str(Path(result["path"]) / "SKILL.md"), "enabled": False}
                     )

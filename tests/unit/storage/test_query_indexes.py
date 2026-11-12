@@ -36,9 +36,9 @@ from corki.storage.sqlite import SQLiteSessionRepository
             (),
         ),
         (
-            "model_steps_created_jd",
+            "usage_events_time",
             "SELECT date(created_at,'localtime') AS day, "
-            "sum(input_tokens),sum(output_tokens) FROM model_steps "
+            "sum(input_tokens),sum(output_tokens) FROM usage_events "
             "WHERE julianday(created_at)>=julianday(?,'utc') "
             "AND julianday(created_at)<julianday(?,'utc') GROUP BY day",
             ("2026-09-26", "2026-10-26"),
@@ -74,13 +74,15 @@ def test_each_query_uses_its_index_and_preserves_results(tmp_path, index, sql, a
             )
         plan = [row[3] for row in db.execute("EXPLAIN QUERY PLAN " + sql, args)]
         assert any(index in row for row in plan), plan
-        if index == "model_steps_created_jd":
-            assert any("SEARCH model_steps USING INDEX" in row for row in plan), plan
+        if index == "usage_events_time":
+            assert any("SEARCH usage_events USING INDEX" in row for row in plan), plan
         else:
             assert not any("TEMP B-TREE" in row for row in plan), plan
         indexed = [tuple(row) for row in db.execute(sql, args)]
         for name in INDEXES:
             db.execute(f"DROP INDEX {name}")
+        if index == "usage_events_time":
+            db.execute("DROP INDEX usage_events_time")
         baseline = [tuple(row) for row in db.execute(sql, args)]
         # Equal timestamps had no tie rule for tools/turns; compare those sets.
         if index == "tool_executions_recency":

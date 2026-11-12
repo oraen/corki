@@ -8,8 +8,6 @@ INDEXES = {
     "tool_executions_recency": "tool_executions(started_at DESC)",
     # Unlike date(..., 'localtime'), julianday(timestamp) is deterministic and
     # preserves existing support for SQLite, ISO-8601 and offset timestamps.
-    "model_steps_created_jd": "model_steps(julianday(created_at))",
-    "model_steps_thread_usage": "model_steps(thread_id,input_tokens,output_tokens)",
 }
 
 

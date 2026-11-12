@@ -13,7 +13,7 @@ try {
  await browser('set','viewport','1440','900');
  await wait(`!!document.querySelector('#package-create')`);
  await browser('click','#package-create');
- await wait(`document.querySelectorAll('.package-resource-section').length===4`);
+ await wait(`document.querySelectorAll('.package-resource-section').length===5`);
  assert.equal(await evaluate(`!!document.querySelector('.package-resource-group summary, .package-create-form select')`),'false');
  assert.equal(await evaluate(`document.querySelectorAll('.package-resource-section')[0].textContent.includes('扩展 Skills')`),'true');
  assert.equal(await evaluate(`document.querySelectorAll('.package-resource-section')[1].textContent.includes('公共 Skills')`),'true');

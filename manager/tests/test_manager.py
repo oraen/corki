@@ -1831,13 +1831,13 @@ def test_monthly_usage_has_30_local_dates_and_zero_fills_gaps(store):
     assert len(store.monthly_usage(date(2026, 10, 17))) == 30
     store.database.parent.mkdir(parents=True, exist_ok=True)
     with closing(sqlite3.connect(store.database)) as db, db:
-        db.execute('CREATE TABLE model_steps(created_at TEXT,input_tokens INTEGER,output_tokens INTEGER)')
+        db.execute('CREATE TABLE usage_events(created_at TEXT,input_tokens INTEGER,output_tokens INTEGER)')
         for day, value in [('2026-09-17', 999), ('2026-09-18', 10),
                            ('2026-10-17', 20), ('2026-10-18', 999)]:
             # Convert local noon to UTC to test the same local-date contract as the API.
-            db.execute("INSERT INTO model_steps VALUES(datetime(?,'utc'),?,?)",
+            db.execute("INSERT INTO usage_events VALUES(datetime(?,'utc'),?,?)",
                        (day + ' 12:00:00', value, value))
-        db.execute("INSERT INTO model_steps VALUES(datetime('2026-10-17 13:00:00','utc'),5,7)")
+        db.execute("INSERT INTO usage_events VALUES(datetime('2026-10-17 13:00:00','utc'),5,7)")
     rows = store.monthly_usage(date(2026, 10, 17))
     assert len(rows) == 30
     assert rows[0] == dict(day='2026-09-18', input=10, output=10, steps=1)

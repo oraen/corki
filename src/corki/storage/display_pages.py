@@ -36,59 +36,27 @@ def read_display_items_page(connect, thread_id, cursor, limit):
         raise ValueError("display cursor belongs to a different thread or is invalid")
     with connect() as connection:
         connection.execute("BEGIN")
-        query = "SELECT sequence,kind,payload_json FROM conversation_items WHERE thread_id=?"
+        table = display_table(connection)
         args = [str(thread_id)]
+        boundary = ""
         if cursor is not None:
-            query += " AND sequence<?"
+            boundary = " AND sequence<?"
             args.append(cursor.before_sequence)
-        query += " ORDER BY sequence DESC LIMIT ?"
-        args.append(limit + 1)
-        rows = connection.execute(query, args).fetchall()
+        rows = connection.execute(
+            f"SELECT sequence,kind,payload_json FROM {table} WHERE thread_id=?"
+            + boundary
+            + " ORDER BY sequence DESC LIMIT ?",
+            (*args, limit + 1),
+        ).fetchall()
         has_more = len(rows) > limit
         rows = rows[:limit]
         if not rows:
             return DisplayItemsPage((), None)
         rows.reverse()
-        start = rows[0]["sequence"]
-        # Only marker metadata is read from the older prefix. Count actual rows
-        # between markers rather than assuming legacy sequence values have no gaps.
-        remaining, previous = 0, None
-        markers = connection.execute(
-            "SELECT sequence,json_extract(payload_json,'$.replacement_item_count') AS count "
-            "FROM conversation_items WHERE thread_id=? AND sequence<? AND kind='compaction' "
-            "ORDER BY sequence",
-            (str(thread_id), start),
-        )
-        for marker in markers:
-            if previous is not None and remaining:
-                between = connection.execute(
-                    "SELECT COUNT(*) FROM conversation_items "
-                    "WHERE thread_id=? AND sequence>? AND sequence<?",
-                    (str(thread_id), previous, marker["sequence"]),
-                ).fetchone()[0]
-                remaining = max(0, remaining - between)
-            if remaining:
-                remaining -= 1
-            else:
-                count = marker["count"]
-                if count is None:
-                    count = 0
-                if type(count) is not int or count < 0:
-                    raise ValueError("invalid compaction replacement count in history")
-                remaining = count
-            previous = marker["sequence"]
-        if previous is not None and remaining:
-            between = connection.execute(
-                "SELECT COUNT(*) FROM conversation_items "
-                "WHERE thread_id=? AND sequence>? AND sequence<?",
-                (str(thread_id), previous, start),
-            ).fetchone()[0]
-            remaining = max(0, remaining - between)
         return DisplayItemsPage(
             tuple(item_from_payload(row["kind"], json.loads(row["payload_json"])) for row in rows),
-            DisplayItemsCursor(thread_id, start) if has_more else None,
-            remaining,
-            rows[-1]["sequence"],
+            DisplayItemsCursor(thread_id, rows[0]["sequence"]) if has_more else None,
+            newest_sequence=rows[-1]["sequence"],
         )
 
 
@@ -106,9 +74,10 @@ def contains_display_item(connect, thread_id, kind, identity, through_sequence):
         raise ValueError("invalid display identity kind")
     stored_kind, field = fields[kind]
     with connect() as connection:
+        table = display_table(connection)
         return (
             connection.execute(
-                f"SELECT 1 FROM conversation_items WHERE thread_id=? AND kind=? "
+                f"SELECT 1 FROM {table} WHERE thread_id=? AND kind=? "
                 f"AND sequence<=? AND {field}=? LIMIT 1",
                 (str(thread_id), stored_kind, through_sequence, str(identity)),
             ).fetchone()
@@ -125,11 +94,11 @@ def read_display_turns_page(connect, thread_id, cursor, limit):
         raise ValueError("display turn cursor belongs to a different thread or is invalid")
     with connect() as connection:
         connection.execute("BEGIN")
-        query = "SELECT id,status,error,model_settings_json FROM turns WHERE thread_id=?"
+        query = "SELECT id,status,error,model_settings_json FROM chat_turns WHERE thread_id=?"
         args = [str(thread_id)]
         if cursor is not None:
             boundary = connection.execute(
-                "SELECT rowid FROM turns WHERE thread_id=? AND id=?",
+                "SELECT rowid FROM chat_turns WHERE thread_id=? AND id=?",
                 (str(thread_id), str(cursor.before_turn_id)),
             ).fetchone()
             if boundary is None:
@@ -146,3 +115,11 @@ def read_display_turns_page(connect, thread_id, cursor, limit):
             tuple(display_turn_from_row(row) for row in rows),
             DisplayTurnsCursor(thread_id, TurnId(rows[0]["id"])) if has_more else None,
         )
+
+
+def display_table(connection):
+    if not connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_history'"
+    ).fetchone():
+        raise ValueError("聊天历史尚未迁移，请先启动新版 Corki 完成初始化")
+    return "chat_history"

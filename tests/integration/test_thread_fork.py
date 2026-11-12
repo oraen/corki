@@ -96,7 +96,8 @@ def test_fork_copies_selected_history_without_mutating_source(tmp_path, before, 
             )
             if before == 0:
                 # Codex retains the prefix before the first user, including initial context.
-                assert copied.items
+                assert not copied.items  # No user-visible messages precede the first input.
+                assert await fork._repository.load_items(fork.thread_id)
                 assert all(not isinstance(i, UserMessageItem) for i in copied.items)
                 with fork._repository._connect() as connection:
                     row = connection.execute(

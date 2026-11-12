@@ -1,24 +1,26 @@
-"""Loopback HTTP service and explicit provider routing for subscription adapters."""
+"""Async loopback gateway with a synchronous lifecycle for service controllers."""
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import errno
 import hmac
 import json
 import os
+import socket
 import ssl
 import sys
 import threading
 import uuid
 from collections.abc import Callable
+from contextlib import suppress
 from functools import partial
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
 
-import httpx
+import aiohttp
 import truststore
+from aiohttp import web
 
 from corki_adaptor.common import MAX_BODY as MAX_BODY
 from corki_adaptor.common import CredentialsUnavailable
@@ -29,21 +31,18 @@ from corki_adaptor.openai.credentials import (
     read_credentials,
 )
 from corki_adaptor.openai.forward import UPSTREAM as UPSTREAM
+from corki_adaptor.transport import AiohttpClient
 
-# Add a provider adapter here to opt it into routing; names never become URLs.
 PROVIDER_ROUTES = {"openai": "forward_openai", "qoder": "forward_qoder"}
 
 
-class Gateway(ThreadingHTTPServer):
-    daemon_threads = True
-    block_on_close = False
-
+class Gateway:
     def __init__(
         self,
         auth_file: Path | None,
         key: str,
         *,
-        client: httpx.Client | None = None,
+        client=None,
         port: int = 0,
         credential_provider: Callable[[], Credentials] | None = None,
         control_token: str | None = None,
@@ -69,69 +68,163 @@ class Gateway(ThreadingHTTPServer):
             self.qoder_credentials()
         else:
             self._openai_credentials()
-        self.client = client or httpx.Client(
-            timeout=httpx.Timeout(120, connect=15),
-            follow_redirects=False,
-            # Match native Codex's OS trust: enterprise roots installed in the
-            # system keychain must work without disabling peer/hostname checks.
-            verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
-        )
+        self.ssl_context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        self.client = client
         self.owns_client = client is None
+        self._loop = None
+        self._stop = None
+        self._stop_requested = threading.Event()
+        self._stopped = threading.Event()
+        self._stopped.set()
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            super().__init__(("127.0.0.1", port), Handler)
+            self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self._socket.bind(("127.0.0.1", port))
+            self._socket.listen(128)
+            self._socket.setblocking(False)
+            self.server_address = self._socket.getsockname()
+            self.server_port = self.server_address[1]
         except BaseException:
-            if self.owns_client:
-                self.client.close()
+            self._socket.close()
             raise
 
     def credentials(self) -> Credentials:
         return self._openai_credentials()
 
+    async def _serve(self):
+        self._loop = asyncio.get_running_loop()
+        self._stop = asyncio.Event()
+        if self._stop_requested.is_set():
+            self._stop.set()
+        session = None
+        runner = None
+        try:
+            if self.owns_client:
+                session = aiohttp.ClientSession(
+                    connector=aiohttp.TCPConnector(
+                        limit=100,
+                        keepalive_timeout=5,
+                        ssl=self.ssl_context,
+                    ),
+                    timeout=aiohttp.ClientTimeout(
+                        total=None,
+                        connect=120,
+                        sock_connect=15,
+                        sock_read=120,
+                    ),
+                    trust_env=True,
+                    json_serialize=lambda value: json.dumps(
+                        value,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    ),
+                )
+                self.client = AiohttpClient(session)
+            # aiohttp's read() rejects >= its limit; the public limit is inclusive.
+            app = web.Application(client_max_size=MAX_BODY + 1)
+            app.router.add_route("*", "/{path:.*}", self._handle)
+            runner = web.AppRunner(
+                app,
+                access_log=None,
+                handler_cancellation=True,
+                shutdown_timeout=5,
+            )
+            await runner.setup()
+            await web.SockSite(runner, self._socket).start()
+            await self._stop.wait()
+        finally:
+            if runner is not None:
+                await runner.cleanup()
+            if session is not None:
+                await session.close()
+            self._loop = None
+
+    def serve_forever(self):
+        self._stopped.clear()
+        try:
+            asyncio.run(self._serve())
+        finally:
+            self._stopped.set()
+
+    def shutdown(self):
+        self._stop_requested.set()
+        loop = self._loop
+        if loop is not None and self._stop is not None:
+            with suppress(RuntimeError):
+                loop.call_soon_threadsafe(self._stop.set)
+        self._stopped.wait()
+
     def server_close(self):
-        super().server_close()
-        if self.owns_client:
-            self.client.close()
+        self.shutdown()
+        self._socket.close()
+
+    async def _handle(self, request):
+        handler = Handler(self, request)
+        try:
+            if request.method == "GET":
+                handler.do_GET()
+            elif request.method == "POST":
+                await handler.do_POST()
+            elif handler.provider_path() is not None:
+                handler.error(405, "请使用 POST 调用转发接口")
+            if handler.response is None:
+                handler.error(500, "Gateway request failed.")
+            return handler.response
+        except (ConnectionError, TimeoutError, aiohttp.ClientError):
+            handler.abort()
+            return handler.response if handler.response is not None else web.Response(status=502)
 
 
-class Handler(BaseHTTPRequestHandler):
-    server: Gateway
-    protocol_version = "HTTP/1.1"
+class Handler:
+    def __init__(self, server, request):
+        self.server = server
+        self.request = request
+        self.headers = request.headers
+        self.path = request.path_qs
+        self.response = None
 
-    def setup(self):
-        super().setup()
-        self.connection.settimeout(30)
-
-    def log_message(self, format, *args):
-        # Neither prompts, Authorization headers nor upstream bodies enter logs.
-        pass
+    async def read_body(self):
+        async with asyncio.timeout(30):
+            return await self.request.read()
 
     def error(self, status: int, message: str, *, code: str | None = None):
         error = {"message": message, "type": "codex_gateway_error"}
         if code is not None:
             error["code"] = code
-        body = json.dumps({"error": error}).encode()
-        self.close_connection = True
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self.wfile.write(body)
+        return self.json_response(status, {"error": error})
 
     def json_response(self, status, value):
-        body = json.dumps(value, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self.close_connection = True
-        self.wfile.write(body)
+        self.response = web.Response(
+            status=status,
+            body=json.dumps(value, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json; charset=utf-8",
+                "Cache-Control": "no-store",
+            },
+        )
+        self.response.force_close()
+        return self.response
+
+    async def start_stream(self, content_type):
+        self.response = web.StreamResponse(
+            status=200,
+            headers={"Content-Type": content_type, "Cache-Control": "no-cache"},
+        )
+        self.response.force_close()
+        await self.response.prepare(self.request)
+
+    async def write(self, chunk):
+        # Awaiting write carries downstream backpressure to the upstream reader.
+        await self.response.write(chunk)
+
+    def abort(self):
+        # Never finish a failed SSE stream with a clean chunked EOF.
+        if self.request.transport is not None:
+            self.request.transport.close()
 
     def provider_path(self):
-        path = urlsplit(self.path).path
-        parts = path.strip("/").split("/")
+        parts = self.request.path.strip("/").split("/")
         if not parts[0] or parts[0] in {"v1", "responses", "chat"}:
             self.error(404, "路径需要加入服务商，例如 /openai/v1/responses")
             return None
@@ -157,32 +250,23 @@ class Handler(BaseHTTPRequestHandler):
         if self.provider_path() is not None:
             self.error(405, "请使用 POST 调用转发接口")
 
-    def do_POST(self):
-        try:
-            if self.path == "/__corki_gateway/stop":
-                supplied = self.headers.get("X-Corki-Control", "")
-                token = self.server.control_token
-                if not token or not hmac.compare_digest(supplied.encode(), token.encode()):
-                    return self.error(403, "Gateway control denied.")
-                self.json_response(200, {"stopping": True})
-                threading.Thread(target=self.server.shutdown, daemon=True).start()
-                return
-            route = self.provider_path()
-            if route is not None:
-                provider, endpoint = route
-                getattr(self, PROVIDER_ROUTES[provider])(endpoint)
-        except (BrokenPipeError, ConnectionResetError, TimeoutError):
-            self.close_connection = True
+    async def do_POST(self):
+        if self.path == "/__corki_gateway/stop":
+            supplied = self.headers.get("X-Corki-Control", "")
+            token = self.server.control_token
+            if not token or not hmac.compare_digest(supplied.encode(), token.encode()):
+                return self.error(403, "Gateway control denied.")
+            self.json_response(200, {"stopping": True})
+            self.server._stop_requested.set()
+            self.server._loop.call_later(0.05, self.server._stop.set)
+            return
+        route = self.provider_path()
+        if route is not None:
+            provider, endpoint = route
+            from corki_adaptor.openai.forward import forward as openai_forward
+            from corki_adaptor.qoder.forward import forward as qoder_forward
 
-    def forward_qoder(self, endpoint):
-        from corki_adaptor.qoder.forward import forward
-
-        return forward(self, endpoint)
-
-    def forward_openai(self, endpoint):
-        from corki_adaptor.openai.forward import forward
-
-        return forward(self, endpoint)
+            await {"openai": openai_forward, "qoder": qoder_forward}[provider](self, endpoint)
 
 
 def main(argv: list[str] | None = None, *, serve: Callable[[Gateway], None] | None = None) -> int:

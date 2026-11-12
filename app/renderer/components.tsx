@@ -105,7 +105,7 @@ export function Picker({
 }: {
   label: string;
   value: string;
-  items: { id: string; label: string; icon?: string }[];
+  items: { id: string; label: string; icon?: string; badge?: string }[];
   onChange: (id: string) => void;
   disabled?: boolean;
   iconFallback?: "initial" | "model";
@@ -224,7 +224,7 @@ export function Picker({
         }}
       >
         {itemIcon(selected)}
-        {selected?.label || label}
+        {selected?.badge ? <span className="picker-badged-label"><span>{selected.label}</span><span className="picker-value-badge" title={selected.badge}>{selected.badge}</span></span> : selected?.label || label}
         <Icon name="chevron" size={15} />
       </button>
       {open && (
@@ -251,7 +251,7 @@ export function Picker({
               }}
             >
               {itemIcon(i)}
-              <span className="picker-label">{i.label}</span>
+              <span className="picker-label">{i.badge ? <span className="picker-badged-label"><span>{i.label}</span><span className="picker-value-badge" title={i.badge}>{i.badge}</span></span> : i.label}</span>
               {i.id === value && <Icon name="check" size={15} />}
             </button>
           ))}

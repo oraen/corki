@@ -1,6 +1,6 @@
 """Local conversation replay is rendering, never tool execution or model sampling."""
 
-from corki.cli.history_projection import HistoryProjection
+from corki.sessions.history_projection import HistoryProjection
 from corki.models.error_safety import display_model_error
 from corki.protocol.items import (
     AssistantMessageItem,

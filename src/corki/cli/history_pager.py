@@ -6,7 +6,6 @@ from io import StringIO
 
 from rich.console import Console
 
-from corki.cli.history_projection import HistoryProjection
 from corki.cli.transcript import Transcript
 from corki.sessions.models import DisplayHistory
 
@@ -77,7 +76,7 @@ class HistoryPager:
             item_cursor = self._advance(item_cursor, page.next_cursor, item_seen)
             if initial:
                 boundary = page.newest_sequence if page.newest_sequence is not None else -1
-            visible = HistoryProjection(page.leading_replacements).feed(page.items)
+            visible = page.items
             known = {item.id for item in items}
             items = tuple(item for item in visible if item.id not in known) + items
         known_turns = {turn.id for turn in turns}

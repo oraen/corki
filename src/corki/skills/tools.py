@@ -23,10 +23,13 @@ class SkillListTool:
                 "scope, and source metadata. "
                 "Directory categories: public/shared skills are in ~/.agents/skills; "
                 "Corki extensions are in $CORKI_HOME/skills (default ~/.corki/skills); "
+                "work skills are in $CORKI_HOME/skills/work and may only be used when explicitly "
+                "requested by the user, never automatically matched by description; "
                 "built-in skills are in $CORKI_HOME/skills/.system. "
                 "Both public and extension skills can have user scope; distinguish them by path. "
                 "~/.codex/skills is not Corki's public skills directory. "
-                "Only currently visible skills are listed; disabled or hidden skills may still exist on disk."
+                "Available work skills are marked work_only, not automatic invocation candidates. "
+                "Disabled or hidden skills may still exist on disk."
             ),
             parameters={
                 "type": "object",
@@ -49,10 +52,15 @@ class SkillListTool:
                     "description": skill.description,
                     "scope": skill.scope.value,
                     "path": str(skill.path),
+                    **(
+                        {"work_only": True, "allow_implicit_invocation": False}
+                        if skill.work_only
+                        else {}
+                    ),
                     **({"plugin_id": skill.plugin_id} if skill.plugin_id is not None else {}),
                 }
                 for skill in snapshot.skills
-                if snapshot.is_visible(skill)
+                if snapshot.is_visible(skill) or (skill.work_only and snapshot.is_enabled(skill))
             ],
             "warnings": [f"{error.path}: {error.message}" for error in snapshot.errors],
         }

@@ -59,10 +59,10 @@ class DesktopState:
                 rows = core.execute(
                     "SELECT t.id,t.updated_at,unixepoch(t.updated_at)-unixepoch("
                     "(SELECT json_extract(i.payload_json,'$.created_at') "
-                    "FROM conversation_items i WHERE i.thread_id=t.thread_id AND i.turn_id=t.id "
+                    "FROM chat_history i WHERE i.thread_id=t.thread_id AND i.turn_id=t.id "
                     "AND i.kind='user_message' "
                     "AND json_extract(i.payload_json,'$.retained_from_id') IS NULL "
-                    "ORDER BY i.sequence LIMIT 1)) FROM turns t WHERE t.thread_id=? "
+                    "ORDER BY i.sequence LIMIT 1)) FROM chat_turns t WHERE t.thread_id=? "
                     f"AND t.id IN ({placeholders}) "
                     "AND t.status IN ('completed','cancelled','failed')",
                     (thread, *missing),
