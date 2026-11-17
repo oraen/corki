@@ -23,6 +23,7 @@ import {
   type Conversation,
   type Draft,
 } from "./state";
+import { ThinkingLabel } from "./thinking-label";
 import { Icon, Modal, Interaction } from "./components";
 import { SnapshotRefresh } from "./refresh";
 import { EventBuffer } from "./event-buffer";
@@ -889,11 +890,16 @@ function App() {
     }
     editDraft({ attachments: [...current.attachments, ...items] }, key);
   }
-  async function importAttachments(load: () => Promise<Attachment[]>, key = selectedRef.current) {
+  async function importAttachments(load: () => Promise<Attachment[] | {attachments: Attachment[]; filePaths: string[]}>, key = selectedRef.current) {
     importingAttachments.current.set(key, (importingAttachments.current.get(key) || 0) + 1);
     setImportingAttachmentCounts(Object.fromEntries(importingAttachments.current));
     try {
-      const items = await load();
+      const imported = await load();
+      const items = Array.isArray(imported) ? imported : imported.attachments;
+      if (!Array.isArray(imported) && imported.filePaths.length) {
+        const current = draftRef.current[key] || freshDraft();
+        editDraft({ content: [current.content, ...imported.filePaths].filter(Boolean).join("\n") }, key);
+      }
       if (items.length) await addAttachments(items, key);
     } catch (error) {
       report(error);
@@ -1213,11 +1219,10 @@ function App() {
                   <div
                     className="thinking-indicator"
                     role="status"
-                    aria-label="思考中"
                   >
                     <div className="thinking-content">
                       <span className="thinking-spinner" aria-hidden="true" />
-                      <span className="thinking-label">{conversation.status === "正在压缩上下文" ? "压缩中" : "思考中"}</span>
+                      <ThinkingLabel key={selected} conversation={conversation} />
                     </div>
                   </div>
                 )}

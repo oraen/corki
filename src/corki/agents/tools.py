@@ -20,6 +20,7 @@ class AgentTool:
         )
 
     async def execute(self, call, context):
+        await self.controller.restore()
         args = dict(call.arguments or {})
         name = call.name
         if name in {"spawn_agent", "send_agent_message"}:
@@ -34,13 +35,13 @@ class AgentTool:
                 raise ValueError("timeout_ms must be between 0 and 60000")
             result = await self.controller.wait(args["ids"], timeout)
         elif name == "send_agent_message":
-            result = await self.controller.send(args["id"], message)
+            result = await self.controller.send(args["id"], message, context)
         elif name == "stop_agent":
             result = await self.controller.stop(args["id"])
         elif name == "close_agent":
             result = await self.controller.close(args["id"])
         else:
-            result = {"agents": [child.snapshot() for child in self.controller.children.values()]}
+            result = await self.controller.list()
         return ToolResult(call.id, name, json.dumps(result, ensure_ascii=False))
 
 
@@ -75,7 +76,9 @@ def agent_tools(controller):
             "Supplement a running child task, or start a follow-up on an "
             "idle child using its existing history. Startup/finalization messages are held "
             "until safe admission; use wait_agents for actual completion. IDs belong to this "
-            "parent runtime: use list_agents after a restart, never reuse an unknown old ID.",
+            "parent: after a restart use list_agents to inspect unloaded children. Only explicit "
+            "follow-up input reloads a child, using the current parent permissions; interrupted "
+            "work is never automatically replayed.",
             {**identity, **message},
             ["id", "message"],
         ),
@@ -88,7 +91,9 @@ def agent_tools(controller):
         ),
         (
             "close_agent",
-            "Stop and release a child. Its recorded history remains on disk.",
+            "Stop and release a child. Known unloaded or already closed children can be closed "
+            "without restarting them. Unknown IDs and other parents’ children are rejected. "
+            "Its recorded history remains on disk.",
             identity,
             ["id"],
         ),

@@ -99,6 +99,10 @@ class SQLiteThreadDeleteStore:
                             os.unlink(transcript_name(thread), dir_fd=descriptor)
                     finally:
                         os.close(descriptor)
+            if "agent_children" in tables:
+                db.execute(
+                    "DELETE FROM agent_children WHERE child_id=? OR parent_id=?", (thread, thread)
+                )
             for table in _TABLES:
                 if table in tables:
                     db.execute(f'DELETE FROM "{table}" WHERE thread_id=?', (thread,))

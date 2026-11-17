@@ -45,6 +45,7 @@ class UsageAnalytics:
                 SELECT date(s.created_at,'localtime') day,
                   s.provider provider,
                   CASE WHEN t.kind='cron' THEN '定时任务'
+                    WHEN t.kind='application' THEN '应用'
                     WHEN t.kind='dingtalk' THEN '钉钉'
                     WHEN t.kind='wechat' THEN '微信'
                     WHEN t.kind='feishu' THEN '飞书'

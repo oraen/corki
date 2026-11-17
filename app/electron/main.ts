@@ -144,7 +144,7 @@ function trusted(event: Electron.IpcMainInvokeEvent) {
   )
     throw new Error("Untrusted sender");
 }
-async function importFiles(paths: unknown): Promise<Attachment[]> {
+async function importFiles(paths: unknown, unsupportedPaths?: string[]): Promise<Attachment[]> {
   if (!Array.isArray(paths) || paths.length > 8)
     throw new Error("最多添加 8 个附件");
   let total = 0;
@@ -153,11 +153,17 @@ async function importFiles(paths: unknown): Promise<Attachment[]> {
     if (typeof p !== "string" || !path.isAbsolute(p))
       throw new Error("文件路径无效");
     const info = await stat(p);
+    const ext = path.extname(p).toLowerCase();
+    const supported = /\.(png|jpe?g|webp|gif|txt|md|json|csv|log|py|js|ts|html|css|yaml|yml|xml)$/i.test(ext);
+    if (unsupportedPaths && !supported) {
+      if (!info.isFile()) throw new Error("请选择文件");
+      unsupportedPaths.push(p);
+      continue;
+    }
     total += info.size;
     if (!info.isFile() || info.size > IMAGE_ASSET_LIMIT || total > IMAGE_ASSET_LIMIT)
       throw new Error("文件过大，无法在本机处理");
-    const ext = path.extname(p).toLowerCase(),
-      name = path.basename(p),
+    const name = path.basename(p),
       buffer = await readBoundedFile(p, /\.(png|jpe?g|webp|gif)$/i.test(ext) ? IMAGE_ASSET_LIMIT : 1_000_000);
     const mime: Record<string, string> = {
       ".png": "image/png",
@@ -262,7 +268,9 @@ function registerIPC() {
   });
   ipcMain.handle("corki:import-files", async (e, paths) => {
     trusted(e);
-    return importFiles(paths);
+    const filePaths: string[] = [];
+    const attachments = await importFiles(paths, filePaths);
+    return { attachments, filePaths };
   });
   ipcMain.handle("corki:paste-images", async (e, images) => {
     trusted(e);

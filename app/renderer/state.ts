@@ -29,7 +29,14 @@ export interface FollowUpState {
   paused: boolean;
   messages: { id: string; content: string; attachments: string[]; state: string; error?: string; createdAt?: string }[];
 }
+export interface GoalProgress {
+  status: string;
+  time_used_seconds: number;
+  updated_at: number;
+}
 export interface Conversation {
+  runStartedAt?: number;
+  goal?: GoalProgress | null;
   modelWarning?: boolean;
   modelWarningReason?: "idle" | "failure" | "connection";
   followUps: FollowUpState;
@@ -247,6 +254,7 @@ export function reduceEvent(
       );
       break;
     case "TurnStarted":
+      s.runStartedAt = d.runStartedAt ?? s.runStartedAt ?? Date.now();
       if (s.messages.some((m) => m.role === "user" && m.requestId && !m.turnId))
         s.messages = s.messages.map((m) =>
           m.role === "user" && m.requestId && !m.turnId ? { ...m, turnId: d.turn_id } : m,
@@ -364,6 +372,7 @@ export function reduceEvent(
       s.status = d.message;
       break;
     case "GoalUpdated":
+      s.goal = { status: d.status, time_used_seconds: d.time_used_seconds, updated_at: d.updated_at ?? Date.now() / 1000 };
       s.status = d.status === "active" ? "正在推进目标" : `目标：${d.status}`;
       break;
     case "TurnFailed":

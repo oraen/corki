@@ -103,6 +103,7 @@ try {
           "../manager/server.py",
           path.join(resources, "manager", "server.py"),
         );
+        await cp("../manager/health.py", path.join(resources, "manager", "health.py"));
         await cp(
           "../manager/usage_analytics.py",
           path.join(resources, "manager", "usage_analytics.py"),
@@ -128,6 +129,9 @@ try {
           "../manager/resource_packages.py",
           path.join(resources, "manager", "resource_packages.py"),
         );
+        await cp("../manager/applications", path.join(resources, "manager", "applications"), {
+          recursive: true, filter: source => !source.includes("__pycache__") && !source.endsWith(".pyc"),
+        });
         await cp(
           "../manager/templates",
           path.join(resources, "manager", "templates"),

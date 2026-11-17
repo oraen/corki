@@ -658,3 +658,20 @@ test("reply wall duration survives terminal events and snapshots", () => {
     messages:[{...source.messages[0], streaming:false, replyElapsedSeconds:9193}], pending:[], live:[]});
   assert.equal(restored.messages[0].replyElapsedSeconds,9193);
 });
+
+test("goal identity survives tool and text events and authoritative snapshot recovery", () => {
+  let s = reduceEvent(emptyConversation(), event("GoalUpdated", {
+    status: "active", time_used_seconds: 40, updated_at: 100,
+  }));
+  s = reduceEvent(s, event("AssistantTextDelta", { turn_id: "t", delta: "hello" }));
+  assert.equal(s.goal.status, "active");
+  const restored = conversationFromSnapshot({
+    threadId: "test", running: true, messages: [], pending: [], live: [],
+    goal: s.goal, runStartedAt: 1000,
+  });
+  assert.deepEqual(restored.goal, s.goal);
+  assert.equal(restored.runStartedAt, 1000);
+  assert.equal(reduceEvent(s, event("GoalUpdated", {
+    status: "complete", time_used_seconds: 55, updated_at: 115,
+  })).goal.status, "complete");
+});

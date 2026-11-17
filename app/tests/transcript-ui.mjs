@@ -197,6 +197,8 @@ try {
   await page.locator(".tool-sections .hljs-number").first().waitFor();
   assert.equal(await page.locator(".tool-activity").count(), 1);
   assert.equal(await page.locator(".tool-sections section").count(), 2);
+  assert.equal(await page.locator(".tool-sections section > header .tool-copy").count(), 2);
+  assert.equal(await page.locator(".tool-text .tool-copy").count(), 0);
   assert.equal(await page.locator(".execution-duration").innerText(), "（耗时2h 3m 21s）");
   assert.equal(await page.evaluate(() => window.injected), undefined);
   await page.getByRole("button", { name: "复制执行输出", exact: true }).click();

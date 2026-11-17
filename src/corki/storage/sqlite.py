@@ -127,9 +127,6 @@ class SQLiteSessionRepository:
             if journal_mode.lower() != "wal":
                 connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA synchronous=NORMAL")
-            quick_check = connection.execute("PRAGMA quick_check").fetchone()[0]
-            if quick_check != "ok":
-                raise StorageIntegrityError(f"SQLite quick_check failed: {quick_check}")
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -379,6 +376,9 @@ class SQLiteSessionRepository:
             install_chat_history(connection)
             # Install only at bootstrap, after legacy columns are migrated.
             install_query_indexes(connection)
+            from corki.agents.store import install_agent_schema
+
+            install_agent_schema(connection)
             from corki.storage.usage_ledger import install_usage_ledger
 
             if hasattr(self, "_path"):

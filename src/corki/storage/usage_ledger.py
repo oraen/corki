@@ -126,3 +126,36 @@ def register_usage_owner(
             job_id=coalesce(excluded.job_id,usage_threads.job_id),run_id=coalesce(excluded.run_id,usage_threads.run_id)""",
             (str(thread), kind, channel, sender, job_id, run_id),
         )
+
+
+def record_external_usage(
+    database, *, step_id, thread_id, turn_id, created_at, provider, model, usage
+):
+    """Record a host-owned direct sampling result, idempotently and without content.
+
+    The host initializes the normal repository once before calling this function.
+    Reusing the same stable step ID cannot count a recovered result twice.
+    """
+    with closing(sqlite3.connect(database, timeout=10)) as db, db:
+        db.execute(
+            """INSERT OR IGNORE INTO usage_events
+            (step_id,thread_id,turn_id,created_at,provider,model,input_tokens,output_tokens,
+             cached_tokens,reasoning_tokens,cache_write_tokens,rollout_budget_units)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                str(step_id),
+                str(thread_id),
+                str(turn_id),
+                created_at,
+                provider,
+                model,
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cached_tokens,
+                usage.reasoning_tokens,
+                usage.cache_write_tokens,
+                float(usage.codex_rollout_budget_units)
+                if usage.codex_rollout_budget_units is not None
+                else None,
+            ),
+        )

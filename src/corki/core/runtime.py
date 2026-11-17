@@ -83,8 +83,6 @@ from corki.memory.reset import MemoryResetter
 from corki.models import (
     ModelError,
     ModelPort,
-    OpenAICompatibleModel,
-    OpenAIResponsesModel,
     ProviderCapabilities,
     resolve_capabilities,
 )
@@ -872,6 +870,7 @@ class LangGraphRuntime:
         inherited_user_instructions: Instructions | None = None,
         inherited_exec_policy: ExecPolicySnapshot | ExecPolicyHandle | None = None,
         load_plugins: bool = True,
+        allow_self_evolution: bool = True,
         model_metadata_resolver: ModelMetadataResolver = resolve_model_metadata,
         _construction: list | None = None,
         session_start_source: Literal["startup", "clear"] | None = None,
@@ -889,6 +888,7 @@ class LangGraphRuntime:
         sampling and compaction requests; it is budgeted but never archived.
         An explicit source repository is borrowed, never closed by this runtime;
         its history can seed an independent persistent or private ephemeral target.
+        allow_self_evolution is a host ceiling, independent of live configuration.
         """
         from corki.storage.forks import validate_fork
 
@@ -903,6 +903,8 @@ class LangGraphRuntime:
         construction = _construction if _construction is not None else []
         if type(load_plugins) is not bool:
             raise ValueError("load_plugins must be a host boolean")
+        if type(allow_self_evolution) is not bool:
+            raise ValueError("allow_self_evolution must be a host boolean")
         if not isinstance(session_source, SessionSource):
             raise ValueError("session source must be host-validated")
         if inherited_exec_policy is not None and (
@@ -1155,6 +1157,7 @@ class LangGraphRuntime:
         evolution = None
         if (
             not ephemeral
+            and allow_self_evolution
             and not session_source.is_non_root_agent
             and skill_service is not None
             and session_source.kind != SessionSourceKind.EXEC
@@ -1317,9 +1320,17 @@ class LangGraphRuntime:
                         configured_skill_roots=configured_skill_roots,
                         mcp_requirements=runtime._mcp_requirements_snapshot,
                         load_plugins=load_plugins,
+                        allow_self_evolution=allow_self_evolution,
                     )
 
-                runtime._agents = AgentController(create_child)
+                from corki.agents.store import AgentStore
+
+                agent_store = (
+                    AgentStore(actual_repository.path.resolve(), runtime.thread_id)
+                    if isinstance(actual_repository, SQLiteSessionRepository)
+                    else None
+                )
+                runtime._agents = AgentController(create_child, store=agent_store)
                 actual_registry.replace_owned(
                     actual_registry.create_owner(), agent_tools(runtime._agents)
                 )
@@ -3416,44 +3427,15 @@ def _capability_home(database_path: Path) -> Path:
 
 
 def _create_model(settings: CorkiSettings, capabilities: ProviderCapabilities) -> ModelPort:
-    if not settings.provider_enabled:
-        raise ValueError("供应商已关闭，请开启供应商或选择其他模型")
-    common = {
-        "api_key": settings.api_key,
-        "base_url": settings.api_base,
-        "capabilities": capabilities,
-        "reasoning_effort": settings.reasoning_effort,
-        "max_retries": settings.model_max_retries,
-        "request_max_retries": settings.model_request_max_retries,
-        "retry_base_seconds": settings.model_retry_base_seconds,
-        "response_char_limit": settings.model_response_char_limit,
-    }
-    if settings.api_mode == "responses":
-        return OpenAIResponsesModel(**common)
-    return OpenAICompatibleModel(
-        **common,
-        thinking_enabled=settings.thinking_enabled,
-    )
+    from corki.models.factory import create_model
+
+    return create_model(settings, capabilities)
 
 
 def _model_capabilities(settings: CorkiSettings) -> ProviderCapabilities:
-    capabilities = resolve_capabilities(
-        base_url=settings.api_base,
-        api_mode=settings.api_mode,
-        provider_name=settings.provider_name,
-    )
-    capabilities = replace(
-        capabilities,
-        supports_native_tool_search=settings.tool_search_mode == "native",
-        supports_native_namespaces=settings.tool_namespace_mode == "native",
-        supports_audio_input=settings.supports_audio_input,
-        supports_service_tier=(
-            capabilities.supports_service_tier
-            if settings.supports_service_tier is None
-            else settings.supports_service_tier
-        ),
-    )
-    return capabilities
+    from corki.models.factory import model_capabilities
+
+    return model_capabilities(settings)
 
 
 def _transport_key(settings: CorkiSettings) -> tuple:

@@ -81,7 +81,7 @@ export interface DesktopAPI {
   takeLaunchDirectory?(): Promise<string | null>;
   chooseDirectory(): Promise<string | null>;
   chooseFiles(): Promise<Attachment[]>;
-  importFiles(files: File[]): Promise<Attachment[]>;
+  importFiles(files: File[]): Promise<{attachments: Attachment[]; filePaths: string[]}>;
   importImages(images: {name: string; mime: string; bytes: ArrayBuffer}[]): Promise<Attachment[]>;
   copy(text: string): Promise<void>;
   openManager(onStarting: () => void): Promise<void>;

@@ -33,7 +33,7 @@ from model_watch import ModelCallWatch
 from protocol import dumps
 from state import DesktopState
 
-from corki.cli.elicitation import validate_field
+from corki.protocol.form_validation import validate_field
 from corki.config.settings import CorkiSettings
 from corki.config import document
 from session_settings import session_settings, session_signature
@@ -84,6 +84,7 @@ class Service:
         self.state = DesktopState(self.home)
         self.send = send
         self.factory = factory or LangGraphRuntime.acreate
+        self.run_started = {}
         self.runtimes = {}
         self.runtime_signatures = {}
         self.permission_modes_cache = {}
@@ -619,7 +620,22 @@ class Service:
             with closing(sqlite3.connect(self.database)) as db:
                 first = db.execute("SELECT user_input FROM chat_turns WHERE thread_id=? AND user_input!='' ORDER BY rowid LIMIT 1", (thread,)).fetchone()
                 title = str(first[0]).split("\n")[0][:80] if first else "新会话"
+        def read_goal():
+            path = self.database.with_name("goals_1.sqlite")
+            if not path.exists():
+                return None
+            with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
+                db.row_factory = sqlite3.Row
+                row = db.execute(
+                    "SELECT status,time_used_seconds,updated_at FROM thread_goals WHERE thread_id=?",
+                    (thread,),
+                ).fetchone()
+                return dict(row) if row else None
+
+        goal = await asyncio.to_thread(read_goal) if thread in self.tasks else None
         return {
+            "runStartedAt": self.run_started.get(thread),
+            "goal": goal,
             "threadId": thread,
             "title": title,
             "directory": str(record.cwd),
@@ -1005,6 +1021,7 @@ class Service:
 
     async def run(self, thread, identity, runtime, content, images):
         terminal = False
+        self.run_started[thread] = int(time.time() * 1000)
 
         async def health(warning):
             data = {"warning": warning, "reason": watch.warning_reason}
@@ -1023,6 +1040,10 @@ class Service:
                     if kind == "AssistantReasoningDelta" and event.channel != "summary":
                         continue
                     data = asdict(event)
+                    if kind == "TurnStarted":
+                        data["runStartedAt"] = self.run_started[thread]
+                    if kind == "GoalUpdated":
+                        data["updated_at"] = time.time()
                     if kind in ("AssistantMessageCompleted", "TurnCancelled", "TurnFailed"):
                         data["createdAt"] = datetime.now(UTC).isoformat()
                     if kind == "ToolCallStarted":
@@ -1121,6 +1142,7 @@ class Service:
                 take_inputs = getattr(runtime, "take_unsubmitted_inputs", None)
                 if take_inputs is not None:
                     take_inputs()
+                self.run_started.pop(thread, None)
                 self.tasks.pop(thread, None)
                 self.active_models.pop(thread, None)
                 self.active_settings.pop(thread, None)

@@ -18,6 +18,37 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 
+def test_health_api_works_with_broken_config_and_requires_trusted_post(store):
+    store.config.write_text('{"api_key":"private-placeholder",', encoding="utf-8")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), module.Handler)
+    server.store = store
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        with httpx.Client(base_url=base, trust_env=False) as client:
+            result = client.get("/api/health")
+            assert result.status_code == 200
+            assert not result.json()["running"]
+            assert client.post("/api/health", json={"action": "start"}).status_code == 403
+            headers = {"X-Corki-Manager": "1"}
+            assert client.post("/api/health", json={"action": "repair"},
+                               headers=headers).status_code == 400
+            assert client.post("/api/health", json={"action": "start"},
+                               headers=headers | {"Origin": "https://example.invalid"}
+                               ).status_code == 403
+            result = client.post("/api/health", json={"action": "start"}, headers=headers)
+            assert result.status_code == 200
+            store.health.worker.join(10)
+            result = client.get("/api/health")
+            assert result.json()["items"][0]["status"] == "abnormal"
+            assert "private-placeholder" not in result.text
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(5)
+
+
 def assert_private_file(path):
     if os.name != "nt":
         assert path.stat().st_mode & 0o777 == 0o600

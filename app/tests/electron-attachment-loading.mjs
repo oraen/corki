@@ -19,6 +19,15 @@ try{
  const input=page.getByRole('textbox',{name:'消息',exact:true}),send=page.getByRole('button',{name:'发送消息',exact:true});
  await input.fill('Import guard fixture');
  const choose=()=>page.getByRole('button',{name:'添加附件',exact:true}).click();
+ const originalDraft=await input.inputValue();
+ const spreadsheetPath=path.join(home,'数据 表格.xlsx');
+ await writeFile(spreadsheetPath,Buffer.alloc(1_100_000));
+ await page.evaluate(()=>{const input=document.createElement('input');input.type='file';input.id='fixture-path-drop';document.body.append(input)});
+ await page.locator('#fixture-path-drop').setInputFiles(spreadsheetPath);
+ await page.evaluate(()=>{const transfer=new DataTransfer();transfer.items.add(document.querySelector('#fixture-path-drop').files[0]);document.querySelector('.composer').dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:transfer}));document.querySelector('#fixture-path-drop').remove()});
+ await poll(async()=>await page.getByRole('textbox',{name:'消息',exact:true}).inputValue()===originalDraft+'\n'+spreadsheetPath);
+ assert.equal(await page.locator('.attachment').count(),0);
+ await input.fill(originalDraft);
  await choose();await poll(()=>send.isDisabled());await input.press('Enter');assert.equal(calls,0);
  await app.evaluate(()=>globalThis.fixturePicker.resolve({canceled:true,filePaths:[]}));await poll(()=>send.isEnabled());
  await choose();await poll(()=>send.isDisabled());

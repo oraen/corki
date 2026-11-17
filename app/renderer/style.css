@@ -500,8 +500,8 @@ main {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.activity.failed {
-  border-color: #edd3cb;
+.activity.failed .activity-end {
+  color: #a87973;
 }
 .typing-dot {
   display: inline-block;
@@ -1304,7 +1304,7 @@ main {
 .tool-text { position: relative; min-width: 0; }
 .activity .tool-text pre { margin: 0; padding: 12px; max-height: 340px; overflow: auto; white-space: pre; overflow-wrap: normal; font-size: 12px; line-height: 1.65; tab-size: 2; }
 .activity .tool-text pre.tool-command { background: #faf8f4; border-bottom: 1px solid #eeece7; }
-.tool-copy { display: flex; align-items: center; gap: 5px; margin: 0 10px 8px auto; color: #827b73; font-size: 11px; padding: 4px 7px; border-radius: 5px; }
+.tool-copy { display: flex; align-items: center; gap: 5px; margin: 0; color: #827b73; font-size: 11px; padding: 4px 7px; border-radius: 5px; }
 .tool-copy:hover { background: #fff0e5; color: #d65b0a; }
 .tool-empty { padding: 14px 12px; font-size: 12px; color: #999188; }
 .agent-progress { display: flex; align-items: flex-start; gap: 10px; margin: 14px 0 14px 51px; color: #817b73; font-size: 13px; line-height: 1.7; }

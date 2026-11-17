@@ -4,12 +4,13 @@ function quickToolsCards(){
  return `<section class="panel quick-tools-panel"><div class="panel-head"><h2>快速使用</h2></div><div class="quick-tools-grid">${[
   ['guide','使用指引','从首次配置到完成一个任务','knowledge'],
   ['setup','快速配置','快速使用厂商和模型初始化配置','config'],
-  ['launch','快速启动','打开 CLI 或桌面应用','developer']
+  ['launch','快速启动','打开 CLI 或桌面应用','developer'],
+  ['health','健康检查','检查数据库与配置文件','tools']
  ].map(([id,title,note,i])=>`<button type="button" class="quick-tool-card" data-action="quick-${id}"><span class="quick-tool-icon">${icon(i)}</span><span><strong>${title}</strong><small>${note}</small></span></button>`).join('')}</div></section>`;
 }
 
 function serviceDevelopmentCards(){
- return `<section class="panel quick-tools-panel" aria-labelledby="service-development-title"><div class="panel-head"><h2 id="service-development-title">服务开发</h2></div><div class="quick-tools-grid"><div class="quick-tool-card toolbox-card service-development-card"><span class="quick-tool-icon">${icon('providers')}</span><strong>应用管理</strong></div></div></section>`;
+ return `<section class="panel quick-tools-panel" aria-labelledby="service-development-title"><div class="panel-head"><h2 id="service-development-title">服务开发</h2></div><div class="quick-tools-grid"><a href="#applications" class="quick-tool-card toolbox-card"><span class="quick-tool-icon">${icon('providers')}</span><strong>应用管理</strong></a></div></section>`;
 }
 
 function toolboxCards(){

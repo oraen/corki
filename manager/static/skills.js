@@ -17,18 +17,21 @@ async function viewSkill(id){return window.CorkiSkills.open(id,{api,toast,reload
 
 function importSkills(){
  let payload=null,version=0,lastFiles=[];
- showDialog('导入 Skills',`<div class="skill-dropzone" id="skill-dropzone"><div class="skill-upload-heading"><span class="skill-upload-symbol">${skillIcon('upload')}</span><strong>将文件或目录拖入该区域</strong></div><div class="skill-upload-actions"><label class="button primary">${skillIcon('folder')}选择文件夹<input id="skill-folder-input" type="file" webkitdirectory multiple></label><label class="button">${skillIcon('file')}选择文件<input id="skill-file-input" type="file" accept=".zip,.md"></label></div><small>可拖入 ZIP 或 SKILL.md</small></div><fieldset class="skill-import-target"><legend>导入位置</legend><div class="skill-import-target-options"><label><input type="radio" name="skill-import-group" value="corki"><span class="skill-import-target-icon">${skillIcon('folder')}</span><span class="skill-import-target-copy"><strong>扩展 Skills</strong><small>通常只在Corki上使用的skills</small></span></label><label><input type="radio" name="skill-import-group" value="public" checked><span class="skill-import-target-icon">${skillIcon('globe')}</span><span class="skill-import-target-copy"><strong>公共 Skills</strong><small>机器上所有Agent的公共skills</small></span></label><label><input type="radio" name="skill-import-group" value="work"><span class="skill-import-target-icon">${skillIcon('briefcase')}</span><span class="skill-import-target-copy"><strong>工作 Skills</strong><small>仅在用户明确指定时使用</small></span></label></div></fieldset><div id="skill-import-preview" aria-live="polite"></div>`,async()=>{
+ showDialog('导入 Skills',`<div class="skill-dropzone" id="skill-dropzone"><div class="skill-upload-heading"><span class="skill-upload-symbol">${skillIcon('upload')}</span><strong>将文件或目录拖入该区域</strong></div><div class="skill-upload-actions"><label class="button primary">${skillIcon('folder')}选择文件夹<input id="skill-folder-input" type="file" webkitdirectory multiple></label><label class="button">${skillIcon('file')}选择文件<input id="skill-file-input" type="file" accept=".zip,.md"></label></div><small>可拖入文件夹、ZIP 或 SKILL.md</small></div><fieldset class="skill-import-target"><legend>导入位置</legend><div class="skill-import-target-options"><label><input type="radio" name="skill-import-group" value="corki"><span class="skill-import-target-icon">${skillIcon('folder')}</span><span class="skill-import-target-copy"><strong>扩展 Skills</strong><small>通常只在Corki上使用的skills</small></span></label><label><input type="radio" name="skill-import-group" value="public" checked><span class="skill-import-target-icon">${skillIcon('globe')}</span><span class="skill-import-target-copy"><strong>公共 Skills</strong><small>机器上所有Agent的公共skills</small></span></label><label><input type="radio" name="skill-import-group" value="work"><span class="skill-import-target-icon">${skillIcon('briefcase')}</span><span class="skill-import-target-copy"><strong>工作 Skills</strong><small>仅在用户明确指定时使用</small></span></label></div></fieldset><div id="skill-import-preview" aria-live="polite"></div>`,async()=>{
    if(!payload)throw Error('请先选择并校验技能');
    await mutate({kind:'skills',action:'import',...payload});
  },'校验通过后可导入');
  $('#editor').classList.add('skill-dialog');$('#cancel-dialog').textContent='取消';$('#save').textContent='导入';$('#save').disabled=true;
  const generation=skillImportGeneration;
  const current=v=>generation===skillImportGeneration&&v===version&&$('#editor').open;
- const base64=file=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=()=>reject(Error('文件读取失败'));reader.readAsDataURL(file);});
+ const base64=file=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=()=>reject(Error('文件读取失败'));reader.readAsDataURL(file.file||file);});
  async function choose(files){
-  lastFiles=[...files];const v=++version;payload=null;$('#save').disabled=true;$('#form-error').textContent='';$('#skill-import-preview').innerHTML='<div class="skill-validating"><span class="spinner"></span>正在读取并校验…</div>';
+  const v=++version;payload=null;$('#save').disabled=true;$('#form-error').textContent='';$('#skill-import-preview').innerHTML='<div class="skill-validating"><span class="spinner"></span>正在读取并校验…</div>';
   try{
-   files=[...files].filter(f=>!f.webkitRelativePath.split('/').some(p=>p==='.DS_Store'||p==='__MACOSX'));
+   files=typeof files==='function'?await files():[...files];
+   if(!current(v))return;
+   lastFiles=files;
+   files=files.filter(f=>!f.webkitRelativePath.split('/').some(p=>p==='.DS_Store'||p==='__MACOSX'));
    if(!files.length)throw Error('请选择技能文件');
    let candidate;
    if(files.length===1&&files[0].name.toLowerCase().endsWith('.zip'))candidate={archive:await base64(files[0])};
@@ -42,7 +45,20 @@ function importSkills(){
  }
  document.querySelectorAll('[name="skill-import-group"]').forEach(input=>input.onchange=()=>{if(lastFiles.length)choose(lastFiles);});
  $('#skill-folder-input').onchange=e=>choose(e.target.files);$('#skill-file-input').onchange=e=>choose(e.target.files);
- const zone=$('#skill-dropzone');zone.ondragover=e=>{e.preventDefault();zone.classList.add('dragover');};zone.ondragleave=()=>zone.classList.remove('dragover');zone.ondrop=e=>{e.preventDefault();zone.classList.remove('dragover');if([...e.dataTransfer.items].some(i=>i.webkitGetAsEntry?.()?.isDirectory)){version++;payload=null;$('#save').disabled=true;$('#skill-import-preview').innerHTML='';$('#form-error').textContent='导入文件夹请使用“选择文件夹”按钮';return;}choose(e.dataTransfer.files);};
+ const zone=$('#skill-dropzone');zone.ondragover=e=>{e.preventDefault();zone.classList.add('dragover');};zone.ondragleave=()=>zone.classList.remove('dragover');zone.ondrop=e=>{e.preventDefault();zone.classList.remove('dragover');const entries=[...e.dataTransfer.items].filter(i=>i.kind==='file').map(i=>i.webkitGetAsEntry?.());if(entries.some(entry=>entry?.isDirectory)){
+  if(entries.some(entry=>!entry)){choose(()=>Promise.reject(Error('无法读取文件夹，请使用“选择文件夹”按钮')));return;}
+  choose(async()=>{
+   const files=[];
+   async function visit(entry,parent=''){
+    const relative=parent+entry.name;
+    if(entry.name==='.DS_Store'||entry.name==='__MACOSX')return;
+    if(entry.isFile){const file=await new Promise((resolve,reject)=>entry.file(resolve,reject));files.push({name:file.name,webkitRelativePath:relative,file});}
+    else if(entry.isDirectory){const reader=entry.createReader();for(;;){const batch=await new Promise((resolve,reject)=>reader.readEntries(resolve,reject));if(!batch.length)break;for(const child of batch)await visit(child,relative+'/');}}
+   }
+   for(const entry of entries)await visit(entry);
+   return files;
+  });
+ }else choose(e.dataTransfer.files);};
 }
 
 document.querySelector('#main').addEventListener('toggle',event=>{

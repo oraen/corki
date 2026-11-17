@@ -77,6 +77,13 @@ from corki.tools.custom import (
 from corki.tools.executor import ToolExecutor
 from corki.tools.registry import ToolRegistry
 
+_health_spec = importlib.util.spec_from_file_location(
+    "corki_health_checks", Path(__file__).with_name("health.py")
+)
+_health_module = importlib.util.module_from_spec(_health_spec)
+_health_spec.loader.exec_module(_health_module)
+HealthChecks = _health_module.HealthChecks
+
 _usage_spec = importlib.util.spec_from_file_location(
     "corki_usage_analytics", Path(__file__).with_name("usage_analytics.py")
 )
@@ -97,6 +104,15 @@ _gateway_spec = importlib.util.spec_from_file_location(
 _gateway_module = importlib.util.module_from_spec(_gateway_spec)
 _gateway_spec.loader.exec_module(_gateway_module)
 ChannelGateway = _gateway_module.ChannelGateway
+
+_applications_spec = importlib.util.spec_from_file_location(
+    "corki_manager_applications", Path(__file__).with_name("applications") / "__init__.py",
+    submodule_search_locations=[str(Path(__file__).with_name("applications"))],
+)
+if "corki_manager_applications" not in sys.modules:
+    _applications_module = importlib.util.module_from_spec(_applications_spec)
+    sys.modules[_applications_spec.name] = _applications_module
+    _applications_spec.loader.exec_module(_applications_module)
 
 STATIC = Path(__file__).parent / "static"
 # Windows registry associations can label .js as text/plain. With nosniff that
@@ -763,6 +779,7 @@ class Store:
                 from corki.storage.sqlite import SQLiteSessionRepository
 
                 SQLiteSessionRepository(self.database)
+        self.health = HealthChecks(self.home, self.workspace)
         self.knowledge = KnowledgeStore(self.home)
         from corki.knowledge.builtin import install_builtin_knowledge
 
@@ -773,6 +790,8 @@ class Store:
         self.adaptor = GatewayManagement(self)
         self.resource_packages = ResourcePackages(self)
         self.channel_gateway = ChannelGateway(self.home)
+        from corki_manager_applications.service import Applications
+        self.applications = Applications(self)
 
     @property
     def knowledge_root(self):
@@ -2878,6 +2897,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(403, {"error": "仅允许本机同源访问"})
         parsed = urlparse(self.path)
         try:
+            if parsed.path == "/api/health":
+                return self.respond(200, self.server.store.health.snapshot())
+            if parsed.path == "/api/applications":
+                from corki_manager_applications.models import AppError
+                try:
+                    return self.respond(200, self.server.store.applications.get(
+                        {k:v[0] for k,v in parse_qs(parsed.query).items()}))
+                except AppError as error:
+                    return self.respond(error.status, {"error":str(error)})
             if parsed.path == "/api/channel-gateway":
                 return self.respond(200, self.server.store.channel_gateway.request())
             if parsed.path == '/api/channel-image':
@@ -3023,6 +3051,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.trusted() or self.headers.get("X-Corki-Manager") != "1":
             return self.respond(403, {"error": "仅允许本机管理页面修改配置"})
+        if self.path == "/api/health":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 256:
+                    raise ValueError("无效的检查请求")
+                if json.loads(self.rfile.read(length)) != {"action": "start"}:
+                    raise ValueError("无效的检查请求")
+                return self.respond(200, self.server.store.health.start())
+            except (ValueError, TypeError):
+                return self.respond(400, {"error": "无效的检查请求"})
+        if self.path == "/api/applications":
+            from corki_manager_applications.http import post
+            return post(self)
         if self.path == "/api/model-test":
             return self.do_model_test()
         if self.path != "/api/mutate":
@@ -3111,6 +3152,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        server.store.applications.close()
         server.store.cron_service.close()
         server.server_close()
 

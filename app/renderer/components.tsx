@@ -362,8 +362,10 @@ export const MessageRow = React.memo(function MessageRow({
   showAvatar = true,
   collapsible = false,
   active = false,
+  toolDuration,
 }: {
   output?: Message;
+  toolDuration?: React.ReactNode;
   commentary?: boolean;
   showAvatar?: boolean;
   collapsible?: boolean;
@@ -483,26 +485,28 @@ export const MessageRow = React.memo(function MessageRow({
         </ToolSummary>
         <div className="tool-sections">
           <section>
-            <header>调用参数</header>
             <MessageRow
               message={{ ...message, role: "tool-parameters" }}
               onError={onError}
             />
           </section>
           <section>
-            <header>
-              执行输出
-              <ExecutionDuration message={message} output={output} />
-            </header>
             {output?.content ? (
               <MessageRow
                 message={{ ...output, role: "tool-output" }}
                 onError={onError}
+                toolDuration={<ExecutionDuration message={message} output={output} />}
               />
             ) : (
-              <div className="tool-empty">
-                {message.streaming ? "等待中" : "暂无输出"}
-              </div>
+              <>
+                <header>
+                  执行输出
+                  <ExecutionDuration message={message} output={output} />
+                </header>
+                <div className="tool-empty">
+                  {message.streaming ? "等待中" : "暂无输出"}
+                </div>
+              </>
             )}
           </section>
         </div>
@@ -523,38 +527,44 @@ export const MessageRow = React.memo(function MessageRow({
       } catch {}
     }
     return (
-      <div className="tool-text">
-        {command && (
-          <pre className="tool-command">
+      <>
+        <header>
+          <span>{message.role === "tool-parameters" ? "调用参数" : "执行输出"}</span>
+          <button
+            className="tool-copy"
+            onClick={() => void copyOriginal()}
+            disabled={copying}
+            aria-label={
+              message.role === "tool-parameters" ? "复制调用参数" : "复制执行输出"
+            }
+          >
+            <Icon name="copy" size={13} />
+            {copied ? "已复制" : "复制"}
+          </button>
+          {toolDuration}
+        </header>
+        <div className="tool-text">
+          {command && (
+            <pre className="tool-command">
+              <code
+                className="hljs"
+                dangerouslySetInnerHTML={{
+                  __html: highlightedText(command, "bash"),
+                }}
+              />
+            </pre>
+          )}
+          <pre>
             <code
               className="hljs"
               dangerouslySetInnerHTML={{
-                __html: highlightedText(command, "bash"),
+                __html: highlightedText(formatted.text, formatted.language),
               }}
             />
           </pre>
-        )}
-        <pre>
-          <code
-            className="hljs"
-            dangerouslySetInnerHTML={{
-              __html: highlightedText(formatted.text, formatted.language),
-            }}
-          />
-        </pre>
-        {more}
-        <button
-          className="tool-copy"
-          onClick={() => void copyOriginal()}
-          disabled={copying}
-          aria-label={
-            message.role === "tool-parameters" ? "复制调用参数" : "复制执行输出"
-          }
-        >
-          <Icon name="copy" size={13} />
-          {copied ? "已复制" : "复制"}
-        </button>
-      </div>
+          {more}
+        </div>
+      </>
     );
   }
   if (["tool-result", "reasoning"].includes(message.role))
