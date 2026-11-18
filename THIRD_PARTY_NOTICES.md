@@ -613,3 +613,15 @@ lifecycle, tools, storage and associated tests in `src/corki/goals/` follow
 `codex-rs/ext/goal/` and `codex-rs/state/src/runtime/goals.rs` from that revision.
 These are modified implementations under the Apache-2.0 license and upstream
 notice reproduced in `src/corki/skills/CODEX_CATALOG_LICENSE.txt`.
+
+## Hermes self-improvement
+
+The skill-learning/review prompts, skill scanner, patch matching and escape-drift
+handling adapt NousResearch/hermes-agent commit
+`67e4d22d83b242ecfb2807ed39e9696ba1b1b0d5` (MIT, Copyright 2025 Nous Research).
+The license is included in `src/corki/evolution/hermes_guard/LICENSE.txt`.
+`docs/self-evolution.md` maps the lifecycle, curation, approval, storage and bundled
+update behaviors to their upstream source symbols and explains Corki host adaptations.
+The scanner's provider-key environment lookup uses Corki's consumed environment
+variables; the Hermes metrics callback is omitted. No Hermes credentials or user
+state are included.

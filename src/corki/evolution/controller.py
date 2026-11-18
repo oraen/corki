@@ -4,17 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 import threading
 import weakref
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 from corki.prompting import PromptContribution, PromptPhase, PromptRole, PromptSlot
-from corki.protocol.events import TokenUsageUpdated, TurnCompleted
+from corki.protocol.events import ToolCallStarted, TurnCompleted
 from corki.skills.io import run_skill_io
-from corki.storage.file_lock import open_lock, try_lock, unlock_and_close
 
+from .policy import ReviewPolicy
 from .state import EvolutionState
 from .switch import EvolutionSwitch
 from .tools import SkillManageTool, WriteFence
@@ -28,11 +30,41 @@ class _Hub:
     def __init__(self):
         self.controllers = weakref.WeakSet()
         self.active = {}
+        self.timer = None
 
     async def enter(self, controller, view):
         self.active[controller] = view
-        # One application's foreground tasks outrank all of its background reviews.
-        await asyncio.gather(*(c.preempt() for c in list(self.controllers)))
+        if self.timer is not None:
+            self.timer.cancel()
+            self.timer = None
+        # Hermes cancels the owning session's review, not unrelated sessions' reviews.
+        await controller.preempt()
+
+    def idle(self, controller, *, delay=None):
+        if self.active or self.timer is not None:
+            return
+        from .maintenance import Curator
+
+        curator = Curator(
+            controller.home, controller.service, controller.cwd, controller.switch.document
+        )
+        if curator.options.get("enabled", True) is False:
+            return
+        reference = weakref.ref(controller)
+
+        def run():
+            self.timer = None
+            current = reference()
+            if current is not None and not current.closed and not self.active:
+                current.maintenance_task = asyncio.create_task(
+                    current.maintain(), name="corki-curator"
+                )
+                _RETAINED_TASKS.add(current.maintenance_task)
+                current.maintenance_task.add_done_callback(_RETAINED_TASKS.discard)
+
+        self.timer = asyncio.get_running_loop().call_later(
+            curator.number("min_idle_hours", 2) * 3600 if delay is None else delay, run
+        )
 
 
 def _hub(home):
@@ -52,10 +84,22 @@ class EvolutionController:
         self.closed = False
         self.fence = None
         self.task = None
+        self.maintenance_task = None
+        self.last_settings = settings
         self.hub = None
         self.view = None
         self.views = {}
         self.write_fence = None
+        self.service.read_observer = self._skill_read
+
+    def _skill_read(self, skill, path, contents):
+        if self.admitted or self.state.path.exists():
+            try:
+                self.state.record_skill_activity(
+                    str(skill.path.parent.resolve()), skill.qualified_name
+                )
+            except (OSError, sqlite3.Error):
+                _LOG.warning("Skill usage telemetry unavailable", exc_info=True)
 
     async def before_turn(self):
         if self.closed:
@@ -66,7 +110,15 @@ class EvolutionController:
         if self.write_fence:
             self.write_fence.revoke()
         self.admitted = self.switch.enabled()
-        self.view = SimpleNamespace(admitted=self.admitted, steps=set(), authored=threading.Event())
+        self.view = SimpleNamespace(
+            admitted=self.admitted,
+            steps=0,
+            authored=threading.Event(),
+            request=None,
+            dispatch=None,
+            settings=None,
+            policy=ReviewPolicy.load(self.switch.document),
+        )
         await self.hub.enter(self, self.view)
         tools = ()
         if self.admitted:
@@ -104,23 +156,33 @@ class EvolutionController:
         if (
             view is not None
             and view.admitted
-            and isinstance(event, TokenUsageUpdated)
-            and event.usage_id
-            and event.usage_id.startswith("model:")
+            and isinstance(event, ToolCallStarted)
+            and event.tool_name == "skill_manage"
         ):
-            view.steps.add(event.usage_id)
+            # Hermes tool_executor resets on ANY skill_manage use, not just a successful write.
+            view.steps = 0
+            view.authored.set()
 
-    async def after_turn(
-        self, terminal, *, settings, repository, model, operation, turn_id, selection=None
-    ):
+    def observe_request(self, request, settings=None):
+        if self.view and self.view.admitted:
+            self.view.steps += 1
+            self.view.request = request
+            self.view.settings = settings
+            self.view.dispatch = self.registry.snapshot()
+
+    async def after_turn(self, terminal, *, settings, repository, model, operation, turn_id):
         view = self.views.pop(str(turn_id), None)
         if self.hub and self.hub.active.get(self) is view:
             self.hub.active.pop(self, None)
+        if view is not None and view.admitted:
+            settings = view.settings or settings
+            self.last_settings = settings
+            self.hub.idle(self)
         if (
             self.closed
             or view is None
             or not view.admitted
-            or not isinstance(terminal, TurnCompleted)
+            or terminal is None
             or operation == "compact"
         ):
             return
@@ -130,13 +192,30 @@ class EvolutionController:
             self.state.completed_turn,
             str(terminal.thread_id),
             str(terminal.turn_id),
-            len(view.steps),
+            view.steps,
             authored=view.authored.is_set(),
+            interval=view.policy.interval,
         )
-        if not due or self.closed or self.hub.active:
+        if (
+            not due
+            or self.closed
+            or not view.policy.enabled
+            or not isinstance(terminal, TurnCompleted)
+            or not terminal.final_answer
+        ):
             return
         self.fence = WriteFence(self.switch, enabled=view.admitted)
-        job = SimpleNamespace(fence=self.fence, lease=None, identity=None, usage=None)
+        snapshot = await repository.load_fork_snapshot(terminal.thread_id)
+        job = SimpleNamespace(
+            fence=self.fence,
+            identity=None,
+            usage=None,
+            prefix=view.request,
+            dispatch=view.dispatch,
+            snapshot=replace(snapshot, usage=()),
+            policy=view.policy,
+            routed=False,
+        )
         self.task = asyncio.create_task(
             self._learn(
                 terminal,
@@ -144,7 +223,6 @@ class EvolutionController:
                 repository=repository,
                 model=model,
                 job=job,
-                selection=selection,
             ),
             name="corki-evolution",
         )
@@ -152,28 +230,33 @@ class EvolutionController:
         _RETAINED_TASKS.add(self.task)
         self.task.add_done_callback(_RETAINED_TASKS.discard)
 
-    def _claim(self, job):
-        self.state.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        owner = open_lock(self.state.root / "review.lock")
-        if not try_lock(owner):
-            owner.close()
-            return False
-        job.lease = owner
-        return True
-
-    async def _learn(self, terminal, *, settings, repository, model, job, selection=None):
+    async def _learn(self, terminal, *, settings, repository, model, job):
         fence = job.fence
         identity, status, usage, error_message = None, "cancelled", None, None
         try:
             # Yield delivery/goal continuation first; never keep the UI waiting on review setup.
-            await asyncio.sleep(0.1)
-            if self.hub.active or not await run_skill_io(self._claim, job):
-                return
+            await asyncio.sleep(0)
             fence.check()
-            if selection is not None:
-                from corki.core.model_settings import bind_model_settings
-
-                settings = bind_model_settings(settings, selection)
+            if job.policy.provider not in (None, "", "auto") or job.policy.model not in (
+                None,
+                "",
+                "auto",
+            ):
+                try:
+                    previous_model = (settings.provider_id, settings.model)
+                    settings = settings.for_model(
+                        job.policy.provider
+                        if job.policy.provider not in (None, "", "auto")
+                        else settings.provider_id,
+                        job.policy.model
+                        if job.policy.model not in (None, "", "auto")
+                        else settings.model,
+                    )
+                    job.routed = (settings.provider_id, settings.model) != previous_model
+                except ValueError:
+                    _LOG.warning(
+                        "Self-evolution auxiliary route unavailable; using the parent model"
+                    )
             model = model(settings)
 
             def begin():
@@ -218,24 +301,22 @@ class EvolutionController:
             error_message = redact_secrets(error_message)[:2000]
             _LOG.warning("Self-evolution review failed: %s", error_message)
         finally:
-            try:
-                if job.identity:
-                    with suppress(Exception):
-                        usage = usage or job.usage
-                        await run_skill_io(
-                            self.state.finish_review,
-                            job.identity,
-                            status,
-                            usage.input_tokens if usage else 0,
-                            usage.output_tokens if usage else 0,
-                            error_message,
-                        )
-            finally:
-                if job.lease:
-                    unlock_and_close(job.lease)
-                    job.lease = None
+            if job.identity:
+                with suppress(Exception):
+                    usage = usage or job.usage
+                    await run_skill_io(
+                        self.state.finish_review,
+                        job.identity,
+                        status,
+                        usage.input_tokens if usage else 0,
+                        usage.output_tokens if usage else 0,
+                        error_message,
+                    )
 
     async def preempt(self):
+        if self.maintenance_task and not self.maintenance_task.done():
+            self.maintenance_task.cancel()
+            await asyncio.wait((self.maintenance_task,), timeout=2)
         task = self.task
         if task is None or task.done():
             return
@@ -247,6 +328,29 @@ class EvolutionController:
         if not done:
             _LOG.warning("Self-evolution cleanup retained; foreground work continues")
 
+    async def maintain(self):
+        from .maintenance import Curator, consolidate
+
+        curator = None
+        try:
+            if not self.switch.enabled():
+                return
+            curator = Curator(self.home, self.service, self.cwd, self.switch.document)
+            report = await run_skill_io(curator.run)
+            if report is not None and curator.options.get("consolidate", False):
+                await consolidate(
+                    curator, self.last_settings, self.switch, requirements=self.requirements
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOG.warning("Self-evolution skill maintenance failed", exc_info=True)
+        finally:
+            if not self.closed and curator is not None:
+                delay = await run_skill_io(curator.next_delay)
+                if delay is not None:
+                    self.hub.idle(self, delay=delay)
+
     async def aclose(self):
         self.closed = True
         if self.write_fence:
@@ -254,4 +358,7 @@ class EvolutionController:
         if self.hub:
             self.hub.active.pop(self, None)
             self.hub.controllers.discard(self)
+            if not self.hub.controllers and self.hub.timer is not None:
+                self.hub.timer.cancel()
+                self.hub.timer = None
         await self.preempt()

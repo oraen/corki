@@ -47,6 +47,8 @@ def install_bundled_skills(home: Path, source: Traversable | None = None) -> Pat
 
 
 def _install_locked(skills_root: Path, source: Traversable) -> Path:
+    from .bundled_sync import MANIFEST, baseline, merge, save
+
     # Recheck the marker under the same OS lock as backup/replacement. Otherwise
     # concurrent CLI, manager and desktop starts can remove one another's backup.
     _seed_work_skills(skills_root, source)
@@ -55,6 +57,8 @@ def _install_locked(skills_root: Path, source: Traversable) -> Path:
     marker = destination / _MARKER
     try:
         if destination.is_dir() and marker.read_text(encoding="utf-8").strip() == fingerprint:
+            if not (destination / MANIFEST).exists():
+                save(destination, baseline(source, _WORK_BUNDLED))
             return destination
     except OSError:
         pass
@@ -62,6 +66,7 @@ def _install_locked(skills_root: Path, source: Traversable) -> Path:
     staging = Path(mkdtemp(prefix=".system-", dir=skills_root))
     try:
         _copy_tree(source, staging, exclude=_WORK_BUNDLED)
+        merge(source, destination, staging, exclude=_WORK_BUNDLED)
         (staging / _MARKER).write_text(f"{fingerprint}\n", encoding="utf-8")
         backup = skills_root / ".system.previous"
         if backup.exists():

@@ -39,12 +39,13 @@ class Model:
 
     async def stream(self, request):
         turn, step = request.items[-1].turn_id, new_step_id()
-        if "bounded, background procedural-learning reviewer" in request.instructions:
+        if any(
+            "Review the conversation above and update the skill library"
+            in getattr(i, "content", "")
+            for i in request.items
+        ):
             self.reviews.append(request)
-            assert (
-                "This background review has no live user authorizing edits" in request.instructions
-            )
-            assert {t.name for t in request.tools} == {"skill_manage"}
+            assert "skill_manage" in {t.name for t in request.tools}
             self.review_started.set()
             if self.stall:
                 try:
@@ -81,7 +82,7 @@ class Model:
             )
             for tool in request.tools:
                 if tool.name == "skill_manage":
-                    assert "not global file permissions" in tool.description
+                    assert "regardless of their origin" in tool.description
             yield ModelCompleted((AssistantMessageItem("Done", turn, step),))
 
     async def aclose(self):
@@ -132,7 +133,12 @@ def test_enabled_reviews_persist_skills_without_memory_or_extra_history(tmp_path
                 await turn(runtime)
             await asyncio.wait_for(runtime._evolution.task, 10)
             assert len(model.reviews) == 2
-            assert (home / "skills/learned-checks/SKILL.md").read_text() == DOCUMENT
+            parent = model.foreground[-1]
+            reviewer = model.reviews[0]
+            assert reviewer.instructions == parent.instructions
+            assert reviewer.tools == parent.tools
+            assert reviewer.items[: len(parent.items)] == parent.items
+            assert (home / "skills/self-improving/learned-checks/SKILL.md").read_text() == DOCUMENT
             assert all("skill_manage" in {t.name for t in r.tools} for r in model.foreground)
             state = EvolutionState(home).status()
             assert state["edits"] == 1 and state["reviews"][0]["status"] == "completed"
@@ -148,7 +154,7 @@ def test_enabled_reviews_persist_skills_without_memory_or_extra_history(tmp_path
             assert "skill_manage" not in {t.name for t in model.foreground[-1].tools}
             assert "<corki_self_evolution>" not in model.foreground[-1].instructions
             assert "learned-checks" in str(model.foreground[-1])
-            assert (home / "skills/learned-checks/SKILL.md").exists()
+            assert (home / "skills/self-improving/learned-checks/SKILL.md").exists()
         finally:
             await runtime.aclose()
 
@@ -166,7 +172,7 @@ def test_new_foreground_turn_preempts_review_and_closes_owned_worker(tmp_path):
             await asyncio.wait_for(model.review_started.wait(), 5)
             await asyncio.wait_for(turn(runtime, "New foreground request"), 5)
             assert model.review_cancelled.is_set()
-            assert not (home / "skills/learned-checks/SKILL.md").exists()
+            assert not (home / "skills/self-improving/learned-checks/SKILL.md").exists()
             state = EvolutionState(home).status()
             assert state["reviews"][0]["status"] == "cancelled"
         finally:
@@ -192,7 +198,7 @@ def test_disabling_feature_applies_next_turn_without_interrupting_admitted_revie
             await asyncio.wait_for(runtime._evolution.task, 10)
             assert not model.review_cancelled.is_set()
             assert EvolutionState(home).status()["reviews"][0]["status"] == "completed"
-            assert (home / "skills/learned-checks/SKILL.md").read_text() == DOCUMENT
+            assert (home / "skills/self-improving/learned-checks/SKILL.md").read_text() == DOCUMENT
             await turn(runtime)
             assert "skill_manage" not in {t.name for t in model.foreground[-1].tools}
             assert len(model.reviews) == 2
@@ -227,7 +233,11 @@ def test_homepage_flag_can_enable_an_already_running_agent_without_memory(tmp_pa
 def test_review_budget_does_not_allow_an_infinite_skill_tool_loop(tmp_path):
     class LoopModel(Model):
         async def stream(self, request):
-            if "bounded, background procedural-learning reviewer" not in request.instructions:
+            if not any(
+                "Review the conversation above and update the skill library"
+                in getattr(i, "content", "")
+                for i in request.items
+            ):
                 async for event in super().stream(request):
                     yield event
                 return
@@ -268,7 +278,7 @@ def test_review_budget_does_not_allow_an_infinite_skill_tool_loop(tmp_path):
     asyncio.run(check())
 
 
-def test_foreground_in_another_session_preempts_review_and_close_releases_lease(tmp_path):
+def test_foreground_in_another_session_does_not_preempt_review(tmp_path):
     from corki.storage.file_lock import open_lock, try_lock, unlock_and_close
 
     async def check():
@@ -281,8 +291,10 @@ def test_foreground_in_another_session_preempts_review_and_close_releases_lease(
                 await turn(first)
             await asyncio.wait_for(model.review_started.wait(), 5)
             await asyncio.wait_for(turn(second), 5)
-            assert model.review_cancelled.is_set()
-            assert EvolutionState(home).status()["reviews"][0]["status"] == "cancelled"
+            assert not model.review_cancelled.is_set()
+            model.review_release.set()
+            await asyncio.wait_for(first._evolution.task, 5)
+            assert EvolutionState(home).status()["reviews"][0]["status"] == "completed"
         finally:
             await first.aclose()
             await second.aclose()
@@ -291,5 +303,157 @@ def test_foreground_in_another_session_preempts_review_and_close_releases_lease(
             assert try_lock(owner)
         finally:
             unlock_and_close(owner)
+
+    asyncio.run(check())
+
+
+def test_review_can_learn_through_code_mode_without_running_terminal_tools(tmp_path):
+    import pytest
+
+    from corki.code_mode.service import CodeModeService
+
+    if not CodeModeService.available():
+        pytest.skip("install corki[code-mode]")
+
+    async def check():
+        class CodeModel:
+            def __init__(self):
+                self.reviews = []
+
+            async def stream(self, request):
+                turn_id, step = request.items[-1].turn_id, new_step_id()
+                reviewing = any(
+                    "Review the conversation above and update the skill library"
+                    in getattr(i, "content", "")
+                    for i in request.items
+                )
+                if reviewing:
+                    self.reviews.append(request)
+                    if len(self.reviews) == 1:
+                        code = (
+                            "await tools.skill_manage("
+                            + json.dumps(
+                                dict(action="create", name="learned-checks", content=DOCUMENT)
+                            )
+                            + ");"
+                        )
+                        code += (
+                            "await tools.exec_command({cmd: "
+                            + json.dumps("touch " + str(tmp_path / "must-not-run"))
+                            + "});"
+                        )
+                        yield ModelCompleted(
+                            (
+                                ToolCallItem(
+                                    ToolCall(
+                                        "review-code",
+                                        "exec",
+                                        None,
+                                        raw_arguments=code,
+                                        input_kind="freeform",
+                                    ),
+                                    turn_id,
+                                    step,
+                                ),
+                            )
+                        )
+                        return
+                yield ModelCompleted((AssistantMessageItem("Done", turn_id, step),))
+
+            async def aclose(self):
+                pass
+
+        home, work = tmp_path / "home", tmp_path / "work"
+        model = CodeModel()
+        runtime = await LangGraphRuntime.acreate(
+            settings=replace(
+                settings(home, work, True),
+                tool_mode="code_mode_only",
+                hooks_enabled=False,
+                goals_enabled=False,
+            ),
+            home_path=home,
+            compatibility_home=home / "user",
+            model=model,
+            database_path=home / "sessions/corki.db",
+            load_plugins=False,
+        )
+        try:
+            for _ in range(10):
+                await turn(runtime)
+            await asyncio.wait_for(runtime._evolution.task, 10)
+            assert len(model.reviews) >= 2
+            assert (home / "skills/self-improving/learned-checks/SKILL.md").read_text() == DOCUMENT
+            assert not (tmp_path / "must-not-run").exists()
+            assert {"exec", "wait"} <= {t.name for t in model.reviews[0].tools}
+        finally:
+            await runtime.aclose()
+
+    asyncio.run(check())
+
+
+def test_explicit_skill_lock_applies_to_normal_terminal_when_learning_and_skills_are_off(tmp_path):
+    from corki.evolution.state import EvolutionState
+    from corki.protocol.events import ToolCallCompleted
+
+    async def check():
+        home, work = tmp_path / "home", tmp_path / "work"
+        work.mkdir()
+        home.mkdir()
+        target = home / "skills/example/SKILL.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("Original")
+        state = EvolutionState(home)
+        state.ensure_skill_usage(str(target.parent), "example")
+        state.set_skill_flags(str(target.parent), locked=True)
+
+        class Model:
+            calls = 0
+
+            async def stream(self, request):
+                self.calls += 1
+                turn_id, step = request.items[-1].turn_id, new_step_id()
+                if self.calls == 1:
+                    yield ModelCompleted(
+                        (
+                            ToolCallItem(
+                                ToolCall(
+                                    "forbidden",
+                                    "exec_command",
+                                    {"cmd": "echo changed > " + str(target)},
+                                ),
+                                turn_id,
+                                step,
+                            ),
+                        )
+                    )
+                else:
+                    yield ModelCompleted((AssistantMessageItem("Done", turn_id, step),))
+
+            async def aclose(self):
+                pass
+
+        runtime = await LangGraphRuntime.acreate(
+            settings=CorkiSettings(
+                work,
+                skills_enabled=False,
+                self_evolution_enabled=False,
+                hooks_enabled=False,
+                goals_enabled=False,
+            ),
+            model=Model(),
+            home_path=home,
+            database_path=home / "sessions/corki.db",
+            load_plugins=False,
+        )
+        try:
+            events = await turn(runtime)
+            assert target.read_text() == "Original"
+            assert any(
+                isinstance(e, ToolCallCompleted) and e.tool_name == "exec_command" and e.is_error
+                for e in events
+            )
+        finally:
+            await runtime.aclose()
 
     asyncio.run(check())

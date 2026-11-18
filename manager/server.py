@@ -77,6 +77,12 @@ from corki.tools.custom import (
 from corki.tools.executor import ToolExecutor
 from corki.tools.registry import ToolRegistry
 
+_skill_move_spec = importlib.util.spec_from_file_location(
+    "corki_manager_skill_move", Path(__file__).with_name("skill_move.py")
+)
+_skill_move_module = importlib.util.module_from_spec(_skill_move_spec)
+_skill_move_spec.loader.exec_module(_skill_move_module)
+
 _health_spec = importlib.util.spec_from_file_location(
     "corki_health_checks", Path(__file__).with_name("health.py")
 )
@@ -767,6 +773,11 @@ class Store:
         self.compatibility_home = (compatibility_home or Path.home()).resolve()
         self.config = self.home / "settings.json"
         self.database = self.home / "sessions/corki.db"
+        with LOCK:
+            _skill_move_module.recover(self, atomic)
+            from corki.evolution.migration import migrate_legacy_skills
+
+            migrate_legacy_skills(self.home, self.workspace, self.compatibility_home)
         # Upgrade existing installations even if Manager is started before CLI.
         # Probe only at service startup, never on snapshots or analytical reads.
         if self.database.is_file():
@@ -1280,9 +1291,11 @@ end run'''
         result = []
         if redaction_secrets is None:
             redaction_secrets = self.redaction_secrets()
+        skill_locations = _skill_move_module.locations(self)
         roots = [
             (self.home / "skills", "skills", True),
             (self.home / "skills/work", "skills", True),
+            (self.home / "skills/self-improving", "skills", True),
             (self.home / "skills/.system", "skills", False),
             (self.compatibility_home / ".agents/skills", "skills", True),
             (self.workspace / ".corki/skills", "skills", False),
@@ -1294,7 +1307,7 @@ end run'''
         for root, kind, writable in roots:
             if not root.exists():
                 continue
-            paths = walk_skill_files(root, excluded_children=("work",) if root == self.home / "skills" else ()).files if kind == "skills" else root.rglob("*.md")
+            paths = walk_skill_files(root, excluded_children=("work", "self-improving") if root == self.home / "skills" else ()).files if kind == "skills" else root.rglob("*.md")
             for path in sorted(paths):
                 if ".manager-backups" in path.parts or is_link_path(path) or not path.is_file():
                     continue
@@ -1341,7 +1354,8 @@ end run'''
                 knowledge = self.knowledge.sync(path, name, text) if kind == "knowledge" else None
                 result.append(
                     dict(
-                        id=revision(str(path)),
+                        id=skill_locations.get(str(path), revision(str(path)))
+                        if kind == "skills" else revision(str(path)),
                         kind=kind,
                         name=name,
                         description=self.redact(description[:180], redaction_secrets),
@@ -1363,6 +1377,8 @@ end run'''
                             if kind == "knowledge"
                             else "work"
                             if work_skill
+                            else "evolution"
+                            if root == self.home / "skills/self-improving"
                             else "public"
                             if root == self.compatibility_home / ".agents/skills"
                             else "corki"
@@ -1374,6 +1390,8 @@ end run'''
                             if kind == "knowledge"
                             else "工作"
                             if work_skill
+                            else "自进化"
+                            if root == self.home / "skills/self-improving"
                             else "Corki 专属"
                             if root == self.home / "skills"
                             else "项目"
@@ -2367,6 +2385,8 @@ end run'''
                     "回滚历史版本" if action == "restore" else "编辑配置文件",
                 )
                 return {"message": "已创建并应用新版本；新 Corki 会话使用此配置"}
+            if kind == "skills" and action == "move":
+                return _skill_move_module.move(self, data, atomic)
             if kind == "skills" and action == "delete":
                 return self.delete_skill(data)
             if kind == "skills" and action == "rename":
@@ -2725,10 +2745,11 @@ end run'''
         if re.match(r"^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)", folder, re.I):
             raise ValueError("技能目录名不能使用 Windows 系统保留名称")
         group = data.get("group", "public")
-        if group not in ("corki", "public", "work"):
-            raise ValueError("请选择扩展 Skills、公共 Skills 或工作 Skills")
+        if group not in ("corki", "public", "work", "evolution"):
+            raise ValueError("请选择有效的 Skills 导入位置")
         archive_parts(folder)
         root = {"corki": self.home / "skills", "work": self.home / "skills/work",
+                "evolution": self.home / "skills/self-improving",
                 "public": self.compatibility_home / ".agents/skills"}[group]
         if private:
             root = self.home / "hooks" / "skills"
@@ -2763,7 +2784,7 @@ end run'''
         finally:
             if stage.exists():
                 shutil.rmtree(stage)
-        label = {"corki": "扩展 Skills", "public": "公共 Skills", "work": "工作 Skills"}[group]
+        label = {"corki": "扩展 Skills", "public": "公共 Skills", "work": "工作 Skills", "evolution": "自进化 Skills"}[group]
         return {**summary, "message": f"已导入{label}；Corki 下次发现技能时可读取"}
 
     def delete_skill(self, data):
@@ -2776,7 +2797,8 @@ end run'''
         if data.get("revision") != item["revision"]:
             raise ValueError("技能已更新，请刷新后重试")
         package = Path(item["path"]).parent
-        roots = [self.home / "skills", self.compatibility_home / ".agents/skills",
+        roots = [self.home / "skills", self.home / "skills/self-improving",
+                 self.compatibility_home / ".agents/skills",
                  self.workspace / ".corki/skills", self.workspace / ".agents/skills"]
         root = next((r for r in roots if package != r and package.is_relative_to(r)), None)
         if root is None or not package.resolve().is_relative_to(root.resolve()):

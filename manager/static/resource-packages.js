@@ -367,6 +367,7 @@ window.CorkiResourcePackages = (() => {
         items: data.skills.filter((item) => item.group === "public"),
       },
       {kind: "skills", title: "工作 Skills", items: data.skills.filter(item => item.group === "work")},
+      {kind: "skills", title: "自进化 Skills", items: data.skills.filter(item => item.group === "evolution")},
       { kind: "mcp", title: "MCP", items: data.mcp },
       { kind: "hooks", title: "Hooks", items: data.hooks },
     ];

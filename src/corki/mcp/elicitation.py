@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
 from itertools import count
@@ -27,6 +28,8 @@ class ElicitationRequest:
 ElicitationHandler = Callable[[ElicitationRequest], Awaitable[None]]
 _IDENTITIES = count()
 _LOG = logging.getLogger(__name__)
+# Host-owned task scope: auxiliary work must never wait on an interactive caller.
+interactive_requests: ContextVar[bool] = ContextVar("interactive_requests", default=True)
 
 
 class ElicitationRouter:
@@ -99,7 +102,7 @@ class ElicitationRouter:
         ],
     ) -> dict[str, Any]:
         handler = self.handler
-        if handler is None:
+        if handler is None or not interactive_requests.get():
             return {"action": "decline"}
         identity = f"corki-mcp-elicitation-{next(_IDENTITIES)}"
         key = server, identity

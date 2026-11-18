@@ -53,6 +53,7 @@ from corki.core.step_settings import (
 from corki.core.step_tools import StepToolState
 from corki.core.turn_run import TurnRun
 from corki.evolution.controller import EvolutionController
+from corki.evolution.locks import SkillLockGuard
 from corki.execution.backend import resolve_execution_permissions
 from corki.execution.rules import ExecPolicyHandle
 from corki.history_notes import HistoryNotesService, history_notes_requested
@@ -333,6 +334,7 @@ class LangGraphRuntime:
         plugin_catalog_base: MCPCatalog | None = None,
         plugin_discovery_enabled: bool = False,
         evolution: EvolutionController | None = None,
+        skill_mutation_guard=None,
         request_context: tuple[ContextItem, ...] = (),
     ) -> None:
         from corki.storage.forks import validate_fork
@@ -417,6 +419,11 @@ class LangGraphRuntime:
         self._mcp_requirements_snapshot = mcp_requirements_snapshot
         self._plugin_manager = plugin_manager
         self._skill_service = skill_service
+        self._skill_guard = skill_mutation_guard
+        if self._skill_guard is None and skill_service is not None:
+            self._skill_guard = SkillLockGuard(
+                skill_service.home, skill_service, settings.working_directory
+            )
         self._skill_tool_owner = skill_tool_owner
         self._pending_skill_service: SkillService | None = None
         self._pending_plugins = None
@@ -1248,6 +1255,9 @@ class LangGraphRuntime:
                 skill_service=skill_service,
                 skill_tool_owner=skill_tool_owner,
                 evolution=evolution,
+                skill_mutation_guard=SkillLockGuard(
+                    capability_home, skill_service, settings.working_directory
+                ),
                 plugin_roots_base=plugin_roots_base,
                 plugin_catalog_base=plugin_catalog_base,
                 plugin_discovery_enabled=load_plugins and settings.plugins_enabled,
@@ -1311,9 +1321,9 @@ class LangGraphRuntime:
                         home_path=capability_home,
                         compatibility_home=compatibility_home,
                         thread_id=ThreadId(identity),
-                        session_source=SessionSource.subagent(SubAgentSource(
-                            "thread_spawn", ThreadSpawnSource(runtime.thread_id, 1)
-                        )),
+                        session_source=SessionSource.subagent(
+                            SubAgentSource("thread_spawn", ThreadSpawnSource(runtime.thread_id, 1))
+                        ),
                         inherited_exec_policy=runtime.execution_policy_handle,
                         inherited_user_instructions=runtime._instruction_manager.user_instructions,
                         request_context=(*request_context, worker_context()),
@@ -2033,7 +2043,6 @@ class LangGraphRuntime:
                         model=self._model_for_settings,
                         operation=operation,
                         turn_id=turn_id,
-                        selection=run.models.current,
                     )
                 except Exception:
                     _LOG.warning("Self-evolution turn observation failed", exc_info=True)
@@ -2098,6 +2107,14 @@ class LangGraphRuntime:
         turn_id = run.turn_id
         terminal: RuntimeEvent | None = None
         graph_context = GraphRunContext(
+            tool_mutation_guard=self._skill_guard.before_tool
+            if self._skill_guard is not None
+            else None,
+            on_model_request=(
+                self._evolution.observe_request
+                if self._evolution is not None and self._evolution.admitted
+                else None
+            ),
             events=_QueueEventSink(
                 run.queue,
                 self._goals,

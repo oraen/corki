@@ -46,6 +46,14 @@ class SkillService:
         configured_project_roots: tuple[Path, ...] = (),
         discovery_cwd: Path | None = None,
     ) -> None:
+        from corki.evolution.migration import migrate_legacy_skills
+
+        relocated = migrate_legacy_skills(home, project_root, compatibility_home)
+        rules = tuple(
+            replace(rule, path=relocated[rule.path])
+            if (rule.path in relocated and not rule.path.exists()
+                and relocated[rule.path].is_file()) else rule for rule in rules
+        )
         self.home = home
         self.project_root = project_root.resolve()
         self._compatibility_home = compatibility_home
@@ -148,7 +156,10 @@ class SkillService:
         check_skill_io()
         if len(data) > MAX_SKILL_CONTENT_BYTES:
             raise ValueError("skill resource exceeds 128 KiB")
-        return data.decode("utf-8-sig", errors="strict")
+        contents = data.decode("utf-8-sig", errors="strict")
+        if observer := getattr(self, "read_observer", None):
+            observer(skill, target, contents)
+        return contents
 
     def render_catalog(self, cwd: Path) -> str:
         return self.catalog(cwd).body
@@ -184,8 +195,10 @@ class SkillService:
                 for path in project_dirs
                 for directory in (".corki", ".agents")
             ),
-            SkillRoot(self.home / "skills", SkillScope.USER, excluded_children=("work",)),
+            SkillRoot(self.home / "skills", SkillScope.USER,
+                      excluded_children=("work", "self-improving")),
             SkillRoot(self.home / "skills/work", SkillScope.USER, work_only=True),
+            SkillRoot(self.home / "skills/self-improving", SkillScope.USER),
         ]
         if self._compatibility_home is not None:
             roots.extend(

@@ -906,6 +906,7 @@ class ContextWindowManager:
             # only its ContextWindowExceeded response below permits trimming.
             request = ModelRequest(
                 model=self._model_name,
+                purpose="compaction",
                 thread_id=self._remote_request_options.get("thread_id"),
                 content_item_kinds=self._remote_request_options.get("content_item_kinds", True),
                 instructions=instructions,

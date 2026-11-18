@@ -7,6 +7,7 @@ const groups = [
   ["corki", "扩展 Skills", "扩展"],
   ["public", "公共 Skills", "公共"],
   ["work", "工作 Skills", "工作"],
+  ["evolution", "自进化 Skills", "自进化"],
   ["builtin", "内置 Skills", "内置"],
 ];
 const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({

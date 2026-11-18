@@ -45,8 +45,12 @@ class ModelRequest:
     # Host identity for request-only prefix IDs, never inferred from a user message.
     thread_id: str | None = None
     content_item_kinds: bool = True
+    # Internal caller intent; never sent as a provider API parameter.
+    purpose: Literal["sampling", "compaction"] = "sampling"
 
     def __post_init__(self) -> None:
+        if self.purpose not in {"sampling", "compaction"}:
+            raise ValueError("invalid model request purpose")
         if self.tool_search_mode == "native":
             object.__setattr__(self, "tool_search_mode", "compatible")
         if not isinstance(self.content_item_kinds, bool):

@@ -18,6 +18,133 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 
+def move_fixture_skill(store, group="public", name="move-example"):
+    root = {"public": store.compatibility_home / ".agents/skills",
+            "corki": store.home / "skills", "work": store.home / "skills/work",
+            "builtin": store.home / "skills/.system",
+            "evolution": store.home / "skills/self-improving"}[group] / name
+    root.mkdir(parents=True)
+    (root / "SKILL.md").write_text(f"---\nname: {name}\ndescription: fixture skill\n---\nGuide\n")
+    (root / "resources").mkdir()
+    (root / "resources/payload.bin").write_bytes(b"\x00\x01fixture")
+    return next(f for f in store.files() if f["kind"] == "skills" and f["name"] == name)
+
+
+@pytest.mark.parametrize("source,target", [("public", "corki"), ("public", "work"),
+                                         ("corki", "public"), ("corki", "work"),
+                                         ("work", "public"), ("work", "corki"),
+                                         ("evolution", "corki"), ("corki", "evolution")])
+def test_skill_move_keeps_identity_contents_and_application_references(store, source, target):
+    item = move_fixture_skill(store, source)
+    original = Path(item["path"])
+    result = change(store, kind="skills", action="move", id=item["id"], group=target,
+                    skill_revision=item["revision"])
+    current = next(f for f in store.files() if f["id"] == item["id"])
+    assert result["id"] == item["id"]
+    assert current["group"] == target
+    assert not original.exists()
+    assert Path(current["path"]).parent.name == original.parent.name
+    assert (Path(current["path"]).parent / "resources/payload.bin").read_bytes() == b"\x00\x01fixture"
+    assert current["revision"] == item["revision"]
+    assert any(f["id"] == item["id"] for f in store.applications.skills(config(store)))
+    assert not (store.home / "manager/skill-move.pending.json").exists()
+    assert "// keep this comment" in store.config_text()
+
+
+def test_skill_move_preserves_path_disable_rules_and_moves_hooks_without_approving_them(store):
+    item = move_fixture_skill(store)
+    path = Path(item["path"])
+    content = config(store)
+    content["skills"] = {"config": [{"path": str(path), "enabled": False, "custom": "retained"}]}
+    content["hooks"] = {"Stop": [{"hooks": [{"type": "skill", "path": str(path)}]}]}
+    store.config.write_text(json.dumps(content))
+    hook_path = store.home / "hooks.json"
+    hook_path.write_text(json.dumps({"hooks": content["hooks"]}))
+    result = change(store, kind="skills", action="move", id=item["id"], group="work",
+                    skill_revision=item["revision"])
+    current = next(f for f in store.files() if f["id"] == item["id"])
+    assert config(store)["skills"]["config"][0] == {
+        "path": current["path"], "enabled": False, "custom": "retained"}
+    assert config(store)["hooks"]["Stop"][0]["hooks"][0]["path"] == current["path"]
+    assert json.loads(hook_path.read_text())["hooks"]["Stop"][0]["hooks"][0]["path"] == current["path"]
+    assert "重新确认" in result["message"]
+    assert all(not h["trusted"] for h in store.hooks_document()["entries"])
+    change(store, kind="skills", action="move", id=item["id"], group="corki",
+           skill_revision=item["revision"])
+    assert not next(f for f in store.snapshot()["files"] if f["id"] == item["id"])["enabled"]
+
+
+@pytest.mark.parametrize("case", ["builtin-source", "builtin-target", "stale-skill", "stale-config",
+                                  "same-group", "directory-conflict", "case-conflict"])
+def test_skill_move_rejects_invalid_requests_without_touching_files(store, case):
+    item = move_fixture_skill(store, "builtin" if case == "builtin-source" else "public")
+    original = Path(item["path"])
+    data = dict(kind="skills", action="move", id=item["id"], group="corki",
+                revision=module.revision(store.config_text()), skill_revision=item["revision"])
+    if case == "builtin-target":
+        data["group"] = "builtin"
+    elif case == "stale-skill":
+        data["skill_revision"] = "stale"
+    elif case == "stale-config":
+        data["revision"] = "stale"
+    elif case == "same-group":
+        data["group"] = "public"
+    elif case in ("directory-conflict", "case-conflict"):
+        (store.home / "skills" / (original.parent.name.upper()
+                                 if case == "case-conflict" else original.parent.name)).mkdir(parents=True)
+    before = store.config_text()
+    with pytest.raises(ValueError):
+        store.mutate(data)
+    assert original.is_file() and store.config_text() == before
+
+
+def test_skill_move_rolls_back_configuration_and_directory_on_write_failure(store, monkeypatch):
+    item = move_fixture_skill(store)
+    source = Path(item["path"])
+    content = config(store)
+    content["skills"] = {"config": [{"path": str(source), "enabled": False}]}
+    store.config.write_text(json.dumps(content))
+    before = store.config_text()
+    original = module.atomic
+
+    def fail_location(path, text, *args, **kwargs):
+        if Path(path).name == "skill-locations.json":
+            raise OSError("simulated write failure")
+        return original(path, text, *args, **kwargs)
+
+    monkeypatch.setattr(module, "atomic", fail_location)
+    with pytest.raises(OSError, match="simulated"):
+        change(store, kind="skills", action="move", id=item["id"], group="corki",
+               skill_revision=item["revision"])
+    assert source.is_file()
+    assert store.config_text() == before
+    assert not (store.home / "skills" / source.parent.name).exists()
+    assert not (store.home / "manager/skill-move.pending.json").exists()
+
+
+def test_skill_move_recovery_uses_journal_and_does_not_overwrite_external_changes(store):
+    item = move_fixture_skill(store)
+    source = Path(item["path"]).parent
+    target = store.home / "skills" / source.name
+    target.parent.mkdir(parents=True)
+    before = store.config_text()
+    after = before + "\n"
+    job = {"source": str(source), "target": str(target), "files": [
+        {"path": str(store.config), "before": before, "after": after}]}
+    pending = store.home / "manager/skill-move.pending.json"
+    pending.parent.mkdir(exist_ok=True)
+    pending.write_text(json.dumps(job))
+    source.rename(target)
+    store.config.write_text(after + "// external edit\n")
+    with pytest.raises(ValueError, match="外部修改"):
+        module._skill_move_module.recover(store, module.atomic)
+    assert target.is_dir() and pending.is_file()
+    store.config.write_text(after)
+    module._skill_move_module.recover(store, module.atomic)
+    assert source.is_dir() and not target.exists()
+    assert store.config_text() == before and not pending.exists()
+
+
 def test_health_api_works_with_broken_config_and_requires_trusted_post(store):
     store.config.write_text('{"api_key":"private-placeholder",', encoding="utf-8")
     server = ThreadingHTTPServer(("127.0.0.1", 0), module.Handler)

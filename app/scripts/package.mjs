@@ -103,6 +103,7 @@ try {
           "../manager/server.py",
           path.join(resources, "manager", "server.py"),
         );
+        await cp("../manager/skill_move.py", path.join(resources, "manager", "skill_move.py"));
         await cp("../manager/health.py", path.join(resources, "manager", "health.py"));
         await cp(
           "../manager/usage_analytics.py",

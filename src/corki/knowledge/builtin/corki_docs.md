@@ -572,7 +572,7 @@ exec_command 执行 Shell 命令；输出可能返回 session_id，后续 write_
 
 ### 如何帮助用户
 
-已有技能包通过 Skills 页导入文件夹或 ZIP，选择扩展或公共位置；要新编写技能使用 skill-creator，要获取现成技能使用 skill-installer。操作前检查 SKILL.md 和资源目录，不能只保存名称或简介。内置技能只读，定制应复制成用户扩展并使用可区分的名称。
+已有技能包通过 Skills 页导入文件夹或 ZIP，选择扩展或公共位置；要新编写技能使用 skill-creator，要获取现成技能使用 skill-installer。操作前检查 SKILL.md 和资源目录，不能只保存名称或简介。管理页中内置技能只读；自进化的学习工具可以原位改进现有技能，不按来源目录设只读限制。新学到的技能放在 skills/self-improving/，只有用户显式锁定才禁止自动修改。
 
 导入后核对目标目录和页面条目，按需求启用，在新轮次检查是否发现。单技能关闭配置只保留 enabled:false；开启时去掉这项禁用字段，只有该字段时可删除整条规则，不能误删其他配置。
 
@@ -580,9 +580,9 @@ exec_command 执行 Shell 命令；输出可能返回 session_id，后续 write_
 
 ### Skills 目录、启停、导入与依赖
 
-管理页依次分区为扩展 Skills、公共 Skills、工作 Skills、内置 Skills；内置默认折叠，其他默认展开。扩展位于数据根 skills/，公共位于 ~/.agents/skills/，工作位于 skills/work/，内置位于 skills/.system/。工作 Skills 的名称、用途和路径可见，但不按任务相似性自动匹配；用户明确指定后可用 skill_read 加载。仅询问是否存在或用途不表示执行。项目还可发现 cwd 到项目根之间的 .corki/skills 与 .agents/skills，以及被配置层允许的根。管理页展示当前选定项目的目录，不承诺完整覆盖运行时的所有上级目录或插件技能。
+管理页依次分区为扩展 Skills、公共 Skills、工作 Skills、自进化 Skills、内置 Skills；自进化和内置默认折叠。扩展位于数据根 skills/，公共位于 ~/.agents/skills/，工作位于 skills/work/，自进化位于 skills/self-improving/，内置位于 skills/.system/。工作 Skills 的名称、用途和路径可见，但不按任务相似性自动匹配；用户明确指定后可用 skill_read 加载。仅询问是否存在或用途不表示执行。项目还可发现 cwd 到项目根之间的 .corki/skills 与 .agents/skills，以及被配置层允许的根。管理页展示当前选定项目的目录，不承诺完整覆盖运行时的所有上级目录或插件技能。
 
-一个 Skill 通常是一个目录，包含 SKILL.md 和可选 scripts/、references/、assets/ 等。SKILL.md 的元数据提供 name、description，帮助模型选择；其正文在使用时读取。目录内可有多个文件，不能仅复制卡片摘要代替完整安装。管理页支持树形查看、编辑/保存扩展与公共内容、导出 ZIP；内置只读，更新可覆盖内置副本。
+一个 Skill 通常是一个目录，包含 SKILL.md 和可选 scripts/、references/、assets/ 等。SKILL.md 的元数据提供 name、description，帮助模型选择；其正文在使用时读取。目录内可有多个文件，不能仅复制卡片摘要代替完整安装。管理页支持树形查看、编辑/保存扩展与公共内容、导出 ZIP；内置在管理页只读；升级只更新未改动的内置副本，已修改的副本保留。
 
 导入支持文件夹、ZIP、单个 SKILL.md，可选扩展、公共或工作位置，检查格式、路径越界与同名冲突。依赖不随说明自动变成可用工具；Skill 提到某 CLI、网络服务、账号或 MCP 时，先检查实际安装及连接。agent-reach 说明不是通用内置联网后端的保证；不能因为说明出现某命令就假定该版本命令存在。
 

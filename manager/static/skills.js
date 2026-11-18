@@ -1,18 +1,66 @@
 'use strict';
 let skillImportGeneration=0;
-const collapsedSkillGroups=new Set(['builtin']);
+const collapsedSkillGroups=new Set(['builtin','evolution']);
 const skillPaths={briefcase:'M9 6V4h6v2 M3 7h18v13H3V7z M3 12h18 M10 12v3h4v-3',upload:'M12 16V3m-5 5 5-5 5 5M4 15v5h16v-5',folder:'M3 7V4h6l3 3h9v13H3V7z',shield:'M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6l-8-3zm-4 9 3 3 5-6',globe:'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18',eye:'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zm13 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0',file:'M5 3h9l5 5v13H5V3zm9 0v6h5M8 13h8M8 17h6'};
 function skillIcon(name){return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${skillPaths[name]||skillPaths.file}"/></svg>`;}
 function skillInitials(name){const parts=String(name).split('-').filter(Boolean);return (parts.length>1?parts.slice(0,2).map(part=>Array.from(part)[0]).join(''):Array.from(String(name)).slice(0,2).join('')).toUpperCase();}
 function skillsPage(){
  const all=state.files.filter(f=>f.kind==='skills'),rows=all.filter(f=>match(f)&&(filter==='all'||(filter==='enabled'?f.enabled:!f.enabled)));
- const groups=[['corki','扩展 Skills','folder'],['public','公共 Skills','globe'],['work','工作 Skills','briefcase'],['builtin','内置 Skills','shield']];
+ const groups=[['corki','扩展 Skills','folder'],['public','公共 Skills','globe'],['work','工作 Skills','briefcase'],['evolution','自进化 Skills','briefcase'],['builtin','内置 Skills','shield']];
  return toolbar(rows.length,tabs([['all','全部'],['enabled','已启用'],['disabled','已停用']]),`<button class="button primary" data-action="skill-import">${skillIcon('upload')}导入 Skills</button>`)+groups.map(([group,title,i])=>{
  const items=rows.filter(f=>f.group===group),total=all.filter(f=>f.group===group).length;
- return `<details class="skill-section" data-skill-group="${group}" ${collapsedSkillGroups.has(group)?'':'open'}><summary class="skill-section-head"><span class="skill-group-icon ${group}">${skillIcon(i)}</span><div><h2>${title}<span>${total}</span></h2></div><svg class="skill-collapse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary><div class="skill-grid">${items.map(f=>`<article class="skill-card ${f.enabled?'':'is-disabled'}"><div class="skill-card-top"><span class="skill-avatar">${esc(skillInitials(f.name))}</span><div class="skill-card-name"><button class="skill-name" data-action="skill-view" data-id="${f.id}" title="${esc(f.name)}">${esc(f.name)}</button>${f.source==='项目'?'<span class="skill-source">项目</span>':''}</div>${f.group!=='work'?`<button class="toggle ${f.enabled?'on':''}" role="switch" aria-checked="${f.enabled}" aria-label="${esc(f.name)} 启用状态" data-action="toggle" data-id="${f.id}"></button>`:''}</div><p class="skill-description" title="${esc(f.description)}">${esc(f.description||'暂无描述')}</p><div class="skill-card-bottom"><span>${f.valid===false?badge('格式异常','orange'):size(f.bytes)+' · '+when(f.updated)}</span>${f.group!=='builtin'?`<button class="skill-detail-button danger" data-action="skill-delete" data-id="${esc(f.id)}">删除</button>`:''}</div></article>`).join('')}</div>${items.length?'':`<div class="skill-empty">${skillIcon(i)}<span>${total?'没有符合筛选条件的技能':group==='public'?'暂无公共Skills':group==='corki'?'暂无扩展Skills':group==='work'?'暂无工作Skills':'暂无内置技能'}</span></div>`}</details>`;
+ return `<details class="skill-section" data-skill-group="${group}" ${collapsedSkillGroups.has(group)?'':'open'}><summary class="skill-section-head"><span class="skill-group-icon ${group}">${skillIcon(i)}</span><div><h2>${title}<span>${total}</span></h2></div><svg class="skill-collapse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary><div class="skill-grid">${items.map(f=>`<article class="skill-card ${f.enabled?'':'is-disabled'}" ${f.group!=='builtin'?`draggable="true" data-drag-skill="${esc(f.id)}"`:''}><div class="skill-card-top"><span class="skill-avatar">${esc(skillInitials(f.name))}</span><div class="skill-card-name"><button class="skill-name" data-action="skill-view" data-id="${f.id}" title="${esc(f.name)}">${esc(f.name)}</button>${f.source==='项目'?'<span class="skill-source">项目</span>':''}</div>${f.group!=='work'?`<button class="toggle ${f.enabled?'on':''}" role="switch" aria-checked="${f.enabled}" aria-label="${esc(f.name)} 启用状态" data-action="toggle" data-id="${f.id}"></button>`:''}</div><p class="skill-description" title="${esc(f.description)}">${esc(f.description||'暂无描述')}</p><div class="skill-card-bottom"><span>${f.valid===false?badge('格式异常','orange'):size(f.bytes)+' · '+when(f.updated)}</span>${f.group!=='builtin'?`<button class="skill-detail-button danger" data-action="skill-delete" data-id="${esc(f.id)}">删除</button>`:''}</div></article>`).join('')}</div>${items.length?'':`<div class="skill-empty">${skillIcon(i)}<span>${total?'没有符合筛选条件的技能':group==='public'?'暂无公共Skills':group==='corki'?'暂无扩展Skills':group==='work'?'暂无工作Skills':group==='evolution'?'暂无自进化Skills':'暂无内置技能'}</span></div>`}</details>`;
  }).join('');
 }
 function resetSkillDialog(){skillImportGeneration++;document.querySelector('#editor')?.classList.remove('skill-dialog');}
+
+let draggedSkill=null, skillMovePending=false;
+function clearSkillDrag(){
+ document.querySelectorAll('.skill-dragging,.skill-drop-target').forEach(node=>node.classList.remove('skill-dragging','skill-drop-target'));
+}
+document.addEventListener('dragstart',event=>{
+ const card=event.target.closest('[data-drag-skill]');
+ if(!card||route!=='skills'||skillMovePending)return;
+ if(event.target.closest('button,input,a,textarea')){event.preventDefault();return;}
+ window.getSelection()?.removeAllRanges();
+ draggedSkill=card.dataset.dragSkill;
+ event.dataTransfer.effectAllowed='move';
+ event.dataTransfer.setData('application/x-corki-skill',draggedSkill);
+ card.classList.add('skill-dragging');
+});
+document.addEventListener('dragover',event=>{
+ if(!draggedSkill||route!=='skills'||skillMovePending)return;
+ const section=event.target.closest('[data-skill-group]');
+ const item=state.files.find(f=>f.id===draggedSkill&&f.kind==='skills');
+ const group=section?.dataset.skillGroup;
+ if(!item||!group||group==='builtin'||group===item.group){clearSkillDrag();return;}
+ event.preventDefault();event.dataTransfer.dropEffect='move';
+ document.querySelectorAll('.skill-drop-target').forEach(node=>{if(node!==section)node.classList.remove('skill-drop-target');});
+ section.classList.add('skill-drop-target');
+});
+document.addEventListener('dragleave',event=>{
+ const section=event.target.closest('[data-skill-group]');
+ if(section&&!section.contains(event.relatedTarget))section.classList.remove('skill-drop-target');
+});
+document.addEventListener('dragend',()=>{draggedSkill=null;clearSkillDrag();});
+document.addEventListener('drop',event=>{
+ if(!draggedSkill||route!=='skills')return;
+ const id=draggedSkill,group=event.target.closest('[data-skill-group]')?.dataset.skillGroup;
+ draggedSkill=null;clearSkillDrag();event.preventDefault();window.getSelection()?.removeAllRanges();
+ const item=state.files.find(f=>f.id===id&&f.kind==='skills');
+ if(!item||skillMovePending||!group||group==='builtin'||group===item.group)return;
+ const names={corki:'扩展 Skills',public:'公共 Skills',work:'工作 Skills',evolution:'自进化 Skills'};
+ const configRevision=state.revision;
+ showDialog('移动 Skill',`<div class="knowledge-delete-file"><span class="skill-move-icon">${skillIcon('folder')}</span><div><strong>${esc(item.name)}</strong><span>${names[item.group]} → ${names[group]}</span></div></div><p class="knowledge-delete-description">确认将此 Skill 及其全部文件移动到${names[group]}？${group==='work'?'移动后仅在明确指定时使用，不会自动召回。':''}${item.group==='public'?'移出公共空间后，其他 Agent 将无法从公共目录找到它。':''}</p>`,async()=>{
+  if(skillMovePending)return;
+  skillMovePending=true;const save=$('#save'),cancel=$('#cancel-dialog');save.disabled=true;cancel.disabled=true;save.textContent='移动中…';
+  try{
+   const result=await api('mutate',{kind:'skills',action:'move',id,group,revision:configRevision,skill_revision:item.revision});
+   collapsedSkillGroups.delete(group);toast(result.message);await load(true);
+  }finally{skillMovePending=false;save.disabled=false;cancel.disabled=false;save.textContent='确认移动';}
+ },'');
+ $('#save').textContent='确认移动';$('#cancel-dialog').focus();
+});
 async function viewSkill(id){return window.CorkiSkills.open(id,{api,toast,reload:()=>load(true)});}
 
 function importSkills(){
@@ -70,7 +118,7 @@ document.querySelector('#main').addEventListener('toggle',event=>{
 function confirmSkillDelete(id){
  const item=state.files.find(f=>f.id===id&&f.kind==='skills');
  if(!item||item.group==='builtin')return toast('此 Skill 不可删除');
- showDialog('删除 Skill',`<div class="knowledge-delete-file"><span class="knowledge-delete-icon">${skillIcon('folder')}</span><div><strong>${esc(item.name)}</strong><span>${{public:'公共 Skills',work:'工作 Skills',corki:'扩展 Skills'}[item.group]}</span></div></div><p class="knowledge-delete-description">将永久删除此 Skill 及其全部文件，删除后无法恢复。${item.group==='public'?'其他 Agent 也将无法再使用此公共 Skill。':''}</p>`,async()=>{
+ showDialog('删除 Skill',`<div class="knowledge-delete-file"><span class="knowledge-delete-icon">${skillIcon('folder')}</span><div><strong>${esc(item.name)}</strong><span>${{public:'公共 Skills',work:'工作 Skills',corki:'扩展 Skills',evolution:'自进化 Skills'}[item.group]}</span></div></div><p class="knowledge-delete-description">将永久删除此 Skill 及其全部文件，删除后无法恢复。${item.group==='public'?'其他 Agent 也将无法再使用此公共 Skill。':''}</p>`,async()=>{
   await mutate({kind:'skills',action:'delete',id,revision:item.revision});
  },'');
  $('#editor').classList.add('knowledge-delete-dialog');

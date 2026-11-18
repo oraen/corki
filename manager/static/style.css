@@ -231,6 +231,11 @@ body.chat-route main{display:flex;flex-direction:column;flex:1;min-height:0;widt
 
 /* Three distinct, quiet containers for the skill library. */
 .skill-section{margin:18px 0 0;padding:22px;background:#fff;border:1px solid #e7e9ee;border-radius:16px;box-shadow:0 2px 6px #29324302}
+.skill-card[draggable="true"]{cursor:grab;user-select:none}
+.skill-card.skill-dragging{opacity:.45}
+.skill-section.skill-drop-target{border-color:#e6a16d;background:#fffbf7;box-shadow:0 0 0 3px #ff6a000b}
+.skill-move-icon{display:grid;place-items:center;width:44px;height:44px;border-radius:12px;background:#fff3e9;color:#d36b25;flex-shrink:0}
+.skill-move-icon svg{width:24px;height:24px}
 .skill-section-head{margin:0 0 20px;padding-bottom:18px;border-bottom:1px solid #eff0f3;gap:11px}
 .skill-group-icon{width:36px;height:36px;border-radius:10px;flex-shrink:0}
 .skill-group-icon svg{width:18px;height:18px}

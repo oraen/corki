@@ -14,6 +14,7 @@ class EvolutionSwitch:
         self._signature = object()
         self._enabled = False
         self._rules = ()
+        self.document = {}
         self._lock = RLock()
 
     def enabled(self) -> bool:
@@ -28,6 +29,7 @@ class EvolutionSwitch:
                     self._enabled = flag is True and skills.get("enabled", True) is not False
                     self._rules = parse_skill_rules(skills.get("config", []), self.path.parent)
                     self._signature = signature
+                    self.document = value
                 return self._enabled
             except FileNotFoundError:
                 return self.fallback
@@ -36,9 +38,14 @@ class EvolutionSwitch:
                 self._signature = object()
                 return False
 
-    def skill_enabled(self, name, path):
-        # Individual skill exclusions still apply during writes. The evolution
-        # opt-in itself is captured at turn admission, not reapplied mid-review.
+    def option(self, section, key, default=None):
+        """Read the already admitted document; no per-token/config polling."""
+        with self._lock:
+            block = self.document.get(section, {})
+            return block.get(key, default) if isinstance(block, dict) else default
+
+    def disabled_skills(self, identities):
+        # Invocation exclusions are catalog state, not content-write locks.
         self.enabled()
         with self._lock:
-            return path.resolve() not in disabled_skill_paths(self._rules, ((name, path),))
+            return disabled_skill_paths(self._rules, identities)

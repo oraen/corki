@@ -106,6 +106,9 @@ class GraphRunContext:
     models: StepSettingsState | None = None
     turn_diff: TurnDiffTracker = field(default_factory=TurnDiffTracker)
     request_user_input: Callable | None = None
+    # Host observation of the exact sampling prefix; not persisted graph state.
+    on_model_request: Callable[[ModelRequest, CorkiSettings], None] | None = None
+    tool_mutation_guard: Callable | None = None
     is_non_root_agent: bool = False
     session_source: SessionSource = DEFAULT_SESSION_SOURCE
     legacy_base_unknown: bool = False
@@ -1126,6 +1129,8 @@ class CorkiGraph:
         if completed is None:
             if runtime.context.legacy_base_unknown:
                 raise ValueError("missing admitted Turn base instructions")
+            if runtime.context.on_model_request is not None:
+                runtime.context.on_model_request(request, self._settings)
             realtime = runtime.context.realtime if state.get("realtime_active", False) else None
             async with aclosing(
                 model_events(self._model, request, realtime, live.failure)
@@ -1213,10 +1218,13 @@ class CorkiGraph:
             # not the mutable session selection. Never persist credentials here.
             provider = self._settings.provider_id or self._settings.provider_name
             if provider:
-                completed = replace(completed, provider_metadata={
-                    **completed.provider_metadata,
-                    "_corki_usage": {"provider": provider, "model": self._settings.model},
-                })
+                completed = replace(
+                    completed,
+                    provider_metadata={
+                        **completed.provider_metadata,
+                        "_corki_usage": {"provider": provider, "model": self._settings.model},
+                    },
+                )
             await self._repository.commit_model_step(
                 state["thread_id"],
                 state["turn_id"],
@@ -1549,6 +1557,19 @@ class CorkiGraph:
             async_owner=self._async_pre_hooks,
             mcp_manager=self._mcp_manager,
         )
+        if runtime.context.tool_mutation_guard is not None:
+            hook = before_tool
+
+            async def guarded(call, tool):
+                updated = await hook(call, tool)
+                if isinstance(updated, str):
+                    return updated
+                refusal = await runtime.context.tool_mutation_guard(
+                    updated, tool, Path(state["cwd"])
+                )
+                return refusal if refusal is not None else updated
+
+            before_tool = guarded
         preview = call.raw_arguments or json.dumps(dict(call.arguments or {}), ensure_ascii=False)
         if not interrupted:
             await runtime.context.events.emit(

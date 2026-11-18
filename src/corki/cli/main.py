@@ -56,6 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
     login = actions.add_parser("login", help="authorize a third-party MCP service")
     login.add_argument("name", help="configured MCP server name")
     login.add_argument("--scopes", metavar="SCOPE,SCOPE", help="explicit OAuth scopes")
+    from corki.evolution.commands import configure_parser
+
+    configure_parser(commands)
     return parser
 
 
@@ -147,6 +150,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser = build_parser()
     arguments = parser.parse_args(argv)
+    if arguments.command == "curator":
+        import json
+
+        from corki.evolution.commands import run as run_curator
+
+        try:
+            print(json.dumps(run_curator(arguments), ensure_ascii=False, indent=2))
+            return 0
+        except (OSError, ValueError) as exc:
+            print(f"Skill maintenance failed: {exc}", file=sys.stderr)
+            return 1
     if arguments.resume and arguments.command:
         parser.error("use either --resume or `corki resume`, not both")
     if arguments.thread_id and arguments.command != "resume":

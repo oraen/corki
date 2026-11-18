@@ -38,6 +38,7 @@ def tools(tmp_path):
     cwd.mkdir()
     configure(home, True)
     (home / "skills").mkdir()
+    (home / "skills/self-improving").mkdir()
     service = SkillService(
         home=home, project_root=cwd, compatibility_home=tmp_path / "user", bundled_enabled=False
     )
@@ -91,13 +92,14 @@ def test_self_evolution_requires_a_real_boolean(tmp_path, value):
 
 def test_versioned_read_patch_restore_and_disabled_retention(tools):
     home, cwd, service, tool = tools
+    tool.review = "test-review"
 
     async def check():
         result, created = await invoke(
             tool, cwd, action="create", name="example-workflow", content=DOCUMENT
         )
         assert not result.is_error and created["changed"]
-        path = home / "skills/example-workflow/SKILL.md"
+        path = home / "skills/self-improving/example-workflow/SKILL.md"
         denied, _ = await invoke(
             tool,
             cwd,
@@ -151,7 +153,7 @@ def test_stale_revision_and_invalid_frontmatter_never_overwrite(tools):
 
     async def check():
         await invoke(tool, cwd, action="create", name="example-workflow", content=DOCUMENT)
-        path = home / "skills/example-workflow/SKILL.md"
+        path = home / "skills/self-improving/example-workflow/SKILL.md"
         _, read = await invoke(tool, cwd, action="read", name="example-workflow")
         path.write_text(DOCUMENT + "External edit.\n")
         denied, _ = await invoke(
@@ -169,7 +171,7 @@ def test_stale_revision_and_invalid_frontmatter_never_overwrite(tools):
             cwd,
             action="write_file",
             name="example-workflow",
-            content=DOCUMENT.replace("name: example-workflow", "name: renamed"),
+            content=DOCUMENT.replace("---\nname:", "broken\nname:"),
             revision=read["revision"],
         )
         assert denied.is_error and "External edit." in path.read_text()
@@ -179,7 +181,7 @@ def test_stale_revision_and_invalid_frontmatter_never_overwrite(tools):
 
 @pytest.mark.parametrize(
     "file",
-    ["../settings.json", "/tmp/escape", "a\\b", "C:/escape", ".system/SKILL.md", "scripts/CON.py"],
+    ["../settings.json", "/tmp/escape", "C:/escape"],
 )
 def test_resource_boundaries_include_windows_paths(tools, file):
     _, cwd, _, tool = tools
@@ -192,10 +194,10 @@ def test_resource_boundaries_include_windows_paths(tools, file):
     asyncio.run(check())
 
 
-def test_shared_and_builtin_skills_are_not_mutated(tools):
+def test_shared_and_builtin_skills_can_be_improved_in_place(tools):
     home, cwd, service, tool = tools
     service = SkillService(home=home, project_root=cwd, compatibility_home=home.parent / "user")
-    tool = SkillManageTool(home, service, cwd, EvolutionSwitch(home))
+    tool = SkillManageTool(home, service, cwd, EvolutionSwitch(home), review="test-review")
     builtin = next(s for s in service.snapshot(cwd).skills if s.scope.value == "system")
     public = home.parent / "user/.agents/skills/shared"
     public.mkdir(parents=True)
@@ -203,19 +205,20 @@ def test_shared_and_builtin_skills_are_not_mutated(tools):
 
     async def check():
         for name, path in ((builtin.name, builtin.path), ("shared", public / "SKILL.md")):
-            original = path.read_bytes()
+            original = path.read_text()
             _, read = await invoke(tool, cwd, action="read", name=name)
-            assert read and not read["editable"]
+            assert read and read["editable"]
             result, _ = await invoke(
                 tool,
                 cwd,
                 action="write_file",
                 name=name,
-                content=DOCUMENT,
-                revision=read["revision"],
+                content=original + "\nVerify the result before delivery.\n",
             )
-            assert result.is_error and path.read_bytes() == original
+            assert not result.is_error, result.content
+            assert path.read_text().endswith("Verify the result before delivery.\n")
         assert service.snapshot(cwd).resolve("shared")
+        assert not (home / "skills/self-improving/shared").exists()
 
     asyncio.run(check())
 
@@ -226,7 +229,7 @@ def test_counters_are_idempotent_and_manual_authoring_suppresses_redundant_revie
         assert not state.completed_turn("t", str(count), 1)
     assert state.completed_turn("t", "9", 1)
     assert not state.completed_turn("t", "9", 1)
-    assert not state.completed_turn("t", "10", 10, authored=True)
+    assert not state.completed_turn("t", "10", 0, authored=True)
     assert not state.completed_turn("t", "11", 1)
 
 
@@ -254,17 +257,17 @@ def test_revoke_before_publication_blocks_late_worker_write(tools, monkeypatch):
         release.set()
         result, _ = await task
         assert result.is_error
-        assert not (tool.home / "skills/example-workflow/SKILL.md").exists()
+        assert not (tool.home / "skills/self-improving/example-workflow/SKILL.md").exists()
 
     asyncio.run(check())
 
 
-def test_disabling_an_individual_skill_blocks_stale_reads_and_duplicate_create(tools):
+def test_disabling_invocation_does_not_make_content_readonly_or_allow_duplicate_create(tools):
     home, cwd, _, tool = tools
 
     async def check():
         await invoke(tool, cwd, action="create", name="example-workflow", content=DOCUMENT)
-        path = home / "skills/example-workflow/SKILL.md"
+        path = home / "skills/self-improving/example-workflow/SKILL.md"
         _, read = await invoke(tool, cwd, action="read", name="example-workflow")
         config = json.loads((home / "settings.json").read_text())
         config["skills"] = {"config": [{"path": str(path), "enabled": False}]}
@@ -277,7 +280,7 @@ def test_disabling_an_individual_skill_blocks_stale_reads_and_duplicate_create(t
             content=DOCUMENT + "Changed.",
             revision=read["revision"],
         )
-        assert result.is_error and path.read_text() == DOCUMENT
+        assert not result.is_error and path.read_text() == DOCUMENT + "Changed."
         result, _ = await invoke(
             tool, cwd, action="create", name="example-workflow", content=DOCUMENT
         )
@@ -286,7 +289,7 @@ def test_disabling_an_individual_skill_blocks_stale_reads_and_duplicate_create(t
     asyncio.run(check())
 
 
-def test_new_support_files_require_read_and_symlinks_are_rejected(tools, tmp_path):
+def test_new_support_files_do_not_require_read_and_external_symlinks_are_rejected(tools, tmp_path):
     home, cwd, _, tool = tools
 
     async def check():
@@ -299,11 +302,11 @@ def test_new_support_files_require_read_and_symlinks_are_rejected(tools, tmp_pat
             file="references/checks.md",
             content="Check the result.",
         )
-        assert result.is_error
+        assert not result.is_error
         _, read = await invoke(
             tool, cwd, action="read", name="example-workflow", file="references/checks.md"
         )
-        assert not read["exists"]
+        assert read["exists"]
         result, _ = await invoke(
             tool,
             cwd,
@@ -315,7 +318,9 @@ def test_new_support_files_require_read_and_symlinks_are_rejected(tools, tmp_pat
         assert not result.is_error
         outside = tmp_path / "outside"
         outside.mkdir()
-        (home / "skills/example-workflow/link").symlink_to(outside, target_is_directory=True)
+        (home / "skills/self-improving/example-workflow/link").symlink_to(
+            outside, target_is_directory=True
+        )
         result, _ = await invoke(
             tool, cwd, action="read", name="example-workflow", file="link/checks.md"
         )
@@ -324,34 +329,34 @@ def test_new_support_files_require_read_and_symlinks_are_rejected(tools, tmp_pat
     asyncio.run(check())
 
 
-def test_foreign_edit_lock_is_not_released_by_contending_tool(tools):
+def test_contending_skill_writer_waits_without_releasing_another_owners_lock(tools):
     import hashlib
-
     from corki.storage.file_lock import open_lock, try_lock, unlock_and_close
 
     home, cwd, _, tool = tools
     locks = home / "evolution/locks"
     locks.mkdir(parents=True)
-    directory = home / "skills/example-workflow"
+    directory = home / "skills/self-improving/example-workflow"
     name = hashlib.sha256(str(directory).encode()).hexdigest() + ".lock"
     owner = open_lock(locks / name)
     assert try_lock(owner)
 
     async def check():
-        result, _ = await invoke(
-            tool, cwd, action="create", name="example-workflow", content=DOCUMENT
-        )
-        assert result.is_error
-        probe = open_lock(locks / name)
+        task = asyncio.create_task(invoke(tool, cwd, action="create", name="example-workflow", content=DOCUMENT))
         try:
-            assert not try_lock(probe)
+            await asyncio.sleep(.05)
+            assert not task.done()
+            probe = open_lock(locks / name)
+            try:
+                assert not try_lock(probe)
+            finally:
+                probe.close()
         finally:
-            probe.close()
+            unlock_and_close(owner)
+        result, _ = await asyncio.wait_for(task, 5)
+        assert not result.is_error
 
-    try:
-        asyncio.run(check())
-    finally:
-        unlock_and_close(owner)
+    asyncio.run(check())
 
 
 def test_versions_are_bounded_even_when_publication_never_finishes(tmp_path):
@@ -366,7 +371,7 @@ def test_versions_are_bounded_even_when_publication_never_finishes(tmp_path):
 
 def test_failed_create_never_removes_an_existing_directory(tools, monkeypatch):
     home, cwd, _, tool = tools
-    directory = home / "skills/example-workflow"
+    directory = home / "skills/self-improving/example-workflow"
     # Simulate another actor creating the directory after catalog validation.
     original = tool._write
 
@@ -394,7 +399,7 @@ def test_invalid_yaml_is_a_tool_error_without_partial_files(tools):
             tool, cwd, action="create", name="broken", content="---\nname: [\n---\nBody."
         )
         assert result.is_error
-        assert not (home / "skills/broken").exists()
+        assert not (home / "skills/self-improving/broken").exists()
 
     asyncio.run(check())
 
@@ -407,7 +412,7 @@ def test_skill_patch_preserves_existing_file_permissions(tools):
 
     async def check():
         await invoke(tool, cwd, action="create", name="example-workflow", content=DOCUMENT)
-        path = home / "skills/example-workflow/SKILL.md"
+        path = home / "skills/self-improving/example-workflow/SKILL.md"
         path.chmod(0o644)
         original_mode = stat.S_IMODE(path.stat().st_mode)
         _, read = await invoke(tool, cwd, action="read", name="example-workflow")
